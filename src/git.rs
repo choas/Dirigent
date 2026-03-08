@@ -120,7 +120,7 @@ pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
     let strategies: &[&[&str]] = &[
         &["apply", "--allow-empty", "-"],
         &["apply", "--allow-empty", "--whitespace=fix", "-"],
-        &["apply", "--allow-empty", "--whitespace=fix", "--3way", "-"],
+        &["apply", "--allow-empty", "--whitespace=fix", "-C1", "-"],
     ];
 
     let mut last_err = String::new();
@@ -164,17 +164,25 @@ fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
         return diff_text.to_string();
     }
 
-    let prefix_a = format!("--- a/{}/", dir_name);
-    let prefix_b = format!("+++ b/{}/", dir_name);
+    let dir_slash = format!("{}/", dir_name);
 
     let mut result = String::with_capacity(diff_text.len());
     for line in diff_text.lines() {
-        if let Some(rest) = line.strip_prefix(&prefix_a) {
-            result.push_str("--- a/");
-            result.push_str(rest);
-        } else if let Some(rest) = line.strip_prefix(&prefix_b) {
-            result.push_str("+++ b/");
-            result.push_str(rest);
+        if line.starts_with("--- a/") || line.starts_with("+++ b/") {
+            // "--- a/dirigent-egui/src/foo.rs" -> "--- a/src/foo.rs"
+            let (prefix, rest) = line.split_at(6); // "--- a/" or "+++ b/"
+            if let Some(stripped) = rest.strip_prefix(&dir_slash) {
+                result.push_str(prefix);
+                result.push_str(stripped);
+            } else {
+                result.push_str(line);
+            }
+        } else if line.starts_with("diff --git ") {
+            // "diff --git a/dirigent-egui/src/foo.rs b/dirigent-egui/src/foo.rs"
+            let fixed = line
+                .replace(&format!("a/{}", dir_slash), "a/")
+                .replace(&format!("b/{}", dir_slash), "b/");
+            result.push_str(&fixed);
         } else {
             result.push_str(line);
         }
