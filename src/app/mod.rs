@@ -254,16 +254,24 @@ impl DirigentApp {
         }
     }
 
-    fn lines_with_cues(&self) -> HashSet<usize> {
-        let mut set = HashSet::new();
+    /// Returns a map from line number to whether the cue is archived.
+    /// `false` = active (yellow dot), `true` = archived (grey dot).
+    /// If a line has both active and archived cues, active wins.
+    fn lines_with_cues(&self) -> HashMap<usize, bool> {
+        let mut map = HashMap::new();
         for c in self.file_cues() {
             let start = c.line_number;
             let end = c.line_number_end.unwrap_or(start);
+            let is_archived = c.status == crate::db::CueStatus::Archived;
             for line in start..=end {
-                set.insert(line);
+                let entry = map.entry(line).or_insert(is_archived);
+                // Active cue wins over archived on the same line
+                if !is_archived {
+                    *entry = false;
+                }
             }
         }
-        set
+        map
     }
 
     // -- Feature 4: Repo switching --
