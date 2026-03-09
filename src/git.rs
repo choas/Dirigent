@@ -132,6 +132,7 @@ pub struct CommitInfo {
     pub full_hash: String,
     pub short_hash: String,
     pub message: String,
+    pub body: String,
     pub author: String,
     pub time_ago: String,
 }
@@ -168,13 +169,13 @@ pub fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
         };
         let hash = format!("{}", commit.id());
         let short_hash = hash.chars().take(7).collect::<String>();
-        let message = commit
-            .message()
-            .unwrap_or("")
+        let full_message = commit.message().unwrap_or("");
+        let message = full_message
             .lines()
             .next()
             .unwrap_or("")
             .to_string();
+        let body = full_message.trim().to_string();
         let author = commit.author().name().unwrap_or("").to_string();
         let secs = commit.time().seconds();
         let diff = now - secs;
@@ -191,6 +192,7 @@ pub fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
             full_hash: hash,
             short_hash,
             message,
+            body,
             author,
             time_ago,
         });

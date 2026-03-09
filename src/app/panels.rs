@@ -139,7 +139,7 @@ impl DirigentApp {
                 let header_resp = egui::CollapsingHeader::new(header_text)
                     .default_open(self.show_git_log)
                     .show(ui, |ui| {
-                        let mut clicked_commit: Option<(String, String)> = None;
+                        let mut clicked_commit: Option<(String, String, String)> = None;
                         egui::ScrollArea::vertical()
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
@@ -168,7 +168,7 @@ impl DirigentApp {
                                         .clicked()
                                     {
                                         clicked_commit =
-                                            Some((commit.full_hash.clone(), commit.message.clone()));
+                                            Some((commit.full_hash.clone(), commit.message.clone(), commit.body.clone()));
                                     }
                                 }
                             });
@@ -176,15 +176,20 @@ impl DirigentApp {
                     });
                 self.show_git_log = header_resp.fully_open();
                 if let Some(inner) = header_resp.body_returned {
-                    if let Some((full_hash, message)) = inner {
+                    if let Some((full_hash, message, body)) = inner {
                         let short_hash = &full_hash[..7.min(full_hash.len())];
                         let diff_text = git::get_commit_diff(&self.project_root, &full_hash)
                             .unwrap_or_default();
                         let parsed = diff_view::parse_unified_diff(&diff_text);
+                        let cue_text = if body.len() > message.len() {
+                            body
+                        } else {
+                            format!("{} {}", short_hash, message)
+                        };
                         self.diff_review = Some(DiffReview {
                             cue_id: 0,
                             diff: diff_text,
-                            cue_text: format!("{} {}", short_hash, message),
+                            cue_text,
                             parsed,
                             view_mode: DiffViewMode::Inline,
                             read_only: true,
@@ -363,7 +368,7 @@ impl DirigentApp {
                 ))
                 .default_open(false)
                 .show(ui, |ui| {
-                    let mut clicked_hash: Option<String> = None;
+                    let mut clicked_commit: Option<(String, String, String)> = None;
                     for commit in &self.commit_history {
                         let msg = if commit.message.len() > 30 {
                             format!("{}...", &commit.message[..27])
@@ -382,16 +387,21 @@ impl DirigentApp {
                             ))
                             .clicked()
                         {
-                            clicked_hash = Some(commit.short_hash.clone());
+                            clicked_commit = Some((commit.short_hash.clone(), commit.message.clone(), commit.body.clone()));
                         }
                     }
-                    if let Some(hash) = clicked_hash {
+                    if let Some((hash, message, body)) = clicked_commit {
                         if let Some(diff_text) = git::get_commit_diff(&self.project_root, &hash) {
                             let parsed = diff_view::parse_unified_diff(&diff_text);
+                            let cue_text = if body.len() > message.len() {
+                                body
+                            } else {
+                                format!("Commit {}", hash)
+                            };
                             self.diff_review = Some(DiffReview {
                                 cue_id: 0,
                                 diff: diff_text,
-                                cue_text: format!("Commit {}", hash),
+                                cue_text,
                                 parsed,
                                 view_mode: DiffViewMode::Inline,
                                 read_only: true,
