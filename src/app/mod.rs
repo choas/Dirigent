@@ -186,16 +186,27 @@ pub struct DirigentApp {
     _fs_watcher: Option<RecommendedWatcher>,
     fs_changed: Arc<AtomicBool>,
     last_fs_rescan: Instant,
+    egui_ctx: Arc<Mutex<Option<egui::Context>>>,
 }
 
-fn start_fs_watcher(root: &PathBuf, changed: &Arc<AtomicBool>) -> Option<RecommendedWatcher> {
+fn start_fs_watcher(
+    root: &PathBuf,
+    changed: &Arc<AtomicBool>,
+    egui_ctx: &Arc<Mutex<Option<egui::Context>>>,
+) -> Option<RecommendedWatcher> {
     let flag = Arc::clone(changed);
+    let ctx = Arc::clone(egui_ctx);
     let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
         if let Ok(event) = res {
             use notify::EventKind;
             match event.kind {
                 EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
                     flag.store(true, Ordering::Relaxed);
+                    if let Ok(guard) = ctx.lock() {
+                        if let Some(ctx) = guard.as_ref() {
+                            ctx.request_repaint();
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -216,7 +227,8 @@ impl DirigentApp {
         let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
 
         let fs_changed = Arc::new(AtomicBool::new(false));
-        let _fs_watcher = start_fs_watcher(&project_root, &fs_changed);
+        let egui_ctx = Arc::new(Mutex::new(None));
+        let _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -261,6 +273,7 @@ impl DirigentApp {
             _fs_watcher,
             fs_changed,
             last_fs_rescan: Instant::now(),
+            egui_ctx,
         }
     }
 
@@ -355,7 +368,7 @@ impl DirigentApp {
         self.project_root = new_root.clone();
         self.file_tree = FileTree::scan(&self.project_root).ok();
         self.fs_changed.store(false, Ordering::Relaxed);
-        self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed);
+        self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.cues = self.db.all_cues().unwrap_or_default();
         self.git_info = git::read_git_info(&self.project_root);
         self.current_file = None;
@@ -605,6 +618,13 @@ impl DirigentApp {
 
 impl eframe::App for DirigentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Store egui context so the file watcher can request repaints
+        if let Ok(mut guard) = self.egui_ctx.lock() {
+            if guard.is_none() {
+                *guard = Some(ctx.clone());
+            }
+        }
+
         // Apply theme if needed
         self.apply_theme(ctx);
 
