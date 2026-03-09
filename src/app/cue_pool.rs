@@ -129,6 +129,8 @@ impl DirigentApp {
                                 let full_path = self.project_root.join(&file_path);
                                 if self.current_file.as_ref() != Some(&full_path) {
                                     self.load_file(full_path);
+                                } else {
+                                    self.dismiss_central_overlays();
                                 }
                                 self.selection_start = Some(line);
                                 self.selection_end = Some(line_end.unwrap_or(line));

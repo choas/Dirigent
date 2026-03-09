@@ -369,8 +369,17 @@ impl DirigentApp {
         self.commit_history = git::read_commit_history(&self.project_root, 50);
     }
 
+    /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
+    /// so the code viewer becomes visible.
+    fn dismiss_central_overlays(&mut self) {
+        self.show_settings = false;
+        self.diff_review = None;
+        self.show_running_log = None;
+    }
+
     fn load_file(&mut self, path: PathBuf) {
         if let Ok(content) = std::fs::read_to_string(&path) {
+            self.dismiss_central_overlays();
             self.current_file_content = content.lines().map(String::from).collect();
             self.current_file = Some(path);
             self.selection_start = None;
