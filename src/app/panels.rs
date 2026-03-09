@@ -202,14 +202,30 @@ impl DirigentApp {
         expanded: &mut HashSet<PathBuf>,
         current_file: &Option<PathBuf>,
         file_to_load: &mut Option<PathBuf>,
+        project_root: &Path,
+        dirty_files: &HashSet<String>,
     ) {
         if entry.is_dir {
             let is_expanded = expanded.contains(&entry.path);
-            let header = egui::CollapsingHeader::new(&entry.name)
+            let dir_has_dirty = Self::dir_has_dirty_files(entry, project_root, dirty_files);
+            let header_text = if dir_has_dirty {
+                egui::RichText::new(&entry.name).color(egui::Color32::from_rgb(200, 160, 50))
+            } else {
+                egui::RichText::new(&entry.name)
+            };
+            let header = egui::CollapsingHeader::new(header_text)
                 .default_open(is_expanded)
                 .show(ui, |ui| {
                     for child in &entry.children {
-                        Self::render_file_entry(ui, child, expanded, current_file, file_to_load);
+                        Self::render_file_entry(
+                            ui,
+                            child,
+                            expanded,
+                            current_file,
+                            file_to_load,
+                            project_root,
+                            dirty_files,
+                        );
                     }
                 });
             if header.fully_open() {
@@ -219,13 +235,44 @@ impl DirigentApp {
             }
         } else {
             let is_selected = current_file.as_ref() == Some(&entry.path);
-            if ui
-                .selectable_label(is_selected, &entry.name)
-                .clicked()
-            {
+            let rel = entry
+                .path
+                .strip_prefix(project_root)
+                .unwrap_or(&entry.path)
+                .to_string_lossy()
+                .to_string();
+            let is_dirty = dirty_files.contains(&rel);
+            let label_text = if is_dirty {
+                egui::RichText::new(format!("{} \u{25CF}", entry.name))
+                    .color(egui::Color32::from_rgb(200, 160, 50))
+            } else {
+                egui::RichText::new(&entry.name)
+            };
+            if ui.selectable_label(is_selected, label_text).clicked() {
                 *file_to_load = Some(entry.path.clone());
             }
         }
+    }
+
+    /// Check if a directory contains any dirty files (recursively).
+    fn dir_has_dirty_files(
+        entry: &FileEntry,
+        project_root: &Path,
+        dirty_files: &HashSet<String>,
+    ) -> bool {
+        if !entry.is_dir {
+            let rel = entry
+                .path
+                .strip_prefix(project_root)
+                .unwrap_or(&entry.path)
+                .to_string_lossy()
+                .to_string();
+            return dirty_files.contains(&rel);
+        }
+        entry
+            .children
+            .iter()
+            .any(|child| Self::dir_has_dirty_files(child, project_root, dirty_files))
     }
 
     pub(super) fn render_status_bar(&mut self, ctx: &egui::Context) {

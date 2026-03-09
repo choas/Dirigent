@@ -1,6 +1,10 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 
-use super::{icon, DirigentApp};
+use super::{icon, DirigentApp, DiffReview};
+use crate::diff_view::{self, DiffViewMode};
+use crate::git;
 
 impl DirigentApp {
     pub(super) fn render_code_viewer(&mut self, ctx: &egui::Context) {
@@ -67,8 +71,16 @@ impl DirigentApp {
             let rel_path = self.relative_path(&file_path);
 
             let mut close_file = false;
+            let mut show_file_diff = false;
+            let is_dirty = self.dirty_files.contains(&rel_path);
             ui.horizontal(|ui| {
                 ui.strong(&rel_path);
+                if is_dirty {
+                    ui.label(
+                        egui::RichText::new("\u{25CF}")
+                            .color(egui::Color32::from_rgb(200, 160, 50)),
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(icon("\u{2715}", self.settings.font_size))
@@ -78,6 +90,15 @@ impl DirigentApp {
                         close_file = true;
                     }
                     ui.label(format!("{} lines", self.current_file_content.len()));
+                    if is_dirty {
+                        if ui
+                            .small_button("Show Diff")
+                            .on_hover_text("Show uncommitted changes for this file")
+                            .clicked()
+                        {
+                            show_file_diff = true;
+                        }
+                    }
                 });
             });
             if close_file {
@@ -86,6 +107,23 @@ impl DirigentApp {
                 self.selection_start = None;
                 self.selection_end = None;
                 self.cue_input.clear();
+                return;
+            }
+            if show_file_diff {
+                let files = vec![rel_path.clone()];
+                if let Some(diff_text) = git::get_working_diff(&self.project_root, &files) {
+                    let parsed = diff_view::parse_unified_diff(&diff_text);
+                    self.diff_review = Some(DiffReview {
+                        cue_id: 0,
+                        diff: diff_text,
+                        cue_text: format!("Uncommitted changes: {}", rel_path),
+                        parsed,
+                        view_mode: DiffViewMode::Inline,
+                        read_only: true,
+                        collapsed_files: HashSet::new(),
+                        prompt_expanded: false,
+                    });
+                }
                 return;
             }
             ui.separator();
