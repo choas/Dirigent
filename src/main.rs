@@ -50,7 +50,7 @@ fn setup_macos_about_panel() {
                     let key: *mut Object = msg_send![ns_string,
                         stringWithUTF8String: b"ApplicationVersion\0".as_ptr()];
                     let val: *mut Object = msg_send![ns_string,
-                        stringWithUTF8String: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr()];
+                        stringWithUTF8String: concat!(env!("BUILD_VERSION"), "\0").as_ptr()];
                     let _: () = msg_send![dict, setObject:val forKey:key];
 
                     // Pass our icon so the About panel shows it instead of the
@@ -146,6 +146,22 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
+
+            // Pre-register the "Icons" font family so the first frame never
+            // panics with "FontFamily::Name(\"Icons\") is not bound to any
+            // fonts".  apply_theme() will overwrite this with the real setup.
+            {
+                let mut fd = egui::FontDefinitions::default();
+                let mono = fd.families
+                    .get(&egui::FontFamily::Monospace)
+                    .cloned()
+                    .unwrap_or_default();
+                fd.families.insert(
+                    egui::FontFamily::Name("Icons".into()),
+                    mono,
+                );
+                cc.egui_ctx.set_fonts(fd);
+            }
 
             #[cfg(target_os = "macos")]
             setup_macos_about_panel();
