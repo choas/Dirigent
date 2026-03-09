@@ -66,12 +66,28 @@ impl DirigentApp {
             let file_path = self.current_file.clone().unwrap();
             let rel_path = self.relative_path(&file_path);
 
+            let mut close_file = false;
             ui.horizontal(|ui| {
                 ui.strong(&rel_path);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(icon("\u{2715}", self.settings.font_size))
+                        .on_hover_text("Close file")
+                        .clicked()
+                    {
+                        close_file = true;
+                    }
                     ui.label(format!("{} lines", self.current_file_content.len()));
                 });
             });
+            if close_file {
+                self.current_file = None;
+                self.current_file_content.clear();
+                self.selection_start = None;
+                self.selection_end = None;
+                self.cue_input.clear();
+                return;
+            }
             ui.separator();
 
             let lines_with_cues = self.lines_with_cues();
