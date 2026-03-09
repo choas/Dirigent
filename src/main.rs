@@ -10,26 +10,16 @@ use eframe::egui;
 use std::path::PathBuf;
 
 fn load_logo_icon() -> egui::IconData {
-    // Load SVG file
-    let svg_bytes = include_bytes!("../assets/logo.svg");
-    
-    // For now, create a placeholder icon since SVG rasterization requires additional dependencies
-    // TODO: Add resvg or similar crate to properly rasterize SVG to RGBA
-    let size = 64u32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-
-    // Create a simple colored square as placeholder until SVG rasterization is implemented
-    for y in 0..size {
-        for x in 0..size {
-            let idx = ((y * size + x) * 4) as usize;
-            rgba[idx] = 100;     // R
-            rgba[idx + 1] = 150; // G  
-            rgba[idx + 2] = 200; // B
-            rgba[idx + 3] = 255;
-        }
+    let png_bytes = include_bytes!("../assets/logo.png");
+    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
+        .expect("failed to decode logo.png")
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
     }
-
-    egui::IconData { rgba, width: size, height: size }
 }
 
 fn main() -> eframe::Result {

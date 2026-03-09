@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub enum ClaudeError {
@@ -81,6 +82,73 @@ pub fn invoke_claude(
         stdout,
         stderr,
         exit_code,
+    })
+}
+
+/// Invoke `claude -p <prompt>` with live stderr streaming to a shared log buffer.
+pub fn invoke_claude_streaming(
+    prompt: &str,
+    project_root: &Path,
+    model: &str,
+    log: Arc<Mutex<String>>,
+) -> Result<ClaudeResponse, ClaudeError> {
+    use std::io::{BufRead, Read};
+    use std::process::Stdio;
+
+    let which_result = Command::new("which").arg("claude").output();
+    match which_result {
+        Ok(output) if !output.status.success() => return Err(ClaudeError::NotFound),
+        Err(_) => return Err(ClaudeError::NotFound),
+        _ => {}
+    }
+
+    let mut cmd = Command::new("claude");
+    cmd.arg("-p").arg(prompt);
+    if !model.is_empty() {
+        cmd.arg("--model").arg(model);
+    }
+
+    let mut child = cmd
+        .current_dir(project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(ClaudeError::SpawnFailed)?;
+
+    let stderr_handle = child.stderr.take().unwrap();
+    let stdout_handle = child.stdout.take().unwrap();
+
+    // Stream stderr line-by-line to the shared log
+    let log_clone = Arc::clone(&log);
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stderr_handle);
+        let mut full = String::new();
+        for line in reader.lines().flatten() {
+            if let Ok(mut log) = log_clone.lock() {
+                log.push_str(&line);
+                log.push('\n');
+            }
+            full.push_str(&line);
+            full.push('\n');
+        }
+        full
+    });
+
+    // Read all of stdout
+    let stdout = {
+        let mut s = String::new();
+        let mut reader = std::io::BufReader::new(stdout_handle);
+        reader.read_to_string(&mut s).ok();
+        s
+    };
+
+    let status = child.wait().map_err(ClaudeError::SpawnFailed)?;
+    let stderr = stderr_thread.join().unwrap_or_default();
+
+    Ok(ClaudeResponse {
+        stdout,
+        stderr,
+        exit_code: status.code(),
     })
 }
 
