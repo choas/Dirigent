@@ -6,8 +6,11 @@ mod panels;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use eframe::egui;
 
@@ -94,6 +97,7 @@ struct DiffReview {
     view_mode: DiffViewMode,
     read_only: bool,
     collapsed_files: HashSet<usize>,
+    prompt_expanded: bool,
 }
 
 enum CueAction {
@@ -177,6 +181,28 @@ pub struct DirigentApp {
     // About dialog
     show_about: bool,
     logo_texture: Option<egui::TextureHandle>,
+
+    // File-system watcher
+    _fs_watcher: Option<RecommendedWatcher>,
+    fs_changed: Arc<AtomicBool>,
+    last_fs_rescan: Instant,
+}
+
+fn start_fs_watcher(root: &PathBuf, changed: &Arc<AtomicBool>) -> Option<RecommendedWatcher> {
+    let flag = Arc::clone(changed);
+    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if let Ok(event) = res {
+            use notify::EventKind;
+            match event.kind {
+                EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                _ => {}
+            }
+        }
+    }).ok()?;
+    watcher.watch(root.as_path(), RecursiveMode::Recursive).ok()?;
+    Some(watcher)
 }
 
 impl DirigentApp {
@@ -188,6 +214,9 @@ impl DirigentApp {
         let settings = settings::load_settings(&project_root);
         let commit_history = git::read_commit_history(&project_root, 50);
         let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
+
+        let fs_changed = Arc::new(AtomicBool::new(false));
+        let _fs_watcher = start_fs_watcher(&project_root, &fs_changed);
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -229,6 +258,9 @@ impl DirigentApp {
             show_git_log: false,
             show_about: false,
             logo_texture: None,
+            _fs_watcher,
+            fs_changed,
+            last_fs_rescan: Instant::now(),
         }
     }
 
@@ -243,6 +275,10 @@ impl DirigentApp {
         } else {
             String::new()
         }
+    }
+
+    fn reload_file_tree(&mut self) {
+        self.file_tree = FileTree::scan(&self.project_root).ok();
     }
 
     fn reload_cues(&mut self) {
@@ -318,6 +354,8 @@ impl DirigentApp {
         };
         self.project_root = new_root.clone();
         self.file_tree = FileTree::scan(&self.project_root).ok();
+        self.fs_changed.store(false, Ordering::Relaxed);
+        self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed);
         self.cues = self.db.all_cues().unwrap_or_default();
         self.git_info = git::read_git_info(&self.project_root);
         self.current_file = None;
@@ -539,6 +577,20 @@ impl DirigentApp {
                     .push(name.to_string());
             }
         }
+        // Ensure the "Icons" family always exists so icon() / icon_small() never
+        // panic.  When no symbol font was loaded, fall back to Monospace fonts.
+        {
+            let needs_fallback = font_def.families
+                .get(&egui::FontFamily::Name("Icons".into()))
+                .map_or(true, |v| v.is_empty());
+            if needs_fallback {
+                let mono = font_def.families
+                    .get(&egui::FontFamily::Monospace)
+                    .cloned()
+                    .unwrap_or_default();
+                font_def.families.insert(egui::FontFamily::Name("Icons".into()), mono);
+            }
+        }
         ctx.set_fonts(font_def);
 
         // Scale all text styles based on the chosen font size
@@ -555,6 +607,15 @@ impl eframe::App for DirigentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Apply theme if needed
         self.apply_theme(ctx);
+
+        // Check for filesystem changes and rescan file tree (debounced)
+        if self.fs_changed.load(Ordering::Relaxed)
+            && self.last_fs_rescan.elapsed() >= std::time::Duration::from_secs(2)
+        {
+            self.fs_changed.store(false, Ordering::Relaxed);
+            self.last_fs_rescan = Instant::now();
+            self.reload_file_tree();
+        }
 
         // Poll for Claude results
         self.process_claude_results();
@@ -577,6 +638,9 @@ impl eframe::App for DirigentApp {
                 500
             };
             ctx.request_repaint_after(std::time::Duration::from_millis(interval));
+        } else if self.fs_changed.load(Ordering::Relaxed) {
+            // Ensure we repaint to pick up filesystem changes after debounce
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
         }
 
         // Render all panels (order matters for layout)
