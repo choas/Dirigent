@@ -1496,9 +1496,8 @@ impl DirigentApp {
         }
 
         if accept {
-            let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, &diff_text);
             let commit_msg = git::generate_commit_message(&cue_text);
-            match git::stage_and_commit(&self.project_root, &file_paths, &commit_msg) {
+            match git::commit_diff(&self.project_root, &diff_text, &commit_msg) {
                 Ok(hash) => {
                     eprintln!("Committed: {}", hash);
                     let _ = self

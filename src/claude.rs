@@ -26,9 +26,9 @@ pub struct ClaudeResponse {
     pub edited_files: Vec<String>,
 }
 
-/// Build a structured prompt for Claude given a comment's context.
+/// Build a structured prompt for Claude given a cue's context.
 pub fn build_prompt(
-    comment_text: &str,
+    cue_text: &str,
     file_path: &str,
     line_number: usize,
     line_number_end: Option<usize>,
@@ -39,7 +39,7 @@ pub fn build_prompt(
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            comment_text,
+            cue_text,
         )
     } else {
         let line_ref = match line_number_end {
@@ -53,7 +53,7 @@ pub fn build_prompt(
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            comment_text, line_ref, file_path,
+            cue_text, line_ref, file_path,
         )
     }
 }

@@ -398,6 +398,76 @@ pub fn stage_and_commit(
     Ok(format!("{}", oid))
 }
 
+/// Commit only the changes described by `diff_text`, not the full working tree state.
+/// Uses `git apply --cached` so each cue commits exactly its own diff.
+pub fn commit_diff(
+    repo_path: &Path,
+    diff_text: &str,
+    commit_message: &str,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Command;
+
+    // Apply the stored diff to the index only (--cached), leaving working tree untouched
+    let mut child = Command::new("git")
+        .args(["apply", "--cached", "--allow-empty"])
+        .current_dir(repo_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run git apply: {e}"))?;
+
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(diff_text.as_bytes())
+        .map_err(|e| format!("failed to pipe diff: {e}"))?;
+
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git apply --cached failed: {stderr}"));
+    }
+
+    // Now commit whatever is staged
+    let repo = Repository::discover(repo_path).map_err(|e| format!("not a repo: {e}"))?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
+
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+
+    // Nothing changed in the index
+    if let Some(ref parent_commit) = parent {
+        if parent_commit.tree_id() == tree_id {
+            return Err("nothing to commit — diff already applied".to_string());
+        }
+    }
+
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+
+    let oid = repo
+        .commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)
+        .map_err(|e| e.to_string())?;
+
+    // Reset the index back to HEAD so it doesn't stay staged
+    let head_commit = repo
+        .head()
+        .map_err(|e| e.to_string())?
+        .peel_to_commit()
+        .map_err(|e| e.to_string())?;
+    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)
+        .map_err(|e| e.to_string())?;
+
+    Ok(format!("{}", oid))
+}
+
 pub fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), String> {
     use std::process::Command;
 
