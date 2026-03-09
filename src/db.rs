@@ -210,6 +210,10 @@ impl Database {
                 "ALTER TABLE cues ADD COLUMN source_ref TEXT;",
             );
         }
+        // Index on status for faster filtered queries
+        let _ = self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);",
+        );
         Ok(())
     }
 
@@ -299,6 +303,37 @@ impl Database {
             cues.push(row?);
         }
         Ok(cues)
+    }
+
+    /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
+    pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
+        let mut cues = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE status != 'archived' ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |row| row_to_cue(row))?;
+        for row in rows {
+            cues.push(row?);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![archived_limit as i64], |row| row_to_cue(row))?;
+        for row in rows {
+            cues.push(row?);
+        }
+        cues.sort_by_key(|c| c.id);
+        Ok(cues)
+    }
+
+    /// Count total archived cues (for UI display when limit is applied).
+    pub fn archived_cue_count(&self) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cues WHERE status = 'archived'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
     }
 
     // -- Execution CRUD --

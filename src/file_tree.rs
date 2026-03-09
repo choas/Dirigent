@@ -12,7 +12,7 @@ const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone)]
-pub struct FileEntry {
+pub(crate) struct FileEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
@@ -20,7 +20,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone)]
-pub struct FileTree {
+pub(crate) struct FileTree {
     pub root: PathBuf,
     pub entries: Vec<FileEntry>,
 }

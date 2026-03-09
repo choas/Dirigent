@@ -3,25 +3,25 @@ use std::collections::HashSet;
 use eframe::egui;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DiffViewMode {
+pub(crate) enum DiffViewMode {
     Inline,
     SideBySide,
 }
 
 #[derive(Debug, Clone)]
-pub struct ParsedDiff {
+pub(crate) struct ParsedDiff {
     pub files: Vec<FileDiff>,
 }
 
 #[derive(Debug, Clone)]
-pub struct FileDiff {
+pub(crate) struct FileDiff {
     pub old_path: String,
     pub new_path: String,
     pub hunks: Vec<DiffHunk>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DiffHunk {
+pub(crate) struct DiffHunk {
     pub old_start: usize,
     pub old_count: usize,
     pub new_start: usize,
@@ -30,7 +30,7 @@ pub struct DiffHunk {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiffLine {
+pub(crate) struct DiffLine {
     pub kind: DiffLineKind,
     pub old_lineno: Option<usize>,
     pub new_lineno: Option<usize>,
@@ -38,13 +38,13 @@ pub struct DiffLine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DiffLineKind {
+pub(crate) enum DiffLineKind {
     Context,
     Addition,
     Deletion,
 }
 
-pub fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
+pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
     let mut files = Vec::new();
     let lines: Vec<&str> = diff_text.lines().collect();
     let mut i = 0;
@@ -174,7 +174,7 @@ fn parse_hunk_header(header: &str) -> (usize, usize) {
     (old_start, new_start)
 }
 
-pub fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
+pub(crate) fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);
@@ -251,7 +251,7 @@ pub fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files:
     }
 }
 
-pub fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
+pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);

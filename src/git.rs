@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use git2::{Repository, Signature, StatusOptions};
 use std::path::{Path, PathBuf};
 
+use crate::error::DirigentError;
+
 #[derive(Debug, Clone)]
 pub(crate) struct GitInfo {
     pub branch: String,
@@ -287,7 +289,7 @@ pub(crate) fn commit_diff(
     repo_path: &Path,
     diff_text: &str,
     commit_message: &str,
-) -> Result<String, String> {
+) -> crate::error::Result<String> {
     use std::io::Write;
     use std::process::Command;
 
@@ -298,20 +300,18 @@ pub(crate) fn commit_diff(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to run git apply --check: {e}"))?;
+        .spawn()?;
 
     check
         .stdin
         .take()
         .unwrap()
-        .write_all(diff_text.as_bytes())
-        .map_err(|e| format!("failed to pipe diff: {e}"))?;
+        .write_all(diff_text.as_bytes())?;
 
-    let check_output = check.wait_with_output().map_err(|e| e.to_string())?;
+    let check_output = check.wait_with_output()?;
     if !check_output.status.success() {
         let stderr = String::from_utf8_lossy(&check_output.stderr);
-        return Err(format!("diff validation failed: {stderr}"));
+        return Err(DirigentError::GitCommand(format!("diff validation failed: {stderr}")));
     }
 
     // Apply the diff to the index only (--cached), leaving working tree untouched
@@ -321,27 +321,25 @@ pub(crate) fn commit_diff(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to run git apply: {e}"))?;
+        .spawn()?;
 
     child
         .stdin
         .take()
         .unwrap()
-        .write_all(diff_text.as_bytes())
-        .map_err(|e| format!("failed to pipe diff: {e}"))?;
+        .write_all(diff_text.as_bytes())?;
 
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let output = child.wait_with_output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git apply --cached failed: {stderr}"));
+        return Err(DirigentError::GitCommand(format!("git apply --cached failed: {stderr}")));
     }
 
     // Now commit whatever is staged
-    let repo = Repository::discover(repo_path).map_err(|e| format!("not a repo: {e}"))?;
-    let mut index = repo.index().map_err(|e| e.to_string())?;
-    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
-    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+    let repo = Repository::discover(repo_path)?;
+    let mut index = repo.index()?;
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
 
     let sig = repo
         .signature()
@@ -352,29 +350,28 @@ pub(crate) fn commit_diff(
     // Nothing changed in the index
     if let Some(ref parent_commit) = parent {
         if parent_commit.tree_id() == tree_id {
-            return Err("nothing to commit — diff already applied".to_string());
+            return Err(DirigentError::GitCommand(
+                "nothing to commit — diff already applied".into(),
+            ));
         }
     }
 
     let parents: Vec<&git2::Commit> = parent.iter().collect();
 
     let oid = repo
-        .commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)
-        .map_err(|e| e.to_string())?;
+        .commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
 
     // Reset the index back to HEAD so it doesn't stay staged
     let head_commit = repo
-        .head()
-        .map_err(|e| e.to_string())?
+        .head()?
         .peel_to_commit()
-        .map_err(|e| e.to_string())?;
-    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DirigentError::Git(e))?;
+    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)?;
 
     Ok(format!("{}", oid))
 }
 
-pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), String> {
+pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {
     use std::process::Command;
 
     if file_paths.is_empty() {
@@ -388,11 +385,12 @@ pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<()
     }
     let output = cmd
         .current_dir(repo_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .output()?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
     Ok(())
 }
@@ -420,17 +418,18 @@ pub(crate) struct WorktreeInfo {
     pub is_locked: bool,
 }
 
-pub(crate) fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, String> {
+pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
     use std::process::Command;
 
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .output()?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -482,12 +481,17 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, Stri
     Ok(worktrees)
 }
 
-pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
     use std::process::Command;
 
-    let repo = Repository::discover(repo_path).map_err(|e| e.to_string())?;
-    let workdir = repo.workdir().ok_or("no workdir")?.to_path_buf();
-    let parent = workdir.parent().ok_or("no parent directory")?;
+    let repo = Repository::discover(repo_path)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| DirigentError::GitCommand("no workdir".into()))?
+        .to_path_buf();
+    let parent = workdir
+        .parent()
+        .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
     let wt_path = parent.join(name);
 
     let output = Command::new("git")
@@ -499,27 +503,29 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> Result<PathBuf, S
             &wt_path.to_string_lossy(),
         ])
         .current_dir(repo_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .output()?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
 
     Ok(wt_path)
 }
 
-pub(crate) fn remove_worktree(repo_path: &Path, wt_path: &Path) -> Result<(), String> {
+pub(crate) fn remove_worktree(repo_path: &Path, wt_path: &Path) -> crate::error::Result<()> {
     use std::process::Command;
 
     let output = Command::new("git")
         .args(["worktree", "remove", &wt_path.to_string_lossy()])
         .current_dir(repo_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+        .output()?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
 
     Ok(())

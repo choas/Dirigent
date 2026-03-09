@@ -1,17 +1,23 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub(crate) enum ClaudeError {
     NotFound,
     SpawnFailed(std::io::Error),
+    Cancelled,
 }
+
+impl std::error::Error for ClaudeError {}
 
 impl std::fmt::Display for ClaudeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClaudeError::NotFound => write!(f, "claude CLI not found on PATH"),
             ClaudeError::SpawnFailed(e) => write!(f, "failed to spawn claude: {e}"),
+            ClaudeError::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -59,11 +65,15 @@ pub(crate) fn build_prompt(
 
 /// Invoke `claude -p <prompt> --output-format stream-json` with live progress
 /// streaming to a shared log buffer. Parses JSON events from stdout in real-time.
+///
+/// The `cancel` token allows the caller to abort the run: a watchdog thread
+/// monitors the flag and kills the child process when it is set.
 pub(crate) fn invoke_claude_streaming(
     prompt: &str,
     project_root: &Path,
     model: &str,
     mut on_log: impl FnMut(&str),
+    cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
     use std::io::{BufRead, Read};
     use std::process::Stdio;
@@ -96,6 +106,28 @@ pub(crate) fn invoke_claude_streaming(
     let stderr_handle = child.stderr.take().unwrap();
     let stdout_handle = child.stdout.take().unwrap();
 
+    // Wrap the child handle so the cancellation watchdog can kill the process.
+    let child = Arc::new(Mutex::new(child));
+
+    // Watchdog thread: polls the cancel flag and kills the child process when set.
+    let done = Arc::new(AtomicBool::new(false));
+    let watchdog = {
+        let child = Arc::clone(&child);
+        let cancel = Arc::clone(&cancel);
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
+                    if let Ok(mut c) = child.lock() {
+                        let _ = c.kill();
+                    }
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        })
+    };
+
     // Collect stderr in background (for error messages)
     let stderr_thread = std::thread::spawn(move || {
         let mut s = String::new();
@@ -110,7 +142,15 @@ pub(crate) fn invoke_claude_streaming(
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
 
-    for line in reader.lines().flatten() {
+    for line_result in reader.lines() {
+        // Check cancellation between lines for fast response
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => break,
+        };
         let event: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {
@@ -238,8 +278,17 @@ pub(crate) fn invoke_claude_streaming(
         }
     }
 
-    let status = child.wait().map_err(ClaudeError::SpawnFailed)?;
+    // Signal the watchdog to stop and wait for it
+    done.store(true, Ordering::Relaxed);
+    let _ = watchdog.join();
+
+    // Reap the child process (works whether it exited naturally or was killed)
+    let status = child.lock().unwrap().wait().map_err(ClaudeError::SpawnFailed)?;
     let stderr = stderr_thread.join().unwrap_or_default();
+
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ClaudeError::Cancelled);
+    }
 
     // If we didn't get a result from stream events, stderr might have the error
     if final_result.is_empty() && !stderr.is_empty() {

@@ -4,6 +4,7 @@ mod app;
 mod claude;
 mod db;
 mod diff_view;
+mod error;
 mod file_tree;
 mod git;
 mod settings;

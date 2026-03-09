@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ThemeChoice {
+pub(crate) enum ThemeChoice {
     // Dark themes
     Dark,
     Nord,
@@ -185,7 +185,7 @@ impl ThemePalette {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum SourceKind {
+pub(crate) enum SourceKind {
     GitHubIssues,
     Notion,
     Mcp,
@@ -213,7 +213,7 @@ impl SourceKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceConfig {
+pub(crate) struct SourceConfig {
     pub name: String,
     pub kind: SourceKind,
     pub label: String,
@@ -240,12 +240,12 @@ impl Default for SourceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Play {
+pub(crate) struct Play {
     pub name: String,
     pub prompt: String,
 }
 
-pub fn default_playbook() -> Vec<Play> {
+pub(crate) fn default_playbook() -> Vec<Play> {
     vec![
         Play {
             name: "Update README".into(),
@@ -283,7 +283,7 @@ pub fn default_playbook() -> Vec<Play> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Settings {
+pub(crate) struct Settings {
     pub theme: ThemeChoice,
     pub claude_model: String,
     pub recent_repos: Vec<String>,
@@ -329,7 +329,7 @@ impl Default for Settings {
     }
 }
 
-pub fn load_settings(project_root: &Path) -> Settings {
+pub(crate) fn load_settings(project_root: &Path) -> Settings {
     let path = project_root.join(".Dirigent").join("settings.json");
     match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
@@ -337,7 +337,7 @@ pub fn load_settings(project_root: &Path) -> Settings {
     }
 }
 
-pub fn save_settings(project_root: &Path, settings: &Settings) {
+pub(crate) fn save_settings(project_root: &Path, settings: &Settings) {
     let dir = project_root.join(".Dirigent");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("settings.json");
@@ -346,7 +346,7 @@ pub fn save_settings(project_root: &Path, settings: &Settings) {
     }
 }
 
-pub fn add_recent_repo(settings: &mut Settings, path: &str) {
+pub(crate) fn add_recent_repo(settings: &mut Settings, path: &str) {
     settings.recent_repos.retain(|p| p != path);
     settings.recent_repos.insert(0, path.to_string());
     settings.recent_repos.truncate(10);
