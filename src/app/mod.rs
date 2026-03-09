@@ -945,42 +945,60 @@ impl eframe::App for DirigentApp {
     }
 }
 
-/// Send a macOS notification using NSAppleScript so it is attributed to the
-/// current process (Dirigent) rather than Script Editor.  Clicking the
-/// notification will activate this Dirigent instance.
+/// Send a macOS notification via `NSUserNotificationCenter`.
+/// Clicking the notification activates the Dirigent process that sent it.
+/// Falls back to `osascript` if the (deprecated) API has been removed.
 #[cfg(target_os = "macos")]
 fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
-    fn escape(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('"', "\\\"")
-    }
-
-    let script_source = format!(
-        "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
-        escape(body),
-        escape(title),
-        escape(subtitle),
-    );
-
     unsafe {
         let pool_cls = Class::get("NSAutoreleasePool").unwrap();
         let pool: *mut Object = msg_send![pool_cls, new];
 
-        let nsstring_cls = Class::get("NSString").unwrap();
-        let src_c = std::ffi::CString::new(script_source).unwrap();
-        let src_ns: *mut Object =
-            msg_send![nsstring_cls, stringWithUTF8String: src_c.as_ptr()];
+        if let Some(notif_cls) = Class::get("NSUserNotification") {
+            let center_cls = Class::get("NSUserNotificationCenter").unwrap();
+            let nsstring = Class::get("NSString").unwrap();
 
-        let script_cls = Class::get("NSAppleScript").unwrap();
-        let script: *mut Object = msg_send![script_cls, alloc];
-        let script: *mut Object = msg_send![script, initWithSource: src_ns];
+            let notif: *mut Object = msg_send![notif_cls, alloc];
+            let notif: *mut Object = msg_send![notif, init];
 
-        let mut err: *mut Object = std::ptr::null_mut();
-        let _: *mut Object = msg_send![script, executeAndReturnError: &mut err];
+            let title_c = std::ffi::CString::new(title).unwrap();
+            let title_ns: *mut Object =
+                msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
+            let _: () = msg_send![notif, setTitle: title_ns];
 
-        let _: () = msg_send![script, release];
+            let sub_c = std::ffi::CString::new(subtitle).unwrap();
+            let sub_ns: *mut Object =
+                msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
+            let _: () = msg_send![notif, setSubtitle: sub_ns];
+
+            let body_c = std::ffi::CString::new(body).unwrap();
+            let body_ns: *mut Object =
+                msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
+            let _: () = msg_send![notif, setInformativeText: body_ns];
+
+            let center: *mut Object =
+                msg_send![center_cls, defaultUserNotificationCenter];
+            let _: () = msg_send![center, deliverNotification: notif];
+        } else {
+            // Fallback: osascript (notification attributed to Script Editor)
+            fn escape(s: &str) -> String {
+                s.replace('\\', "\\\\").replace('"', "\\\"")
+            }
+            let script = format!(
+                "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
+                escape(body),
+                escape(title),
+                escape(subtitle),
+            );
+            let _ = Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .output();
+        }
+
         let _: () = msg_send![pool, drain];
     }
 }
