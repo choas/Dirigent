@@ -640,14 +640,18 @@ impl DirigentApp {
                     preview
                 })
                 .unwrap_or_else(|| format!("Cue #{}", cue_id));
-            let msg = format!("{} \u{2014} ready for review.", preview);
+            let project_name = self
+                .project_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
             std::thread::spawn(move || {
                 let _ = Command::new("osascript")
                     .args([
                         "-e",
                         &format!(
-                            "display notification \"{}\" with title \"Dirigent\" subtitle \"Task moved to Review\"",
-                            msg
+                            "display notification \"{}\" with title \"Dirigent\" subtitle \"{}\"",
+                            preview, project_name
                         ),
                     ])
                     .output();
