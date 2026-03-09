@@ -780,8 +780,42 @@ impl DirigentApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.current_file.is_none() {
-                ui.centered_and_justified(|ui| {
-                    ui.label("Select a file from the tree to view");
+                // Ensure logo texture is loaded
+                if self.logo_texture.is_none() {
+                    let png_bytes = include_bytes!("../assets/logo.png");
+                    let img = image::load_from_memory_with_format(
+                        png_bytes,
+                        image::ImageFormat::Png,
+                    )
+                    .expect("failed to decode logo.png")
+                    .into_rgba8();
+                    let size = [img.width() as usize, img.height() as usize];
+                    let pixels = img.into_raw();
+                    let color_image =
+                        egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                    self.logo_texture = Some(ctx.load_texture(
+                        "dirigent_logo",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+
+                ui.vertical_centered(|ui| {
+                    let available = ui.available_height();
+                    ui.add_space(available * 0.3);
+                    if let Some(ref tex) = self.logo_texture {
+                        ui.add(
+                            egui::Image::new(tex).max_size(egui::vec2(96.0, 96.0)),
+                        );
+                    }
+                    ui.add_space(8.0);
+                    ui.heading("Dirigent");
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.add_space(16.0);
+                    ui.label(
+                        egui::RichText::new("Select a file from the tree to view")
+                            .weak(),
+                    );
                 });
                 return;
             }
@@ -1058,7 +1092,6 @@ impl DirigentApp {
                                     self.db.get_latest_execution(cue_id)
                                 {
                                     if let Some(ref diff) = exec.diff {
-                                        let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root,diff);
                                         let cue_text = self
                                             .cues
                                             .iter()
@@ -1067,20 +1100,13 @@ impl DirigentApp {
                                             .unwrap_or_default();
                                         let commit_msg =
                                             git::generate_commit_message(&cue_text);
-                                        match git::stage_and_commit(
+                                        match git::commit_diff(
                                             &self.project_root,
-                                            &file_paths,
+                                            diff,
                                             &commit_msg,
                                         ) {
                                             Ok(hash) => {
                                                 eprintln!("Committed: {}", hash);
-                                                let _ = self.db.update_cue_status(
-                                                    cue_id,
-                                                    CueStatus::Done,
-                                                );
-                                            }
-                                            Err(e) if e.contains("nothing to commit") => {
-                                                eprintln!("No changes to commit (already committed by another cue)");
                                                 let _ = self.db.update_cue_status(
                                                     cue_id,
                                                     CueStatus::Done,
