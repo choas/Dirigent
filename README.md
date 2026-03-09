@@ -24,15 +24,21 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 ## Features
 
-- **File tree & code viewer** — Browse any Git repository with syntax highlighting (via [syntect](https://github.com/trekhleb/syntect))
-- **Cue system** — Create cues on code to direct AI; each cue carries a file path, line range, and natural-language prompt
+- **File tree & code viewer** — Browse any Git repository with syntax highlighting (via [syntect](https://crates.io/crates/syntect)); lines with active cues are marked with a yellow dot
+- **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived
-- **Claude Code integration** — Sends batched prompts to Claude Code CLI and streams progress in real time
-- **Diff view** — Review AI-generated changes with a side-by-side diff before accepting
-- **Git integration** — View commit history, create commits, manage worktrees
-- **Themes** — 10 dark and 10 light themes (Nord, Solarized, Dracula, Gruvbox, and more)
-- **Settings & global prompt** — Configure model, font size, and a global system prompt prepended to every cue
-- **macOS native** — Custom About panel and dock icon on macOS
+- **Claude Code integration** — Sends prompts to Claude Code CLI and streams stderr progress in real time; configurable model (Opus 4.6, Sonnet 4.6)
+- **Diff view** — Review AI-generated changes inline or side-by-side before accepting; collapsible per-file diffs with +/- statistics
+- **Git integration** — View commit history (last 50 commits), create commits, manage worktrees, see dirty-file indicators in the file tree
+- **Search** — In-file search (Cmd+F) with match navigation; project-wide search (Cmd+Shift+F) with clickable results
+- **Source integration** — Import cues from GitHub Issues, Notion, MCP, or custom shell commands with automatic deduplication and configurable polling
+- **Playbook** — Predefined prompts (e.g. "Update README", "Security audit", "Add tests") that can be run as global cues
+- **Themes** — 20 themes: 10 dark (Nord, Dracula, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Solarized) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night)
+- **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
+- **Notifications** — macOS sound (Glass.aiff) and popup notifications when Claude finishes a task
+- **Settings** — Configure theme, Claude model, font family and size, notification preferences, sources, and playbook
+- **Repository picker** — Switch between projects and track recent repositories
+- **macOS native** — Custom About panel, dock icon, and notification integration
 
 ## Prerequisites
 
@@ -69,28 +75,34 @@ cargo run --release -- /path/to/your/project
 
 1. **Browse** — Navigate your codebase in the file tree on the left
 2. **Cue** — Select lines in the code viewer and create a cue describing what you want changed
-3. **Batch** — Move cues from Inbox to Ready when you're satisfied with the prompt
-4. **Execute** — Dirigent sends the batch to Claude Code and streams progress
-5. **Review** — Inspect the diff that Claude produced
-6. **Accept or reject** — Apply the changes or discard them
-7. **Commit** — Commit accepted changes directly from the app
+3. **Run** — Click Run on a cue to send it to Claude Code; streaming progress is shown in real time
+4. **Review** — Inspect the diff that Claude produced (inline or side-by-side)
+5. **Accept or reject** — Commit the changes or revert them
+6. **Repeat** — Use the global prompt field or playbook for cues that don't target specific lines
 
 ### Per-project data
 
-Dirigent stores its database and settings in a `.dirigent/` directory inside your project root. This directory is local to each project and should be added to `.gitignore` (Dirigent's own `.gitignore` already excludes it).
+Dirigent stores its database (`Dirigent.db`) and settings (`settings.json`) in a `.Dirigent/` directory inside your project root. This directory is local to each project and should be added to `.gitignore`.
 
 ## Architecture
 
 ```
 src/
-├── main.rs        — Entry point, window setup
-├── app/           — UI state, panels, code viewer (egui)
-├── claude.rs      — Claude Code CLI integration
-├── db.rs          — SQLite persistence (cues, executions)
-├── diff_view.rs   — Diff parsing and rendering
-├── file_tree.rs   — File system navigation
-├── git.rs         — Git operations (log, commit, worktrees)
-└── settings.rs    — Themes, fonts, preferences
+├── main.rs          — Entry point, window setup, macOS integration
+├── app/
+│   ├── mod.rs       — App state, update loop, panel orchestration
+│   ├── code_viewer.rs — Syntax-highlighted code display with cue markers
+│   ├── cue_pool.rs  — Kanban columns and cue card rendering
+│   ├── dialogs.rs   — Settings, diff review, repo picker, worktree manager
+│   ├── panels.rs    — Menu bar, repo bar, file tree, status bar, prompt field
+│   └── search.rs    — In-file and project-wide search
+├── claude.rs        — Claude Code CLI invocation and stream parsing
+├── db.rs            — SQLite persistence (cues, executions, migrations)
+├── diff_view.rs     — Unified diff parsing, inline and side-by-side rendering
+├── file_tree.rs     — Recursive directory scanning with ignore patterns
+├── git.rs           — Git status, history, commit, worktree operations
+├── settings.rs      — Themes, fonts, model, sources, playbook
+└── sources.rs       — External cue sources (GitHub Issues, custom commands)
 ```
 
 **Key dependencies:**
@@ -101,13 +113,14 @@ src/
 | [egui_extras](https://crates.io/crates/egui_extras) (syntect) | Syntax highlighting |
 | [rusqlite](https://crates.io/crates/rusqlite) | SQLite (bundled) |
 | [git2](https://crates.io/crates/git2) | Git operations via libgit2 |
+| [notify](https://crates.io/crates/notify) | Cross-platform filesystem watching |
 
 ## Status
 
-Dirigent is in early development (v0.1.0). Core features work — file browsing, cue management, Claude Code integration, diff review, and git operations — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in early development (v0.1.0). Core features work — file browsing, cue management, Claude Code integration, diff review, git operations, search, and source integration — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-Copyright 2026 Lars Gregori
+Copyright 2025 Lars Gregori
