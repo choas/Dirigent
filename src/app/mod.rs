@@ -485,6 +485,27 @@ impl DirigentApp {
             font_def.families.entry(egui::FontFamily::Proportional).or_default()
                 .insert(0, font_family.clone());
         }
+        // Add a symbol fallback font so icons render even when the chosen
+        // code font lacks glyphs like ⚙, ❯, ↺, etc.
+        let symbol_fallback = "DiriSymbolFallback";
+        let symbol_fonts: &[&str] = &[
+            "/System/Library/Fonts/Apple Symbols.ttf",
+            "/System/Library/Fonts/Menlo.ttc",
+            "/System/Library/Fonts/SFNSMono.ttf",
+        ];
+        for path in symbol_fonts {
+            if let Ok(data) = std::fs::read(path) {
+                font_def.font_data.insert(
+                    symbol_fallback.to_string(),
+                    egui::FontData::from_owned(data).into(),
+                );
+                font_def.families.entry(egui::FontFamily::Monospace).or_default()
+                    .push(symbol_fallback.to_string());
+                font_def.families.entry(egui::FontFamily::Proportional).or_default()
+                    .push(symbol_fallback.to_string());
+                break;
+            }
+        }
         ctx.set_fonts(font_def);
 
         // Scale all text styles based on the chosen font size
