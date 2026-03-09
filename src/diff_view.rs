@@ -14,6 +14,7 @@ pub struct ParsedDiff {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FileDiff {
     pub old_path: String,
     pub new_path: String,
@@ -21,6 +22,7 @@ pub struct FileDiff {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DiffHunk {
     pub old_start: usize,
     pub old_count: usize,

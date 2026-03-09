@@ -20,6 +20,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FileTree {
     pub root: PathBuf,
     pub entries: Vec<FileEntry>,

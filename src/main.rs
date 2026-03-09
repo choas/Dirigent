@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 mod app;
 mod claude;
 mod db;
@@ -106,7 +108,7 @@ fn setup_macos_about_panel() {
                 }
             }
 
-            std::mem::forget(helper); // prevent deallocation
+            let _ = helper; // prevent deallocation
         }
     }
 }

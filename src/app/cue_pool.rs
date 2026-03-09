@@ -83,7 +83,7 @@ impl DirigentApp {
 
                         let header = format!("{} ({})", status.label(), section_cues.len());
                         egui::CollapsingHeader::new(header)
-                            .id_source(status.label())
+                            .id_salt(status.label())
                             .default_open(
                                 status == CueStatus::Inbox || status == CueStatus::Review,
                             )

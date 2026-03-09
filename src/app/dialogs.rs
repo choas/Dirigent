@@ -1,9 +1,8 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp, DiffReview};
+use super::{icon, DirigentApp};
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;

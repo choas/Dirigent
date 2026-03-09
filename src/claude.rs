@@ -18,6 +18,7 @@ impl std::fmt::Display for ClaudeError {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ClaudeResponse {
     pub stdout: String,
     pub stderr: String,
@@ -59,6 +60,7 @@ pub fn build_prompt(
 }
 
 /// Invoke `claude -p <prompt>` in the given project directory.
+#[allow(dead_code)]
 pub fn invoke_claude(
     prompt: &str,
     project_root: &Path,

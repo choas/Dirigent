@@ -210,7 +210,7 @@ pub struct DirigentApp {
     search_in_files_query: String,
     search_in_files_active: bool,
     search_in_files_results: Vec<search::SearchResult>,
-    search_in_files_searching: bool,
+    _search_in_files_searching: bool,
 }
 
 fn start_fs_watcher(
@@ -311,7 +311,7 @@ impl DirigentApp {
             search_in_files_query: String::new(),
             search_in_files_active: false,
             search_in_files_results: Vec::new(),
-            search_in_files_searching: false,
+            _search_in_files_searching: false,
         }
     }
 

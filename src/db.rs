@@ -84,6 +84,7 @@ impl ExecutionStatus {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Cue {
     pub id: i64,
     pub text: String,
@@ -96,6 +97,7 @@ pub struct Cue {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Execution {
     pub id: i64,
     pub cue_id: i64,
@@ -283,6 +285,7 @@ impl Database {
         Ok(cues)
     }
 
+    #[allow(dead_code)]
     pub fn cues_for_file(&self, file_path: &str) -> Result<Vec<Cue>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE file_path = ?1 ORDER BY line_number",
@@ -373,6 +376,7 @@ impl Database {
     }
 
     /// Get all distinct source labels from existing cues.
+    #[allow(dead_code)]
     pub fn all_source_labels(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT source_label FROM cues WHERE source_label IS NOT NULL ORDER BY source_label",

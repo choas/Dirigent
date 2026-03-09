@@ -182,6 +182,7 @@ pub fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ApplyError {
     SpawnFailed(std::io::Error),
     ApplyFailed { stderr: String },
@@ -233,6 +234,7 @@ pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -279,6 +281,7 @@ pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
 /// Fix diff paths when Claude generates paths relative to a parent directory.
 /// E.g. "--- a/Dirigent-egui/src/app.rs" when cwd is already "Dirigent-egui/"
 /// becomes "--- a/src/app.rs".
+#[allow(dead_code)]
 fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
     // Get the repo directory name to detect prefix issues
     let dir_name = repo_path
@@ -317,6 +320,7 @@ fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
     result
 }
 
+#[allow(dead_code)]
 pub fn parse_diff_file_paths(diff_text: &str) -> Vec<String> {
     let mut paths = Vec::new();
     for line in diff_text.lines() {
@@ -358,6 +362,7 @@ pub fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<
     paths
 }
 
+#[allow(dead_code)]
 pub fn stage_and_commit(
     repo_path: &Path,
     file_paths: &[String],
