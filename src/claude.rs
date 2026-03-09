@@ -181,13 +181,7 @@ pub(crate) fn invoke_claude_streaming(
                                 if let Some(text) =
                                     block.get("text").and_then(|t| t.as_str())
                                 {
-                                    // Show a truncated preview of assistant text
-                                    let preview: String =
-                                        text.chars().take(200).collect();
-                                    on_log(&preview);
-                                    if text.len() > 200 {
-                                        on_log("...");
-                                    }
+                                    on_log(text);
                                     on_log("\n");
                                 }
                             }
