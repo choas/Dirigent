@@ -291,9 +291,32 @@ pub fn commit_diff(
     use std::io::Write;
     use std::process::Command;
 
-    // Apply the stored diff to the index only (--cached), leaving working tree untouched
+    // Dry-run: validate the diff before applying
+    let mut check = Command::new("git")
+        .args(["apply", "--cached", "--check"])
+        .current_dir(repo_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run git apply --check: {e}"))?;
+
+    check
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(diff_text.as_bytes())
+        .map_err(|e| format!("failed to pipe diff: {e}"))?;
+
+    let check_output = check.wait_with_output().map_err(|e| e.to_string())?;
+    if !check_output.status.success() {
+        let stderr = String::from_utf8_lossy(&check_output.stderr);
+        return Err(format!("diff validation failed: {stderr}"));
+    }
+
+    // Apply the diff to the index only (--cached), leaving working tree untouched
     let mut child = Command::new("git")
-        .args(["apply", "--cached", "--allow-empty"])
+        .args(["apply", "--cached"])
         .current_dir(repo_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
