@@ -258,6 +258,21 @@ impl DirigentApp {
                     );
                 }
 
+                // Show transient status message (auto-dismiss after 10s)
+                let expired = matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 10);
+                if expired {
+                    self.status_message = None;
+                }
+                if let Some((ref msg, _)) = self.status_message {
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(msg.as_str())
+                            .monospace()
+                            .small()
+                            .color(egui::Color32::from_rgb(255, 200, 60)),
+                    );
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Settings gear button
                     if ui

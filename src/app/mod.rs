@@ -189,6 +189,9 @@ pub struct DirigentApp {
     fs_changed: Arc<AtomicBool>,
     last_fs_rescan: Instant,
     egui_ctx: Arc<Mutex<Option<egui::Context>>>,
+
+    // Status bar message (auto-dismisses after a few seconds)
+    status_message: Option<(String, Instant)>,
 }
 
 fn start_fs_watcher(
@@ -278,7 +281,28 @@ impl DirigentApp {
             fs_changed,
             last_fs_rescan: Instant::now(),
             egui_ctx,
+            status_message: None,
         }
+    }
+
+    /// Return a short preview of a cue's text (first few words).
+    fn cue_preview(&self, cue_id: i64) -> String {
+        self.cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| {
+                let words: Vec<&str> = c.text.split_whitespace().take(6).collect();
+                let mut preview = words.join(" ");
+                if c.text.split_whitespace().count() > 6 {
+                    preview.push('\u{2026}');
+                }
+                preview
+            })
+            .unwrap_or_else(|| format!("Cue #{}", cue_id))
+    }
+
+    fn set_status_message(&mut self, msg: String) {
+        self.status_message = Some((msg, Instant::now()));
     }
 
     fn format_elapsed(&self, cue_id: i64) -> String {
@@ -479,7 +503,8 @@ impl DirigentApp {
             self.running_start_times.remove(&result.cue_id);
 
             if let Some(ref error) = result.error {
-                eprintln!("Claude error for cue {}: {}", result.cue_id, error);
+                let preview = self.cue_preview(result.cue_id);
+                self.set_status_message(format!("Claude error for \"{}\": {}", preview, error));
                 let _ = self.db.fail_execution(result.exec_id, error);
                 let _ = self
                     .db
@@ -505,10 +530,11 @@ impl DirigentApp {
                 let _ =
                     self.db
                         .complete_execution(result.exec_id, &result.response, None);
-                eprintln!(
-                    "Claude completed but no file changes detected for cue {}",
-                    result.cue_id
-                );
+                let preview = self.cue_preview(result.cue_id);
+                self.set_status_message(format!(
+                    "Claude completed but no file changes detected for \"{}\"",
+                    preview
+                ));
                 let _ = self
                     .db
                     .update_cue_status(result.cue_id, CueStatus::Done);
