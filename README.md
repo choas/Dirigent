@@ -110,4 +110,4 @@ Dirigent is in early development (v0.1.0). Core features work — file browsing,
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-Copyright 2025 Lars Gregori
+Copyright 2026 Lars Gregori
