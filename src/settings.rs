@@ -386,10 +386,22 @@ pub struct Settings {
     pub notify_sound: bool,
     #[serde(default = "default_true")]
     pub notify_popup: bool,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_font_family() -> String {
+    "Menlo".to_string()
+}
+
+fn default_font_size() -> f32 {
+    13.0
 }
 
 impl Default for Settings {
@@ -400,6 +412,8 @@ impl Default for Settings {
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,
+            font_family: default_font_family(),
+            font_size: default_font_size(),
         }
     }
 }

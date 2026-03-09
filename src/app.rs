@@ -594,6 +594,33 @@ impl DirigentApp {
                         });
                     ui.end_row();
 
+                    ui.label("Font:");
+                    egui::ComboBox::from_id_salt("font_combo")
+                        .selected_text(&self.settings.font_family)
+                        .show_ui(ui, |ui| {
+                            for font in &[
+                                "Menlo",
+                                "SF Mono",
+                                "Monaco",
+                                "Courier New",
+                                "JetBrains Mono",
+                                "Fira Code",
+                                "Source Code Pro",
+                                "Cascadia Code",
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.settings.font_family,
+                                    font.to_string(),
+                                    *font,
+                                );
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Font Size:");
+                    ui.add(egui::Slider::new(&mut self.settings.font_size, 8.0..=32.0).suffix(" px"));
+                    ui.end_row();
+
                     ui.label("Notifications:");
                     ui.end_row();
 
@@ -1503,10 +1530,30 @@ impl DirigentApp {
         self.needs_theme_apply = false;
         ctx.set_visuals(self.settings.theme.visuals());
         self.syntax_theme = if self.settings.theme.is_dark() {
-            egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
+            egui_extras::syntax_highlighting::CodeTheme::dark(self.settings.font_size)
         } else {
-            egui_extras::syntax_highlighting::CodeTheme::light(12.0)
+            egui_extras::syntax_highlighting::CodeTheme::light(self.settings.font_size)
         };
+
+        let mut style = (*ctx.style()).clone();
+        let font_family = &self.settings.font_family;
+        let size = self.settings.font_size;
+
+        // Add the user's chosen font as a custom monospace family
+        let mut font_def = egui::FontDefinitions::default();
+        font_def.families.entry(egui::FontFamily::Monospace).or_default()
+            .insert(0, font_family.clone());
+        font_def.families.entry(egui::FontFamily::Proportional).or_default()
+            .insert(0, font_family.clone());
+        ctx.set_fonts(font_def);
+
+        // Scale all text styles based on the chosen font size
+        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::new(size * 0.75, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::new(size, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::new(size, egui::FontFamily::Monospace));
+        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(size, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(size * 1.4, egui::FontFamily::Proportional));
+        ctx.set_style(style);
     }
 
     // Feature 4: Repo picker window
