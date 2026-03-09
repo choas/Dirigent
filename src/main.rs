@@ -53,6 +53,19 @@ fn setup_macos_about_panel() {
                         stringWithUTF8String: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr()];
                     let _: () = msg_send![dict, setObject:val forKey:key];
 
+                    // Pass our icon so the About panel shows it instead of the
+                    // generic macOS folder icon.
+                    let png_bytes = include_bytes!("../assets/logo.png");
+                    let ns_data_cls = Class::get("NSData").unwrap();
+                    let icon_data: *mut Object = msg_send![ns_data_cls,
+                        dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
+                    let ns_image_cls = Class::get("NSImage").unwrap();
+                    let icon: *mut Object = msg_send![ns_image_cls, alloc];
+                    let icon: *mut Object = msg_send![icon, initWithData:icon_data];
+                    let key: *mut Object = msg_send![ns_string,
+                        stringWithUTF8String: b"ApplicationIcon\0".as_ptr()];
+                    let _: () = msg_send![dict, setObject:icon forKey:key];
+
                     let _: () =
                         msg_send![app, orderFrontStandardAboutPanelWithOptions:dict];
                 }
