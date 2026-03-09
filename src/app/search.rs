@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use eframe::egui;
 
@@ -7,7 +9,7 @@ use crate::file_tree::FileEntry;
 
 /// A single match from project-wide search.
 #[derive(Clone)]
-pub struct SearchResult {
+pub(super) struct SearchResult {
     pub file_path: PathBuf,
     pub rel_path: String,
     pub line_number: usize,
@@ -15,7 +17,7 @@ pub struct SearchResult {
 }
 
 /// Recursively collect all file paths from the file tree.
-fn collect_files(entries: &[FileEntry], out: &mut Vec<PathBuf>) {
+pub(super) fn collect_files(entries: &[FileEntry], out: &mut Vec<PathBuf>) {
     for entry in entries {
         if entry.is_dir {
             collect_files(&entry.children, out);
@@ -25,109 +27,138 @@ fn collect_files(entries: &[FileEntry], out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Search all files in the project for a query string (case-insensitive).
-pub fn search_in_files(
+const BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg",
+    "woff", "woff2", "ttf", "otf",
+    "zip", "tar", "gz", "bz2",
+    "exe", "dll", "so", "dylib",
+    "o", "a", "lib",
+    "pdf", "db", "sqlite",
+];
+
+fn is_binary_ext(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    BINARY_EXTENSIONS.iter().any(|&b| b == ext)
+}
+
+/// Search files in parallel across multiple threads, returning up to `max_results` matches.
+pub(super) fn search_files_parallel(
     root: &Path,
-    tree: &crate::file_tree::FileTree,
+    files: &[PathBuf],
     query: &str,
+    max_results: usize,
 ) -> Vec<SearchResult> {
-    let query_lower = query.to_lowercase();
-    let mut results = Vec::new();
-    let mut files = Vec::new();
-    collect_files(&tree.entries, &mut files);
-
-    for file_path in files {
-        // Skip binary files by checking extension
-        let ext = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if matches!(
-            ext,
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "svg"
-                | "woff" | "woff2" | "ttf" | "otf"
-                | "zip" | "tar" | "gz" | "bz2"
-                | "exe" | "dll" | "so" | "dylib"
-                | "o" | "a" | "lib"
-                | "pdf" | "db" | "sqlite"
-        ) {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let rel_path = file_path
-            .strip_prefix(root)
-            .unwrap_or(&file_path)
-            .to_string_lossy()
-            .to_string();
-
-        for (idx, line) in content.lines().enumerate() {
-            if line.to_lowercase().contains(&query_lower) {
-                results.push(SearchResult {
-                    file_path: file_path.clone(),
-                    rel_path: rel_path.clone(),
-                    line_number: idx + 1,
-                    line_content: line.to_string(),
-                });
-                if results.len() >= 500 {
-                    return results;
-                }
-            }
-        }
+    if files.is_empty() {
+        return Vec::new();
     }
 
-    results
+    let query_lower = query.to_lowercase();
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8);
+    let chunk_size = (files.len() + num_threads - 1) / num_threads;
+    let found_count = AtomicUsize::new(0);
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = files
+            .chunks(chunk_size)
+            .map(|chunk| {
+                let query_lower = &query_lower;
+                let found_count = &found_count;
+                let root = root;
+                s.spawn(move || {
+                    let mut local_results = Vec::new();
+                    for file_path in chunk {
+                        if found_count.load(Ordering::Relaxed) >= max_results {
+                            break;
+                        }
+                        if is_binary_ext(file_path) {
+                            continue;
+                        }
+                        let content = match std::fs::read_to_string(file_path) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        let rel_path = file_path
+                            .strip_prefix(root)
+                            .unwrap_or(file_path)
+                            .to_string_lossy()
+                            .to_string();
+                        for (idx, line) in content.lines().enumerate() {
+                            if line.to_lowercase().contains(query_lower.as_str()) {
+                                local_results.push(SearchResult {
+                                    file_path: file_path.clone(),
+                                    rel_path: rel_path.clone(),
+                                    line_number: idx + 1,
+                                    line_content: line.to_string(),
+                                });
+                                found_count.fetch_add(1, Ordering::Relaxed);
+                                if found_count.load(Ordering::Relaxed) >= max_results {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    local_results
+                })
+            })
+            .collect();
+
+        let mut all_results: Vec<SearchResult> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect();
+        all_results.truncate(max_results);
+        all_results
+    })
 }
 
 impl DirigentApp {
     /// Update search-in-file matches when the query changes.
     pub(super) fn update_search_in_file_matches(&mut self) {
-        self.search_in_file_matches.clear();
-        self.search_in_file_current = None;
-        if self.search_in_file_query.is_empty() {
+        self.search.in_file_matches.clear();
+        self.search.in_file_current = None;
+        if self.search.in_file_query.is_empty() {
             return;
         }
-        let query = self.search_in_file_query.to_lowercase();
-        for (idx, line) in self.current_file_content.iter().enumerate() {
+        let query = self.search.in_file_query.to_lowercase();
+        for (idx, line) in self.viewer.content.iter().enumerate() {
             if line.to_lowercase().contains(&query) {
-                self.search_in_file_matches.push(idx + 1);
+                self.search.in_file_matches.push(idx + 1);
             }
         }
-        if !self.search_in_file_matches.is_empty() {
-            self.search_in_file_current = Some(0);
-            self.scroll_to_line = Some(self.search_in_file_matches[0]);
+        if !self.search.in_file_matches.is_empty() {
+            self.search.in_file_current = Some(0);
+            self.viewer.scroll_to_line = Some(self.search.in_file_matches[0]);
         }
     }
 
     /// Navigate to the next match in the current file.
     pub(super) fn search_in_file_next(&mut self) {
-        if self.search_in_file_matches.is_empty() {
+        if self.search.in_file_matches.is_empty() {
             return;
         }
-        let next = match self.search_in_file_current {
-            Some(i) => (i + 1) % self.search_in_file_matches.len(),
+        let next = match self.search.in_file_current {
+            Some(i) => (i + 1) % self.search.in_file_matches.len(),
             None => 0,
         };
-        self.search_in_file_current = Some(next);
-        self.scroll_to_line = Some(self.search_in_file_matches[next]);
+        self.search.in_file_current = Some(next);
+        self.viewer.scroll_to_line = Some(self.search.in_file_matches[next]);
     }
 
     /// Navigate to the previous match in the current file.
     pub(super) fn search_in_file_prev(&mut self) {
-        if self.search_in_file_matches.is_empty() {
+        if self.search.in_file_matches.is_empty() {
             return;
         }
-        let prev = match self.search_in_file_current {
-            Some(0) => self.search_in_file_matches.len() - 1,
+        let prev = match self.search.in_file_current {
+            Some(0) => self.search.in_file_matches.len() - 1,
             Some(i) => i - 1,
             None => 0,
         };
-        self.search_in_file_current = Some(prev);
-        self.scroll_to_line = Some(self.search_in_file_matches[prev]);
+        self.search.in_file_current = Some(prev);
+        self.viewer.scroll_to_line = Some(self.search.in_file_matches[prev]);
     }
 
     /// Render the search-in-file bar (shown at top of code viewer when active).
@@ -139,7 +170,7 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             ui.label("Find:");
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.search_in_file_query)
+                egui::TextEdit::singleline(&mut self.search.in_file_query)
                     .desired_width(250.0)
                     .hint_text("Search in file...")
                     .font(egui::TextStyle::Monospace),
@@ -161,12 +192,12 @@ impl DirigentApp {
                 response.request_focus();
             }
 
-            let match_count = self.search_in_file_matches.len();
-            if !self.search_in_file_query.is_empty() {
+            let match_count = self.search.in_file_matches.len();
+            if !self.search.in_file_query.is_empty() {
                 let label = if match_count == 0 {
                     "No matches".to_string()
                 } else {
-                    let current = self.search_in_file_current.map(|i| i + 1).unwrap_or(0);
+                    let current = self.search.in_file_current.map(|i| i + 1).unwrap_or(0);
                     format!("{}/{}", current, match_count)
                 };
                 ui.label(
@@ -198,10 +229,10 @@ impl DirigentApp {
         ui.separator();
 
         if close {
-            self.search_in_file_active = false;
-            self.search_in_file_query.clear();
-            self.search_in_file_matches.clear();
-            self.search_in_file_current = None;
+            self.search.in_file_active = false;
+            self.search.in_file_query.clear();
+            self.search.in_file_matches.clear();
+            self.search.in_file_current = None;
         }
 
         close
@@ -215,7 +246,7 @@ impl DirigentApp {
             ui.strong("Search in Files");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button(icon("\u{2715}", fs)).on_hover_text("Close search").clicked() {
-                    self.search_in_files_active = false;
+                    self.search.in_files_active = false;
                 }
             });
         });
@@ -224,7 +255,7 @@ impl DirigentApp {
         let mut trigger_search = false;
         ui.horizontal(|ui| {
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.search_in_files_query)
+                egui::TextEdit::singleline(&mut self.search.in_files_query)
                     .desired_width(ui.available_width() - 40.0)
                     .hint_text("Search...")
                     .font(egui::TextStyle::Monospace),
@@ -237,21 +268,32 @@ impl DirigentApp {
             }
         });
 
-        if trigger_search && !self.search_in_files_query.is_empty() {
-            if let Some(ref tree) = self.file_tree.clone() {
-                self.search_in_files_results =
-                    search_in_files(&self.project_root, tree, &self.search_in_files_query);
+        if trigger_search && !self.search.in_files_query.is_empty() {
+            if let Some(ref tree) = self.file_tree {
+                self.search.in_files_searching = true;
+                self.search.in_files_results.clear();
+                let root = self.project_root.clone();
+                let query = self.search.in_files_query.clone();
+                let mut files = Vec::new();
+                collect_files(&tree.entries, &mut files);
+                let pending = Arc::clone(&self.search.pending_results);
+                std::thread::spawn(move || {
+                    let results = search_files_parallel(&root, &files, &query, 500);
+                    if let Ok(mut guard) = pending.lock() {
+                        *guard = Some(results);
+                    }
+                });
             }
         }
 
         ui.separator();
 
-        if !self.search_in_files_results.is_empty() {
+        if !self.search.in_files_results.is_empty() {
             ui.label(
                 egui::RichText::new(format!(
                     "{} results{}",
-                    self.search_in_files_results.len(),
-                    if self.search_in_files_results.len() >= 500 {
+                    self.search.in_files_results.len(),
+                    if self.search.in_files_results.len() >= 500 {
                         " (capped)"
                     } else {
                         ""
@@ -268,7 +310,14 @@ impl DirigentApp {
         egui::ScrollArea::vertical()
             .id_salt("search_files_scroll")
             .show(ui, |ui| {
-                if self.search_in_files_results.is_empty() && !self.search_in_files_query.is_empty()
+                if self.search.in_files_searching {
+                    ui.label(
+                        egui::RichText::new("Searching...")
+                            .italics()
+                            .color(egui::Color32::from_gray(120)),
+                    );
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                } else if self.search.in_files_results.is_empty() && !self.search.in_files_query.is_empty()
                 {
                     ui.label(
                         egui::RichText::new("No results found.")
@@ -278,7 +327,7 @@ impl DirigentApp {
                 }
 
                 let mut current_file: Option<&str> = None;
-                for result in &self.search_in_files_results {
+                for result in &self.search.in_files_results {
                     if current_file != Some(&result.rel_path) {
                         current_file = Some(&result.rel_path);
                         ui.add_space(4.0);
@@ -312,7 +361,7 @@ impl DirigentApp {
 
         if let Some((path, line)) = navigate_to {
             self.load_file(path);
-            self.scroll_to_line = Some(line);
+            self.viewer.scroll_to_line = Some(line);
         }
     }
 
@@ -321,14 +370,14 @@ impl DirigentApp {
         // Cmd+F = search in file
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::F))
         {
-            if self.current_file.is_some() {
-                self.search_in_file_active = true;
+            if self.viewer.current_file.is_some() {
+                self.search.in_file_active = true;
             }
         }
 
         // Cmd+Shift+F = search in files
         if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) {
-            self.search_in_files_active = true;
+            self.search.in_files_active = true;
         }
     }
 }

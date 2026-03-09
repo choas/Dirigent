@@ -509,7 +509,7 @@ impl DirigentApp {
             let _ = self
                 .db
                 .update_cue_status(cue_id, CueStatus::Inbox);
-            if let Some(ref path) = self.current_file {
+            if let Some(ref path) = self.viewer.current_file {
                 let p = path.clone();
                 self.load_file(p);
             }
@@ -590,11 +590,11 @@ impl DirigentApp {
 
     // Feature 5: Worktree panel
     pub(super) fn render_worktree_panel(&mut self, ctx: &egui::Context) {
-        if !self.show_worktree_panel {
+        if !self.git.show_worktree_panel {
             return;
         }
 
-        let mut open = self.show_worktree_panel;
+        let mut open = self.git.show_worktree_panel;
         let mut switch_to: Option<PathBuf> = None;
         let mut remove_path: Option<PathBuf> = None;
         let mut create_name: Option<String> = None;
@@ -609,7 +609,7 @@ impl DirigentApp {
                 egui::ScrollArea::vertical()
                     .max_height(200.0)
                     .show(ui, |ui| {
-                        for wt in &self.worktrees {
+                        for wt in &self.git.worktrees {
                             ui.horizontal(|ui| {
                                 let label = if wt.is_current {
                                     format!("\u{25B6} {} (current)", wt.name)
@@ -644,7 +644,7 @@ impl DirigentApp {
                             ui.separator();
                         }
 
-                        if self.worktrees.is_empty() {
+                        if self.git.worktrees.is_empty() {
                             ui.label(
                                 egui::RichText::new("No worktrees found")
                                     .italics()
@@ -657,21 +657,21 @@ impl DirigentApp {
                 ui.label("Create new worktree:");
                 ui.horizontal(|ui| {
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.new_worktree_name)
+                        egui::TextEdit::singleline(&mut self.git.new_worktree_name)
                             .desired_width(200.0)
                             .hint_text("branch-name")
                             .font(egui::TextStyle::Monospace),
                     );
-                    if ui.button("Create").clicked() && !self.new_worktree_name.is_empty() {
-                        create_name = Some(self.new_worktree_name.clone());
+                    if ui.button("Create").clicked() && !self.git.new_worktree_name.is_empty() {
+                        create_name = Some(self.git.new_worktree_name.clone());
                     }
                 });
             });
 
-        self.show_worktree_panel = open;
+        self.git.show_worktree_panel = open;
 
         if let Some(path) = switch_to {
-            self.show_worktree_panel = false;
+            self.git.show_worktree_panel = false;
             if let Ok(canonical) = std::fs::canonicalize(&path) {
                 self.switch_repo(canonical);
             } else {
@@ -693,7 +693,7 @@ impl DirigentApp {
         if let Some(name) = create_name {
             match git::create_worktree(&self.project_root, &name) {
                 Ok(_path) => {
-                    self.new_worktree_name.clear();
+                    self.git.new_worktree_name.clear();
                     self.reload_worktrees();
                 }
                 Err(e) => {
@@ -705,14 +705,16 @@ impl DirigentApp {
 
     // Claude progress rendered in the central panel (replaces code viewer)
     pub(super) fn render_running_log_central(&mut self, ctx: &egui::Context) {
-        let cue_id = self.show_running_log.unwrap();
+        let cue_id = self.claude.show_log.unwrap();
         let fs = self.settings.font_size;
 
+        // Drain any pending log updates before rendering
+        self.drain_log_channel();
+
         let log_text = self
-            .running_logs
+            .claude.running_logs
             .get(&cue_id)
-            .and_then(|log| log.lock().ok())
-            .map(|log| log.clone())
+            .cloned()
             .unwrap_or_default();
 
         let is_running = self
@@ -794,7 +796,7 @@ impl DirigentApp {
         });
 
         if close {
-            self.show_running_log = None;
+            self.claude.show_log = None;
         }
     }
 }

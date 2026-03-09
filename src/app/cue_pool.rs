@@ -224,14 +224,14 @@ impl DirigentApp {
 
                 if !unique_labels.is_empty() {
                     ui.horizontal(|ui| {
-                        let current = self.source_filter.as_deref().unwrap_or("All");
+                        let current = self.sources.filter.as_deref().unwrap_or("All");
                         egui::ComboBox::from_id_salt("source_filter")
                             .selected_text(current)
                             .width(ui.available_width() - 8.0)
                             .show_ui(ui, |ui| {
-                                let is_all = self.source_filter.is_none();
+                                let is_all = self.sources.filter.is_none();
                                 if ui.selectable_label(is_all, "All").clicked() {
-                                    self.source_filter = None;
+                                    self.sources.filter = None;
                                 }
                                 for label in &unique_labels {
                                     let count = self
@@ -242,10 +242,10 @@ impl DirigentApp {
                                         })
                                         .count();
                                     let display = format!("{} ({})", label, count);
-                                    let selected = self.source_filter.as_deref()
+                                    let selected = self.sources.filter.as_deref()
                                         == Some(label.as_str());
                                     if ui.selectable_label(selected, &display).clicked() {
-                                        self.source_filter = Some(label.clone());
+                                        self.sources.filter = Some(label.clone());
                                     }
                                 }
                             });
@@ -258,7 +258,7 @@ impl DirigentApp {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();
 
                     let cues_snapshot = self.cues.clone();
-                    let source_filter = self.source_filter.clone();
+                    let source_filter = self.sources.filter.clone();
                     for &status in CueStatus::all() {
                         let section_cues: Vec<&Cue> = cues_snapshot
                             .iter()
@@ -272,13 +272,17 @@ impl DirigentApp {
                             })
                             .collect();
 
-                        let header = format!("{} ({})", status.label(), section_cues.len());
+                        let header = if status == CueStatus::Archived && self.archived_cue_count > section_cues.len() {
+                            format!("{} ({}/{})", status.label(), section_cues.len(), self.archived_cue_count)
+                        } else {
+                            format!("{} ({})", status.label(), section_cues.len())
+                        };
                         let mut collapsing = egui::CollapsingHeader::new(header)
                             .id_salt(status.label())
                             .default_open(
                                 status == CueStatus::Inbox || status == CueStatus::Review,
                             );
-                        if status == CueStatus::Ready && self.expand_running_section {
+                        if status == CueStatus::Ready && self.claude.expand_running {
                             collapsing = collapsing.open(Some(true));
                         }
                         collapsing.show(ui, |ui| {
@@ -296,7 +300,7 @@ impl DirigentApp {
                     }
 
                     // Reset the expand flag after rendering
-                    self.expand_running_section = false;
+                    self.claude.expand_running = false;
 
                     // Process actions after iteration
                     for (id, action) in actions {
@@ -313,26 +317,31 @@ impl DirigentApp {
                                 self.editing_cue_id = None;
                             }
                             CueAction::MoveTo(new_status) => {
+                                // Cancel the running task if moving away from Ready
+                                if new_status != CueStatus::Ready {
+                                    self.cancel_cue_task(id);
+                                }
                                 let _ = self.db.update_cue_status(id, new_status);
                                 if new_status == CueStatus::Ready {
-                                    self.expand_running_section = true;
+                                    self.claude.expand_running = true;
                                     self.reload_cues();
                                     self.trigger_claude(id);
                                 }
                             }
                             CueAction::Delete => {
+                                self.cancel_cue_task(id);
                                 let _ = self.db.delete_cue(id);
                             }
                             CueAction::Navigate(file_path, line, line_end) => {
                                 let full_path = self.project_root.join(&file_path);
-                                if self.current_file.as_ref() != Some(&full_path) {
+                                if self.viewer.current_file.as_ref() != Some(&full_path) {
                                     self.load_file(full_path);
                                 } else {
                                     self.dismiss_central_overlays();
                                 }
-                                self.selection_start = Some(line);
-                                self.selection_end = Some(line_end.unwrap_or(line));
-                                self.scroll_to_line = Some(line);
+                                self.viewer.selection_start = Some(line);
+                                self.viewer.selection_end = Some(line_end.unwrap_or(line));
+                                self.viewer.scroll_to_line = Some(line);
                             }
                             CueAction::ShowDiff(cue_id) => {
                                 if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
@@ -415,7 +424,7 @@ impl DirigentApp {
                                     CueStatus::Inbox,
                                 );
                                 // Reload file to show reverted content
-                                if let Some(ref path) = self.current_file {
+                                if let Some(ref path) = self.viewer.current_file {
                                     let p = path.clone();
                                     self.load_file(p);
                                 }
@@ -423,22 +432,18 @@ impl DirigentApp {
                             }
                             CueAction::ShowRunningLog(cue_id) => {
                                 // Load log from DB if not already in memory
-                                if !self.running_logs.contains_key(&cue_id) {
+                                if !self.claude.running_logs.contains_key(&cue_id) {
                                     if let Ok(Some(exec)) =
                                         self.db.get_latest_execution(cue_id)
                                     {
                                         if let Some(log_text) = exec.log {
-                                            self.running_logs.insert(
-                                                cue_id,
-                                                std::sync::Arc::new(
-                                                    std::sync::Mutex::new(log_text),
-                                                ),
-                                            );
+                                            self.claude.running_logs
+                                                .insert(cue_id, log_text);
                                         }
                                     }
                                 }
                                 self.dismiss_central_overlays();
-                                self.show_running_log = Some(cue_id);
+                                self.claude.show_log = Some(cue_id);
                             }
                         }
                         self.reload_cues();

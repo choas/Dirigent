@@ -8,7 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -90,6 +91,22 @@ struct ClaudeResult {
     error: Option<String>,
 }
 
+/// A log message from a running Claude worker thread.
+struct LogUpdate {
+    cue_id: i64,
+    text: String,
+}
+
+/// Handle to a background task with cancellation support.
+struct TaskHandle {
+    join_handle: JoinHandle<()>,
+    cancel: Arc<AtomicBool>,
+    /// Cue ID if this is a Claude execution task (None for source fetches).
+    cue_id: Option<i64>,
+    /// Execution DB row ID for cleanup on panic.
+    exec_id: Option<i64>,
+}
+
 /// State for reviewing a diff before accepting/rejecting.
 struct DiffReview {
     cue_id: i64,
@@ -115,6 +132,72 @@ enum CueAction {
     ShowRunningLog(i64),
 }
 
+/// State for the code viewer panel.
+pub(super) struct CodeViewerState {
+    pub(super) current_file: Option<PathBuf>,
+    pub(super) content: Vec<String>,
+    /// Start of the selected line range (1-based, always <= selection_end).
+    pub(super) selection_start: Option<usize>,
+    /// End of the selected line range (1-based, always >= selection_start).
+    pub(super) selection_end: Option<usize>,
+    pub(super) cue_input: String,
+    pub(super) scroll_to_line: Option<usize>,
+    pub(super) syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
+}
+
+/// State for in-file and project-wide search.
+pub(super) struct SearchState {
+    // Search in file (Cmd+F)
+    pub(super) in_file_query: String,
+    pub(super) in_file_active: bool,
+    pub(super) in_file_matches: Vec<usize>,
+    pub(super) in_file_current: Option<usize>,
+
+    // Search in files (Cmd+Shift+F)
+    pub(super) in_files_query: String,
+    pub(super) in_files_active: bool,
+    #[allow(private_interfaces)]
+    pub(super) in_files_results: Vec<search::SearchResult>,
+    pub(super) in_files_searching: bool,
+    #[allow(private_interfaces)]
+    pub(super) pending_results: Arc<Mutex<Option<Vec<search::SearchResult>>>>,
+}
+
+/// State for Claude execution and live log streaming.
+pub(super) struct ClaudeRunState {
+    tx: mpsc::Sender<ClaudeResult>,
+    rx: mpsc::Receiver<ClaudeResult>,
+    log_tx: mpsc::Sender<LogUpdate>,
+    log_rx: mpsc::Receiver<LogUpdate>,
+    pub(super) running_logs: HashMap<i64, String>,
+    pub(super) start_times: HashMap<i64, Instant>,
+    pub(super) exec_ids: HashMap<i64, i64>,
+    pub(super) show_log: Option<i64>,
+    pub(super) last_log_flush: Instant,
+    /// Expand the "Running" section on next frame (after user clicks Run).
+    pub(super) expand_running: bool,
+}
+
+/// State for git information, dirty files, commit history, and worktrees.
+pub(super) struct GitState {
+    pub(super) info: Option<git::GitInfo>,
+    /// Relative paths of files with uncommitted changes.
+    pub(super) dirty_files: HashSet<String>,
+    pub(super) commit_history: Vec<git::CommitInfo>,
+    pub(super) show_log: bool,
+    pub(super) worktrees: Vec<git::WorktreeInfo>,
+    pub(super) new_worktree_name: String,
+    pub(super) show_worktree_panel: bool,
+}
+
+/// State for external cue source polling.
+pub(super) struct SourceState {
+    tx: mpsc::Sender<SourceItem>,
+    rx: mpsc::Receiver<SourceItem>,
+    pub(super) last_poll: HashMap<String, Instant>,
+    pub(super) filter: Option<String>,
+}
+
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
@@ -122,67 +205,40 @@ pub struct DirigentApp {
     // File tree
     file_tree: Option<FileTree>,
     expanded_dirs: HashSet<PathBuf>,
+    file_tree_pending: Arc<Mutex<Option<FileTree>>>,
+    file_tree_scanning: bool,
 
     // Code viewer
-    current_file: Option<PathBuf>,
-    current_file_content: Vec<String>,
-    /// Start of the selected line range (1-based, always <= selection_end).
-    selection_start: Option<usize>,
-    /// End of the selected line range (1-based, always >= selection_start).
-    selection_end: Option<usize>,
-    cue_input: String,
-    scroll_to_line: Option<usize>,
+    pub(super) viewer: CodeViewerState,
 
     // Cue pool
     cues: Vec<Cue>,
+    archived_cue_count: usize,
 
-    // Claude execution
-    claude_pending: Arc<Mutex<Vec<ClaudeResult>>>,
+    // Claude execution & running logs
+    pub(super) claude: ClaudeRunState,
 
     // Diff review modal
     diff_review: Option<DiffReview>,
 
-    // Git info
-    git_info: Option<git::GitInfo>,
-    /// Relative paths of files with uncommitted changes.
-    dirty_files: HashSet<String>,
+    // Git state
+    pub(super) git: GitState,
 
-    // Commit history
-    commit_history: Vec<git::CommitInfo>,
-
-    // Syntax highlighting theme
-    syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
-
-    // Settings (Feature 1)
+    // Settings
     settings: Settings,
     show_settings: bool,
     needs_theme_apply: bool,
 
-    // Global prompt (Feature 2)
+    // Global prompt
     global_prompt_input: String,
 
-    // Repo picker (Feature 4)
+    // Repo picker
     show_repo_picker: bool,
     repo_path_input: String,
-
-    // Worktrees (Feature 5)
-    show_worktree_panel: bool,
-    worktrees: Vec<git::WorktreeInfo>,
-    new_worktree_name: String,
 
     // Inline cue editing
     editing_cue_id: Option<i64>,
     editing_cue_text: String,
-
-    // Git log panel (left nav)
-    show_git_log: bool,
-
-    // Claude running logs (live stderr streaming)
-    running_logs: HashMap<i64, Arc<Mutex<String>>>,
-    running_start_times: HashMap<i64, Instant>,
-    running_exec_ids: HashMap<i64, i64>,
-    show_running_log: Option<i64>,
-    last_log_flush: Instant,
 
     // About dialog
     show_about: bool,
@@ -192,36 +248,25 @@ pub struct DirigentApp {
     _fs_watcher: Option<RecommendedWatcher>,
     fs_changed: Arc<AtomicBool>,
     last_fs_rescan: Instant,
-    egui_ctx: Arc<Mutex<Option<egui::Context>>>,
+    egui_ctx: Arc<OnceLock<egui::Context>>,
 
     // Status bar message (auto-dismisses after a few seconds)
     status_message: Option<(String, Instant)>,
 
     // Source integration
-    source_pending: Arc<Mutex<Vec<SourceItem>>>,
-    last_source_poll: HashMap<String, Instant>,
-    pub(super) source_filter: Option<String>,
+    pub(super) sources: SourceState,
 
-    // Search in file (Cmd+F)
-    search_in_file_query: String,
-    search_in_file_active: bool,
-    search_in_file_matches: Vec<usize>,
-    search_in_file_current: Option<usize>,
+    // Search
+    pub(super) search: SearchState,
 
-    // Search in files (Cmd+Shift+F)
-    search_in_files_query: String,
-    search_in_files_active: bool,
-    search_in_files_results: Vec<search::SearchResult>,
-    _search_in_files_searching: bool,
-
-    // Expand the "Running" section on next frame (after user clicks Run)
-    expand_running_section: bool,
+    // Task lifecycle management
+    task_handles: Vec<TaskHandle>,
 }
 
 fn start_fs_watcher(
     root: &PathBuf,
     changed: &Arc<AtomicBool>,
-    egui_ctx: &Arc<Mutex<Option<egui::Context>>>,
+    egui_ctx: &Arc<OnceLock<egui::Context>>,
 ) -> Option<RecommendedWatcher> {
     let flag = Arc::clone(changed);
     let ctx = Arc::clone(egui_ctx);
@@ -231,10 +276,8 @@ fn start_fs_watcher(
             match event.kind {
                 EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
                     flag.store(true, Ordering::Relaxed);
-                    if let Ok(guard) = ctx.lock() {
-                        if let Some(ctx) = guard.as_ref() {
-                            ctx.request_repaint();
-                        }
+                    if let Some(ctx) = ctx.get() {
+                        ctx.request_repaint();
                     }
                 }
                 _ => {}
@@ -249,7 +292,8 @@ impl DirigentApp {
     pub fn new(project_root: PathBuf) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
         let file_tree = FileTree::scan(&project_root).ok();
-        let cues = db.all_cues().unwrap_or_default();
+        let cues = db.all_cues_limited_archived(200).unwrap_or_default();
+        let archived_cue_count = db.archived_cue_count().unwrap_or(0);
         let git_info = git::read_git_info(&project_root);
         let dirty_files = git::get_dirty_files(&project_root);
         let settings = settings::load_settings(&project_root);
@@ -257,8 +301,12 @@ impl DirigentApp {
         let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
 
         let fs_changed = Arc::new(AtomicBool::new(false));
-        let egui_ctx = Arc::new(Mutex::new(None));
+        let egui_ctx = Arc::new(OnceLock::new());
         let _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
+
+        let (claude_tx, claude_rx) = mpsc::channel();
+        let (source_tx, source_rx) = mpsc::channel();
+        let (log_tx, log_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -271,36 +319,49 @@ impl DirigentApp {
             db,
             file_tree,
             expanded_dirs: HashSet::new(),
-            current_file: None,
-            current_file_content: Vec::new(),
-            selection_start: None,
-            selection_end: None,
-            cue_input: String::new(),
-            scroll_to_line: None,
+            file_tree_pending: Arc::new(Mutex::new(None)),
+            file_tree_scanning: false,
+            viewer: CodeViewerState {
+                current_file: None,
+                content: Vec::new(),
+                selection_start: None,
+                selection_end: None,
+                cue_input: String::new(),
+                scroll_to_line: None,
+                syntax_theme,
+            },
             cues,
-            claude_pending: Arc::new(Mutex::new(Vec::new())),
+            archived_cue_count,
+            claude: ClaudeRunState {
+                tx: claude_tx,
+                rx: claude_rx,
+                log_tx,
+                log_rx,
+                running_logs: HashMap::new(),
+                start_times: HashMap::new(),
+                exec_ids: HashMap::new(),
+                show_log: None,
+                last_log_flush: Instant::now(),
+                expand_running: false,
+            },
             diff_review: None,
-            git_info,
-            dirty_files,
-            commit_history,
-            syntax_theme,
+            git: GitState {
+                info: git_info,
+                dirty_files,
+                commit_history,
+                show_log: false,
+                worktrees,
+                new_worktree_name: String::new(),
+                show_worktree_panel: false,
+            },
             settings,
             show_settings: false,
             needs_theme_apply: true,
             global_prompt_input: String::new(),
             show_repo_picker: false,
             repo_path_input: String::new(),
-            show_worktree_panel: false,
-            worktrees,
-            new_worktree_name: String::new(),
             editing_cue_id: None,
             editing_cue_text: String::new(),
-            running_logs: HashMap::new(),
-            running_start_times: HashMap::new(),
-            running_exec_ids: HashMap::new(),
-            show_running_log: None,
-            last_log_flush: Instant::now(),
-            show_git_log: false,
             show_about: false,
             logo_texture: None,
             _fs_watcher,
@@ -308,18 +369,24 @@ impl DirigentApp {
             last_fs_rescan: Instant::now(),
             egui_ctx,
             status_message: None,
-            source_pending: Arc::new(Mutex::new(Vec::new())),
-            last_source_poll: HashMap::new(),
-            source_filter: None,
-            search_in_file_query: String::new(),
-            search_in_file_active: false,
-            search_in_file_matches: Vec::new(),
-            search_in_file_current: None,
-            search_in_files_query: String::new(),
-            search_in_files_active: false,
-            search_in_files_results: Vec::new(),
-            _search_in_files_searching: false,
-            expand_running_section: false,
+            sources: SourceState {
+                tx: source_tx,
+                rx: source_rx,
+                last_poll: HashMap::new(),
+                filter: None,
+            },
+            search: SearchState {
+                in_file_query: String::new(),
+                in_file_active: false,
+                in_file_matches: Vec::new(),
+                in_file_current: None,
+                in_files_query: String::new(),
+                in_files_active: false,
+                in_files_results: Vec::new(),
+                in_files_searching: false,
+                pending_results: Arc::new(Mutex::new(None)),
+            },
+            task_handles: Vec::new(),
         }
     }
 
@@ -344,7 +411,7 @@ impl DirigentApp {
     }
 
     fn format_elapsed(&self, cue_id: i64) -> String {
-        if let Some(start) = self.running_start_times.get(&cue_id) {
+        if let Some(start) = self.claude.start_times.get(&cue_id) {
             let secs = start.elapsed().as_secs();
             if secs < 60 {
                 format!("{}s", secs)
@@ -357,20 +424,33 @@ impl DirigentApp {
     }
 
     fn reload_file_tree(&mut self) {
-        self.file_tree = FileTree::scan(&self.project_root).ok();
+        if self.file_tree_scanning {
+            return;
+        }
+        self.file_tree_scanning = true;
+        let root = self.project_root.clone();
+        let pending = Arc::clone(&self.file_tree_pending);
+        std::thread::spawn(move || {
+            if let Ok(tree) = FileTree::scan(&root) {
+                if let Ok(mut guard) = pending.lock() {
+                    *guard = Some(tree);
+                }
+            }
+        });
     }
 
     fn reload_cues(&mut self) {
-        self.cues = self.db.all_cues().unwrap_or_default();
+        self.cues = self.db.all_cues_limited_archived(200).unwrap_or_default();
+        self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
     }
 
     fn reload_git_info(&mut self) {
-        self.git_info = git::read_git_info(&self.project_root);
-        self.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.info = git::read_git_info(&self.project_root);
+        self.git.dirty_files = git::get_dirty_files(&self.project_root);
     }
 
     fn reload_commit_history(&mut self) {
-        self.commit_history = git::read_commit_history(&self.project_root, 50);
+        self.git.commit_history = git::read_commit_history(&self.project_root, 50);
     }
 
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
@@ -378,22 +458,22 @@ impl DirigentApp {
     fn dismiss_central_overlays(&mut self) {
         self.show_settings = false;
         self.diff_review = None;
-        self.show_running_log = None;
+        self.claude.show_log = None;
     }
 
     fn load_file(&mut self, path: PathBuf) {
         if let Ok(content) = std::fs::read_to_string(&path) {
             self.dismiss_central_overlays();
-            self.current_file_content = content.lines().map(String::from).collect();
-            self.current_file = Some(path);
-            self.selection_start = None;
-            self.selection_end = None;
-            self.cue_input.clear();
+            self.viewer.content = content.lines().map(String::from).collect();
+            self.viewer.current_file = Some(path);
+            self.viewer.selection_start = None;
+            self.viewer.selection_end = None;
+            self.viewer.cue_input.clear();
             // Reset in-file search state for the new file
-            self.search_in_file_active = false;
-            self.search_in_file_query.clear();
-            self.search_in_file_matches.clear();
-            self.search_in_file_current = None;
+            self.search.in_file_active = false;
+            self.search.in_file_query.clear();
+            self.search.in_file_matches.clear();
+            self.search.in_file_current = None;
         }
     }
 
@@ -405,7 +485,7 @@ impl DirigentApp {
     }
 
     fn file_cues(&self) -> Vec<&Cue> {
-        if let Some(ref current) = self.current_file {
+        if let Some(ref current) = self.viewer.current_file {
             let rel = self.relative_path(current);
             self.cues
                 .iter()
@@ -439,6 +519,20 @@ impl DirigentApp {
     // -- Feature 4: Repo switching --
 
     fn switch_repo(&mut self, new_root: PathBuf) {
+        // Cancel all running tasks — they belong to the old repo.
+        self.cancel_all_tasks();
+
+        // Validate that the path is an existing directory
+        if !new_root.is_dir() {
+            eprintln!("Cannot switch repo: path is not a directory: {}", new_root.display());
+            return;
+        }
+        // Validate that it's inside a git repository
+        if git2::Repository::discover(&new_root).is_err() {
+            eprintln!("Cannot switch repo: not a git repository: {}", new_root.display());
+            return;
+        }
+
         self.db = match Database::open(&new_root) {
             Ok(db) => db,
             Err(e) => {
@@ -450,17 +544,18 @@ impl DirigentApp {
         self.file_tree = FileTree::scan(&self.project_root).ok();
         self.fs_changed.store(false, Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
-        self.cues = self.db.all_cues().unwrap_or_default();
-        self.git_info = git::read_git_info(&self.project_root);
-        self.dirty_files = git::get_dirty_files(&self.project_root);
-        self.current_file = None;
-        self.commit_history = git::read_commit_history(&self.project_root, 50);
-        self.current_file_content.clear();
-        self.selection_start = None;
-        self.selection_end = None;
+        self.cues = self.db.all_cues_limited_archived(200).unwrap_or_default();
+        self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+        self.git.info = git::read_git_info(&self.project_root);
+        self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.viewer.current_file = None;
+        self.git.commit_history = git::read_commit_history(&self.project_root, 50);
+        self.viewer.content.clear();
+        self.viewer.selection_start = None;
+        self.viewer.selection_end = None;
         self.expanded_dirs.clear();
         self.diff_review = None;
-        self.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
 
         // Update recent repos
         let path_str = new_root.to_string_lossy().to_string();
@@ -471,7 +566,7 @@ impl DirigentApp {
     // -- Feature 5: Worktrees --
 
     fn reload_worktrees(&mut self) {
-        self.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
     }
 
     // -- Claude integration --
@@ -492,19 +587,29 @@ impl DirigentApp {
         // Insert execution record
         let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
 
-        // Create shared log buffer for live stderr streaming
-        let log = Arc::new(Mutex::new(String::new()));
-        self.running_logs.insert(cue_id, Arc::clone(&log));
-        self.running_start_times.insert(cue_id, Instant::now());
-        self.running_exec_ids.insert(cue_id, exec_id);
+        // Initialize log buffer for this cue
+        self.claude.running_logs.insert(cue_id, String::new());
+        self.claude.start_times.insert(cue_id, Instant::now());
+        self.claude.exec_ids.insert(cue_id, exec_id);
 
         let project_root = self.project_root.clone();
-        let pending = Arc::clone(&self.claude_pending);
+        let claude_tx = self.claude.tx.clone();
+        let log_tx = self.claude.log_tx.clone();
         let model = self.settings.claude_model.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_thread = Arc::clone(&cancel);
 
-        std::thread::spawn(move || {
+        let join_handle = std::thread::spawn(move || {
+            let on_log = |text: &str| {
+                let _ = log_tx.send(LogUpdate {
+                    cue_id,
+                    text: text.to_string(),
+                });
+            };
             let result =
-                match claude::invoke_claude_streaming(&prompt, &project_root, &model, log) {
+                match claude::invoke_claude_streaming(
+                    &prompt, &project_root, &model, on_log, cancel_thread,
+                ) {
                     Ok(response) => {
                         // Claude Code edits files directly via tools.
                         // Capture the actual changes via git diff on edited files.
@@ -530,31 +635,31 @@ impl DirigentApp {
                         error: Some(e.to_string()),
                     },
                 };
-            if let Ok(mut pending) = pending.lock() {
-                pending.push(result);
-            }
+            let _ = claude_tx.send(result);
+        });
+
+        self.task_handles.push(TaskHandle {
+            join_handle,
+            cancel,
+            cue_id: Some(cue_id),
+            exec_id: Some(exec_id),
         });
     }
 
     fn process_claude_results(&mut self) {
-        let results: Vec<ClaudeResult> = {
-            if let Ok(mut pending) = self.claude_pending.lock() {
-                pending.drain(..).collect()
-            } else {
-                return;
-            }
-        };
+        // Drain log channel into local buffers first
+        self.drain_log_channel();
+
+        let results: Vec<ClaudeResult> = self.claude.rx.try_iter().collect();
 
         for result in results {
             // Save the running log to DB before processing
-            if let Some(log) = self.running_logs.get(&result.cue_id) {
-                if let Ok(log_text) = log.lock() {
-                    let _ = self.db.update_execution_log(result.exec_id, &log_text);
-                }
+            if let Some(log_text) = self.claude.running_logs.get(&result.cue_id) {
+                let _ = self.db.update_execution_log(result.exec_id, log_text);
             }
             // Clean up runtime tracking (keep running_logs for viewing)
-            self.running_exec_ids.remove(&result.cue_id);
-            self.running_start_times.remove(&result.cue_id);
+            self.claude.exec_ids.remove(&result.cue_id);
+            self.claude.start_times.remove(&result.cue_id);
 
             if let Some(ref error) = result.error {
                 let preview = self.cue_preview(result.cue_id);
@@ -574,7 +679,7 @@ impl DirigentApp {
                 );
                 self.notify_review_ready(result.cue_id);
                 // Reload current file so user sees changes
-                if let Some(ref path) = self.current_file {
+                if let Some(ref path) = self.viewer.current_file {
                     let p = path.clone();
                     self.load_file(p);
                 }
@@ -597,21 +702,31 @@ impl DirigentApp {
         }
     }
 
+    /// Drain the log channel, appending text to the per-cue log buffers.
+    fn drain_log_channel(&mut self) {
+        for update in self.claude.log_rx.try_iter() {
+            self.claude.running_logs
+                .entry(update.cue_id)
+                .or_default()
+                .push_str(&update.text);
+        }
+    }
+
     /// Periodically flush local running logs to DB (for cross-instance visibility)
     /// and reload remote running logs from DB (for viewing another instance's run).
     fn sync_running_logs(&mut self) {
+        self.drain_log_channel();
+
         // Flush local running logs to DB
-        for (&cue_id, log) in &self.running_logs {
-            if let Some(&exec_id) = self.running_exec_ids.get(&cue_id) {
-                if let Ok(log_text) = log.lock() {
-                    let _ = self.db.update_execution_log(exec_id, &log_text);
-                }
+        for (&cue_id, log_text) in &self.claude.running_logs {
+            if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id) {
+                let _ = self.db.update_execution_log(exec_id, log_text);
             }
         }
 
         // Reload log from DB for the currently viewed cue if it's a remote run
-        if let Some(cue_id) = self.show_running_log {
-            if !self.running_exec_ids.contains_key(&cue_id) {
+        if let Some(cue_id) = self.claude.show_log {
+            if !self.claude.exec_ids.contains_key(&cue_id) {
                 let is_running = self
                     .cues
                     .iter()
@@ -619,21 +734,14 @@ impl DirigentApp {
                 if is_running {
                     if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
                         if let Some(log_text) = exec.log {
-                            if let Some(log) = self.running_logs.get(&cue_id) {
-                                if let Ok(mut guard) = log.lock() {
-                                    *guard = log_text;
-                                }
-                            } else {
-                                self.running_logs
-                                    .insert(cue_id, Arc::new(Mutex::new(log_text)));
-                            }
+                            self.claude.running_logs.insert(cue_id, log_text);
                         }
                     }
                 }
             }
         }
 
-        self.last_log_flush = Instant::now();
+        self.claude.last_log_flush = Instant::now();
     }
 
     fn notify_review_ready(&self, cue_id: i64) {
@@ -671,29 +779,42 @@ impl DirigentApp {
     // -- Source polling --
 
     fn poll_sources(&mut self) {
-        for source in &self.settings.sources {
-            if !source.enabled || source.poll_interval_secs == 0 {
-                continue;
-            }
-            let interval = std::time::Duration::from_secs(source.poll_interval_secs);
-            let should_poll = self
-                .last_source_poll
-                .get(&source.name)
-                .map_or(true, |last| last.elapsed() >= interval);
+        // Collect sources to poll first to avoid borrow conflict with &mut self.
+        let to_poll: Vec<settings::SourceConfig> = self
+            .settings
+            .sources
+            .iter()
+            .filter(|s| {
+                s.enabled
+                    && s.poll_interval_secs > 0
+                    && self
+                        .sources.last_poll
+                        .get(&s.name)
+                        .map_or(true, |last| {
+                            last.elapsed()
+                                >= std::time::Duration::from_secs(s.poll_interval_secs)
+                        })
+            })
+            .cloned()
+            .collect();
 
-            if should_poll {
-                self.last_source_poll
-                    .insert(source.name.clone(), Instant::now());
-                self.trigger_source_fetch_config(source.clone());
-            }
+        for source in to_poll {
+            self.sources.last_poll
+                .insert(source.name.clone(), Instant::now());
+            self.trigger_source_fetch_config(source);
         }
     }
 
-    fn trigger_source_fetch_config(&self, source: settings::SourceConfig) {
+    fn trigger_source_fetch_config(&mut self, source: settings::SourceConfig) {
         let project_root = self.project_root.clone();
-        let pending = Arc::clone(&self.source_pending);
+        let source_tx = self.sources.tx.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_thread = Arc::clone(&cancel);
 
-        std::thread::spawn(move || {
+        let join_handle = std::thread::spawn(move || {
+            if cancel_thread.load(Ordering::Relaxed) {
+                return;
+            }
             let items = match source.kind {
                 SourceKind::GitHubIssues => {
                     let label_filter = if source.filter.is_empty() {
@@ -707,6 +828,10 @@ impl DirigentApp {
                         None,
                         &source.label,
                     )
+                    .unwrap_or_else(|e| {
+                        eprintln!("Source fetch error: {e}");
+                        Vec::new()
+                    })
                 }
                 SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
                     if source.command.is_empty() {
@@ -717,33 +842,42 @@ impl DirigentApp {
                             &source.command,
                             &source.label,
                         )
+                        .unwrap_or_else(|e| {
+                            eprintln!("Source fetch error: {e}");
+                            Vec::new()
+                        })
                     }
                 }
             };
-            if let Ok(mut pending) = pending.lock() {
-                pending.extend(items);
+            if cancel_thread.load(Ordering::Relaxed) {
+                return;
             }
+            for item in items {
+                let _ = source_tx.send(item);
+            }
+        });
+
+        self.task_handles.push(TaskHandle {
+            join_handle,
+            cancel,
+            cue_id: None,
+            exec_id: None,
         });
     }
 
     /// Trigger a manual fetch for a source by its index in settings.
     pub(super) fn trigger_source_fetch(&mut self, idx: usize) {
-        if let Some(source) = self.settings.sources.get(idx) {
-            self.last_source_poll
+        if let Some(source) = self.settings.sources.get(idx).cloned() {
+            self.sources.last_poll
                 .insert(source.name.clone(), Instant::now());
-            self.trigger_source_fetch_config(source.clone());
-            self.set_status_message(format!("Fetching from \"{}\"...", source.name));
+            let msg = format!("Fetching from \"{}\"...", source.name);
+            self.trigger_source_fetch_config(source);
+            self.set_status_message(msg);
         }
     }
 
     fn process_source_results(&mut self) {
-        let items: Vec<SourceItem> = {
-            if let Ok(mut pending) = self.source_pending.lock() {
-                pending.drain(..).collect()
-            } else {
-                return;
-            }
-        };
+        let items: Vec<SourceItem> = self.sources.rx.try_iter().collect();
 
         if items.is_empty() {
             return;
@@ -770,6 +904,68 @@ impl DirigentApp {
         }
     }
 
+    // -- Task lifecycle --
+
+    /// Reap finished tasks: join completed threads, surface panics, clean up
+    /// orphaned execution records.
+    fn reap_tasks(&mut self) {
+        let mut i = 0;
+        while i < self.task_handles.len() {
+            if self.task_handles[i].join_handle.is_finished() {
+                let handle = self.task_handles.swap_remove(i);
+                match handle.join_handle.join() {
+                    Ok(()) => {
+                        // Normal completion — result already sent via channel.
+                    }
+                    Err(_panic) => {
+                        // Thread panicked — mark orphaned execution as failed.
+                        if let Some(exec_id) = handle.exec_id {
+                            let _ = self.db.fail_execution(exec_id, "worker thread panicked");
+                        }
+                        if let Some(cue_id) = handle.cue_id {
+                            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                            self.claude.running_logs.remove(&cue_id);
+                            self.claude.start_times.remove(&cue_id);
+                            self.claude.exec_ids.remove(&cue_id);
+                            let preview = self.cue_preview(cue_id);
+                            self.set_status_message(format!(
+                                "Worker thread panicked for \"{}\"",
+                                preview
+                            ));
+                        }
+                        self.reload_cues();
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Signal cancellation for a specific cue's running task.
+    fn cancel_cue_task(&mut self, cue_id: i64) {
+        for handle in &self.task_handles {
+            if handle.cue_id == Some(cue_id) {
+                handle.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Signal cancellation for all running tasks.
+    fn cancel_all_tasks(&mut self) {
+        for handle in &self.task_handles {
+            handle.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Cancel all tasks and block until every worker thread has exited.
+    fn shutdown_tasks(&mut self) {
+        self.cancel_all_tasks();
+        for handle in self.task_handles.drain(..) {
+            let _ = handle.join_handle.join();
+        }
+    }
+
     /// Render project-wide search panel as a left side panel (replaces file tree).
     fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("search_files_panel")
@@ -788,7 +984,7 @@ impl DirigentApp {
         }
         self.needs_theme_apply = false;
         ctx.set_visuals(self.settings.theme.visuals());
-        self.syntax_theme = if self.settings.theme.is_dark() {
+        self.viewer.syntax_theme = if self.settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(self.settings.font_size)
         } else {
             egui_extras::syntax_highlighting::CodeTheme::light(self.settings.font_size)
@@ -859,11 +1055,7 @@ impl DirigentApp {
 impl eframe::App for DirigentApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Store egui context so the file watcher can request repaints
-        if let Ok(mut guard) = self.egui_ctx.lock() {
-            if guard.is_none() {
-                *guard = Some(ctx.clone());
-            }
-        }
+        let _ = self.egui_ctx.set(ctx.clone());
 
         // Apply theme if needed
         self.apply_theme(ctx);
@@ -875,7 +1067,26 @@ impl eframe::App for DirigentApp {
             self.fs_changed.store(false, Ordering::Relaxed);
             self.last_fs_rescan = Instant::now();
             self.reload_file_tree();
-            self.dirty_files = git::get_dirty_files(&self.project_root);
+            self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        }
+
+        // Reap finished/panicked worker threads
+        self.reap_tasks();
+
+        // Check for completed background file tree scan
+        if let Ok(mut guard) = self.file_tree_pending.lock() {
+            if let Some(tree) = guard.take() {
+                self.file_tree = Some(tree);
+                self.file_tree_scanning = false;
+            }
+        }
+
+        // Check for completed background search
+        if let Ok(mut guard) = self.search.pending_results.lock() {
+            if let Some(results) = guard.take() {
+                self.search.in_files_results = results;
+                self.search.in_files_searching = false;
+            }
         }
 
         // Poll for Claude results
@@ -886,25 +1097,20 @@ impl eframe::App for DirigentApp {
         self.process_source_results();
 
         // Periodically sync running logs to/from DB (every 3s)
-        if !self.running_exec_ids.is_empty() || self.show_running_log.is_some() {
-            if self.last_log_flush.elapsed() >= std::time::Duration::from_secs(3) {
+        if !self.claude.exec_ids.is_empty() || self.claude.show_log.is_some() {
+            if self.claude.last_log_flush.elapsed() >= std::time::Duration::from_secs(3) {
                 self.sync_running_logs();
             }
         }
 
-        // Request repaint if there are pending Claude tasks
-        if let Ok(pending) = self.claude_pending.lock() {
-            if !pending.is_empty() {
-                ctx.request_repaint();
-            }
-        }
+        // Request repaint while Claude tasks are running
         if self
             .cues
             .iter()
             .any(|c| c.status == CueStatus::Ready)
         {
             // Repaint faster when log window is open for live streaming
-            let interval = if self.show_running_log.is_some() {
+            let interval = if self.claude.show_log.is_some() {
                 100
             } else {
                 500
@@ -932,7 +1138,7 @@ impl eframe::App for DirigentApp {
         self.render_repo_bar(ctx); // top
         self.render_status_bar(ctx); // bottom-most
         self.render_prompt_field(ctx); // above status bar
-        if self.search_in_files_active {
+        if self.search.in_files_active {
             self.render_search_in_files_panel_wrapper(ctx); // replaces file tree
         } else {
             self.render_file_tree_panel(ctx); // left side
@@ -942,6 +1148,12 @@ impl eframe::App for DirigentApp {
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
         self.render_about_dialog(ctx); // floating
+    }
+}
+
+impl Drop for DirigentApp {
+    fn drop(&mut self) {
+        self.shutdown_tasks();
     }
 }
 

@@ -88,7 +88,7 @@ impl DirigentApp {
                 }
                 if ui.small_button("Worktrees").clicked() {
                     self.reload_worktrees();
-                    self.show_worktree_panel = true;
+                    self.git.show_worktree_panel = true;
                 }
             });
         });
@@ -102,7 +102,7 @@ impl DirigentApp {
                 ui.heading("Files");
                 ui.separator();
                 // File tree takes remaining space above git log
-                let git_log_open = self.show_git_log;
+                let git_log_open = self.git.show_log;
                 let available = ui.available_height();
                 // When git log is open, give file tree ~60% of space; otherwise all of it
                 let file_tree_height = if git_log_open {
@@ -121,10 +121,10 @@ impl DirigentApp {
                                     ui,
                                     entry,
                                     &mut self.expanded_dirs,
-                                    &self.current_file,
+                                    &self.viewer.current_file,
                                     &mut file_to_load,
                                     &self.project_root,
-                                    &self.dirty_files,
+                                    &self.git.dirty_files,
                                 );
                             }
                             if let Some(path) = file_to_load {
@@ -136,15 +136,15 @@ impl DirigentApp {
                 ui.separator();
 
                 // Git Log collapsible section
-                let header_text = format!("Git Log ({})", self.commit_history.len());
+                let header_text = format!("Git Log ({})", self.git.commit_history.len());
                 let header_resp = egui::CollapsingHeader::new(header_text)
-                    .default_open(self.show_git_log)
+                    .default_open(self.git.show_log)
                     .show(ui, |ui| {
                         let mut clicked_commit: Option<(String, String, String)> = None;
                         egui::ScrollArea::vertical()
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
-                                for commit in &self.commit_history {
+                                for commit in &self.git.commit_history {
                                     let msg = if commit.message.len() > 30 {
                                         format!("{}...", &commit.message[..27])
                                     } else {
@@ -175,7 +175,7 @@ impl DirigentApp {
                             });
                         clicked_commit
                     });
-                self.show_git_log = header_resp.fully_open();
+                self.git.show_log = header_resp.fully_open();
                 if let Some(inner) = header_resp.body_returned {
                     if let Some((full_hash, message, body)) = inner {
                         let short_hash = &full_hash[..7.min(full_hash.len())];
@@ -285,7 +285,7 @@ impl DirigentApp {
     pub(super) fn render_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if let Some(ref info) = self.git_info {
+                if let Some(ref info) = self.git.info {
                     ui.label(
                         icon_small(&format!("\u{25CF} {}", info.branch), self.settings.font_size),
                     );
@@ -369,12 +369,12 @@ impl DirigentApp {
                 ui.separator();
                 egui::CollapsingHeader::new(format!(
                     "Commits ({})",
-                    self.commit_history.len()
+                    self.git.commit_history.len()
                 ))
                 .default_open(false)
                 .show(ui, |ui| {
                     let mut clicked_commit: Option<(String, String, String)> = None;
-                    for commit in &self.commit_history {
+                    for commit in &self.git.commit_history {
                         let msg = if commit.message.len() > 30 {
                             format!("{}...", &commit.message[..27])
                         } else {

@@ -20,13 +20,13 @@ impl DirigentApp {
         }
 
         // Claude Progress in central panel
-        if self.show_running_log.is_some() {
+        if self.claude.show_log.is_some() {
             self.render_running_log_central(ctx);
             return;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.current_file.is_none() {
+            if self.viewer.current_file.is_none() {
                 // Ensure logo texture is loaded
                 if self.logo_texture.is_none() {
                     let png_bytes = include_bytes!("../../assets/logo.png");
@@ -67,12 +67,12 @@ impl DirigentApp {
                 return;
             }
 
-            let file_path = self.current_file.clone().unwrap();
+            let file_path = self.viewer.current_file.clone().unwrap();
             let rel_path = self.relative_path(&file_path);
 
             let mut close_file = false;
             let mut show_file_diff = false;
-            let is_dirty = self.dirty_files.contains(&rel_path);
+            let is_dirty = self.git.dirty_files.contains(&rel_path);
             ui.horizontal(|ui| {
                 ui.strong(&rel_path);
                 if is_dirty {
@@ -89,7 +89,7 @@ impl DirigentApp {
                     {
                         close_file = true;
                     }
-                    ui.label(format!("{} lines", self.current_file_content.len()));
+                    ui.label(format!("{} lines", self.viewer.content.len()));
                     if is_dirty {
                         if ui
                             .small_button("Show Diff")
@@ -102,11 +102,11 @@ impl DirigentApp {
                 });
             });
             if close_file {
-                self.current_file = None;
-                self.current_file_content.clear();
-                self.selection_start = None;
-                self.selection_end = None;
-                self.cue_input.clear();
+                self.viewer.current_file = None;
+                self.viewer.content.clear();
+                self.viewer.selection_start = None;
+                self.viewer.selection_end = None;
+                self.viewer.cue_input.clear();
                 return;
             }
             if show_file_diff {
@@ -130,12 +130,12 @@ impl DirigentApp {
             ui.separator();
 
             // Render in-file search bar (Cmd+F)
-            if self.search_in_file_active {
+            if self.search.in_file_active {
                 self.render_search_in_file_bar(ui);
             }
 
             let lines_with_cues = self.lines_with_cues();
-            let num_lines = self.current_file_content.len();
+            let num_lines = self.viewer.content.len();
             let line_height = 16.0;
 
             let ext = file_path
@@ -143,8 +143,8 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            let sel_start = self.selection_start;
-            let sel_end = self.selection_end;
+            let sel_start = self.viewer.selection_start;
+            let sel_end = self.viewer.selection_end;
             let mut new_sel_start = sel_start;
             let mut new_sel_end = sel_end;
             let mut submit_cue = false;
@@ -153,7 +153,7 @@ impl DirigentApp {
             let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
 
             // Handle scroll-to-line requests (from search, cue navigation, etc.)
-            if let Some(target_line) = self.scroll_to_line.take() {
+            if let Some(target_line) = self.viewer.scroll_to_line.take() {
                 let target_offset = (target_line.saturating_sub(1)) as f32 * line_height;
                 scroll_area = scroll_area.vertical_scroll_offset(target_offset);
             }
@@ -162,7 +162,7 @@ impl DirigentApp {
                 for line_idx in row_range {
                     let line_num = line_idx + 1;
                     let line_text = self
-                        .current_file_content
+                        .viewer.content
                         .get(line_idx)
                         .map(|s| s.as_str())
                         .unwrap_or("");
@@ -173,10 +173,10 @@ impl DirigentApp {
                     };
                     let is_selection_end = sel_end == Some(line_num);
                     let cue_state = lines_with_cues.get(&line_num);
-                    let is_search_match = self.search_in_file_matches.contains(&line_num);
+                    let is_search_match = self.search.in_file_matches.contains(&line_num);
                     let is_current_search_match = self
-                        .search_in_file_current
-                        .map(|i| self.search_in_file_matches.get(i) == Some(&line_num))
+                        .search.in_file_current
+                        .map(|i| self.search.in_file_matches.get(i) == Some(&line_num))
                         .unwrap_or(false);
 
                     let response = ui.horizontal(|ui| {
@@ -204,7 +204,7 @@ impl DirigentApp {
                         let layout_job = egui_extras::syntax_highlighting::highlight(
                             ui.ctx(),
                             ui.style(),
-                            &self.syntax_theme,
+                            &self.viewer.syntax_theme,
                             line_text,
                             ext,
                         );
@@ -283,7 +283,7 @@ impl DirigentApp {
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
                             );
                             let input_response = ui.add(
-                                egui::TextEdit::singleline(&mut self.cue_input)
+                                egui::TextEdit::singleline(&mut self.viewer.cue_input)
                                     .desired_width(ui.available_width() - 80.0)
                                     .hint_text("Add a cue...")
                                     .font(egui::TextStyle::Monospace),
@@ -309,19 +309,19 @@ impl DirigentApp {
                 new_sel_end = None;
             }
 
-            if new_sel_start != self.selection_start || new_sel_end != self.selection_end {
-                self.selection_start = new_sel_start;
-                self.selection_end = new_sel_end;
-                self.cue_input.clear();
+            if new_sel_start != self.viewer.selection_start || new_sel_end != self.viewer.selection_end {
+                self.viewer.selection_start = new_sel_start;
+                self.viewer.selection_end = new_sel_end;
+                self.viewer.cue_input.clear();
             }
 
-            if submit_cue && !self.cue_input.is_empty() {
-                if let Some(start) = self.selection_start {
-                    let end = self.selection_end.unwrap_or(start);
+            if submit_cue && !self.viewer.cue_input.is_empty() {
+                if let Some(start) = self.viewer.selection_start {
+                    let end = self.viewer.selection_end.unwrap_or(start);
                     let line_end = if end > start { Some(end) } else { None };
-                    let text = self.cue_input.clone();
+                    let text = self.viewer.cue_input.clone();
                     let _ = self.db.insert_cue(&text, &rel_path, start, line_end);
-                    self.cue_input.clear();
+                    self.viewer.cue_input.clear();
                     self.reload_cues();
                 }
             }
