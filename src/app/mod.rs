@@ -457,7 +457,7 @@ impl DirigentApp {
 
         // Lazily load the logo texture
         if self.logo_texture.is_none() {
-            let png_bytes = include_bytes!("../assets/logo.png");
+            let png_bytes = include_bytes!("../../assets/logo.png");
             let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
                 .expect("failed to decode logo.png")
                 .into_rgba8();
@@ -782,7 +782,7 @@ impl DirigentApp {
             if self.current_file.is_none() {
                 // Ensure logo texture is loaded
                 if self.logo_texture.is_none() {
-                    let png_bytes = include_bytes!("../assets/logo.png");
+                    let png_bytes = include_bytes!("../../assets/logo.png");
                     let img = image::load_from_memory_with_format(
                         png_bytes,
                         image::ImageFormat::Png,
@@ -1107,6 +1107,38 @@ impl DirigentApp {
                                         ) {
                                             Ok(hash) => {
                                                 eprintln!("Committed: {}", hash);
+                                                let _ = self.db.update_cue_status(
+                                                    cue_id,
+                                                    CueStatus::Done,
+                                                );
+                                            }
+                                            Err(e) if e.contains("git apply --cached failed") => {
+                                                eprintln!("Commit failed (conflict): {}", e);
+                                                let file_paths = git::parse_diff_file_paths_for_repo(
+                                                    &self.project_root, diff,
+                                                );
+                                                let files_list = file_paths.join(", ");
+                                                let conflict_cue_text = format!(
+                                                    "Resolve merge conflict in: {}\n\n\
+                                                     The diff from a previous cue could not be applied \
+                                                     because another cue modified the same files. \
+                                                     Please reconcile the changes so both intents are preserved.\n\n\
+                                                     Original cue: {}",
+                                                    files_list, cue_text,
+                                                );
+                                                let first_file = file_paths.first()
+                                                    .cloned()
+                                                    .unwrap_or_default();
+                                                if let Ok(new_id) = self.db.insert_cue(
+                                                    &conflict_cue_text,
+                                                    &first_file,
+                                                    0,
+                                                    None,
+                                                ) {
+                                                    eprintln!(
+                                                        "Created conflict-resolution cue #{}", new_id
+                                                    );
+                                                }
                                                 let _ = self.db.update_cue_status(
                                                     cue_id,
                                                     CueStatus::Done,
@@ -1500,6 +1532,35 @@ impl DirigentApp {
             match git::commit_diff(&self.project_root, &diff_text, &commit_msg) {
                 Ok(hash) => {
                     eprintln!("Committed: {}", hash);
+                    let _ = self
+                        .db
+                        .update_cue_status(cue_id, CueStatus::Done);
+                }
+                Err(e) if e.contains("git apply --cached failed") => {
+                    eprintln!("Commit failed (conflict): {}", e);
+                    let file_paths = git::parse_diff_file_paths_for_repo(
+                        &self.project_root, &diff_text,
+                    );
+                    let files_list = file_paths.join(", ");
+                    let conflict_cue_text = format!(
+                        "Resolve merge conflict in: {}\n\n\
+                         The diff from a previous cue could not be applied \
+                         because another cue modified the same files. \
+                         Please reconcile the changes so both intents are preserved.\n\n\
+                         Original cue: {}",
+                        files_list, cue_text,
+                    );
+                    let first_file = file_paths.first()
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Ok(new_id) = self.db.insert_cue(
+                        &conflict_cue_text,
+                        &first_file,
+                        0,
+                        None,
+                    ) {
+                        eprintln!("Created conflict-resolution cue #{}", new_id);
+                    }
                     let _ = self
                         .db
                         .update_cue_status(cue_id, CueStatus::Done);
