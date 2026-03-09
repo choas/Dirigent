@@ -213,6 +213,9 @@ pub struct DirigentApp {
     search_in_files_active: bool,
     search_in_files_results: Vec<search::SearchResult>,
     _search_in_files_searching: bool,
+
+    // Expand the "Running" section on next frame (after user clicks Run)
+    expand_running_section: bool,
 }
 
 fn start_fs_watcher(
@@ -316,6 +319,7 @@ impl DirigentApp {
             search_in_files_active: false,
             search_in_files_results: Vec::new(),
             _search_in_files_searching: false,
+            expand_running_section: false,
         }
     }
 

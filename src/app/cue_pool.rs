@@ -13,7 +13,45 @@ impl DirigentApp {
             .default_width(250.0)
             .min_width(200.0)
             .show(ctx, |ui| {
-                ui.heading("Cues");
+                // Header: "Cues" heading + "+" playbook button
+                let mut selected_play_prompt: Option<String> = None;
+                let mut custom_cue_requested = false;
+                ui.horizontal(|ui| {
+                    ui.heading("Cues");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let plus_btn = ui.button("+").on_hover_text("Playbook");
+                        let popup_id = ui.make_persistent_id("playbook_popup");
+                        if plus_btn.clicked() {
+                            ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                        }
+                        egui::popup_below_widget(ui, popup_id, &plus_btn, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                            ui.set_min_width(200.0);
+                            ui.label(egui::RichText::new("Playbook").strong());
+                            ui.separator();
+                            for play in &self.settings.playbook {
+                                if ui.selectable_label(false, &play.name).clicked() {
+                                    selected_play_prompt = Some(play.prompt.clone());
+                                }
+                            }
+                            if !self.settings.playbook.is_empty() {
+                                ui.separator();
+                            }
+                            if ui.selectable_label(false, "+ Custom cue...").clicked() {
+                                custom_cue_requested = true;
+                            }
+                        });
+                    });
+                });
+
+                // Handle playbook selection
+                if let Some(prompt) = selected_play_prompt {
+                    let _ = self.db.insert_cue(&prompt, "", 0, None);
+                    self.reload_cues();
+                }
+                if custom_cue_requested {
+                    // Focus the global prompt field by clearing and letting egui pick it up
+                    self.global_prompt_input.clear();
+                }
 
                 // Source filter dropdown
                 let unique_labels: Vec<String> = {
@@ -82,12 +120,15 @@ impl DirigentApp {
                             .collect();
 
                         let header = format!("{} ({})", status.label(), section_cues.len());
-                        egui::CollapsingHeader::new(header)
+                        let mut collapsing = egui::CollapsingHeader::new(header)
                             .id_salt(status.label())
                             .default_open(
                                 status == CueStatus::Inbox || status == CueStatus::Review,
-                            )
-                            .show(ui, |ui| {
+                            );
+                        if status == CueStatus::Ready && self.expand_running_section {
+                            collapsing = collapsing.open(Some(true));
+                        }
+                        collapsing.show(ui, |ui| {
                                 if section_cues.is_empty() {
                                     ui.label(
                                         egui::RichText::new("(empty)")
@@ -100,6 +141,9 @@ impl DirigentApp {
                                 }
                             });
                     }
+
+                    // Reset the expand flag after rendering
+                    self.expand_running_section = false;
 
                     // Process actions after iteration
                     for (id, action) in actions {
@@ -118,6 +162,7 @@ impl DirigentApp {
                             CueAction::MoveTo(new_status) => {
                                 let _ = self.db.update_cue_status(id, new_status);
                                 if new_status == CueStatus::Ready {
+                                    self.expand_running_section = true;
                                     self.reload_cues();
                                     self.trigger_claude(id);
                                 }
