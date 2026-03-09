@@ -6,15 +6,57 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 
 use crate::claude;
-use crate::db::{Comment, CommentStatus, Database};
+use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{self, DiffViewMode, ParsedDiff};
 use crate::file_tree::{FileEntry, FileTree};
 use crate::git;
 use crate::settings::{self, Settings, ThemeChoice};
 
+/// Try to load a font from the system by name. Returns (bytes, ttc_index).
+fn load_system_font(name: &str) -> Option<(Vec<u8>, u32)> {
+    // Known font paths on macOS
+    let candidates: &[(&str, u32)] = match name {
+        "Menlo" => &[("/System/Library/Fonts/Menlo.ttc", 0)],
+        "Monaco" => &[("/System/Library/Fonts/Monaco.ttf", 0)],
+        "SF Mono" => &[("/System/Library/Fonts/SFNSMono.ttf", 0)],
+        "Courier New" => &[
+            ("/System/Library/Fonts/Supplemental/Courier New.ttf", 0),
+            ("/Library/Fonts/Courier New.ttf", 0),
+        ],
+        _ => &[],
+    };
+
+    for &(path, index) in candidates {
+        if let Ok(data) = std::fs::read(path) {
+            return Some((data, index));
+        }
+    }
+
+    // Try common font directories with various extensions
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [
+        "/System/Library/Fonts".to_string(),
+        "/System/Library/Fonts/Supplemental".to_string(),
+        "/Library/Fonts".to_string(),
+        format!("{}/Library/Fonts", home),
+    ];
+    let exts = ["ttf", "ttc", "otf"];
+
+    for dir in &dirs {
+        for ext in &exts {
+            let path = format!("{}/{}.{}", dir, name, ext);
+            if let Ok(data) = std::fs::read(&path) {
+                return Some((data, 0));
+            }
+        }
+    }
+
+    None
+}
+
 /// Result of a background Claude invocation.
 struct ClaudeResult {
-    comment_id: i64,
+    cue_id: i64,
     exec_id: i64,
     diff: Option<String>,
     response: String,
@@ -23,9 +65,9 @@ struct ClaudeResult {
 
 /// State for reviewing a diff before accepting/rejecting.
 struct DiffReview {
-    comment_id: i64,
+    cue_id: i64,
     diff: String,
-    comment_text: String,
+    cue_text: String,
     parsed: ParsedDiff,
     view_mode: DiffViewMode,
     read_only: bool,
@@ -47,11 +89,11 @@ pub struct DirigentApp {
     selection_start: Option<usize>,
     /// End of the selected line range (1-based, always >= selection_start).
     selection_end: Option<usize>,
-    comment_input: String,
+    cue_input: String,
     scroll_to_line: Option<usize>,
 
-    // Comment pool
-    comments: Vec<Comment>,
+    // Cue pool
+    cues: Vec<Cue>,
 
     // Claude execution
     claude_pending: Arc<Mutex<Vec<ClaudeResult>>>,
@@ -85,9 +127,9 @@ pub struct DirigentApp {
     worktrees: Vec<git::WorktreeInfo>,
     new_worktree_name: String,
 
-    // Inline comment editing
-    editing_comment_id: Option<i64>,
-    editing_comment_text: String,
+    // Inline cue editing
+    editing_cue_id: Option<i64>,
+    editing_cue_text: String,
 
     // Git log panel (left nav)
     show_git_log: bool,
@@ -95,13 +137,17 @@ pub struct DirigentApp {
     // Claude running logs (live stderr streaming)
     running_logs: HashMap<i64, Arc<Mutex<String>>>,
     show_running_log: Option<i64>,
+
+    // About dialog
+    show_about: bool,
+    logo_texture: Option<egui::TextureHandle>,
 }
 
 impl DirigentApp {
     pub fn new(project_root: PathBuf) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
         let file_tree = FileTree::scan(&project_root).ok();
-        let comments = db.all_comments().unwrap_or_default();
+        let cues = db.all_cues().unwrap_or_default();
         let git_info = git::read_git_info(&project_root);
         let settings = settings::load_settings(&project_root);
         let commit_history = git::read_commit_history(&project_root, 50);
@@ -122,9 +168,9 @@ impl DirigentApp {
             current_file_content: Vec::new(),
             selection_start: None,
             selection_end: None,
-            comment_input: String::new(),
+            cue_input: String::new(),
             scroll_to_line: None,
-            comments,
+            cues,
             claude_pending: Arc::new(Mutex::new(Vec::new())),
             diff_review: None,
             git_info,
@@ -139,16 +185,18 @@ impl DirigentApp {
             show_worktree_panel: false,
             worktrees,
             new_worktree_name: String::new(),
-            editing_comment_id: None,
-            editing_comment_text: String::new(),
+            editing_cue_id: None,
+            editing_cue_text: String::new(),
             running_logs: HashMap::new(),
             show_running_log: None,
             show_git_log: false,
+            show_about: false,
+            logo_texture: None,
         }
     }
 
-    fn reload_comments(&mut self) {
-        self.comments = self.db.all_comments().unwrap_or_default();
+    fn reload_cues(&mut self) {
+        self.cues = self.db.all_cues().unwrap_or_default();
     }
 
     fn reload_git_info(&mut self) {
@@ -165,7 +213,7 @@ impl DirigentApp {
             self.current_file = Some(path);
             self.selection_start = None;
             self.selection_end = None;
-            self.comment_input.clear();
+            self.cue_input.clear();
         }
     }
 
@@ -176,10 +224,10 @@ impl DirigentApp {
             .to_string()
     }
 
-    fn file_comments(&self) -> Vec<&Comment> {
+    fn file_cues(&self) -> Vec<&Cue> {
         if let Some(ref current) = self.current_file {
             let rel = self.relative_path(current);
-            self.comments
+            self.cues
                 .iter()
                 .filter(|c| c.file_path == rel)
                 .collect()
@@ -188,9 +236,9 @@ impl DirigentApp {
         }
     }
 
-    fn lines_with_comments(&self) -> HashSet<usize> {
+    fn lines_with_cues(&self) -> HashSet<usize> {
         let mut set = HashSet::new();
-        for c in self.file_comments() {
+        for c in self.file_cues() {
             let start = c.line_number;
             let end = c.line_number_end.unwrap_or(start);
             for line in start..=end {
@@ -212,7 +260,7 @@ impl DirigentApp {
         };
         self.project_root = new_root.clone();
         self.file_tree = FileTree::scan(&self.project_root).ok();
-        self.comments = self.db.all_comments().unwrap_or_default();
+        self.cues = self.db.all_cues().unwrap_or_default();
         self.git_info = git::read_git_info(&self.project_root);
         self.current_file = None;
         self.commit_history = git::read_commit_history(&self.project_root, 50);
@@ -237,25 +285,25 @@ impl DirigentApp {
 
     // -- Claude integration --
 
-    fn trigger_claude(&mut self, comment_id: i64) {
-        let comment = match self.comments.iter().find(|c| c.id == comment_id) {
+    fn trigger_claude(&mut self, cue_id: i64) {
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
             None => return,
         };
 
         let prompt = claude::build_prompt(
-            &comment.text,
-            &comment.file_path,
-            comment.line_number,
-            comment.line_number_end,
+            &cue.text,
+            &cue.file_path,
+            cue.line_number,
+            cue.line_number_end,
         );
 
         // Insert execution record
-        let exec_id = self.db.insert_execution(comment_id, &prompt).unwrap_or(0);
+        let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
 
         // Create shared log buffer for live stderr streaming
         let log = Arc::new(Mutex::new(String::new()));
-        self.running_logs.insert(comment_id, Arc::clone(&log));
+        self.running_logs.insert(cue_id, Arc::clone(&log));
 
         let project_root = self.project_root.clone();
         let pending = Arc::clone(&self.claude_pending);
@@ -274,7 +322,7 @@ impl DirigentApp {
                             git::get_working_diff(&project_root, &response.edited_files)
                         };
                         ClaudeResult {
-                            comment_id,
+                            cue_id,
                             exec_id,
                             diff,
                             response: response.stdout,
@@ -282,7 +330,7 @@ impl DirigentApp {
                         }
                     }
                     Err(e) => ClaudeResult {
-                        comment_id,
+                        cue_id,
                         exec_id,
                         diff: None,
                         response: String::new(),
@@ -306,21 +354,21 @@ impl DirigentApp {
 
         for result in results {
             if let Some(ref error) = result.error {
-                eprintln!("Claude error for comment {}: {}", result.comment_id, error);
+                eprintln!("Claude error for cue {}: {}", result.cue_id, error);
                 let _ = self.db.fail_execution(result.exec_id, error);
                 let _ = self
                     .db
-                    .update_comment_status(result.comment_id, CommentStatus::Inbox);
+                    .update_cue_status(result.cue_id, CueStatus::Inbox);
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
                 let _ =
                     self.db
                         .complete_execution(result.exec_id, &result.response, Some(diff));
-                let _ = self.db.update_comment_status(
-                    result.comment_id,
-                    CommentStatus::Review,
+                let _ = self.db.update_cue_status(
+                    result.cue_id,
+                    CueStatus::Review,
                 );
-                self.notify_review_ready(result.comment_id);
+                self.notify_review_ready(result.cue_id);
                 // Reload current file so user sees changes
                 if let Some(ref path) = self.current_file {
                     let p = path.clone();
@@ -333,18 +381,18 @@ impl DirigentApp {
                     self.db
                         .complete_execution(result.exec_id, &result.response, None);
                 eprintln!(
-                    "Claude completed but no file changes detected for comment {}",
-                    result.comment_id
+                    "Claude completed but no file changes detected for cue {}",
+                    result.cue_id
                 );
                 let _ = self
                     .db
-                    .update_comment_status(result.comment_id, CommentStatus::Done);
+                    .update_cue_status(result.cue_id, CueStatus::Done);
             }
-            self.reload_comments();
+            self.reload_cues();
         }
     }
 
-    fn notify_review_ready(&self, comment_id: i64) {
+    fn notify_review_ready(&self, cue_id: i64) {
         if self.settings.notify_sound {
             std::thread::spawn(|| {
                 let _ = Command::new("afplay")
@@ -355,7 +403,7 @@ impl DirigentApp {
         if self.settings.notify_popup {
             let preview = self
                 .db
-                .get_comment(comment_id)
+                .get_cue(cue_id)
                 .ok()
                 .flatten()
                 .map(|c| {
@@ -366,7 +414,7 @@ impl DirigentApp {
                     }
                     preview
                 })
-                .unwrap_or_else(|| format!("Comment #{}", comment_id));
+                .unwrap_or_else(|| format!("Cue #{}", cue_id));
             let msg = format!("{} — ready for review.", preview);
             std::thread::spawn(move || {
                 let _ = Command::new("osascript")
@@ -383,6 +431,70 @@ impl DirigentApp {
     }
 
     // -- UI rendering --
+
+    fn render_menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("Dirigent", |ui| {
+                    if ui.button("About Dirigent").clicked() {
+                        self.show_about = true;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Settings...").clicked() {
+                        self.show_settings = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+    }
+
+    fn render_about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+
+        // Lazily load the logo texture
+        if self.logo_texture.is_none() {
+            let png_bytes = include_bytes!("../assets/logo.png");
+            let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
+                .expect("failed to decode logo.png")
+                .into_rgba8();
+            let size = [img.width() as usize, img.height() as usize];
+            let pixels = img.into_raw();
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+            self.logo_texture = Some(ctx.load_texture(
+                "dirigent_logo",
+                color_image,
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+
+        let mut open = self.show_about;
+        egui::Window::new("About Dirigent")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    if let Some(ref tex) = self.logo_texture {
+                        ui.add(egui::Image::new(tex).max_size(egui::vec2(128.0, 128.0)));
+                    }
+                    ui.add_space(8.0);
+                    ui.heading("Dirigent");
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("A read-only code viewer where humans direct and AI performs.")
+                            .weak(),
+                    );
+                    ui.add_space(12.0);
+                });
+            });
+        self.show_about = open;
+    }
 
     // Feature 4: Repo bar at top
     fn render_repo_bar(&mut self, ctx: &egui::Context) {
@@ -492,9 +604,9 @@ impl DirigentApp {
                             .unwrap_or_default();
                         let parsed = diff_view::parse_unified_diff(&diff_text);
                         self.diff_review = Some(DiffReview {
-                            comment_id: 0,
+                            cue_id: 0,
                             diff: diff_text,
-                            comment_text: format!("{} {}", short_hash, message),
+                            cue_text: format!("{} {}", short_hash, message),
                             parsed,
                             view_mode: DiffViewMode::Inline,
                             read_only: true,
@@ -654,6 +766,18 @@ impl DirigentApp {
             return;
         }
 
+        // Diff Review in central panel
+        if self.diff_review.is_some() {
+            self.render_diff_review_central(ctx);
+            return;
+        }
+
+        // Claude Progress in central panel
+        if self.show_running_log.is_some() {
+            self.render_running_log_central(ctx);
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.current_file.is_none() {
                 ui.centered_and_justified(|ui| {
@@ -673,7 +797,7 @@ impl DirigentApp {
             });
             ui.separator();
 
-            let lines_with_comments = self.lines_with_comments();
+            let lines_with_cues = self.lines_with_cues();
             let num_lines = self.current_file_content.len();
             let line_height = 16.0;
 
@@ -686,7 +810,7 @@ impl DirigentApp {
             let sel_end = self.selection_end;
             let mut new_sel_start = sel_start;
             let mut new_sel_end = sel_end;
-            let mut submit_comment = false;
+            let mut submit_cue = false;
             let mut clear_selection = false;
 
             let scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
@@ -705,10 +829,10 @@ impl DirigentApp {
                         _ => false,
                     };
                     let is_selection_end = sel_end == Some(line_num);
-                    let has_comment = lines_with_comments.contains(&line_num);
+                    let has_cue = lines_with_cues.contains(&line_num);
 
                     let response = ui.horizontal(|ui| {
-                        if has_comment {
+                        if has_cue {
                             ui.colored_label(egui::Color32::from_rgb(255, 180, 50), "\u{2022}");
                         } else {
                             ui.label(" ");
@@ -768,7 +892,7 @@ impl DirigentApp {
                         }
                     }
 
-                    // Show comment input after the last line of the selection
+                    // Show cue input after the last line of the selection
                     if is_selection_end {
                         let range_label = if sel_start == sel_end {
                             format!("L{}", sel_start.unwrap_or(0))
@@ -787,16 +911,16 @@ impl DirigentApp {
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
                             );
                             let input_response = ui.add(
-                                egui::TextEdit::singleline(&mut self.comment_input)
+                                egui::TextEdit::singleline(&mut self.cue_input)
                                     .desired_width(ui.available_width() - 80.0)
-                                    .hint_text("Add a comment...")
+                                    .hint_text("Add a cue...")
                                     .font(egui::TextStyle::Monospace),
                             );
                             if ui.button("Add").clicked()
                                 || (input_response.lost_focus()
                                     && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                             {
-                                submit_comment = true;
+                                submit_cue = true;
                             }
                             if ui.button("✕").clicked()
                                 || ui.input(|i| i.key_pressed(egui::Key::Escape))
@@ -816,55 +940,55 @@ impl DirigentApp {
             if new_sel_start != self.selection_start || new_sel_end != self.selection_end {
                 self.selection_start = new_sel_start;
                 self.selection_end = new_sel_end;
-                self.comment_input.clear();
+                self.cue_input.clear();
             }
 
-            if submit_comment && !self.comment_input.is_empty() {
+            if submit_cue && !self.cue_input.is_empty() {
                 if let Some(start) = self.selection_start {
                     let end = self.selection_end.unwrap_or(start);
                     let line_end = if end > start { Some(end) } else { None };
-                    let text = self.comment_input.clone();
-                    let _ = self.db.insert_comment(&text, &rel_path, start, line_end);
-                    self.comment_input.clear();
-                    self.reload_comments();
+                    let text = self.cue_input.clone();
+                    let _ = self.db.insert_cue(&text, &rel_path, start, line_end);
+                    self.cue_input.clear();
+                    self.reload_cues();
                 }
             }
         });
     }
 
-    fn render_comment_pool(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::right("comment_pool")
+    fn render_cue_pool(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::right("cue_pool")
             .default_width(250.0)
             .min_width(200.0)
             .show(ctx, |ui| {
-                ui.heading("Comments");
+                ui.heading("Cues");
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut actions: Vec<(i64, CommentAction)> = Vec::new();
+                    let mut actions: Vec<(i64, CueAction)> = Vec::new();
 
-                    let comments_snapshot = self.comments.clone();
-                    for &status in CommentStatus::all() {
-                        let section_comments: Vec<&Comment> = comments_snapshot
+                    let cues_snapshot = self.cues.clone();
+                    for &status in CueStatus::all() {
+                        let section_cues: Vec<&Cue> = cues_snapshot
                             .iter()
                             .filter(|c| c.status == status)
                             .collect();
 
-                        let header = format!("{} ({})", status.label(), section_comments.len());
+                        let header = format!("{} ({})", status.label(), section_cues.len());
                         egui::CollapsingHeader::new(header)
                             .default_open(
-                                status == CommentStatus::Inbox || status == CommentStatus::Review,
+                                status == CueStatus::Inbox || status == CueStatus::Review,
                             )
                             .show(ui, |ui| {
-                                if section_comments.is_empty() {
+                                if section_cues.is_empty() {
                                     ui.label(
                                         egui::RichText::new("(empty)")
                                             .italics()
                                             .color(egui::Color32::from_gray(120)),
                                     );
                                 }
-                                for comment in &section_comments {
-                                    self.render_comment_card(ui, comment, &mut actions, status);
+                                for cue in &section_cues {
+                                    self.render_cue_card(ui, cue, &mut actions, status);
                                 }
                             });
                     }
@@ -872,28 +996,28 @@ impl DirigentApp {
                     // Process actions after iteration
                     for (id, action) in actions {
                         match action {
-                            CommentAction::StartEdit(text) => {
-                                self.editing_comment_id = Some(id);
-                                self.editing_comment_text = text;
+                            CueAction::StartEdit(text) => {
+                                self.editing_cue_id = Some(id);
+                                self.editing_cue_text = text;
                             }
-                            CommentAction::CancelEdit => {
-                                self.editing_comment_id = None;
+                            CueAction::CancelEdit => {
+                                self.editing_cue_id = None;
                             }
-                            CommentAction::SaveEdit(new_text) => {
-                                let _ = self.db.update_comment_text(id, &new_text);
-                                self.editing_comment_id = None;
+                            CueAction::SaveEdit(new_text) => {
+                                let _ = self.db.update_cue_text(id, &new_text);
+                                self.editing_cue_id = None;
                             }
-                            CommentAction::MoveTo(new_status) => {
-                                let _ = self.db.update_comment_status(id, new_status);
-                                if new_status == CommentStatus::Ready {
-                                    self.reload_comments();
+                            CueAction::MoveTo(new_status) => {
+                                let _ = self.db.update_cue_status(id, new_status);
+                                if new_status == CueStatus::Ready {
+                                    self.reload_cues();
                                     self.trigger_claude(id);
                                 }
                             }
-                            CommentAction::Delete => {
-                                let _ = self.db.delete_comment(id);
+                            CueAction::Delete => {
+                                let _ = self.db.delete_cue(id);
                             }
-                            CommentAction::Navigate(file_path, line, line_end) => {
+                            CueAction::Navigate(file_path, line, line_end) => {
                                 let full_path = self.project_root.join(&file_path);
                                 if self.current_file.as_ref() != Some(&full_path) {
                                     self.load_file(full_path);
@@ -902,24 +1026,24 @@ impl DirigentApp {
                                 self.selection_end = Some(line_end.unwrap_or(line));
                                 self.scroll_to_line = Some(line);
                             }
-                            CommentAction::ShowDiff(comment_id) => {
-                                if let Ok(Some(exec)) = self.db.get_latest_execution(comment_id) {
+                            CueAction::ShowDiff(cue_id) => {
+                                if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
                                     if let Some(diff) = exec.diff {
-                                        let comment = self
-                                            .comments
+                                        let cue = self
+                                            .cues
                                             .iter()
-                                            .find(|c| c.id == comment_id);
-                                        let text = comment
+                                            .find(|c| c.id == cue_id);
+                                        let text = cue
                                             .map(|c| c.text.clone())
                                             .unwrap_or_default();
-                                        let read_only = comment
-                                            .map(|c| c.status != CommentStatus::Review)
+                                        let read_only = cue
+                                            .map(|c| c.status != CueStatus::Review)
                                             .unwrap_or(true);
                                         let parsed = diff_view::parse_unified_diff(&diff);
                                         self.diff_review = Some(DiffReview {
-                                            comment_id,
+                                            cue_id,
                                             diff,
-                                            comment_text: text,
+                                            cue_text: text,
                                             parsed,
                                             view_mode: DiffViewMode::Inline,
                                             read_only,
@@ -928,20 +1052,20 @@ impl DirigentApp {
                                     }
                                 }
                             }
-                            CommentAction::CommitReview(comment_id) => {
+                            CueAction::CommitReview(cue_id) => {
                                 if let Ok(Some(exec)) =
-                                    self.db.get_latest_execution(comment_id)
+                                    self.db.get_latest_execution(cue_id)
                                 {
                                     if let Some(ref diff) = exec.diff {
                                         let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root,diff);
-                                        let comment_text = self
-                                            .comments
+                                        let cue_text = self
+                                            .cues
                                             .iter()
-                                            .find(|c| c.id == comment_id)
+                                            .find(|c| c.id == cue_id)
                                             .map(|c| c.text.clone())
                                             .unwrap_or_default();
                                         let commit_msg =
-                                            git::generate_commit_message(&comment_text);
+                                            git::generate_commit_message(&cue_text);
                                         match git::stage_and_commit(
                                             &self.project_root,
                                             &file_paths,
@@ -949,9 +1073,9 @@ impl DirigentApp {
                                         ) {
                                             Ok(hash) => {
                                                 eprintln!("Committed: {}", hash);
-                                                let _ = self.db.update_comment_status(
-                                                    comment_id,
-                                                    CommentStatus::Done,
+                                                let _ = self.db.update_cue_status(
+                                                    cue_id,
+                                                    CueStatus::Done,
                                                 );
                                             }
                                             Err(e) => {
@@ -963,9 +1087,9 @@ impl DirigentApp {
                                 self.reload_git_info();
                                 self.reload_commit_history();
                             }
-                            CommentAction::RevertReview(comment_id) => {
+                            CueAction::RevertReview(cue_id) => {
                                 if let Ok(Some(exec)) =
-                                    self.db.get_latest_execution(comment_id)
+                                    self.db.get_latest_execution(cue_id)
                                 {
                                     if let Some(ref diff) = exec.diff {
                                         let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root,diff);
@@ -977,9 +1101,9 @@ impl DirigentApp {
                                         }
                                     }
                                 }
-                                let _ = self.db.update_comment_status(
-                                    comment_id,
-                                    CommentStatus::Inbox,
+                                let _ = self.db.update_cue_status(
+                                    cue_id,
+                                    CueStatus::Inbox,
                                 );
                                 // Reload file to show reverted content
                                 if let Some(ref path) = self.current_file {
@@ -988,40 +1112,40 @@ impl DirigentApp {
                                 }
                                 self.reload_git_info();
                             }
-                            CommentAction::ShowRunningLog(comment_id) => {
-                                self.show_running_log = Some(comment_id);
+                            CueAction::ShowRunningLog(cue_id) => {
+                                self.show_running_log = Some(cue_id);
                             }
                         }
-                        self.reload_comments();
+                        self.reload_cues();
                     }
                 });
             });
     }
 
-    fn render_comment_card(
+    fn render_cue_card(
         &mut self,
         ui: &mut egui::Ui,
-        comment: &Comment,
-        actions: &mut Vec<(i64, CommentAction)>,
-        status: CommentStatus,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+        status: CueStatus,
     ) {
         egui::Frame::none()
             .inner_margin(4.0)
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
             .rounding(4.0)
             .show(ui, |ui| {
-                // Comment text - inline editable for Inbox
-                if self.editing_comment_id == Some(comment.id) {
-                    let response = ui.text_edit_multiline(&mut self.editing_comment_text);
+                // Cue text - inline editable for Inbox
+                if self.editing_cue_id == Some(cue.id) {
+                    let response = ui.text_edit_multiline(&mut self.editing_cue_text);
                     ui.horizontal(|ui| {
                         if ui.small_button("\u{2713} Save").clicked() {
                             actions.push((
-                                comment.id,
-                                CommentAction::SaveEdit(self.editing_comment_text.clone()),
+                                cue.id,
+                                CueAction::SaveEdit(self.editing_cue_text.clone()),
                             ));
                         }
                         if ui.small_button("\u{2715} Cancel").clicked() {
-                            actions.push((comment.id, CommentAction::CancelEdit));
+                            actions.push((cue.id, CueAction::CancelEdit));
                         }
                     });
                     // Request focus on first frame
@@ -1029,39 +1153,39 @@ impl DirigentApp {
                         response.request_focus();
                     }
                 } else {
-                    let display_text = if comment.text.len() > 60 {
-                        format!("{}...", &comment.text[..57])
+                    let display_text = if cue.text.len() > 60 {
+                        format!("{}...", &cue.text[..57])
                     } else {
-                        comment.text.clone()
+                        cue.text.clone()
                     };
                     let label_response = ui.label(&display_text);
                     // Double-click label to edit (Inbox only)
-                    if status == CommentStatus::Inbox && label_response.double_clicked() {
+                    if status == CueStatus::Inbox && label_response.double_clicked() {
                         actions.push((
-                            comment.id,
-                            CommentAction::StartEdit(comment.text.clone()),
+                            cue.id,
+                            CueAction::StartEdit(cue.text.clone()),
                         ));
                     }
                     // Single-click to show diff (Review/Done/Archived)
-                    if matches!(status, CommentStatus::Review | CommentStatus::Done | CommentStatus::Archived)
+                    if matches!(status, CueStatus::Review | CueStatus::Done | CueStatus::Archived)
                         && label_response.clicked()
                     {
-                        actions.push((comment.id, CommentAction::ShowDiff(comment.id)));
+                        actions.push((cue.id, CueAction::ShowDiff(cue.id)));
                     }
                 }
 
                 // File:line link or "Global" label
-                if comment.file_path.is_empty() {
+                if cue.file_path.is_empty() {
                     ui.label(
                         egui::RichText::new("Global")
                             .small()
                             .color(egui::Color32::from_rgb(180, 140, 255)),
                     );
                 } else {
-                    let location = if let Some(end) = comment.line_number_end {
-                        format!("{}:{}-{}", comment.file_path, comment.line_number, end)
+                    let location = if let Some(end) = cue.line_number_end {
+                        format!("{}:{}-{}", cue.file_path, cue.line_number, end)
                     } else {
-                        format!("{}:{}", comment.file_path, comment.line_number)
+                        format!("{}:{}", cue.file_path, cue.line_number)
                     };
                     if ui
                         .small_button(&location)
@@ -1069,11 +1193,11 @@ impl DirigentApp {
                         .clicked()
                     {
                         actions.push((
-                            comment.id,
-                            CommentAction::Navigate(
-                                comment.file_path.clone(),
-                                comment.line_number,
-                                comment.line_number_end,
+                            cue.id,
+                            CueAction::Navigate(
+                                cue.file_path.clone(),
+                                cue.line_number,
+                                cue.line_number_end,
                             ),
                         ));
                     }
@@ -1081,17 +1205,17 @@ impl DirigentApp {
 
                 // Action buttons
                 ui.horizontal(|ui| {
-                    match comment.status {
-                        CommentStatus::Inbox => {
-                            if self.editing_comment_id != Some(comment.id) {
+                    match cue.status {
+                        CueStatus::Inbox => {
+                            if self.editing_cue_id != Some(cue.id) {
                                 if ui
                                     .small_button("Edit")
-                                    .on_hover_text("Edit comment")
+                                    .on_hover_text("Edit cue")
                                     .clicked()
                                 {
                                     actions.push((
-                                        comment.id,
-                                        CommentAction::StartEdit(comment.text.clone()),
+                                        cue.id,
+                                        CueAction::StartEdit(cue.text.clone()),
                                     ));
                                 }
                             }
@@ -1101,8 +1225,8 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Ready),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Ready),
                                 ));
                             }
                             if ui
@@ -1111,12 +1235,12 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Done),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Done),
                                 ));
                             }
                         }
-                        CommentStatus::Ready => {
+                        CueStatus::Ready => {
                             if ui
                                 .small_button(
                                     egui::RichText::new("\u{2022} Running...")
@@ -1126,8 +1250,8 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::ShowRunningLog(comment.id),
+                                    cue.id,
+                                    CueAction::ShowRunningLog(cue.id),
                                 ));
                             }
                             if ui
@@ -1136,19 +1260,19 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Inbox),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Inbox),
                                 ));
                             }
                         }
-                        CommentStatus::Review => {
+                        CueStatus::Review => {
                             if ui
                                 .small_button("\u{25B6} Diff")
                                 .on_hover_text("View the diff")
                                 .clicked()
                             {
                                 actions
-                                    .push((comment.id, CommentAction::ShowDiff(comment.id)));
+                                    .push((cue.id, CueAction::ShowDiff(cue.id)));
                             }
                             if ui
                                 .small_button("\u{2713} Commit")
@@ -1156,8 +1280,8 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::CommitReview(comment.id),
+                                    cue.id,
+                                    CueAction::CommitReview(cue.id),
                                 ));
                             }
                             if ui
@@ -1166,12 +1290,12 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::RevertReview(comment.id),
+                                    cue.id,
+                                    CueAction::RevertReview(cue.id),
                                 ));
                             }
                         }
-                        CommentStatus::Done => {
+                        CueStatus::Done => {
                             ui.label(
                                 egui::RichText::new("\u{2713}")
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
@@ -1182,8 +1306,8 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Archived),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Archived),
                                 ));
                             }
                             if ui
@@ -1192,20 +1316,20 @@ impl DirigentApp {
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Inbox),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Inbox),
                                 ));
                             }
                         }
-                        CommentStatus::Archived => {
+                        CueStatus::Archived => {
                             if ui
                                 .small_button("\u{21BA} Unarchive")
                                 .on_hover_text("Move back to Done")
                                 .clicked()
                             {
                                 actions.push((
-                                    comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Done),
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Done),
                                 ));
                             }
                         }
@@ -1214,10 +1338,10 @@ impl DirigentApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button("\u{2715}")
-                            .on_hover_text("Delete comment")
+                            .on_hover_text("Delete cue")
                             .clicked()
                         {
-                            actions.push((comment.id, CommentAction::Delete));
+                            actions.push((cue.id, CueAction::Delete));
                         }
                     });
                 });
@@ -1226,96 +1350,62 @@ impl DirigentApp {
         ui.add_space(2.0);
     }
 
-    // Feature 3: Rewritten diff review with inline + side-by-side
-    fn render_diff_review(&mut self, ctx: &egui::Context) {
-        if self.diff_review.is_none() {
-            return;
-        }
-
+    // Diff review rendered in the central panel (replaces code viewer)
+    fn render_diff_review_central(&mut self, ctx: &egui::Context) {
         let mut close = false;
         let mut accept = false;
         let mut reject = false;
         let mut toggle_mode = None;
 
         let review = self.diff_review.as_mut().unwrap();
-        let comment_id = review.comment_id;
+        let cue_id = review.cue_id;
         let diff_text = review.diff.clone();
-        let comment_text = review.comment_text.clone();
+        let cue_text = review.cue_text.clone();
         let parsed = review.parsed.clone();
         let view_mode = review.view_mode;
         let read_only = review.read_only;
         let collapsed_files = &mut review.collapsed_files;
 
-        egui::Window::new("Diff Review")
-            .collapsible(false)
-            .resizable(true)
-            .default_size([800.0, 550.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // Header bar
+            ui.horizontal(|ui| {
+                if ui.button("\u{2190} Back").clicked() {
+                    close = true;
+                }
+                ui.separator();
+                ui.strong("Diff Review");
+                ui.separator();
                 if read_only {
-                    // Git log commit
                     ui.label(
-                        egui::RichText::new(format!("Commit: {}", comment_text)).strong(),
+                        egui::RichText::new(format!("Commit: {}", cue_text))
+                            .color(egui::Color32::from_gray(180)),
                     );
                 } else {
                     ui.label(
-                        egui::RichText::new(format!("Comment: {}", comment_text)).strong(),
+                        egui::RichText::new(format!("Cue: {}", cue_text))
+                            .color(egui::Color32::from_gray(180)),
                     );
                 }
-                ui.separator();
+            });
+            ui.separator();
 
-                // View mode toggle
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(view_mode == DiffViewMode::Inline, "Inline")
-                        .clicked()
-                    {
-                        toggle_mode = Some(DiffViewMode::Inline);
-                    }
-                    if ui
-                        .selectable_label(view_mode == DiffViewMode::SideBySide, "Side-by-Side")
-                        .clicked()
-                    {
-                        toggle_mode = Some(DiffViewMode::SideBySide);
-                    }
-                });
-                ui.separator();
+            // View mode toggle + action buttons
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(view_mode == DiffViewMode::Inline, "Inline")
+                    .clicked()
+                {
+                    toggle_mode = Some(DiffViewMode::Inline);
+                }
+                if ui
+                    .selectable_label(view_mode == DiffViewMode::SideBySide, "Side-by-Side")
+                    .clicked()
+                {
+                    toggle_mode = Some(DiffViewMode::SideBySide);
+                }
 
-                egui::ScrollArea::both()
-                    .max_height(400.0)
-                    .show(ui, |ui| {
-                        if parsed.files.is_empty() {
-                            ui.add_space(20.0);
-                            ui.label(
-                                egui::RichText::new("No file changes in this commit.")
-                                    .italics()
-                                    .color(egui::Color32::from_rgb(150, 150, 150)),
-                            );
-                        } else {
-                            match view_mode {
-                                DiffViewMode::Inline => {
-                                    diff_view::render_inline_diff(ui, &parsed, collapsed_files);
-                                }
-                                DiffViewMode::SideBySide => {
-                                    diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
-                                }
-                            }
-                        }
-                    });
-
-                ui.separator();
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !read_only {
-                        if ui
-                            .button(
-                                egui::RichText::new("\u{2713} Commit")
-                                    .color(egui::Color32::from_rgb(100, 200, 100)),
-                            )
-                            .on_hover_text("Commit the applied changes")
-                            .clicked()
-                        {
-                            accept = true;
-                        }
                         if ui
                             .button(
                                 egui::RichText::new("\u{21BA} Revert")
@@ -1326,12 +1416,44 @@ impl DirigentApp {
                         {
                             reject = true;
                         }
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
+                        if ui
+                            .button(
+                                egui::RichText::new("\u{2713} Commit")
+                                    .color(egui::Color32::from_rgb(100, 200, 100)),
+                            )
+                            .on_hover_text("Commit the applied changes")
+                            .clicked()
+                        {
+                            accept = true;
+                        }
                     }
                 });
             });
+            ui.separator();
+
+            // Diff content fills the rest
+            egui::ScrollArea::both()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    if parsed.files.is_empty() {
+                        ui.add_space(20.0);
+                        ui.label(
+                            egui::RichText::new("No file changes in this commit.")
+                                .italics()
+                                .color(egui::Color32::from_rgb(150, 150, 150)),
+                        );
+                    } else {
+                        match view_mode {
+                            DiffViewMode::Inline => {
+                                diff_view::render_inline_diff(ui, &parsed, collapsed_files);
+                            }
+                            DiffViewMode::SideBySide => {
+                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
+                            }
+                        }
+                    }
+                });
+        });
 
         if let Some(mode) = toggle_mode {
             if let Some(ref mut review) = self.diff_review {
@@ -1340,38 +1462,36 @@ impl DirigentApp {
         }
 
         if accept {
-            // Diff already applied to working tree — just commit
-            let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root,&diff_text);
-            let commit_msg = git::generate_commit_message(&comment_text);
+            let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, &diff_text);
+            let commit_msg = git::generate_commit_message(&cue_text);
             match git::stage_and_commit(&self.project_root, &file_paths, &commit_msg) {
                 Ok(hash) => {
                     eprintln!("Committed: {}", hash);
                     let _ = self
                         .db
-                        .update_comment_status(comment_id, CommentStatus::Done);
+                        .update_cue_status(cue_id, CueStatus::Done);
                 }
                 Err(e) => {
                     eprintln!("Commit failed: {}", e);
                 }
             }
-            self.reload_comments();
+            self.reload_cues();
             self.reload_git_info();
             self.reload_commit_history();
             self.diff_review = None;
         } else if reject {
-            // Revert the applied changes
-            let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root,&diff_text);
+            let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, &diff_text);
             if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
                 eprintln!("Revert failed: {}", e);
             }
             let _ = self
                 .db
-                .update_comment_status(comment_id, CommentStatus::Inbox);
+                .update_cue_status(cue_id, CueStatus::Inbox);
             if let Some(ref path) = self.current_file {
                 let p = path.clone();
                 self.load_file(p);
             }
-            self.reload_comments();
+            self.reload_cues();
             self.reload_git_info();
             self.diff_review = None;
         } else if close {
@@ -1425,20 +1545,20 @@ impl DirigentApp {
 
                     ui.separator();
 
-                    let total = self.comments.len();
+                    let total = self.cues.len();
                     let inbox = self
-                        .comments
+                        .cues
                         .iter()
-                        .filter(|c| c.status == CommentStatus::Inbox)
+                        .filter(|c| c.status == CueStatus::Inbox)
                         .count();
                     let review = self
-                        .comments
+                        .cues
                         .iter()
-                        .filter(|c| c.status == CommentStatus::Review)
+                        .filter(|c| c.status == CueStatus::Review)
                         .count();
                     ui.label(
                         egui::RichText::new(format!(
-                            "{} comments ({} inbox, {} review)",
+                            "{} cues ({} inbox, {} review)",
                             total, inbox, review
                         ))
                         .monospace()
@@ -1480,9 +1600,9 @@ impl DirigentApp {
                         if let Some(diff_text) = git::get_commit_diff(&self.project_root, &hash) {
                             let parsed = diff_view::parse_unified_diff(&diff_text);
                             self.diff_review = Some(DiffReview {
-                                comment_id: 0,
+                                cue_id: 0,
                                 diff: diff_text,
-                                comment_text: format!("Commit {}", hash),
+                                cue_text: format!("Commit {}", hash),
                                 parsed,
                                 view_mode: DiffViewMode::Inline,
                                 read_only: true,
@@ -1515,9 +1635,9 @@ impl DirigentApp {
                         && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submitted && !self.global_prompt_input.is_empty() {
                     let text = self.global_prompt_input.clone();
-                    let _ = self.db.insert_comment(&text, "", 0, None);
+                    let _ = self.db.insert_cue(&text, "", 0, None);
                     self.global_prompt_input.clear();
-                    self.reload_comments();
+                    self.reload_cues();
                 }
             });
         });
@@ -1539,12 +1659,17 @@ impl DirigentApp {
         let font_family = &self.settings.font_family;
         let size = self.settings.font_size;
 
-        // Add the user's chosen font as a custom monospace family
+        // Load the user's chosen font from the system and register it with egui
         let mut font_def = egui::FontDefinitions::default();
-        font_def.families.entry(egui::FontFamily::Monospace).or_default()
-            .insert(0, font_family.clone());
-        font_def.families.entry(egui::FontFamily::Proportional).or_default()
-            .insert(0, font_family.clone());
+        if let Some((font_bytes, index)) = load_system_font(font_family) {
+            let mut font_data = egui::FontData::from_owned(font_bytes);
+            font_data.index = index;
+            font_def.font_data.insert(font_family.clone(), font_data.into());
+            font_def.families.entry(egui::FontFamily::Monospace).or_default()
+                .insert(0, font_family.clone());
+            font_def.families.entry(egui::FontFamily::Proportional).or_default()
+                .insert(0, font_family.clone());
+        }
         ctx.set_fonts(font_def);
 
         // Scale all text styles based on the chosen font size
@@ -1738,8 +1863,8 @@ impl DirigentApp {
     }
 }
 
-enum CommentAction {
-    MoveTo(CommentStatus),
+enum CueAction {
+    MoveTo(CueStatus),
     Delete,
     StartEdit(String),
     CancelEdit,
@@ -1752,28 +1877,26 @@ enum CommentAction {
 }
 
 impl DirigentApp {
-    fn render_running_log(&mut self, ctx: &egui::Context) {
-        let comment_id = match self.show_running_log {
-            Some(id) => id,
-            None => return,
-        };
+    // Claude progress rendered in the central panel (replaces code viewer)
+    fn render_running_log_central(&mut self, ctx: &egui::Context) {
+        let cue_id = self.show_running_log.unwrap();
 
         let log_text = self
             .running_logs
-            .get(&comment_id)
+            .get(&cue_id)
             .and_then(|log| log.lock().ok())
             .map(|log| log.clone())
             .unwrap_or_default();
 
         let is_running = self
-            .comments
+            .cues
             .iter()
-            .any(|c| c.id == comment_id && c.status == CommentStatus::Ready);
+            .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
 
-        let comment_text = self
-            .comments
+        let cue_text = self
+            .cues
             .iter()
-            .find(|c| c.id == comment_id)
+            .find(|c| c.id == cue_id)
             .map(|c| {
                 if c.text.len() > 80 {
                     format!("{}...", &c.text[..77])
@@ -1783,52 +1906,55 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
-        let mut open = true;
+        let mut close = false;
 
-        egui::Window::new("Claude Progress")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([650.0, 400.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if is_running {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // Header bar
+            ui.horizontal(|ui| {
+                if ui.button("\u{2190} Back").clicked() {
+                    close = true;
+                }
+                ui.separator();
+                ui.strong("Claude Progress");
+                ui.separator();
+                if is_running {
+                    ui.label(
+                        egui::RichText::new("\u{2022} Running")
+                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("\u{2713} Completed")
+                            .color(egui::Color32::from_rgb(100, 200, 100)),
+                    );
+                }
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(&cue_text)
+                        .small()
+                        .color(egui::Color32::from_gray(160)),
+                );
+            });
+            ui.separator();
+
+            // Log content fills the rest
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if log_text.is_empty() {
                         ui.label(
-                            egui::RichText::new("\u{2022} Running")
-                                .color(egui::Color32::from_rgb(100, 180, 255)),
+                            egui::RichText::new("Waiting for output...")
+                                .italics()
+                                .color(egui::Color32::from_gray(120)),
                         );
                     } else {
-                        ui.label(
-                            egui::RichText::new("\u{2713} Completed")
-                                .color(egui::Color32::from_rgb(100, 200, 100)),
-                        );
+                        ui.label(egui::RichText::new(&log_text).monospace().small());
                     }
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(&comment_text)
-                            .small()
-                            .color(egui::Color32::from_gray(160)),
-                    );
                 });
-                ui.separator();
+        });
 
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        if log_text.is_empty() {
-                            ui.label(
-                                egui::RichText::new("Waiting for output...")
-                                    .italics()
-                                    .color(egui::Color32::from_gray(120)),
-                            );
-                        } else {
-                            ui.label(egui::RichText::new(&log_text).monospace().small());
-                        }
-                    });
-            });
-
-        if !open {
+        if close {
             self.show_running_log = None;
         }
     }
@@ -1849,9 +1975,9 @@ impl eframe::App for DirigentApp {
             }
         }
         if self
-            .comments
+            .cues
             .iter()
-            .any(|c| c.status == CommentStatus::Ready)
+            .any(|c| c.status == CueStatus::Ready)
         {
             // Repaint faster when log window is open for live streaming
             let interval = if self.show_running_log.is_some() {
@@ -1863,15 +1989,15 @@ impl eframe::App for DirigentApp {
         }
 
         // Render all panels (order matters for layout)
+        self.render_menu_bar(ctx); // macOS-style menu bar
         self.render_repo_bar(ctx); // top
         self.render_status_bar(ctx); // bottom-most
         self.render_prompt_field(ctx); // above status bar
         self.render_file_tree_panel(ctx); // left side
-        self.render_comment_pool(ctx); // right side
-        self.render_code_viewer(ctx); // center (also shows settings when toggled)
-        self.render_diff_review(ctx); // floating
+        self.render_cue_pool(ctx); // right side
+        self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
-        self.render_running_log(ctx); // floating
+        self.render_about_dialog(ctx); // floating
     }
 }
