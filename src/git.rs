@@ -198,6 +198,43 @@ impl std::fmt::Display for ApplyError {
     }
 }
 
+/// Get the working-tree diff for specific files (or all files if empty).
+/// Returns the `git diff` output, or None if there are no changes.
+pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
+    use std::process::Command;
+
+    let mut cmd = Command::new("git");
+    cmd.arg("diff").current_dir(repo_path);
+    if !files.is_empty() {
+        cmd.arg("--");
+        for f in files {
+            // Make paths relative to repo root if they're absolute
+            let path = Path::new(f);
+            let rel = if path.is_absolute() {
+                path.strip_prefix(repo_path)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                f.clone()
+            };
+            cmd.arg(rel);
+        }
+    }
+
+    let output = cmd.output().ok()?;
+    if output.status.success() {
+        let diff = String::from_utf8_lossy(&output.stdout).to_string();
+        if diff.trim().is_empty() {
+            None
+        } else {
+            Some(diff)
+        }
+    } else {
+        None
+    }
+}
+
 pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
     use std::io::Write;
     use std::process::{Command, Stdio};

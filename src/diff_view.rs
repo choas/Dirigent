@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,7 +174,7 @@ fn parse_hunk_header(header: &str) -> (usize, usize) {
     (old_start, new_start)
 }
 
-pub fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff) {
+pub fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);
@@ -180,59 +182,76 @@ pub fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff) {
     let context_text = egui::Color32::from_gray(180);
     let gutter_color = egui::Color32::from_gray(100);
 
-    for file in &diff.files {
-        ui.label(
-            egui::RichText::new(format!("{} \u{2192} {}", file.old_path, file.new_path))
+    for (file_idx, file) in diff.files.iter().enumerate() {
+        let is_collapsed = collapsed_files.contains(&file_idx);
+        let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
+        let additions: usize = file.hunks.iter().flat_map(|h| &h.lines).filter(|l| l.kind == DiffLineKind::Addition).count();
+        let deletions: usize = file.hunks.iter().flat_map(|h| &h.lines).filter(|l| l.kind == DiffLineKind::Deletion).count();
+        let stats = format!(" +{} -{}", additions, deletions);
+
+        if ui.add(egui::Label::new(
+            egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
                 .strong()
                 .color(egui::Color32::from_rgb(150, 150, 220)),
-        );
-        ui.add_space(4.0);
-
-        for hunk in &file.hunks {
-            for line in &hunk.lines {
-                let old_num = line
-                    .old_lineno
-                    .map(|n| format!("{:>4}", n))
-                    .unwrap_or_else(|| "    ".to_string());
-                let new_num = line
-                    .new_lineno
-                    .map(|n| format!("{:>4}", n))
-                    .unwrap_or_else(|| "    ".to_string());
-                let prefix = match line.kind {
-                    DiffLineKind::Addition => "+",
-                    DiffLineKind::Deletion => "-",
-                    DiffLineKind::Context => " ",
-                };
-                let (text_color, bg_color) = match line.kind {
-                    DiffLineKind::Addition => (green_text, Some(green_bg)),
-                    DiffLineKind::Deletion => (red_text, Some(red_bg)),
-                    DiffLineKind::Context => (context_text, None),
-                };
-
-                let response = ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
-                            .monospace()
-                            .color(gutter_color),
-                    );
-                    ui.label(
-                        egui::RichText::new(&line.content)
-                            .monospace()
-                            .color(text_color),
-                    );
-                });
-
-                if let Some(bg) = bg_color {
-                    ui.painter()
-                        .rect_filled(response.response.rect, 0.0, bg);
-                }
+        ).sense(egui::Sense::click())).clicked() {
+            if is_collapsed {
+                collapsed_files.remove(&file_idx);
+            } else {
+                collapsed_files.insert(file_idx);
             }
-            ui.add_space(8.0);
         }
+
+        if !is_collapsed {
+            ui.add_space(4.0);
+
+            for hunk in &file.hunks {
+                for line in &hunk.lines {
+                    let old_num = line
+                        .old_lineno
+                        .map(|n| format!("{:>4}", n))
+                        .unwrap_or_else(|| "    ".to_string());
+                    let new_num = line
+                        .new_lineno
+                        .map(|n| format!("{:>4}", n))
+                        .unwrap_or_else(|| "    ".to_string());
+                    let prefix = match line.kind {
+                        DiffLineKind::Addition => "+",
+                        DiffLineKind::Deletion => "-",
+                        DiffLineKind::Context => " ",
+                    };
+                    let (text_color, bg_color) = match line.kind {
+                        DiffLineKind::Addition => (green_text, Some(green_bg)),
+                        DiffLineKind::Deletion => (red_text, Some(red_bg)),
+                        DiffLineKind::Context => (context_text, None),
+                    };
+
+                    let response = ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
+                                .monospace()
+                                .color(gutter_color),
+                        );
+                        ui.label(
+                            egui::RichText::new(&line.content)
+                                .monospace()
+                                .color(text_color),
+                        );
+                    });
+
+                    if let Some(bg) = bg_color {
+                        ui.painter()
+                            .rect_filled(response.response.rect, 0.0, bg);
+                    }
+                }
+                ui.add_space(8.0);
+            }
+        }
+
+        ui.separator();
     }
 }
 
-pub fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff) {
+pub fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);
@@ -241,12 +260,30 @@ pub fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff) {
     let gutter_color = egui::Color32::from_gray(100);
     let sep_color = egui::Color32::from_gray(60);
 
-    for file in &diff.files {
-        ui.label(
-            egui::RichText::new(format!("{} \u{2192} {}", file.old_path, file.new_path))
+    for (file_idx, file) in diff.files.iter().enumerate() {
+        let is_collapsed = collapsed_files.contains(&file_idx);
+        let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
+        let additions: usize = file.hunks.iter().flat_map(|h| &h.lines).filter(|l| l.kind == DiffLineKind::Addition).count();
+        let deletions: usize = file.hunks.iter().flat_map(|h| &h.lines).filter(|l| l.kind == DiffLineKind::Deletion).count();
+        let stats = format!(" +{} -{}", additions, deletions);
+
+        if ui.add(egui::Label::new(
+            egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
                 .strong()
                 .color(egui::Color32::from_rgb(150, 150, 220)),
-        );
+        ).sense(egui::Sense::click())).clicked() {
+            if is_collapsed {
+                collapsed_files.remove(&file_idx);
+            } else {
+                collapsed_files.insert(file_idx);
+            }
+        }
+
+        if is_collapsed {
+            ui.separator();
+            continue;
+        }
+
         ui.add_space(4.0);
 
         for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
@@ -333,6 +370,8 @@ pub fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff) {
 
             ui.add_space(8.0);
         }
+
+        ui.separator();
     }
 }
 

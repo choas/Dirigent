@@ -8,7 +8,7 @@ pub enum CommentStatus {
     Ready,
     Review,
     Done,
-    Rejected,
+    Archived,
 }
 
 impl CommentStatus {
@@ -18,7 +18,7 @@ impl CommentStatus {
             CommentStatus::Ready => "ready",
             CommentStatus::Review => "review",
             CommentStatus::Done => "done",
-            CommentStatus::Rejected => "rejected",
+            CommentStatus::Archived => "archived",
         }
     }
 
@@ -28,7 +28,7 @@ impl CommentStatus {
             "ready" => Some(CommentStatus::Ready),
             "review" => Some(CommentStatus::Review),
             "done" => Some(CommentStatus::Done),
-            "rejected" => Some(CommentStatus::Rejected),
+            "archived" => Some(CommentStatus::Archived),
             _ => None,
         }
     }
@@ -39,17 +39,17 @@ impl CommentStatus {
             CommentStatus::Ready,
             CommentStatus::Review,
             CommentStatus::Done,
-            CommentStatus::Rejected,
+            CommentStatus::Archived,
         ]
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             CommentStatus::Inbox => "Inbox",
-            CommentStatus::Ready => "Ready",
+            CommentStatus::Ready => "Running",
             CommentStatus::Review => "Review",
             CommentStatus::Done => "Done",
-            CommentStatus::Rejected => "Rejected",
+            CommentStatus::Archived => "Archived",
         }
     }
 }
@@ -89,6 +89,7 @@ pub struct Comment {
     pub text: String,
     pub file_path: String,
     pub line_number: usize,
+    pub line_number_end: Option<usize>,
     pub status: CommentStatus,
 }
 
@@ -130,6 +131,7 @@ impl Database {
                 text TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 line_number INTEGER NOT NULL,
+                line_number_end INTEGER,
                 status TEXT NOT NULL DEFAULT 'inbox'
             );
 
@@ -142,15 +144,37 @@ impl Database {
                 status TEXT NOT NULL DEFAULT 'pending'
             );",
         )?;
+        // Migration: add line_number_end column if missing
+        let has_col: bool = self
+            .conn
+            .prepare("SELECT line_number_end FROM comments LIMIT 0")
+            .is_ok();
+        if !has_col {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE comments ADD COLUMN line_number_end INTEGER;",
+            );
+        }
         Ok(())
     }
 
     // -- Comment CRUD --
 
-    pub fn insert_comment(&self, text: &str, file_path: &str, line_number: usize) -> Result<i64> {
+    pub fn insert_comment(
+        &self,
+        text: &str,
+        file_path: &str,
+        line_number: usize,
+        line_number_end: Option<usize>,
+    ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO comments (text, file_path, line_number, status) VALUES (?1, ?2, ?3, ?4)",
-            params![text, file_path, line_number as i64, CommentStatus::Inbox.as_str()],
+            "INSERT INTO comments (text, file_path, line_number, line_number_end, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                text,
+                file_path,
+                line_number as i64,
+                line_number_end.map(|n| n as i64),
+                CommentStatus::Inbox.as_str()
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -158,7 +182,7 @@ impl Database {
     pub fn get_comment(&self, id: i64) -> Result<Option<Comment>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, status FROM comments WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status FROM comments WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_comment(row)?))
@@ -194,7 +218,7 @@ impl Database {
     pub fn all_comments(&self) -> Result<Vec<Comment>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, status FROM comments ORDER BY id")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status FROM comments ORDER BY id")?;
         let rows = stmt.query_map([], |row| row_to_comment(row))?;
         let mut comments = Vec::new();
         for row in rows {
@@ -205,7 +229,7 @@ impl Database {
 
     pub fn comments_for_file(&self, file_path: &str) -> Result<Vec<Comment>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, status FROM comments WHERE file_path = ?1 ORDER BY line_number",
+            "SELECT id, text, file_path, line_number, line_number_end, status FROM comments WHERE file_path = ?1 ORDER BY line_number",
         )?;
         let rows = stmt.query_map(params![file_path], |row| row_to_comment(row))?;
         let mut comments = Vec::new();
@@ -260,12 +284,14 @@ impl Database {
 }
 
 fn row_to_comment(row: &rusqlite::Row) -> rusqlite::Result<Comment> {
-    let status_str: String = row.get(4)?;
+    let status_str: String = row.get(5)?;
+    let line_end: Option<i64> = row.get(4)?;
     Ok(Comment {
         id: row.get(0)?,
         text: row.get(1)?,
         file_path: row.get(2)?,
         line_number: row.get::<_, i64>(3)? as usize,
+        line_number_end: line_end.map(|n| n as usize),
         status: CommentStatus::from_str(&status_str).unwrap_or(CommentStatus::Inbox),
     })
 }

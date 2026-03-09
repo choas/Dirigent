@@ -382,6 +382,14 @@ pub struct Settings {
     pub theme: ThemeChoice,
     pub claude_model: String,
     pub recent_repos: Vec<String>,
+    #[serde(default = "default_true")]
+    pub notify_sound: bool,
+    #[serde(default = "default_true")]
+    pub notify_popup: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -390,6 +398,8 @@ impl Default for Settings {
             theme: ThemeChoice::Dark,
             claude_model: "claude-opus-4-6".to_string(),
             recent_repos: Vec::new(),
+            notify_sound: true,
+            notify_popup: true,
         }
     }
 }

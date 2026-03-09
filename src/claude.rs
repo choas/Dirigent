@@ -22,31 +22,38 @@ pub struct ClaudeResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
+    /// File paths that Claude edited (from Edit/Write tool_use events).
+    pub edited_files: Vec<String>,
 }
 
 /// Build a structured prompt for Claude given a comment's context.
-pub fn build_prompt(comment_text: &str, file_path: &str, line_number: usize) -> String {
+pub fn build_prompt(
+    comment_text: &str,
+    file_path: &str,
+    line_number: usize,
+    line_number_end: Option<usize>,
+) -> String {
     if file_path.is_empty() {
         format!(
             "## Task\n\n{}\n\n\
-             ## Output Format\n\n\
-             Respond with ONLY a unified diff (```diff block) that implements the requested change.\n\
-             Do not include explanations outside the diff block.\n\
-             Use correct --- a/ and +++ b/ prefixes.\n\
-             Make sure hunk headers (@@ lines) have correct line numbers.",
+             ## Instructions\n\n\
+             Make the requested changes directly by editing the files. \
+             Do not output a diff — use your tools to edit files in place.",
             comment_text,
         )
     } else {
+        let line_ref = match line_number_end {
+            Some(end) => format!("lines {}-{}", line_number, end),
+            None => format!("line {}", line_number),
+        };
         format!(
             "## Task\n\n{}\n\n\
              ## Context\n\n\
-             Target: line {} in {}\n\n\
-             ## Output Format\n\n\
-             Respond with ONLY a unified diff (```diff block) that implements the requested change.\n\
-             Do not include explanations outside the diff block.\n\
-             Use correct --- a/ and +++ b/ prefixes.\n\
-             Make sure hunk headers (@@ lines) have correct line numbers.",
-            comment_text, line_number, file_path,
+             Focus on {} in `{}`.\n\n\
+             ## Instructions\n\n\
+             Make the requested changes directly by editing the files. \
+             Do not output a diff — use your tools to edit files in place.",
+            comment_text, line_ref, file_path,
         )
     }
 }
@@ -82,10 +89,12 @@ pub fn invoke_claude(
         stdout,
         stderr,
         exit_code,
+        edited_files: Vec::new(),
     })
 }
 
-/// Invoke `claude -p <prompt>` with live stderr streaming to a shared log buffer.
+/// Invoke `claude -p <prompt> --output-format stream-json` with live progress
+/// streaming to a shared log buffer. Parses JSON events from stdout in real-time.
 pub fn invoke_claude_streaming(
     prompt: &str,
     project_root: &Path,
@@ -103,7 +112,12 @@ pub fn invoke_claude_streaming(
     }
 
     let mut cmd = Command::new("claude");
-    cmd.arg("-p").arg(prompt);
+    cmd.arg("-p")
+        .arg(prompt)
+        .arg("--verbose")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--dangerously-skip-permissions");
     if !model.is_empty() {
         cmd.arg("--model").arg(model);
     }
@@ -118,37 +132,176 @@ pub fn invoke_claude_streaming(
     let stderr_handle = child.stderr.take().unwrap();
     let stdout_handle = child.stdout.take().unwrap();
 
-    // Stream stderr line-by-line to the shared log
-    let log_clone = Arc::clone(&log);
+    // Collect stderr in background (for error messages)
     let stderr_thread = std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(stderr_handle);
-        let mut full = String::new();
-        for line in reader.lines().flatten() {
-            if let Ok(mut log) = log_clone.lock() {
-                log.push_str(&line);
-                log.push('\n');
-            }
-            full.push_str(&line);
-            full.push('\n');
-        }
-        full
+        let mut s = String::new();
+        std::io::BufReader::new(stderr_handle)
+            .read_to_string(&mut s)
+            .ok();
+        s
     });
 
-    // Read all of stdout
-    let stdout = {
-        let mut s = String::new();
-        let mut reader = std::io::BufReader::new(stdout_handle);
-        reader.read_to_string(&mut s).ok();
-        s
-    };
+    // Parse stream-json events from stdout in real-time
+    let reader = std::io::BufReader::new(stdout_handle);
+    let log_clone = Arc::clone(&log);
+    let mut final_result = String::new();
+    let mut edited_files: Vec<String> = Vec::new();
+
+    for line in reader.lines().flatten() {
+        let event: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => {
+                // Non-JSON line, just log it
+                if let Ok(mut log) = log_clone.lock() {
+                    log.push_str(&line);
+                    log.push('\n');
+                }
+                continue;
+            }
+        };
+
+        let event_type = event
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        match event_type {
+            "assistant" => {
+                if let Some(content) = event
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for block in content {
+                        let block_type =
+                            block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match block_type {
+                            "text" => {
+                                if let Some(text) =
+                                    block.get("text").and_then(|t| t.as_str())
+                                {
+                                    // Show a truncated preview of assistant text
+                                    let preview: String =
+                                        text.chars().take(200).collect();
+                                    if let Ok(mut log) = log_clone.lock() {
+                                        log.push_str(&preview);
+                                        if text.len() > 200 {
+                                            log.push_str("...");
+                                        }
+                                        log.push('\n');
+                                    }
+                                }
+                            }
+                            "tool_use" => {
+                                let name = block
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("?");
+                                let input =
+                                    block.get("input").cloned().unwrap_or_default();
+                                // Track files edited by Claude
+                                if matches!(name, "Edit" | "Write" | "NotebookEdit") {
+                                    if let Some(path) =
+                                        input.get("file_path").and_then(|p| p.as_str())
+                                    {
+                                        if !edited_files.contains(&path.to_string()) {
+                                            edited_files.push(path.to_string());
+                                        }
+                                    }
+                                }
+                                let detail = if let Some(cmd) =
+                                    input.get("command").and_then(|c| c.as_str())
+                                {
+                                    format!(
+                                        " $ {}",
+                                        cmd.lines().next().unwrap_or("")
+                                    )
+                                } else if let Some(path) =
+                                    input.get("file_path").and_then(|p| p.as_str())
+                                {
+                                    format!(" {}", path)
+                                } else if let Some(pattern) =
+                                    input.get("pattern").and_then(|p| p.as_str())
+                                {
+                                    format!(" \"{}\"", pattern)
+                                } else {
+                                    String::new()
+                                };
+                                if let Ok(mut log) = log_clone.lock() {
+                                    log.push_str(&format!(
+                                        "\u{2192} {}{}\n",
+                                        name, detail
+                                    ));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "result" => {
+                if let Some(result) =
+                    event.get("result").and_then(|r| r.as_str())
+                {
+                    final_result = result.to_string();
+                }
+                // Show cost and duration
+                let cost = event
+                    .get("cost_usd")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.0);
+                let duration = event
+                    .get("duration_ms")
+                    .and_then(|d| d.as_u64())
+                    .unwrap_or(0);
+                let turns = event
+                    .get("num_turns")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0);
+                if let Ok(mut log) = log_clone.lock() {
+                    log.push_str(&format!(
+                        "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
+                        turns,
+                        duration as f64 / 1000.0,
+                        cost
+                    ));
+                }
+            }
+            "system" => {
+                if let Some(subtype) =
+                    event.get("subtype").and_then(|s| s.as_str())
+                {
+                    if let Ok(mut log) = log_clone.lock() {
+                        log.push_str(&format!("[{}]\n", subtype));
+                    }
+                }
+            }
+            _ => {
+                // Log unknown event types briefly
+                if !event_type.is_empty() {
+                    if let Ok(mut log) = log_clone.lock() {
+                        log.push_str(&format!("[{}]\n", event_type));
+                    }
+                }
+            }
+        }
+    }
 
     let status = child.wait().map_err(ClaudeError::SpawnFailed)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
+    // If we didn't get a result from stream events, stderr might have the error
+    if final_result.is_empty() && !stderr.is_empty() {
+        if let Ok(mut log) = log.lock() {
+            log.push_str(&format!("\nError: {}\n", stderr));
+        }
+    }
+
     Ok(ClaudeResponse {
-        stdout,
+        stdout: final_result,
         stderr,
         exit_code: status.code(),
+        edited_files,
     })
 }
 

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
@@ -28,6 +29,7 @@ struct DiffReview {
     parsed: ParsedDiff,
     view_mode: DiffViewMode,
     read_only: bool,
+    collapsed_files: HashSet<usize>,
 }
 
 pub struct DirigentApp {
@@ -41,7 +43,10 @@ pub struct DirigentApp {
     // Code viewer
     current_file: Option<PathBuf>,
     current_file_content: Vec<String>,
-    selected_line: Option<usize>,
+    /// Start of the selected line range (1-based, always <= selection_end).
+    selection_start: Option<usize>,
+    /// End of the selected line range (1-based, always >= selection_start).
+    selection_end: Option<usize>,
     comment_input: String,
     scroll_to_line: Option<usize>,
 
@@ -84,6 +89,9 @@ pub struct DirigentApp {
     editing_comment_id: Option<i64>,
     editing_comment_text: String,
 
+    // Git log panel (left nav)
+    show_git_log: bool,
+
     // Claude running logs (live stderr streaming)
     running_logs: HashMap<i64, Arc<Mutex<String>>>,
     show_running_log: Option<i64>,
@@ -112,7 +120,8 @@ impl DirigentApp {
             expanded_dirs: HashSet::new(),
             current_file: None,
             current_file_content: Vec::new(),
-            selected_line: None,
+            selection_start: None,
+            selection_end: None,
             comment_input: String::new(),
             scroll_to_line: None,
             comments,
@@ -134,6 +143,7 @@ impl DirigentApp {
             editing_comment_text: String::new(),
             running_logs: HashMap::new(),
             show_running_log: None,
+            show_git_log: false,
         }
     }
 
@@ -153,7 +163,8 @@ impl DirigentApp {
         if let Ok(content) = std::fs::read_to_string(&path) {
             self.current_file_content = content.lines().map(String::from).collect();
             self.current_file = Some(path);
-            self.selected_line = None;
+            self.selection_start = None;
+            self.selection_end = None;
             self.comment_input.clear();
         }
     }
@@ -178,10 +189,15 @@ impl DirigentApp {
     }
 
     fn lines_with_comments(&self) -> HashSet<usize> {
-        self.file_comments()
-            .iter()
-            .map(|c| c.line_number)
-            .collect()
+        let mut set = HashSet::new();
+        for c in self.file_comments() {
+            let start = c.line_number;
+            let end = c.line_number_end.unwrap_or(start);
+            for line in start..=end {
+                set.insert(line);
+            }
+        }
+        set
     }
 
     // -- Feature 4: Repo switching --
@@ -201,7 +217,8 @@ impl DirigentApp {
         self.current_file = None;
         self.commit_history = git::read_commit_history(&self.project_root, 50);
         self.current_file_content.clear();
-        self.selected_line = None;
+        self.selection_start = None;
+        self.selection_end = None;
         self.expanded_dirs.clear();
         self.diff_review = None;
         self.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
@@ -226,7 +243,12 @@ impl DirigentApp {
             None => return,
         };
 
-        let prompt = claude::build_prompt(&comment.text, &comment.file_path, comment.line_number);
+        let prompt = claude::build_prompt(
+            &comment.text,
+            &comment.file_path,
+            comment.line_number,
+            comment.line_number_end,
+        );
 
         // Insert execution record
         let exec_id = self.db.insert_execution(comment_id, &prompt).unwrap_or(0);
@@ -243,7 +265,14 @@ impl DirigentApp {
             let result =
                 match claude::invoke_claude_streaming(&prompt, &project_root, &model, log) {
                     Ok(response) => {
-                        let diff = claude::parse_diff_from_response(&response.stdout);
+                        // Claude Code edits files directly via tools.
+                        // Capture the actual changes via git diff on edited files.
+                        let diff = if response.edited_files.is_empty() {
+                            // Fallback: try parsing response text for a diff
+                            claude::parse_diff_from_response(&response.stdout)
+                        } else {
+                            git::get_working_diff(&project_root, &response.edited_files)
+                        };
                         ClaudeResult {
                             comment_id,
                             exec_id,
@@ -283,49 +312,73 @@ impl DirigentApp {
                     .db
                     .update_comment_status(result.comment_id, CommentStatus::Inbox);
             } else if let Some(ref diff) = result.diff {
-                // Persist the execution result (so Diff button works later)
+                // Claude already edited files directly. Store the diff for review.
                 let _ =
                     self.db
                         .complete_execution(result.exec_id, &result.response, Some(diff));
-
-                // Apply diff to working tree immediately
-                match git::apply_diff(&self.project_root, diff) {
-                    Ok(()) => {
-                        let _ = self.db.update_comment_status(
-                            result.comment_id,
-                            CommentStatus::Review,
-                        );
-                        // Reload current file so user sees changes
-                        if let Some(ref path) = self.current_file {
-                            let p = path.clone();
-                            self.load_file(p);
-                        }
-                        self.reload_git_info();
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Failed to apply diff for comment {}: {}",
-                            result.comment_id, e
-                        );
-                        let _ = self.db.update_comment_status(
-                            result.comment_id,
-                            CommentStatus::Inbox,
-                        );
-                    }
+                let _ = self.db.update_comment_status(
+                    result.comment_id,
+                    CommentStatus::Review,
+                );
+                self.notify_review_ready(result.comment_id);
+                // Reload current file so user sees changes
+                if let Some(ref path) = self.current_file {
+                    let p = path.clone();
+                    self.load_file(p);
                 }
+                self.reload_git_info();
             } else {
+                // Claude ran but no files were changed
                 let _ =
                     self.db
                         .complete_execution(result.exec_id, &result.response, None);
                 eprintln!(
-                    "No diff found in Claude response for comment {}",
+                    "Claude completed but no file changes detected for comment {}",
                     result.comment_id
                 );
                 let _ = self
                     .db
-                    .update_comment_status(result.comment_id, CommentStatus::Inbox);
+                    .update_comment_status(result.comment_id, CommentStatus::Done);
             }
             self.reload_comments();
+        }
+    }
+
+    fn notify_review_ready(&self, comment_id: i64) {
+        if self.settings.notify_sound {
+            std::thread::spawn(|| {
+                let _ = Command::new("afplay")
+                    .arg("/System/Library/Sounds/Glass.aiff")
+                    .output();
+            });
+        }
+        if self.settings.notify_popup {
+            let preview = self
+                .db
+                .get_comment(comment_id)
+                .ok()
+                .flatten()
+                .map(|c| {
+                    let words: Vec<&str> = c.text.split_whitespace().take(6).collect();
+                    let mut preview = words.join(" ");
+                    if c.text.split_whitespace().count() > 6 {
+                        preview.push_str("…");
+                    }
+                    preview
+                })
+                .unwrap_or_else(|| format!("Comment #{}", comment_id));
+            let msg = format!("{} — ready for review.", preview);
+            std::thread::spawn(move || {
+                let _ = Command::new("osascript")
+                    .args([
+                        "-e",
+                        &format!(
+                            "display notification \"{}\" with title \"Dirigent\" subtitle \"Task moved to Review\"",
+                            msg
+                        ),
+                    ])
+                    .output();
+            });
         }
     }
 
@@ -336,7 +389,7 @@ impl DirigentApp {
         egui::TopBottomPanel::top("repo_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("\u{1F4C1} {}", self.project_root.display()))
+                    egui::RichText::new(format!("\u{25B8} {}", self.project_root.display()))
                         .monospace()
                         .small(),
                 );
@@ -353,31 +406,103 @@ impl DirigentApp {
     }
 
     fn render_file_tree_panel(&mut self, ctx: &egui::Context) {
-        let mut clicked_commit: Option<String> = None;
-
         egui::SidePanel::left("file_tree")
             .default_width(220.0)
             .min_width(150.0)
             .show(ctx, |ui| {
                 ui.heading("Files");
                 ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if let Some(tree) = self.file_tree.clone() {
-                        let mut file_to_load = None;
-                        for entry in &tree.entries {
-                            Self::render_file_entry(
-                                ui,
-                                entry,
-                                &mut self.expanded_dirs,
-                                &self.current_file,
-                                &mut file_to_load,
-                            );
+                // File tree takes remaining space above git log
+                let git_log_open = self.show_git_log;
+                let available = ui.available_height();
+                // When git log is open, give file tree ~60% of space; otherwise all of it
+                let file_tree_height = if git_log_open {
+                    available * 0.6
+                } else {
+                    available - 24.0 // leave room for the git log header
+                };
+                egui::ScrollArea::vertical()
+                    .id_salt("file_tree_scroll")
+                    .max_height(file_tree_height)
+                    .show(ui, |ui| {
+                        if let Some(tree) = self.file_tree.clone() {
+                            let mut file_to_load = None;
+                            for entry in &tree.entries {
+                                Self::render_file_entry(
+                                    ui,
+                                    entry,
+                                    &mut self.expanded_dirs,
+                                    &self.current_file,
+                                    &mut file_to_load,
+                                );
+                            }
+                            if let Some(path) = file_to_load {
+                                self.load_file(path);
+                            }
                         }
-                        if let Some(path) = file_to_load {
-                            self.load_file(path);
+                    });
+
+                ui.separator();
+
+                // Git Log collapsible section
+                let header_text = format!("Git Log ({})", self.commit_history.len());
+                let header_resp = egui::CollapsingHeader::new(header_text)
+                    .default_open(self.show_git_log)
+                    .show(ui, |ui| {
+                        let mut clicked_hash: Option<String> = None;
+                        egui::ScrollArea::vertical()
+                            .id_salt("git_log_scroll")
+                            .show(ui, |ui| {
+                                for commit in &self.commit_history {
+                                    let msg = if commit.message.len() > 30 {
+                                        format!("{}...", &commit.message[..27])
+                                    } else {
+                                        commit.message.clone()
+                                    };
+                                    let label =
+                                        format!("{} {}", commit.short_hash, msg);
+                                    if ui
+                                        .selectable_label(
+                                            false,
+                                            egui::RichText::new(&label)
+                                                .monospace()
+                                                .small(),
+                                        )
+                                        .on_hover_text(format!(
+                                            "{} - {}\n{}\n{}",
+                                            commit.short_hash,
+                                            commit.author,
+                                            commit.message,
+                                            commit.time_ago
+                                        ))
+                                        .clicked()
+                                    {
+                                        clicked_hash =
+                                            Some(commit.short_hash.clone());
+                                    }
+                                }
+                            });
+                        clicked_hash
+                    });
+                self.show_git_log = header_resp.fully_open();
+                if let Some(inner) = header_resp.body_returned {
+                    if let Some(hash) = inner {
+                        if let Some(diff_text) =
+                            git::get_commit_diff(&self.project_root, &hash)
+                        {
+                            let parsed = diff_view::parse_unified_diff(&diff_text);
+                            self.diff_review = Some(DiffReview {
+                                comment_id: 0,
+                                diff: diff_text,
+                                comment_text: format!("Commit {}", hash),
+                                parsed,
+                                view_mode: DiffViewMode::Inline,
+                                read_only: true,
+                                collapsed_files: HashSet::new(),
+                            });
                         }
                     }
-                });
+                }
             });
     }
 
@@ -413,7 +538,96 @@ impl DirigentApp {
         }
     }
 
+    fn render_settings_panel(&mut self, ctx: &egui::Context) {
+        let mut save = false;
+        let mut close = false;
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Settings");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("✕").on_hover_text("Close settings").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            ui.separator();
+            ui.add_space(8.0);
+
+            egui::Grid::new("settings_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Theme:");
+                    let theme_label = self.settings.theme.display_name();
+                    egui::ComboBox::from_id_salt("theme_combo")
+                        .selected_text(theme_label)
+                        .show_ui(ui, |ui| {
+                            let mut prev_was_dark = true;
+                            for variant in ThemeChoice::all_variants() {
+                                if prev_was_dark && !variant.is_dark() {
+                                    ui.separator();
+                                    prev_was_dark = false;
+                                }
+                                ui.selectable_value(
+                                    &mut self.settings.theme,
+                                    variant.clone(),
+                                    variant.display_name(),
+                                );
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Claude Model:");
+                    egui::ComboBox::from_id_salt("model_combo")
+                        .selected_text(&self.settings.claude_model)
+                        .show_ui(ui, |ui| {
+                            for model in &[
+                                "claude-opus-4-6",
+                                "claude-sonnet-4-6",
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.settings.claude_model,
+                                    model.to_string(),
+                                    *model,
+                                );
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Notifications:");
+                    ui.end_row();
+
+                    ui.label("  Sound:");
+                    ui.checkbox(&mut self.settings.notify_sound, "Play sound on task review");
+                    ui.end_row();
+
+                    ui.label("  Popup:");
+                    ui.checkbox(&mut self.settings.notify_popup, "Show macOS notification");
+                    ui.end_row();
+                });
+
+            ui.add_space(12.0);
+            if ui.button("Save").clicked() {
+                save = true;
+            }
+        });
+
+        if close {
+            self.show_settings = false;
+        }
+        if save {
+            settings::save_settings(&self.project_root, &self.settings);
+            self.needs_theme_apply = true;
+        }
+    }
+
     fn render_code_viewer(&mut self, ctx: &egui::Context) {
+        if self.show_settings {
+            self.render_settings_panel(ctx);
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.current_file.is_none() {
                 ui.centered_and_justified(|ui| {
@@ -442,8 +656,12 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            let mut new_selected = self.selected_line;
+            let sel_start = self.selection_start;
+            let sel_end = self.selection_end;
+            let mut new_sel_start = sel_start;
+            let mut new_sel_end = sel_end;
             let mut submit_comment = false;
+            let mut clear_selection = false;
 
             let scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
 
@@ -456,7 +674,11 @@ impl DirigentApp {
                         .map(|s| s.as_str())
                         .unwrap_or("");
 
-                    let is_selected = self.selected_line == Some(line_num);
+                    let is_in_selection = match (sel_start, sel_end) {
+                        (Some(s), Some(e)) => line_num >= s && line_num <= e,
+                        _ => false,
+                    };
+                    let is_selection_end = sel_end == Some(line_num);
                     let has_comment = lines_with_comments.contains(&line_num);
 
                     let response = ui.horizontal(|ui| {
@@ -489,7 +711,7 @@ impl DirigentApp {
                             egui::Sense::click(),
                         );
 
-                        if is_selected {
+                        if is_in_selection {
                             ui.painter().rect_filled(
                                 rect,
                                 0.0,
@@ -501,14 +723,40 @@ impl DirigentApp {
                     });
 
                     if response.inner.clicked() {
-                        new_selected = Some(line_num);
+                        let shift_held = ui.input(|i| i.modifiers.shift);
+                        if shift_held {
+                            // Shift-click: extend selection from existing start (or set new range)
+                            if let Some(anchor) = sel_start {
+                                let lo = anchor.min(line_num);
+                                let hi = anchor.max(line_num);
+                                new_sel_start = Some(lo);
+                                new_sel_end = Some(hi);
+                            } else {
+                                new_sel_start = Some(line_num);
+                                new_sel_end = Some(line_num);
+                            }
+                        } else {
+                            // Plain click: select single line
+                            new_sel_start = Some(line_num);
+                            new_sel_end = Some(line_num);
+                        }
                     }
 
-                    if is_selected {
+                    // Show comment input after the last line of the selection
+                    if is_selection_end {
+                        let range_label = if sel_start == sel_end {
+                            format!("L{}", sel_start.unwrap_or(0))
+                        } else {
+                            format!(
+                                "L{}-{}",
+                                sel_start.unwrap_or(0),
+                                sel_end.unwrap_or(0)
+                            )
+                        };
                         ui.horizontal(|ui| {
                             ui.label("     ");
                             ui.label(
-                                egui::RichText::new(">")
+                                egui::RichText::new(range_label)
                                     .monospace()
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
                             );
@@ -524,20 +772,33 @@ impl DirigentApp {
                             {
                                 submit_comment = true;
                             }
+                            if ui.button("✕").clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            {
+                                clear_selection = true;
+                            }
                         });
                     }
                 }
             });
 
-            if new_selected != self.selected_line {
-                self.selected_line = new_selected;
+            if clear_selection {
+                new_sel_start = None;
+                new_sel_end = None;
+            }
+
+            if new_sel_start != self.selection_start || new_sel_end != self.selection_end {
+                self.selection_start = new_sel_start;
+                self.selection_end = new_sel_end;
                 self.comment_input.clear();
             }
 
             if submit_comment && !self.comment_input.is_empty() {
-                if let Some(line_num) = self.selected_line {
+                if let Some(start) = self.selection_start {
+                    let end = self.selection_end.unwrap_or(start);
+                    let line_end = if end > start { Some(end) } else { None };
                     let text = self.comment_input.clone();
-                    let _ = self.db.insert_comment(&text, &rel_path, line_num);
+                    let _ = self.db.insert_comment(&text, &rel_path, start, line_end);
                     self.comment_input.clear();
                     self.reload_comments();
                 }
@@ -606,12 +867,13 @@ impl DirigentApp {
                             CommentAction::Delete => {
                                 let _ = self.db.delete_comment(id);
                             }
-                            CommentAction::Navigate(file_path, line) => {
+                            CommentAction::Navigate(file_path, line, line_end) => {
                                 let full_path = self.project_root.join(&file_path);
                                 if self.current_file.as_ref() != Some(&full_path) {
                                     self.load_file(full_path);
                                 }
-                                self.selected_line = Some(line);
+                                self.selection_start = Some(line);
+                                self.selection_end = Some(line_end.unwrap_or(line));
                                 self.scroll_to_line = Some(line);
                             }
                             CommentAction::ShowDiff(comment_id) => {
@@ -635,6 +897,7 @@ impl DirigentApp {
                                             parsed,
                                             view_mode: DiffViewMode::Inline,
                                             read_only,
+                                            collapsed_files: HashSet::new(),
                                         });
                                     }
                                 }
@@ -690,7 +953,7 @@ impl DirigentApp {
                                 }
                                 let _ = self.db.update_comment_status(
                                     comment_id,
-                                    CommentStatus::Rejected,
+                                    CommentStatus::Inbox,
                                 );
                                 // Reload file to show reverted content
                                 if let Some(ref path) = self.current_file {
@@ -753,8 +1016,8 @@ impl DirigentApp {
                             CommentAction::StartEdit(comment.text.clone()),
                         ));
                     }
-                    // Single-click to show diff (Review/Done/Rejected)
-                    if matches!(status, CommentStatus::Review | CommentStatus::Done | CommentStatus::Rejected)
+                    // Single-click to show diff (Review/Done/Archived)
+                    if matches!(status, CommentStatus::Review | CommentStatus::Done | CommentStatus::Archived)
                         && label_response.clicked()
                     {
                         actions.push((comment.id, CommentAction::ShowDiff(comment.id)));
@@ -769,7 +1032,11 @@ impl DirigentApp {
                             .color(egui::Color32::from_rgb(180, 140, 255)),
                     );
                 } else {
-                    let location = format!("{}:{}", comment.file_path, comment.line_number);
+                    let location = if let Some(end) = comment.line_number_end {
+                        format!("{}:{}-{}", comment.file_path, comment.line_number, end)
+                    } else {
+                        format!("{}:{}", comment.file_path, comment.line_number)
+                    };
                     if ui
                         .small_button(&location)
                         .on_hover_text("Navigate to this location")
@@ -780,6 +1047,7 @@ impl DirigentApp {
                             CommentAction::Navigate(
                                 comment.file_path.clone(),
                                 comment.line_number,
+                                comment.line_number_end,
                             ),
                         ));
                     }
@@ -791,7 +1059,7 @@ impl DirigentApp {
                         CommentStatus::Inbox => {
                             if self.editing_comment_id != Some(comment.id) {
                                 if ui
-                                    .small_button("\u{270E}")
+                                    .small_button("Edit")
                                     .on_hover_text("Edit comment")
                                     .clicked()
                                 {
@@ -802,7 +1070,7 @@ impl DirigentApp {
                                 }
                             }
                             if ui
-                                .small_button("\u{25B6} Ready")
+                                .small_button("\u{25B6} Run")
                                 .on_hover_text("Send to Claude")
                                 .clicked()
                             {
@@ -825,7 +1093,7 @@ impl DirigentApp {
                         CommentStatus::Ready => {
                             if ui
                                 .small_button(
-                                    egui::RichText::new("\u{23F3} Running...")
+                                    egui::RichText::new("\u{2022} Running...")
                                         .color(egui::Color32::from_rgb(100, 180, 255)),
                                 )
                                 .on_hover_text("View Claude's progress")
@@ -849,7 +1117,7 @@ impl DirigentApp {
                         }
                         CommentStatus::Review => {
                             if ui
-                                .small_button("\u{1F50D} Diff")
+                                .small_button("\u{25B6} Diff")
                                 .on_hover_text("View the diff")
                                 .clicked()
                             {
@@ -883,6 +1151,16 @@ impl DirigentApp {
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
                             );
                             if ui
+                                .small_button("\u{2193} Archive")
+                                .on_hover_text("Move to Archived")
+                                .clicked()
+                            {
+                                actions.push((
+                                    comment.id,
+                                    CommentAction::MoveTo(CommentStatus::Archived),
+                                ));
+                            }
+                            if ui
                                 .small_button("\u{21BA} Reopen")
                                 .on_hover_text("Move back to Inbox")
                                 .clicked()
@@ -893,15 +1171,15 @@ impl DirigentApp {
                                 ));
                             }
                         }
-                        CommentStatus::Rejected => {
+                        CommentStatus::Archived => {
                             if ui
-                                .small_button("\u{21BA} Retry")
-                                .on_hover_text("Move back to Inbox")
+                                .small_button("\u{21BA} Unarchive")
+                                .on_hover_text("Move back to Done")
                                 .clicked()
                             {
                                 actions.push((
                                     comment.id,
-                                    CommentAction::MoveTo(CommentStatus::Inbox),
+                                    CommentAction::MoveTo(CommentStatus::Done),
                                 ));
                             }
                         }
@@ -933,13 +1211,14 @@ impl DirigentApp {
         let mut reject = false;
         let mut toggle_mode = None;
 
-        let review = self.diff_review.as_ref().unwrap();
+        let review = self.diff_review.as_mut().unwrap();
         let comment_id = review.comment_id;
         let diff_text = review.diff.clone();
         let comment_text = review.comment_text.clone();
         let parsed = review.parsed.clone();
         let view_mode = review.view_mode;
         let read_only = review.read_only;
+        let collapsed_files = &mut review.collapsed_files;
 
         egui::Window::new("Diff Review")
             .collapsible(false)
@@ -974,10 +1253,10 @@ impl DirigentApp {
                     .show(ui, |ui| {
                         match view_mode {
                             DiffViewMode::Inline => {
-                                diff_view::render_inline_diff(ui, &parsed);
+                                diff_view::render_inline_diff(ui, &parsed, collapsed_files);
                             }
                             DiffViewMode::SideBySide => {
-                                diff_view::render_side_by_side_diff(ui, &parsed);
+                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
                             }
                         }
                     });
@@ -1045,7 +1324,7 @@ impl DirigentApp {
             }
             let _ = self
                 .db
-                .update_comment_status(comment_id, CommentStatus::Rejected);
+                .update_comment_status(comment_id, CommentStatus::Inbox);
             if let Some(ref path) = self.current_file {
                 let p = path.clone();
                 self.load_file(p);
@@ -1063,7 +1342,7 @@ impl DirigentApp {
             ui.horizontal(|ui| {
                 if let Some(ref info) = self.git_info {
                     ui.label(
-                        egui::RichText::new(format!("\u{2387} {}", info.branch))
+                        egui::RichText::new(format!("\u{25CF} {}", info.branch))
                             .monospace()
                             .small(),
                     );
@@ -1133,6 +1412,7 @@ impl DirigentApp {
                 ))
                 .default_open(false)
                 .show(ui, |ui| {
+                    let mut clicked_hash: Option<String> = None;
                     for commit in &self.commit_history {
                         let msg = if commit.message.len() > 30 {
                             format!("{}...", &commit.message[..27])
@@ -1151,26 +1431,26 @@ impl DirigentApp {
                             ))
                             .clicked()
                         {
-                            clicked_commit = Some(commit.short_hash.clone());
+                            clicked_hash = Some(commit.short_hash.clone());
+                        }
+                    }
+                    if let Some(hash) = clicked_hash {
+                        if let Some(diff_text) = git::get_commit_diff(&self.project_root, &hash) {
+                            let parsed = diff_view::parse_unified_diff(&diff_text);
+                            self.diff_review = Some(DiffReview {
+                                comment_id: 0,
+                                diff: diff_text,
+                                comment_text: format!("Commit {}", hash),
+                                parsed,
+                                view_mode: DiffViewMode::Inline,
+                                read_only: true,
+                                collapsed_files: HashSet::new(),
+                            });
                         }
                     }
                 });
             });
         });
-
-        if let Some(hash) = clicked_commit {
-            if let Some(diff_text) = git::get_commit_diff(&self.project_root, &hash) {
-                let parsed = diff_view::parse_unified_diff(&diff_text);
-                self.diff_review = Some(DiffReview {
-                    comment_id: 0,
-                    diff: diff_text,
-                    comment_text: format!("Commit {}", hash),
-                    parsed,
-                    view_mode: DiffViewMode::Inline,
-                    read_only: true,
-                });
-            }
-        }
     }
 
     // Feature 2: Global prompt input
@@ -1193,78 +1473,12 @@ impl DirigentApp {
                         && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submitted && !self.global_prompt_input.is_empty() {
                     let text = self.global_prompt_input.clone();
-                    let _ = self.db.insert_comment(&text, "", 0);
+                    let _ = self.db.insert_comment(&text, "", 0, None);
                     self.global_prompt_input.clear();
                     self.reload_comments();
                 }
             });
         });
-    }
-
-    // Feature 1: Settings window
-    fn render_settings_window(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
-            return;
-        }
-
-        let mut open = self.show_settings;
-        let mut save = false;
-
-        egui::Window::new("Settings")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_size([350.0, 200.0])
-            .show(ctx, |ui| {
-                egui::Grid::new("settings_grid")
-                    .num_columns(2)
-                    .spacing([12.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label("Theme:");
-                        let theme_label = self.settings.theme.display_name();
-                        egui::ComboBox::from_id_salt("theme_combo")
-                            .selected_text(theme_label)
-                            .show_ui(ui, |ui| {
-                                for variant in ThemeChoice::all_variants() {
-                                    ui.selectable_value(
-                                        &mut self.settings.theme,
-                                        variant.clone(),
-                                        variant.display_name(),
-                                    );
-                                }
-                            });
-                        ui.end_row();
-
-                        ui.label("Claude Model:");
-                        egui::ComboBox::from_id_salt("model_combo")
-                            .selected_text(&self.settings.claude_model)
-                            .show_ui(ui, |ui| {
-                                for model in &[
-                                    "claude-opus-4-6",
-                                    "claude-sonnet-4-6",
-                                ] {
-                                    ui.selectable_value(
-                                        &mut self.settings.claude_model,
-                                        model.to_string(),
-                                        *model,
-                                    );
-                                }
-                            });
-                        ui.end_row();
-                    });
-
-                ui.add_space(12.0);
-                if ui.button("Save").clicked() {
-                    save = true;
-                }
-            });
-
-        self.show_settings = open;
-
-        if save {
-            settings::save_settings(&self.project_root, &self.settings);
-            self.needs_theme_apply = true;
-        }
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -1372,7 +1586,7 @@ impl DirigentApp {
                                 let label = if wt.is_current {
                                     format!("\u{25B6} {} (current)", wt.name)
                                 } else if wt.is_locked {
-                                    format!("\u{1F512} {}", wt.name)
+                                    format!("\u{25A0} {}", wt.name)
                                 } else {
                                     wt.name.clone()
                                 };
@@ -1468,7 +1682,7 @@ enum CommentAction {
     StartEdit(String),
     CancelEdit,
     SaveEdit(String),
-    Navigate(String, usize),
+    Navigate(String, usize, Option<usize>),
     ShowDiff(i64),
     CommitReview(i64),
     RevertReview(i64),
@@ -1518,7 +1732,7 @@ impl DirigentApp {
                 ui.horizontal(|ui| {
                     if is_running {
                         ui.label(
-                            egui::RichText::new("\u{23F3} Running")
+                            egui::RichText::new("\u{2022} Running")
                                 .color(egui::Color32::from_rgb(100, 180, 255)),
                         );
                     } else {
@@ -1592,10 +1806,9 @@ impl eframe::App for DirigentApp {
         self.render_prompt_field(ctx); // above status bar
         self.render_file_tree_panel(ctx); // left side
         self.render_comment_pool(ctx); // right side
-        self.render_code_viewer(ctx); // center
+        self.render_code_viewer(ctx); // center (also shows settings when toggled)
         self.render_diff_review(ctx); // floating
         self.render_repo_picker(ctx); // floating
-        self.render_settings_window(ctx); // floating
         self.render_worktree_panel(ctx); // floating
         self.render_running_log(ctx); // floating
     }
