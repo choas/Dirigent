@@ -957,32 +957,39 @@ fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
         let pool_cls = Class::get("NSAutoreleasePool").unwrap();
         let pool: *mut Object = msg_send![pool_cls, new];
 
-        if let Some(notif_cls) = Class::get("NSUserNotification") {
-            let center_cls = Class::get("NSUserNotificationCenter").unwrap();
-            let nsstring = Class::get("NSString").unwrap();
-
-            let notif: *mut Object = msg_send![notif_cls, alloc];
-            let notif: *mut Object = msg_send![notif, init];
-
-            let title_c = std::ffi::CString::new(title).unwrap();
-            let title_ns: *mut Object =
-                msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
-            let _: () = msg_send![notif, setTitle: title_ns];
-
-            let sub_c = std::ffi::CString::new(subtitle).unwrap();
-            let sub_ns: *mut Object =
-                msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
-            let _: () = msg_send![notif, setSubtitle: sub_ns];
-
-            let body_c = std::ffi::CString::new(body).unwrap();
-            let body_ns: *mut Object =
-                msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
-            let _: () = msg_send![notif, setInformativeText: body_ns];
-
+        let mut delivered = false;
+        if let (Some(notif_cls), Some(center_cls)) = (
+            Class::get("NSUserNotification"),
+            Class::get("NSUserNotificationCenter"),
+        ) {
             let center: *mut Object =
                 msg_send![center_cls, defaultUserNotificationCenter];
-            let _: () = msg_send![center, deliverNotification: notif];
-        } else {
+            if !center.is_null() {
+                let nsstring = Class::get("NSString").unwrap();
+
+                let notif: *mut Object = msg_send![notif_cls, alloc];
+                let notif: *mut Object = msg_send![notif, init];
+
+                let title_c = std::ffi::CString::new(title).unwrap();
+                let title_ns: *mut Object =
+                    msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
+                let _: () = msg_send![notif, setTitle: title_ns];
+
+                let sub_c = std::ffi::CString::new(subtitle).unwrap();
+                let sub_ns: *mut Object =
+                    msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
+                let _: () = msg_send![notif, setSubtitle: sub_ns];
+
+                let body_c = std::ffi::CString::new(body).unwrap();
+                let body_ns: *mut Object =
+                    msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
+                let _: () = msg_send![notif, setInformativeText: body_ns];
+
+                let _: () = msg_send![center, deliverNotification: notif];
+                delivered = true;
+            }
+        }
+        if !delivered {
             // Fallback: osascript (notification attributed to Script Editor)
             fn escape(s: &str) -> String {
                 s.replace('\\', "\\\\").replace('"', "\\\"")
