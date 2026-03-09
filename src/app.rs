@@ -449,7 +449,7 @@ impl DirigentApp {
                 let header_resp = egui::CollapsingHeader::new(header_text)
                     .default_open(self.show_git_log)
                     .show(ui, |ui| {
-                        let mut clicked_hash: Option<String> = None;
+                        let mut clicked_commit: Option<(String, String)> = None;
                         egui::ScrollArea::vertical()
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
@@ -477,30 +477,29 @@ impl DirigentApp {
                                         ))
                                         .clicked()
                                     {
-                                        clicked_hash =
-                                            Some(commit.short_hash.clone());
+                                        clicked_commit =
+                                            Some((commit.full_hash.clone(), commit.message.clone()));
                                     }
                                 }
                             });
-                        clicked_hash
+                        clicked_commit
                     });
                 self.show_git_log = header_resp.fully_open();
                 if let Some(inner) = header_resp.body_returned {
-                    if let Some(hash) = inner {
-                        if let Some(diff_text) =
-                            git::get_commit_diff(&self.project_root, &hash)
-                        {
-                            let parsed = diff_view::parse_unified_diff(&diff_text);
-                            self.diff_review = Some(DiffReview {
-                                comment_id: 0,
-                                diff: diff_text,
-                                comment_text: format!("Commit {}", hash),
-                                parsed,
-                                view_mode: DiffViewMode::Inline,
-                                read_only: true,
-                                collapsed_files: HashSet::new(),
-                            });
-                        }
+                    if let Some((full_hash, message)) = inner {
+                        let short_hash = &full_hash[..7.min(full_hash.len())];
+                        let diff_text = git::get_commit_diff(&self.project_root, &full_hash)
+                            .unwrap_or_default();
+                        let parsed = diff_view::parse_unified_diff(&diff_text);
+                        self.diff_review = Some(DiffReview {
+                            comment_id: 0,
+                            diff: diff_text,
+                            comment_text: format!("{} {}", short_hash, message),
+                            parsed,
+                            view_mode: DiffViewMode::Inline,
+                            read_only: true,
+                            collapsed_files: HashSet::new(),
+                        });
                     }
                 }
             });
@@ -1226,9 +1225,16 @@ impl DirigentApp {
             .default_size([800.0, 550.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(format!("Comment: {}", comment_text)).strong(),
-                );
+                if read_only {
+                    // Git log commit
+                    ui.label(
+                        egui::RichText::new(format!("Commit: {}", comment_text)).strong(),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(format!("Comment: {}", comment_text)).strong(),
+                    );
+                }
                 ui.separator();
 
                 // View mode toggle
@@ -1251,12 +1257,21 @@ impl DirigentApp {
                 egui::ScrollArea::both()
                     .max_height(400.0)
                     .show(ui, |ui| {
-                        match view_mode {
-                            DiffViewMode::Inline => {
-                                diff_view::render_inline_diff(ui, &parsed, collapsed_files);
-                            }
-                            DiffViewMode::SideBySide => {
-                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
+                        if parsed.files.is_empty() {
+                            ui.add_space(20.0);
+                            ui.label(
+                                egui::RichText::new("No file changes in this commit.")
+                                    .italics()
+                                    .color(egui::Color32::from_rgb(150, 150, 150)),
+                            );
+                        } else {
+                            match view_mode {
+                                DiffViewMode::Inline => {
+                                    diff_view::render_inline_diff(ui, &parsed, collapsed_files);
+                                }
+                                DiffViewMode::SideBySide => {
+                                    diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
+                                }
                             }
                         }
                     });

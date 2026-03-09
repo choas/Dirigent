@@ -96,6 +96,7 @@ pub fn format_status_summary(info: &GitInfo) -> String {
 
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
+    pub full_hash: String,
     pub short_hash: String,
     pub message: String,
     pub author: String,
@@ -154,6 +155,7 @@ pub fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
             format!("{}d ago", diff / 86400)
         };
         commits.push(CommitInfo {
+            full_hash: hash,
             short_hash,
             message,
             author,
@@ -173,11 +175,7 @@ pub fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).to_string();
-        if text.trim().is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        Some(text)
     } else {
         None
     }
