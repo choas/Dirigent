@@ -60,6 +60,22 @@ fn load_system_font(name: &str) -> Option<(Vec<u8>, u32)> {
     None
 }
 
+/// Returns a `RichText` using the dedicated icon font (SF Mono) at the given size.
+fn icon(text: &str, size: f32) -> egui::RichText {
+    egui::RichText::new(text).font(egui::FontId::new(
+        size,
+        egui::FontFamily::Name("Icons".into()),
+    ))
+}
+
+/// Returns a `RichText` using the dedicated icon font (SF Mono) at 75% of the given size.
+fn icon_small(text: &str, size: f32) -> egui::RichText {
+    egui::RichText::new(text).font(egui::FontId::new(
+        size * 0.75,
+        egui::FontFamily::Name("Icons".into()),
+    ))
+}
+
 /// Result of a background Claude invocation.
 struct ClaudeResult {
     cue_id: i64,
@@ -502,25 +518,25 @@ impl DirigentApp {
             font_def.families.entry(egui::FontFamily::Proportional).or_default()
                 .insert(0, font_family.clone());
         }
-        // Add a symbol fallback font so icons render even when the chosen
+        // Add symbol fallback fonts so icons render even when the chosen
         // code font lacks glyphs like ⚙, ❯, ↺, etc.
-        let symbol_fallback = "DiriSymbolFallback";
-        let symbol_fonts: &[&str] = &[
-            "/System/Library/Fonts/Apple Symbols.ttf",
-            "/System/Library/Fonts/Menlo.ttc",
-            "/System/Library/Fonts/SFNSMono.ttf",
+        // SF Mono has the best coverage for our icon characters, so it comes first.
+        let symbol_fonts: &[(&str, &str, u32)] = &[
+            ("DiriSymFallback_SFMono", "/System/Library/Fonts/SFNSMono.ttf", 0),
+            ("DiriSymFallback_Symbols", "/System/Library/Fonts/Apple Symbols.ttf", 0),
+            ("DiriSymFallback_Menlo", "/System/Library/Fonts/Menlo.ttc", 0),
         ];
-        for path in symbol_fonts {
+        for &(name, path, index) in symbol_fonts {
             if let Ok(data) = std::fs::read(path) {
-                font_def.font_data.insert(
-                    symbol_fallback.to_string(),
-                    egui::FontData::from_owned(data).into(),
-                );
+                let mut fd = egui::FontData::from_owned(data);
+                fd.index = index;
+                font_def.font_data.insert(name.to_string(), fd.into());
                 font_def.families.entry(egui::FontFamily::Monospace).or_default()
-                    .push(symbol_fallback.to_string());
+                    .push(name.to_string());
                 font_def.families.entry(egui::FontFamily::Proportional).or_default()
-                    .push(symbol_fallback.to_string());
-                break;
+                    .push(name.to_string());
+                font_def.families.entry(egui::FontFamily::Name("Icons".into())).or_default()
+                    .push(name.to_string());
             }
         }
         ctx.set_fonts(font_def);
