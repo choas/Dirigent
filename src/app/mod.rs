@@ -651,17 +651,7 @@ impl DirigentApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-            std::thread::spawn(move || {
-                let _ = Command::new("osascript")
-                    .args([
-                        "-e",
-                        &format!(
-                            "display notification \"{}\" with title \"Dirigent\" subtitle \"{}\"",
-                            preview, project_name
-                        ),
-                    ])
-                    .output();
-            });
+            send_macos_notification("Dirigent", &project_name, &preview);
         }
     }
 
@@ -941,3 +931,46 @@ impl eframe::App for DirigentApp {
         self.render_about_dialog(ctx); // floating
     }
 }
+
+/// Send a macOS notification using NSAppleScript so it is attributed to the
+/// current process (Dirigent) rather than Script Editor.  Clicking the
+/// notification will activate this Dirigent instance.
+#[cfg(target_os = "macos")]
+fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+
+    fn escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    let script_source = format!(
+        "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
+        escape(body),
+        escape(title),
+        escape(subtitle),
+    );
+
+    unsafe {
+        let pool_cls = Class::get("NSAutoreleasePool").unwrap();
+        let pool: *mut Object = msg_send![pool_cls, new];
+
+        let nsstring_cls = Class::get("NSString").unwrap();
+        let src_c = std::ffi::CString::new(script_source).unwrap();
+        let src_ns: *mut Object =
+            msg_send![nsstring_cls, stringWithUTF8String: src_c.as_ptr()];
+
+        let script_cls = Class::get("NSAppleScript").unwrap();
+        let script: *mut Object = msg_send![script_cls, alloc];
+        let script: *mut Object = msg_send![script, initWithSource: src_ns];
+
+        let mut err: *mut Object = std::ptr::null_mut();
+        let _: *mut Object = msg_send![script, executeAndReturnError: &mut err];
+
+        let _: () = msg_send![script, release];
+        let _: () = msg_send![pool, drain];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn send_macos_notification(_title: &str, _subtitle: &str, _body: &str) {}
