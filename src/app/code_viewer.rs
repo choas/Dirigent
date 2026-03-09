@@ -113,6 +113,7 @@ impl DirigentApp {
                 let files = vec![rel_path.clone()];
                 if let Some(diff_text) = git::get_working_diff(&self.project_root, &files) {
                     let parsed = diff_view::parse_unified_diff(&diff_text);
+                    self.dismiss_central_overlays();
                     self.diff_review = Some(DiffReview {
                         cue_id: 0,
                         diff: diff_text,

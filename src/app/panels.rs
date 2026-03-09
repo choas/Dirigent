@@ -20,6 +20,7 @@ impl DirigentApp {
                     }
                     ui.separator();
                     if ui.button("Settings...").clicked() {
+                        self.dismiss_central_overlays();
                         self.show_settings = true;
                         ui.close_menu();
                     }
@@ -186,6 +187,7 @@ impl DirigentApp {
                         } else {
                             format!("{} {}", short_hash, message)
                         };
+                        self.dismiss_central_overlays();
                         self.diff_review = Some(DiffReview {
                             cue_id: 0,
                             diff: diff_text,
@@ -334,6 +336,9 @@ impl DirigentApp {
                         .on_hover_text("Settings")
                         .clicked()
                     {
+                        if !self.show_settings {
+                            self.dismiss_central_overlays();
+                        }
                         self.show_settings = !self.show_settings;
                     }
 
@@ -398,6 +403,7 @@ impl DirigentApp {
                             } else {
                                 format!("Commit {}", hash)
                             };
+                            self.dismiss_central_overlays();
                             self.diff_review = Some(DiffReview {
                                 cue_id: 0,
                                 diff: diff_text,

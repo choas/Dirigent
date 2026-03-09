@@ -195,6 +195,7 @@ impl DirigentApp {
                                             .map(|c| c.status != CueStatus::Review)
                                             .unwrap_or(true);
                                         let parsed = diff_view::parse_unified_diff(&diff);
+                                        self.dismiss_central_overlays();
                                         self.diff_review = Some(super::DiffReview {
                                             cue_id,
                                             diff,
@@ -283,6 +284,7 @@ impl DirigentApp {
                                         }
                                     }
                                 }
+                                self.dismiss_central_overlays();
                                 self.show_running_log = Some(cue_id);
                             }
                         }
