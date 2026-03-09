@@ -433,6 +433,49 @@ impl Default for SourceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Play {
+    pub name: String,
+    pub prompt: String,
+}
+
+pub fn default_playbook() -> Vec<Play> {
+    vec![
+        Play {
+            name: "Update README".into(),
+            prompt: "Review the project and update README.md to accurately reflect the current state: features, setup instructions, and usage.".into(),
+        },
+        Play {
+            name: "Verify architecture".into(),
+            prompt: "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes.".into(),
+        },
+        Play {
+            name: "Verify last 5 commits".into(),
+            prompt: "Review the last 5 git commits. Check for bugs, incomplete changes, or inconsistencies. Report findings without making changes.".into(),
+        },
+        Play {
+            name: "Create release".into(),
+            prompt: "Prepare a release: update version numbers, ensure CHANGELOG is current, verify tests pass, create a release commit.".into(),
+        },
+        Play {
+            name: "Security audit".into(),
+            prompt: "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings.".into(),
+        },
+        Play {
+            name: "Check dead code".into(),
+            prompt: "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything.".into(),
+        },
+        Play {
+            name: "Add tests".into(),
+            prompt: "Identify untested code paths and write comprehensive tests for the most critical and least covered areas.".into(),
+        },
+        Play {
+            name: "Fix all warnings".into(),
+            prompt: "Run `cargo check`, collect all warnings, and fix every one of them.".into(),
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: ThemeChoice,
     pub claude_model: String,
@@ -447,6 +490,8 @@ pub struct Settings {
     pub font_size: f32,
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
+    #[serde(default = "default_playbook")]
+    pub playbook: Vec<Play>,
 }
 
 fn default_true() -> bool {
@@ -472,6 +517,7 @@ impl Default for Settings {
             font_family: default_font_family(),
             font_size: default_font_size(),
             sources: Vec::new(),
+            playbook: default_playbook(),
         }
     }
 }
