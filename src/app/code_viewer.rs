@@ -90,6 +90,11 @@ impl DirigentApp {
             }
             ui.separator();
 
+            // Render in-file search bar (Cmd+F)
+            if self.search_in_file_active {
+                self.render_search_in_file_bar(ui);
+            }
+
             let lines_with_cues = self.lines_with_cues();
             let num_lines = self.current_file_content.len();
             let line_height = 16.0;
@@ -106,7 +111,13 @@ impl DirigentApp {
             let mut submit_cue = false;
             let mut clear_selection = false;
 
-            let scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
+            let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
+
+            // Handle scroll-to-line requests (from search, cue navigation, etc.)
+            if let Some(target_line) = self.scroll_to_line.take() {
+                let target_offset = (target_line.saturating_sub(1)) as f32 * line_height;
+                scroll_area = scroll_area.vertical_scroll_offset(target_offset);
+            }
 
             scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
                 for line_idx in row_range {
@@ -123,6 +134,11 @@ impl DirigentApp {
                     };
                     let is_selection_end = sel_end == Some(line_num);
                     let cue_state = lines_with_cues.get(&line_num);
+                    let is_search_match = self.search_in_file_matches.contains(&line_num);
+                    let is_current_search_match = self
+                        .search_in_file_current
+                        .map(|i| self.search_in_file_matches.get(i) == Some(&line_num))
+                        .unwrap_or(false);
 
                     let response = ui.horizontal(|ui| {
                         match cue_state {
@@ -167,6 +183,22 @@ impl DirigentApp {
                                 rect,
                                 0.0,
                                 egui::Color32::from_rgba_premultiplied(60, 60, 120, 80),
+                            );
+                        }
+
+                        if is_current_search_match {
+                            // Current search match: bright orange highlight
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                egui::Color32::from_rgba_premultiplied(200, 120, 0, 60),
+                            );
+                        } else if is_search_match {
+                            // Other search matches: subtle yellow highlight
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                egui::Color32::from_rgba_premultiplied(180, 160, 0, 35),
                             );
                         }
 

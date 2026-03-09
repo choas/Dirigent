@@ -371,6 +371,11 @@ impl DirigentApp {
             self.selection_start = None;
             self.selection_end = None;
             self.cue_input.clear();
+            // Reset in-file search state for the new file
+            self.search_in_file_active = false;
+            self.search_in_file_query.clear();
+            self.search_in_file_matches.clear();
+            self.search_in_file_current = None;
         }
     }
 
@@ -752,6 +757,16 @@ impl DirigentApp {
         }
     }
 
+    /// Render project-wide search panel as a left side panel (replaces file tree).
+    fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("search_files_panel")
+            .default_width(220.0)
+            .min_width(150.0)
+            .show(ctx, |ui| {
+                self.render_search_in_files_panel(ui);
+            });
+    }
+
     // -- Theme --
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -895,12 +910,19 @@ impl eframe::App for DirigentApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(30));
         }
 
+        // Handle keyboard shortcuts for search (Cmd+F, Cmd+Shift+F)
+        self.handle_search_shortcuts(ctx);
+
         // Render all panels (order matters for layout)
         self.render_menu_bar(ctx); // macOS-style menu bar
         self.render_repo_bar(ctx); // top
         self.render_status_bar(ctx); // bottom-most
         self.render_prompt_field(ctx); // above status bar
-        self.render_file_tree_panel(ctx); // left side
+        if self.search_in_files_active {
+            self.render_search_in_files_panel_wrapper(ctx); // replaces file tree
+        } else {
+            self.render_file_tree_panel(ctx); // left side
+        }
         self.render_cue_pool(ctx); // right side
         self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
         self.render_repo_picker(ctx); // floating
