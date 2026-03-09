@@ -346,6 +346,15 @@ impl Database {
         Ok(count > 0)
     }
 
+    /// Update the text of an existing cue identified by source_ref.
+    pub fn update_cue_text_by_source_ref(&self, source_ref: &str, text: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cues SET text = ?1 WHERE source_ref = ?2",
+            params![text, source_ref],
+        )?;
+        Ok(())
+    }
+
     /// Insert a cue from an external source (global cue with source tracking).
     pub fn insert_cue_from_source(
         &self,

@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::path::PathBuf;
 
 use eframe::egui;
 
@@ -6,6 +7,118 @@ use super::{icon, CueAction, DirigentApp};
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
+
+// -- Markdown import --
+
+struct ImportedSection {
+    number: usize,
+    title: String,
+    body: String,
+}
+
+fn parse_markdown_sections(content: &str) -> Vec<ImportedSection> {
+    let mut sections = Vec::new();
+    let mut current_title: Option<(usize, String)> = None;
+    let mut body_lines: Vec<&str> = Vec::new();
+
+    for line in content.lines() {
+        if let Some(heading) = line.strip_prefix("### ") {
+            // Flush previous section
+            if let Some((num, title)) = current_title.take() {
+                sections.push(ImportedSection {
+                    number: num,
+                    title,
+                    body: clean_body(&body_lines),
+                });
+                body_lines.clear();
+            }
+            // Parse "N. Title" pattern
+            let heading = heading.trim();
+            if let Some(dot_pos) = heading.find(". ") {
+                if let Ok(num) = heading[..dot_pos].parse::<usize>() {
+                    current_title = Some((num, heading[dot_pos + 2..].to_string()));
+                    continue;
+                }
+            }
+            // Fallback: no number
+            current_title = Some((sections.len() + 1, heading.to_string()));
+        } else if current_title.is_some() {
+            body_lines.push(line);
+        }
+    }
+    // Flush last section
+    if let Some((num, title)) = current_title {
+        sections.push(ImportedSection {
+            number: num,
+            title,
+            body: clean_body(&body_lines),
+        });
+    }
+
+    sections
+}
+
+/// Clean up section body: strip `---` separators, code fences, and collapse
+/// excessive blank lines while preserving the full content.
+fn clean_body(lines: &[&str]) -> String {
+    let mut out = Vec::new();
+    let mut in_code_block = false;
+
+    for &line in lines {
+        let trimmed = line.trim();
+
+        // Toggle code blocks — skip fence lines but keep code content
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+
+        // Skip horizontal rules
+        if !in_code_block && trimmed == "---" {
+            continue;
+        }
+
+        out.push(line);
+    }
+
+    // Trim leading/trailing blank lines and collapse runs of 3+ blanks to 2
+    let text = out.join("\n");
+    let text = text.trim();
+
+    let mut result = String::with_capacity(text.len());
+    let mut consecutive_blanks = 0u32;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            consecutive_blanks += 1;
+            if consecutive_blanks <= 1 {
+                result.push('\n');
+            }
+        } else {
+            consecutive_blanks = 0;
+            if !result.is_empty() && !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push_str(line);
+        }
+    }
+
+    result
+}
+
+fn pick_markdown_file() -> Option<PathBuf> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(
+            r#"POSIX path of (choose file of type {"public.text"} with prompt "Import Markdown Document")"#,
+        )
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() { None } else { Some(PathBuf::from(path)) }
+}
 
 impl DirigentApp {
     pub(super) fn render_cue_pool(&mut self, ctx: &egui::Context) {
@@ -16,10 +129,14 @@ impl DirigentApp {
                 // Header: "Cues" heading + "+" playbook button
                 let mut selected_play_prompt: Option<String> = None;
                 let mut custom_cue_requested = false;
+                let mut import_requested = false;
                 ui.horizontal(|ui| {
                     ui.heading("Cues");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let plus_btn = ui.button("+").on_hover_text("Playbook");
+                        if ui.button("\u{21E9}").on_hover_text("Import from document").clicked() {
+                            import_requested = true;
+                        }
                         let popup_id = ui.make_persistent_id("playbook_popup");
                         if plus_btn.clicked() {
                             ui.memory_mut(|mem| mem.toggle_popup(popup_id));
@@ -51,6 +168,42 @@ impl DirigentApp {
                 if custom_cue_requested {
                     // Focus the global prompt field by clearing and letting egui pick it up
                     self.global_prompt_input.clear();
+                }
+                if import_requested {
+                    if let Some(path) = pick_markdown_file() {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            let stem = path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("import")
+                                .to_string();
+                            let sections = parse_markdown_sections(&content);
+                            let mut new_count = 0usize;
+                            let mut updated_count = 0usize;
+                            for section in &sections {
+                                let source_ref = format!("{}#{}", path.display(), section.number);
+                                let text = format!("{}\n\n{}", section.title, section.body);
+                                if self.db.cue_exists_by_source_ref(&source_ref).unwrap_or(false) {
+                                    if self.db.update_cue_text_by_source_ref(&source_ref, &text).is_ok() {
+                                        updated_count += 1;
+                                    }
+                                } else {
+                                    let _ = self.db.insert_cue_from_source(&text, &stem, &source_ref);
+                                    new_count += 1;
+                                }
+                            }
+                            self.reload_cues();
+                            let filename = path.file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("document");
+                            let msg = match (new_count, updated_count) {
+                                (0, 0) => format!("No changes from \"{}\"", filename),
+                                (n, 0) => format!("Imported {} new cue(s) from \"{}\"", n, filename),
+                                (0, u) => format!("Updated {} cue(s) from \"{}\"", u, filename),
+                                (n, u) => format!("Imported {} new, updated {} cue(s) from \"{}\"", n, u, filename),
+                            };
+                            self.set_status_message(msg);
+                        }
+                    }
                 }
 
                 // Source filter dropdown
