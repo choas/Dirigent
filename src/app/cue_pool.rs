@@ -166,6 +166,21 @@ impl DirigentApp {
                                 self.reload_git_info();
                             }
                             CueAction::ShowRunningLog(cue_id) => {
+                                // Load log from DB if not already in memory
+                                if !self.running_logs.contains_key(&cue_id) {
+                                    if let Ok(Some(exec)) =
+                                        self.db.get_latest_execution(cue_id)
+                                    {
+                                        if let Some(log_text) = exec.log {
+                                            self.running_logs.insert(
+                                                cue_id,
+                                                std::sync::Arc::new(
+                                                    std::sync::Mutex::new(log_text),
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
                                 self.show_running_log = Some(cue_id);
                             }
                         }
@@ -336,6 +351,16 @@ impl DirigentApp {
                                     .push((cue.id, CueAction::ShowDiff(cue.id)));
                             }
                             if ui
+                                .small_button(icon("Log", fs))
+                                .on_hover_text("View Claude's output log")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::ShowRunningLog(cue.id),
+                                ));
+                            }
+                            if ui
                                 .small_button(icon("\u{2713} Commit", fs))
                                 .on_hover_text("Commit the applied changes")
                                 .clicked()
@@ -362,6 +387,16 @@ impl DirigentApp {
                                     .color(egui::Color32::from_rgb(100, 200, 100)),
                             );
                             if ui
+                                .small_button(icon("Log", fs))
+                                .on_hover_text("View Claude's output log")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::ShowRunningLog(cue.id),
+                                ));
+                            }
+                            if ui
                                 .small_button(icon("\u{2193} Archive", fs))
                                 .on_hover_text("Move to Archived")
                                 .clicked()
@@ -383,6 +418,16 @@ impl DirigentApp {
                             }
                         }
                         CueStatus::Archived => {
+                            if ui
+                                .small_button(icon("Log", fs))
+                                .on_hover_text("View Claude's output log")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::ShowRunningLog(cue.id),
+                                ));
+                            }
                             if ui
                                 .small_button(icon("\u{21BA} Unarchive", fs))
                                 .on_hover_text("Move back to Done")

@@ -556,8 +556,13 @@ impl DirigentApp {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     if log_text.is_empty() {
+                        let msg = if is_running {
+                            "Waiting for output..."
+                        } else {
+                            "No output recorded."
+                        };
                         ui.label(
-                            egui::RichText::new("Waiting for output...")
+                            egui::RichText::new(msg)
                                 .italics()
                                 .color(egui::Color32::from_gray(120)),
                         );

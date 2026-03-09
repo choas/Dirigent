@@ -100,6 +100,7 @@ pub struct Execution {
     pub prompt: String,
     pub response: Option<String>,
     pub diff: Option<String>,
+    pub log: Option<String>,
     pub status: ExecutionStatus,
 }
 
@@ -176,6 +177,16 @@ impl Database {
         if has_old_col {
             let _ = self.conn.execute_batch(
                 "ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;",
+            );
+        }
+        // Migration: add log column to executions
+        let has_log_col: bool = self
+            .conn
+            .prepare("SELECT log FROM executions LIMIT 0")
+            .is_ok();
+        if !has_log_col {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE executions ADD COLUMN log TEXT;",
             );
         }
         Ok(())
@@ -294,9 +305,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_execution_log(&self, id: i64, log: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE executions SET log = ?1 WHERE id = ?2",
+            params![log, id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_latest_execution(&self, cue_id: i64) -> Result<Option<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, status FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, cue_id, prompt, response, diff, log, status FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id])?;
         if let Some(row) = rows.next()? {
@@ -321,13 +340,14 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
 }
 
 fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
-    let status_str: String = row.get(5)?;
+    let status_str: String = row.get(6)?;
     Ok(Execution {
         id: row.get(0)?,
         cue_id: row.get(1)?,
         prompt: row.get(2)?,
         response: row.get(3)?,
         diff: row.get(4)?,
+        log: row.get(5)?,
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
     })
 }

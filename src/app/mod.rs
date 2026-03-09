@@ -176,7 +176,9 @@ pub struct DirigentApp {
     // Claude running logs (live stderr streaming)
     running_logs: HashMap<i64, Arc<Mutex<String>>>,
     running_start_times: HashMap<i64, Instant>,
+    running_exec_ids: HashMap<i64, i64>,
     show_running_log: Option<i64>,
+    last_log_flush: Instant,
 
     // About dialog
     show_about: bool,
@@ -266,7 +268,9 @@ impl DirigentApp {
             editing_cue_text: String::new(),
             running_logs: HashMap::new(),
             running_start_times: HashMap::new(),
+            running_exec_ids: HashMap::new(),
             show_running_log: None,
+            last_log_flush: Instant::now(),
             show_git_log: false,
             show_about: false,
             logo_texture: None,
@@ -414,6 +418,7 @@ impl DirigentApp {
         let log = Arc::new(Mutex::new(String::new()));
         self.running_logs.insert(cue_id, Arc::clone(&log));
         self.running_start_times.insert(cue_id, Instant::now());
+        self.running_exec_ids.insert(cue_id, exec_id);
 
         let project_root = self.project_root.clone();
         let pending = Arc::clone(&self.claude_pending);
@@ -463,6 +468,16 @@ impl DirigentApp {
         };
 
         for result in results {
+            // Save the running log to DB before processing
+            if let Some(log) = self.running_logs.get(&result.cue_id) {
+                if let Ok(log_text) = log.lock() {
+                    let _ = self.db.update_execution_log(result.exec_id, &log_text);
+                }
+            }
+            // Clean up runtime tracking (keep running_logs for viewing)
+            self.running_exec_ids.remove(&result.cue_id);
+            self.running_start_times.remove(&result.cue_id);
+
             if let Some(ref error) = result.error {
                 eprintln!("Claude error for cue {}: {}", result.cue_id, error);
                 let _ = self.db.fail_execution(result.exec_id, error);
@@ -500,6 +515,45 @@ impl DirigentApp {
             }
             self.reload_cues();
         }
+    }
+
+    /// Periodically flush local running logs to DB (for cross-instance visibility)
+    /// and reload remote running logs from DB (for viewing another instance's run).
+    fn sync_running_logs(&mut self) {
+        // Flush local running logs to DB
+        for (&cue_id, log) in &self.running_logs {
+            if let Some(&exec_id) = self.running_exec_ids.get(&cue_id) {
+                if let Ok(log_text) = log.lock() {
+                    let _ = self.db.update_execution_log(exec_id, &log_text);
+                }
+            }
+        }
+
+        // Reload log from DB for the currently viewed cue if it's a remote run
+        if let Some(cue_id) = self.show_running_log {
+            if !self.running_exec_ids.contains_key(&cue_id) {
+                let is_running = self
+                    .cues
+                    .iter()
+                    .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
+                if is_running {
+                    if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
+                        if let Some(log_text) = exec.log {
+                            if let Some(log) = self.running_logs.get(&cue_id) {
+                                if let Ok(mut guard) = log.lock() {
+                                    *guard = log_text;
+                                }
+                            } else {
+                                self.running_logs
+                                    .insert(cue_id, Arc::new(Mutex::new(log_text)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.last_log_flush = Instant::now();
     }
 
     fn notify_review_ready(&self, cue_id: i64) {
@@ -639,6 +693,13 @@ impl eframe::App for DirigentApp {
 
         // Poll for Claude results
         self.process_claude_results();
+
+        // Periodically sync running logs to/from DB (every 3s)
+        if !self.running_exec_ids.is_empty() || self.show_running_log.is_some() {
+            if self.last_log_flush.elapsed() >= std::time::Duration::from_secs(3) {
+                self.sync_running_logs();
+            }
+        }
 
         // Request repaint if there are pending Claude tasks
         if let Ok(pending) = self.claude_pending.lock() {
