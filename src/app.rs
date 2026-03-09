@@ -976,6 +976,7 @@ impl DirigentApp {
 
                         let header = format!("{} ({})", status.label(), section_cues.len());
                         egui::CollapsingHeader::new(header)
+                            .id_source(status.label())
                             .default_open(
                                 status == CueStatus::Inbox || status == CueStatus::Review,
                             )
@@ -1073,6 +1074,13 @@ impl DirigentApp {
                                         ) {
                                             Ok(hash) => {
                                                 eprintln!("Committed: {}", hash);
+                                                let _ = self.db.update_cue_status(
+                                                    cue_id,
+                                                    CueStatus::Done,
+                                                );
+                                            }
+                                            Err(e) if e.contains("nothing to commit") => {
+                                                eprintln!("No changes to commit (already committed by another cue)");
                                                 let _ = self.db.update_cue_status(
                                                     cue_id,
                                                     CueStatus::Done,
