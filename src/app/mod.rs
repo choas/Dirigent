@@ -2,6 +2,7 @@ mod code_viewer;
 mod cue_pool;
 mod dialogs;
 mod panels;
+mod search;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -19,7 +20,8 @@ use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::file_tree::FileTree;
 use crate::git;
-use crate::settings::{self, Settings};
+use crate::settings::{self, Settings, SourceKind};
+use crate::sources::{self, SourceItem};
 
 /// Try to load a font from the system by name. Returns (bytes, ttc_index).
 fn load_system_font(name: &str) -> Option<(Vec<u8>, u32)> {
@@ -192,6 +194,23 @@ pub struct DirigentApp {
 
     // Status bar message (auto-dismisses after a few seconds)
     status_message: Option<(String, Instant)>,
+
+    // Source integration
+    source_pending: Arc<Mutex<Vec<SourceItem>>>,
+    last_source_poll: HashMap<String, Instant>,
+    pub(super) source_filter: Option<String>,
+
+    // Search in file (Cmd+F)
+    search_in_file_query: String,
+    search_in_file_active: bool,
+    search_in_file_matches: Vec<usize>,
+    search_in_file_current: Option<usize>,
+
+    // Search in files (Cmd+Shift+F)
+    search_in_files_query: String,
+    search_in_files_active: bool,
+    search_in_files_results: Vec<search::SearchResult>,
+    search_in_files_searching: bool,
 }
 
 fn start_fs_watcher(
@@ -282,6 +301,17 @@ impl DirigentApp {
             last_fs_rescan: Instant::now(),
             egui_ctx,
             status_message: None,
+            source_pending: Arc::new(Mutex::new(Vec::new())),
+            last_source_poll: HashMap::new(),
+            source_filter: None,
+            search_in_file_query: String::new(),
+            search_in_file_active: false,
+            search_in_file_matches: Vec::new(),
+            search_in_file_current: None,
+            search_in_files_query: String::new(),
+            search_in_files_active: false,
+            search_in_files_results: Vec::new(),
+            search_in_files_searching: false,
         }
     }
 
@@ -620,6 +650,108 @@ impl DirigentApp {
         }
     }
 
+    // -- Source polling --
+
+    fn poll_sources(&mut self) {
+        for source in &self.settings.sources {
+            if !source.enabled || source.poll_interval_secs == 0 {
+                continue;
+            }
+            let interval = std::time::Duration::from_secs(source.poll_interval_secs);
+            let should_poll = self
+                .last_source_poll
+                .get(&source.name)
+                .map_or(true, |last| last.elapsed() >= interval);
+
+            if should_poll {
+                self.last_source_poll
+                    .insert(source.name.clone(), Instant::now());
+                self.trigger_source_fetch_config(source.clone());
+            }
+        }
+    }
+
+    fn trigger_source_fetch_config(&self, source: settings::SourceConfig) {
+        let project_root = self.project_root.clone();
+        let pending = Arc::clone(&self.source_pending);
+
+        std::thread::spawn(move || {
+            let items = match source.kind {
+                SourceKind::GitHubIssues => {
+                    let label_filter = if source.filter.is_empty() {
+                        None
+                    } else {
+                        Some(source.filter.as_str())
+                    };
+                    sources::fetch_github_issues(
+                        &project_root,
+                        label_filter,
+                        None,
+                        &source.label,
+                    )
+                }
+                SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
+                    if source.command.is_empty() {
+                        Vec::new()
+                    } else {
+                        sources::fetch_custom_command(
+                            &project_root,
+                            &source.command,
+                            &source.label,
+                        )
+                    }
+                }
+            };
+            if let Ok(mut pending) = pending.lock() {
+                pending.extend(items);
+            }
+        });
+    }
+
+    /// Trigger a manual fetch for a source by its index in settings.
+    pub(super) fn trigger_source_fetch(&mut self, idx: usize) {
+        if let Some(source) = self.settings.sources.get(idx) {
+            self.last_source_poll
+                .insert(source.name.clone(), Instant::now());
+            self.trigger_source_fetch_config(source.clone());
+            self.set_status_message(format!("Fetching from \"{}\"...", source.name));
+        }
+    }
+
+    fn process_source_results(&mut self) {
+        let items: Vec<SourceItem> = {
+            if let Ok(mut pending) = self.source_pending.lock() {
+                pending.drain(..).collect()
+            } else {
+                return;
+            }
+        };
+
+        if items.is_empty() {
+            return;
+        }
+
+        let mut new_count = 0;
+        for item in items {
+            match self.db.cue_exists_by_source_ref(&item.external_id) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(_) => continue,
+            }
+            if self
+                .db
+                .insert_cue_from_source(&item.text, &item.source_label, &item.external_id)
+                .is_ok()
+            {
+                new_count += 1;
+            }
+        }
+        if new_count > 0 {
+            self.reload_cues();
+            self.set_status_message(format!("{} new cue(s) from sources", new_count));
+        }
+    }
+
     // -- Theme --
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -720,6 +852,10 @@ impl eframe::App for DirigentApp {
         // Poll for Claude results
         self.process_claude_results();
 
+        // Poll external sources for new cues
+        self.poll_sources();
+        self.process_source_results();
+
         // Periodically sync running logs to/from DB (every 3s)
         if !self.running_exec_ids.is_empty() || self.show_running_log.is_some() {
             if self.last_log_flush.elapsed() >= std::time::Duration::from_secs(3) {
@@ -748,6 +884,15 @@ impl eframe::App for DirigentApp {
         } else if self.fs_changed.load(Ordering::Relaxed) {
             // Ensure we repaint to pick up filesystem changes after debounce
             ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        // Ensure periodic repaint for source polling
+        if self
+            .settings
+            .sources
+            .iter()
+            .any(|s| s.enabled && s.poll_interval_secs > 0)
+        {
+            ctx.request_repaint_after(std::time::Duration::from_secs(30));
         }
 
         // Render all panels (order matters for layout)

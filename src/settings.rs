@@ -377,6 +377,61 @@ impl ThemeChoice {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SourceKind {
+    GitHubIssues,
+    Notion,
+    Mcp,
+    Custom,
+}
+
+impl SourceKind {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            SourceKind::GitHubIssues => "GitHub Issues",
+            SourceKind::Notion => "Notion",
+            SourceKind::Mcp => "MCP",
+            SourceKind::Custom => "Custom",
+        }
+    }
+
+    pub fn all() -> &'static [SourceKind] {
+        &[
+            SourceKind::GitHubIssues,
+            SourceKind::Notion,
+            SourceKind::Mcp,
+            SourceKind::Custom,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceConfig {
+    pub name: String,
+    pub kind: SourceKind,
+    pub label: String,
+    pub poll_interval_secs: u64,
+    pub enabled: bool,
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub command: String,
+}
+
+impl Default for SourceConfig {
+    fn default() -> Self {
+        SourceConfig {
+            name: "New Source".to_string(),
+            kind: SourceKind::GitHubIssues,
+            label: "github".to_string(),
+            poll_interval_secs: 300,
+            enabled: true,
+            filter: String::new(),
+            command: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: ThemeChoice,
@@ -390,6 +445,8 @@ pub struct Settings {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    #[serde(default)]
+    pub sources: Vec<SourceConfig>,
 }
 
 fn default_true() -> bool {
@@ -414,6 +471,7 @@ impl Default for Settings {
             notify_popup: true,
             font_family: default_font_family(),
             font_size: default_font_size(),
+            sources: Vec::new(),
         }
     }
 }

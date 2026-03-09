@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use eframe::egui;
 
@@ -14,16 +14,71 @@ impl DirigentApp {
             .min_width(200.0)
             .show(ctx, |ui| {
                 ui.heading("Cues");
+
+                // Source filter dropdown
+                let unique_labels: Vec<String> = {
+                    let mut labels = BTreeSet::new();
+                    for c in &self.cues {
+                        if let Some(ref label) = c.source_label {
+                            labels.insert(label.clone());
+                        }
+                    }
+                    for s in &self.settings.sources {
+                        if s.enabled {
+                            labels.insert(s.label.clone());
+                        }
+                    }
+                    labels.into_iter().collect()
+                };
+
+                if !unique_labels.is_empty() {
+                    ui.horizontal(|ui| {
+                        let current = self.source_filter.as_deref().unwrap_or("All");
+                        egui::ComboBox::from_id_salt("source_filter")
+                            .selected_text(current)
+                            .width(ui.available_width() - 8.0)
+                            .show_ui(ui, |ui| {
+                                let is_all = self.source_filter.is_none();
+                                if ui.selectable_label(is_all, "All").clicked() {
+                                    self.source_filter = None;
+                                }
+                                for label in &unique_labels {
+                                    let count = self
+                                        .cues
+                                        .iter()
+                                        .filter(|c| {
+                                            c.source_label.as_deref() == Some(label.as_str())
+                                        })
+                                        .count();
+                                    let display = format!("{} ({})", label, count);
+                                    let selected = self.source_filter.as_deref()
+                                        == Some(label.as_str());
+                                    if ui.selectable_label(selected, &display).clicked() {
+                                        self.source_filter = Some(label.clone());
+                                    }
+                                }
+                            });
+                    });
+                }
+
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();
 
                     let cues_snapshot = self.cues.clone();
+                    let source_filter = self.source_filter.clone();
                     for &status in CueStatus::all() {
                         let section_cues: Vec<&Cue> = cues_snapshot
                             .iter()
                             .filter(|c| c.status == status)
+                            .filter(|c| {
+                                if let Some(ref filter) = source_filter {
+                                    c.source_label.as_deref() == Some(filter.as_str())
+                                } else {
+                                    true
+                                }
+                            })
                             .collect();
 
                         let header = format!("{} ({})", status.label(), section_cues.len());
@@ -243,6 +298,18 @@ impl DirigentApp {
                     }
                 }
 
+                // Source label badge
+                if let Some(ref label) = cue.source_label {
+                    ui.horizontal(|ui| {
+                        let badge_color = source_label_color(label);
+                        let badge = egui::RichText::new(label)
+                            .small()
+                            .background_color(badge_color)
+                            .color(egui::Color32::from_gray(220));
+                        ui.label(badge);
+                    });
+                }
+
                 // File:line link or "Global" label
                 if cue.file_path.is_empty() {
                     ui.label(
@@ -455,4 +522,22 @@ impl DirigentApp {
 
         ui.add_space(2.0);
     }
+}
+
+/// Pick a deterministic badge color based on the source label string.
+fn source_label_color(label: &str) -> egui::Color32 {
+    let hash = label
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let colors = [
+        egui::Color32::from_rgb(50, 90, 150),
+        egui::Color32::from_rgb(120, 65, 120),
+        egui::Color32::from_rgb(140, 85, 45),
+        egui::Color32::from_rgb(45, 115, 85),
+        egui::Color32::from_rgb(140, 50, 65),
+        egui::Color32::from_rgb(65, 110, 140),
+        egui::Color32::from_rgb(100, 100, 50),
+        egui::Color32::from_rgb(80, 60, 130),
+    ];
+    colors[(hash as usize) % colors.len()]
 }

@@ -91,6 +91,8 @@ pub struct Cue {
     pub line_number: usize,
     pub line_number_end: Option<usize>,
     pub status: CueStatus,
+    pub source_label: Option<String>,
+    pub source_ref: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +191,25 @@ impl Database {
                 "ALTER TABLE executions ADD COLUMN log TEXT;",
             );
         }
+        // Migration: add source_label and source_ref columns to cues
+        let has_source_label: bool = self
+            .conn
+            .prepare("SELECT source_label FROM cues LIMIT 0")
+            .is_ok();
+        if !has_source_label {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE cues ADD COLUMN source_label TEXT;",
+            );
+        }
+        let has_source_ref: bool = self
+            .conn
+            .prepare("SELECT source_ref FROM cues LIMIT 0")
+            .is_ok();
+        if !has_source_ref {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE cues ADD COLUMN source_ref TEXT;",
+            );
+        }
         Ok(())
     }
 
@@ -217,7 +238,7 @@ impl Database {
     pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status FROM cues WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_cue(row)?))
@@ -253,7 +274,7 @@ impl Database {
     pub fn all_cues(&self) -> Result<Vec<Cue>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status FROM cues ORDER BY id")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues ORDER BY id")?;
         let rows = stmt.query_map([], |row| row_to_cue(row))?;
         let mut cues = Vec::new();
         for row in rows {
@@ -264,7 +285,7 @@ impl Database {
 
     pub fn cues_for_file(&self, file_path: &str) -> Result<Vec<Cue>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status FROM cues WHERE file_path = ?1 ORDER BY line_number",
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE file_path = ?1 ORDER BY line_number",
         )?;
         let rows = stmt.query_map(params![file_path], |row| row_to_cue(row))?;
         let mut cues = Vec::new();
@@ -324,6 +345,45 @@ impl Database {
             Ok(None)
         }
     }
+
+    // -- Source integration --
+
+    /// Check if a cue with the given source_ref already exists (for deduplication).
+    pub fn cue_exists_by_source_ref(&self, source_ref: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cues WHERE source_ref = ?1",
+            params![source_ref],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Insert a cue from an external source (global cue with source tracking).
+    pub fn insert_cue_from_source(
+        &self,
+        text: &str,
+        source_label: &str,
+        source_ref: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, '', 0, ?2, ?3, ?4)",
+            params![text, CueStatus::Inbox.as_str(), source_label, source_ref],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get all distinct source labels from existing cues.
+    pub fn all_source_labels(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT source_label FROM cues WHERE source_label IS NOT NULL ORDER BY source_label",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut labels = Vec::new();
+        for row in rows {
+            labels.push(row?);
+        }
+        Ok(labels)
+    }
 }
 
 fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
@@ -336,6 +396,8 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         line_number: row.get::<_, i64>(3)? as usize,
         line_number_end: line_end.map(|n| n as usize),
         status: CueStatus::from_str(&status_str).unwrap_or(CueStatus::Inbox),
+        source_label: row.get(6)?,
+        source_ref: row.get(7)?,
     })
 }
 

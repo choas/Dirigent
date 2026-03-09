@@ -7,12 +7,13 @@ use super::{icon, DirigentApp, DiffReview};
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::{self, ThemeChoice};
+use crate::settings::{self, SourceConfig, SourceKind, ThemeChoice};
 
 impl DirigentApp {
     pub(super) fn render_settings_panel(&mut self, ctx: &egui::Context) {
         let mut save = false;
         let mut close = false;
+        let mut fetch_idx: Option<usize> = None;
         let fs = self.settings.font_size;
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -107,6 +108,148 @@ impl DirigentApp {
                     ui.end_row();
                 });
 
+            // Sources section
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.strong("Sources");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("+ Add Source").clicked() {
+                        self.settings.sources.push(SourceConfig::default());
+                    }
+                });
+            });
+            ui.add_space(4.0);
+
+            if self.settings.sources.is_empty() {
+                ui.label(
+                    egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Notion, MCP, or custom commands.")
+                        .italics()
+                        .color(egui::Color32::from_gray(120)),
+                );
+            }
+
+            let mut remove_idx = None;
+            let num_sources = self.settings.sources.len();
+
+            for i in 0..num_sources {
+                egui::Frame::none()
+                    .inner_margin(6.0)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                    .rounding(4.0)
+                    .show(ui, |ui| {
+                        // Header: name + enabled + delete
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.sources[i].name)
+                                    .desired_width(150.0)
+                                    .font(egui::TextStyle::Body),
+                            );
+                            ui.checkbox(&mut self.settings.sources[i].enabled, "Enabled");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .small_button(icon("\u{2715}", fs))
+                                        .on_hover_text("Delete source")
+                                        .clicked()
+                                    {
+                                        remove_idx = Some(i);
+                                    }
+                                },
+                            );
+                        });
+
+                        egui::Grid::new(format!("source_grid_{}", i))
+                            .num_columns(2)
+                            .spacing([8.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label("Kind:");
+                                egui::ComboBox::from_id_salt(format!("source_kind_{}", i))
+                                    .selected_text(self.settings.sources[i].kind.display_name())
+                                    .show_ui(ui, |ui| {
+                                        for kind in SourceKind::all() {
+                                            ui.selectable_value(
+                                                &mut self.settings.sources[i].kind,
+                                                kind.clone(),
+                                                kind.display_name(),
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+
+                                ui.label("Label:");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.settings.sources[i].label,
+                                    )
+                                    .desired_width(120.0)
+                                    .hint_text("filter tag")
+                                    .font(egui::TextStyle::Monospace),
+                                );
+                                ui.end_row();
+
+                                match self.settings.sources[i].kind {
+                                    SourceKind::GitHubIssues => {
+                                        ui.label("GH Label:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].filter,
+                                            )
+                                            .desired_width(120.0)
+                                            .hint_text("e.g. enhancement")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+                                    }
+                                    _ => {
+                                        ui.label("Command:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].command,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("shell command outputting JSON")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+                                    }
+                                }
+
+                                ui.label("Poll interval:");
+                                ui.horizontal(|ui| {
+                                    let mut secs =
+                                        self.settings.sources[i].poll_interval_secs as f64;
+                                    ui.add(
+                                        egui::DragValue::new(&mut secs)
+                                            .range(0.0..=86400.0)
+                                            .speed(10.0)
+                                            .suffix("s"),
+                                    );
+                                    self.settings.sources[i].poll_interval_secs = secs as u64;
+                                    ui.label(
+                                        egui::RichText::new("(0 = manual only)")
+                                            .small()
+                                            .color(egui::Color32::from_gray(120)),
+                                    );
+                                });
+                                ui.end_row();
+                            });
+
+                        ui.horizontal(|ui| {
+                            if ui.small_button("Fetch Now").clicked() {
+                                fetch_idx = Some(i);
+                            }
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+
+            if let Some(idx) = remove_idx {
+                self.settings.sources.remove(idx);
+            }
+
             ui.add_space(12.0);
             if ui.button("Save").clicked() {
                 save = true;
@@ -119,6 +262,9 @@ impl DirigentApp {
         if save {
             settings::save_settings(&self.project_root, &self.settings);
             self.needs_theme_apply = true;
+        }
+        if let Some(idx) = fetch_idx {
+            self.trigger_source_fetch(idx);
         }
     }
 

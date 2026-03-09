@@ -5,6 +5,7 @@ mod diff_view;
 mod file_tree;
 mod git;
 mod settings;
+mod sources;
 
 use eframe::egui;
 use std::path::PathBuf;
