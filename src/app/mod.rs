@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use eframe::egui;
 
@@ -154,6 +155,7 @@ pub struct DirigentApp {
 
     // Claude running logs (live stderr streaming)
     running_logs: HashMap<i64, Arc<Mutex<String>>>,
+    running_start_times: HashMap<i64, Instant>,
     show_running_log: Option<i64>,
 
     // About dialog
@@ -206,10 +208,24 @@ impl DirigentApp {
             editing_cue_id: None,
             editing_cue_text: String::new(),
             running_logs: HashMap::new(),
+            running_start_times: HashMap::new(),
             show_running_log: None,
             show_git_log: false,
             show_about: false,
             logo_texture: None,
+        }
+    }
+
+    fn format_elapsed(&self, cue_id: i64) -> String {
+        if let Some(start) = self.running_start_times.get(&cue_id) {
+            let secs = start.elapsed().as_secs();
+            if secs < 60 {
+                format!("{}s", secs)
+            } else {
+                format!("{}:{:02}", secs / 60, secs % 60)
+            }
+        } else {
+            String::new()
         }
     }
 
@@ -330,6 +346,7 @@ impl DirigentApp {
         // Create shared log buffer for live stderr streaming
         let log = Arc::new(Mutex::new(String::new()));
         self.running_logs.insert(cue_id, Arc::clone(&log));
+        self.running_start_times.insert(cue_id, Instant::now());
 
         let project_root = self.project_root.clone();
         let pending = Arc::clone(&self.claude_pending);
