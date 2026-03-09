@@ -4,7 +4,7 @@ use git2::{Repository, Signature, StatusOptions};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
-pub struct GitInfo {
+pub(crate) struct GitInfo {
     pub branch: String,
     pub last_commit_hash: String,
     pub last_commit_message: String,
@@ -13,7 +13,7 @@ pub struct GitInfo {
     pub deleted_count: usize,
 }
 
-pub fn read_git_info(path: &Path) -> Option<GitInfo> {
+pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
     let repo = Repository::discover(path).ok()?;
 
     let branch = {
@@ -88,7 +88,7 @@ pub fn read_git_info(path: &Path) -> Option<GitInfo> {
 }
 
 /// Returns relative paths of all files with uncommitted changes (modified, new, deleted, staged).
-pub fn get_dirty_files(path: &Path) -> HashSet<String> {
+pub(crate) fn get_dirty_files(path: &Path) -> HashSet<String> {
     let mut result = HashSet::new();
     let repo = match Repository::discover(path) {
         Ok(r) => r,
@@ -118,7 +118,7 @@ pub fn get_dirty_files(path: &Path) -> HashSet<String> {
     result
 }
 
-pub fn format_status_summary(info: &GitInfo) -> String {
+pub(crate) fn format_status_summary(info: &GitInfo) -> String {
     format!(
         "~{} +{} -{}",
         info.modified_count, info.added_count, info.deleted_count
@@ -128,7 +128,7 @@ pub fn format_status_summary(info: &GitInfo) -> String {
 // -- Commit history --
 
 #[derive(Debug, Clone)]
-pub struct CommitInfo {
+pub(crate) struct CommitInfo {
     pub full_hash: String,
     pub short_hash: String,
     pub message: String,
@@ -137,7 +137,7 @@ pub struct CommitInfo {
     pub time_ago: String,
 }
 
-pub fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
+pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
     let repo = match Repository::discover(path) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
@@ -200,7 +200,7 @@ pub fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
     commits
 }
 
-pub fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
+pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
     use std::process::Command;
     let output = Command::new("git")
         .args(["diff-tree", "--root", "-p", commit_hash])
@@ -218,7 +218,7 @@ pub fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
 
 /// Get the working-tree diff for specific files (or all files if empty).
 /// Returns the `git diff` output, or None if there are no changes.
-pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
+pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
     use std::process::Command;
 
     let mut cmd = Command::new("git");
@@ -255,7 +255,7 @@ pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
 
 /// Like parse_diff_file_paths but also strips a directory prefix if present.
 /// Use this when the diff may have been generated with paths relative to a parent dir.
-pub fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<String> {
+pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<String> {
     let dir_name = repo_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -283,7 +283,7 @@ pub fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<
 
 /// Commit only the changes described by `diff_text`, not the full working tree state.
 /// Uses `git apply --cached` so each cue commits exactly its own diff.
-pub fn commit_diff(
+pub(crate) fn commit_diff(
     repo_path: &Path,
     diff_text: &str,
     commit_message: &str,
@@ -374,7 +374,7 @@ pub fn commit_diff(
     Ok(format!("{}", oid))
 }
 
-pub fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), String> {
+pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), String> {
     use std::process::Command;
 
     if file_paths.is_empty() {
@@ -397,7 +397,7 @@ pub fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), Strin
     Ok(())
 }
 
-pub fn generate_commit_message(cue_text: &str) -> String {
+pub(crate) fn generate_commit_message(cue_text: &str) -> String {
     let summary = if cue_text.len() > 68 {
         format!("{}...", &cue_text[..65])
     } else {
@@ -413,14 +413,14 @@ pub fn generate_commit_message(cue_text: &str) -> String {
 // -- Worktree support --
 
 #[derive(Debug, Clone)]
-pub struct WorktreeInfo {
+pub(crate) struct WorktreeInfo {
     pub name: String,
     pub path: PathBuf,
     pub is_current: bool,
     pub is_locked: bool,
 }
 
-pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, String> {
+pub(crate) fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, String> {
     use std::process::Command;
 
     let output = Command::new("git")
@@ -482,7 +482,7 @@ pub fn list_worktrees(repo_path: &Path) -> Result<Vec<WorktreeInfo>, String> {
     Ok(worktrees)
 }
 
-pub fn create_worktree(repo_path: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> Result<PathBuf, String> {
     use std::process::Command;
 
     let repo = Repository::discover(repo_path).map_err(|e| e.to_string())?;
@@ -509,7 +509,7 @@ pub fn create_worktree(repo_path: &Path, name: &str) -> Result<PathBuf, String> 
     Ok(wt_path)
 }
 
-pub fn remove_worktree(repo_path: &Path, wt_path: &Path) -> Result<(), String> {
+pub(crate) fn remove_worktree(repo_path: &Path, wt_path: &Path) -> Result<(), String> {
     use std::process::Command;
 
     let output = Command::new("git")
@@ -523,4 +523,189 @@ pub fn remove_worktree(repo_path: &Path, wt_path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- format_status_summary --
+
+    #[test]
+    fn format_status_summary_basic() {
+        let info = GitInfo {
+            branch: "main".to_string(),
+            last_commit_hash: "abc1234".to_string(),
+            last_commit_message: "init".to_string(),
+            modified_count: 3,
+            added_count: 1,
+            deleted_count: 2,
+        };
+        assert_eq!(format_status_summary(&info), "~3 +1 -2");
+    }
+
+    #[test]
+    fn format_status_summary_zeros() {
+        let info = GitInfo {
+            branch: "main".to_string(),
+            last_commit_hash: String::new(),
+            last_commit_message: String::new(),
+            modified_count: 0,
+            added_count: 0,
+            deleted_count: 0,
+        };
+        assert_eq!(format_status_summary(&info), "~0 +0 -0");
+    }
+
+    // -- generate_commit_message --
+
+    #[test]
+    fn generate_commit_message_short() {
+        let msg = generate_commit_message("Fix typo");
+        assert_eq!(msg, "Dirigent: Fix typo");
+    }
+
+    #[test]
+    fn generate_commit_message_long_truncates() {
+        let long_text = "A".repeat(100);
+        let msg = generate_commit_message(&long_text);
+        // Should have truncated summary with "..." and full body
+        assert!(msg.starts_with("Dirigent: "));
+        assert!(msg.contains("..."));
+        assert!(msg.contains(&long_text));
+    }
+
+    #[test]
+    fn generate_commit_message_boundary_68() {
+        let exactly_68 = "B".repeat(68);
+        let msg = generate_commit_message(&exactly_68);
+        assert_eq!(msg, format!("Dirigent: {}", exactly_68));
+        assert!(!msg.contains("..."));
+    }
+
+    // -- parse_diff_file_paths_for_repo --
+
+    #[test]
+    fn parse_diff_file_paths_simple() {
+        let diff = "\
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,3 @@
+ fn main() {}
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,1 +1,1 @@
+-old
++new
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/myproject"), diff);
+        assert_eq!(paths, vec!["src/main.rs", "src/lib.rs"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_strips_repo_prefix() {
+        let diff = "\
+--- a/myproject/src/app.rs
++++ b/myproject/src/app.rs
+@@ -1,1 +1,1 @@
+-x
++y
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/home/user/myproject"), diff);
+        assert_eq!(paths, vec!["src/app.rs"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_no_duplicates() {
+        let diff = "\
+--- a/f.rs
++++ b/f.rs
+@@ -1,1 +1,1 @@
+-a
++b
+--- a/f.rs
++++ b/f.rs
+@@ -10,1 +10,1 @@
+-c
++d
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), diff);
+        assert_eq!(paths, vec!["f.rs"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_empty_diff() {
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), "");
+        assert!(paths.is_empty());
+    }
+
+    // -- read_git_info with a temp repo --
+
+    #[test]
+    fn read_git_info_on_temp_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create an initial commit so HEAD exists
+        let sig = Signature::now("Test", "test@test.com").unwrap();
+        let tree_id = {
+            let mut index = repo.index().unwrap();
+            let file_path = dir.path().join("hello.txt");
+            std::fs::write(&file_path, "hello").unwrap();
+            index
+                .add_path(std::path::Path::new("hello.txt"))
+                .unwrap();
+            index.write().unwrap();
+            index.write_tree().unwrap()
+        };
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[])
+            .unwrap();
+
+        let info = read_git_info(dir.path()).expect("should read git info");
+        assert!(
+            info.branch == "main" || info.branch == "master",
+            "branch should be main or master, got: {}",
+            info.branch
+        );
+        assert_eq!(info.last_commit_message, "initial commit");
+        assert_eq!(info.last_commit_hash.len(), 7);
+        assert_eq!(info.modified_count, 0);
+        assert_eq!(info.added_count, 0);
+        assert_eq!(info.deleted_count, 0);
+    }
+
+    #[test]
+    fn read_git_info_nonexistent_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_git_info(dir.path()).is_none());
+    }
+
+    #[test]
+    fn get_dirty_files_detects_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        let sig = Signature::now("Test", "test@test.com").unwrap();
+        let tree_id = {
+            let mut index = repo.index().unwrap();
+            std::fs::write(dir.path().join("tracked.txt"), "v1").unwrap();
+            index
+                .add_path(std::path::Path::new("tracked.txt"))
+                .unwrap();
+            index.write().unwrap();
+            index.write_tree().unwrap()
+        };
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        // Modify the tracked file and add an untracked file
+        std::fs::write(dir.path().join("tracked.txt"), "v2").unwrap();
+        std::fs::write(dir.path().join("new.txt"), "new").unwrap();
+
+        let dirty = get_dirty_files(dir.path());
+        assert!(dirty.contains("tracked.txt"));
+        assert!(dirty.contains("new.txt"));
+    }
 }

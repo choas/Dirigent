@@ -1,9 +1,8 @@
 use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
-pub enum ClaudeError {
+pub(crate) enum ClaudeError {
     NotFound,
     SpawnFailed(std::io::Error),
 }
@@ -18,7 +17,7 @@ impl std::fmt::Display for ClaudeError {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClaudeResponse {
+pub(crate) struct ClaudeResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
@@ -27,7 +26,7 @@ pub struct ClaudeResponse {
 }
 
 /// Build a structured prompt for Claude given a cue's context.
-pub fn build_prompt(
+pub(crate) fn build_prompt(
     cue_text: &str,
     file_path: &str,
     line_number: usize,
@@ -60,11 +59,11 @@ pub fn build_prompt(
 
 /// Invoke `claude -p <prompt> --output-format stream-json` with live progress
 /// streaming to a shared log buffer. Parses JSON events from stdout in real-time.
-pub fn invoke_claude_streaming(
+pub(crate) fn invoke_claude_streaming(
     prompt: &str,
     project_root: &Path,
     model: &str,
-    log: Arc<Mutex<String>>,
+    mut on_log: impl FnMut(&str),
 ) -> Result<ClaudeResponse, ClaudeError> {
     use std::io::{BufRead, Read};
     use std::process::Stdio;
@@ -108,7 +107,6 @@ pub fn invoke_claude_streaming(
 
     // Parse stream-json events from stdout in real-time
     let reader = std::io::BufReader::new(stdout_handle);
-    let log_clone = Arc::clone(&log);
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
 
@@ -117,10 +115,8 @@ pub fn invoke_claude_streaming(
             Ok(v) => v,
             Err(_) => {
                 // Non-JSON line, just log it
-                if let Ok(mut log) = log_clone.lock() {
-                    log.push_str(&line);
-                    log.push('\n');
-                }
+                on_log(&line);
+                on_log("\n");
                 continue;
             }
         };
@@ -148,13 +144,11 @@ pub fn invoke_claude_streaming(
                                     // Show a truncated preview of assistant text
                                     let preview: String =
                                         text.chars().take(200).collect();
-                                    if let Ok(mut log) = log_clone.lock() {
-                                        log.push_str(&preview);
-                                        if text.len() > 200 {
-                                            log.push_str("...");
-                                        }
-                                        log.push('\n');
+                                    on_log(&preview);
+                                    if text.len() > 200 {
+                                        on_log("...");
                                     }
+                                    on_log("\n");
                                 }
                             }
                             "tool_use" => {
@@ -192,12 +186,10 @@ pub fn invoke_claude_streaming(
                                 } else {
                                     String::new()
                                 };
-                                if let Ok(mut log) = log_clone.lock() {
-                                    log.push_str(&format!(
-                                        "\u{2192} {}{}\n",
-                                        name, detail
-                                    ));
-                                }
+                                on_log(&format!(
+                                    "\u{2192} {}{}\n",
+                                    name, detail
+                                ));
                             }
                             _ => {}
                         }
@@ -223,30 +215,24 @@ pub fn invoke_claude_streaming(
                     .get("num_turns")
                     .and_then(|t| t.as_u64())
                     .unwrap_or(0);
-                if let Ok(mut log) = log_clone.lock() {
-                    log.push_str(&format!(
-                        "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
-                        turns,
-                        duration as f64 / 1000.0,
-                        cost
-                    ));
-                }
+                on_log(&format!(
+                    "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
+                    turns,
+                    duration as f64 / 1000.0,
+                    cost
+                ));
             }
             "system" => {
                 if let Some(subtype) =
                     event.get("subtype").and_then(|s| s.as_str())
                 {
-                    if let Ok(mut log) = log_clone.lock() {
-                        log.push_str(&format!("[{}]\n", subtype));
-                    }
+                    on_log(&format!("[{}]\n", subtype));
                 }
             }
             _ => {
                 // Log unknown event types briefly
                 if !event_type.is_empty() {
-                    if let Ok(mut log) = log_clone.lock() {
-                        log.push_str(&format!("[{}]\n", event_type));
-                    }
+                    on_log(&format!("[{}]\n", event_type));
                 }
             }
         }
@@ -257,9 +243,7 @@ pub fn invoke_claude_streaming(
 
     // If we didn't get a result from stream events, stderr might have the error
     if final_result.is_empty() && !stderr.is_empty() {
-        if let Ok(mut log) = log.lock() {
-            log.push_str(&format!("\nError: {}\n", stderr));
-        }
+        on_log(&format!("\nError: {}\n", stderr));
     }
 
     Ok(ClaudeResponse {
@@ -271,7 +255,7 @@ pub fn invoke_claude_streaming(
 }
 
 /// Parse diff content from a Claude response.
-pub fn parse_diff_from_response(response: &str) -> Option<String> {
+pub(crate) fn parse_diff_from_response(response: &str) -> Option<String> {
     if let Some(diff) = extract_fenced_diff(response) {
         return Some(diff);
     }
@@ -450,4 +434,155 @@ fn parse_hunk_header(header: &str) -> (usize, usize, &str) {
         .unwrap_or(1);
 
     (old_start, new_start, tail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- build_prompt --
+
+    #[test]
+    fn build_prompt_global_cue() {
+        let prompt = build_prompt("Add tests", "", 0, None);
+        assert!(prompt.contains("Add tests"));
+        assert!(!prompt.contains("Focus on"));
+    }
+
+    #[test]
+    fn build_prompt_with_file_single_line() {
+        let prompt = build_prompt("Fix bug", "src/main.rs", 42, None);
+        assert!(prompt.contains("Fix bug"));
+        assert!(prompt.contains("line 42"));
+        assert!(prompt.contains("`src/main.rs`"));
+    }
+
+    #[test]
+    fn build_prompt_with_file_line_range() {
+        let prompt = build_prompt("Refactor", "lib.rs", 10, Some(20));
+        assert!(prompt.contains("lines 10-20"));
+        assert!(prompt.contains("`lib.rs`"));
+    }
+
+    // -- parse_diff_from_response --
+
+    #[test]
+    fn parse_fenced_diff() {
+        let response = "\
+Here's the fix:
+
+```diff
+--- a/foo.rs
++++ b/foo.rs
+@@ -1,3 +1,3 @@
+ line1
+-old
++new
+```
+
+Done!";
+        let diff = parse_diff_from_response(response).unwrap();
+        assert!(diff.contains("--- a/foo.rs"));
+        assert!(diff.contains("+++ b/foo.rs"));
+        assert!(diff.contains("-old"));
+        assert!(diff.contains("+new"));
+    }
+
+    #[test]
+    fn parse_inline_unified_diff() {
+        let response = "\
+--- a/foo.rs
++++ b/foo.rs
+@@ -1,2 +1,2 @@
+ keep
+-remove
++add
+";
+        let diff = parse_diff_from_response(response).unwrap();
+        assert!(diff.contains("-remove"));
+        assert!(diff.contains("+add"));
+    }
+
+    #[test]
+    fn parse_no_diff_returns_none() {
+        assert!(parse_diff_from_response("Just some text, no diff here.").is_none());
+    }
+
+    #[test]
+    fn parse_multiple_fenced_diffs() {
+        let response = "\
+```diff
+--- a/one.rs
++++ b/one.rs
+@@ -1,1 +1,1 @@
+-a
++b
+```
+
+```diff
+--- a/two.rs
++++ b/two.rs
+@@ -1,1 +1,1 @@
+-c
++d
+```";
+        let diff = parse_diff_from_response(response).unwrap();
+        assert!(diff.contains("--- a/one.rs"));
+        assert!(diff.contains("--- a/two.rs"));
+    }
+
+    // -- fix_hunk_headers --
+
+    #[test]
+    fn fix_hunk_headers_corrects_counts() {
+        let input = "\
+--- a/f.rs
++++ b/f.rs
+@@ -1,999 +1,999 @@
+ context
+-old1
+-old2
++new1
+";
+        let result = fix_hunk_headers(input);
+        // 1 context + 2 old = 3 old lines, 1 context + 1 new = 2 new lines
+        assert!(result.contains("@@ -1,3 +1,2 @@"));
+    }
+
+    #[test]
+    fn fix_hunk_headers_preserves_tail() {
+        let input = "\
+--- a/f.rs
++++ b/f.rs
+@@ -10,0 +10,0 @@ fn main()
++new_line
+";
+        let result = fix_hunk_headers(input);
+        assert!(result.contains(" fn main()"));
+    }
+
+    // -- parse_hunk_header --
+
+    #[test]
+    fn parse_hunk_header_basic() {
+        let (old, new, tail) = parse_hunk_header("@@ -10,5 +20,3 @@");
+        assert_eq!(old, 10);
+        assert_eq!(new, 20);
+        assert_eq!(tail, "");
+    }
+
+    #[test]
+    fn parse_hunk_header_with_function_context() {
+        let (old, new, tail) = parse_hunk_header("@@ -1,4 +1,4 @@ fn main()");
+        assert_eq!(old, 1);
+        assert_eq!(new, 1);
+        assert_eq!(tail, " fn main()");
+    }
+
+    #[test]
+    fn parse_hunk_header_no_comma() {
+        let (old, new, _) = parse_hunk_header("@@ -1 +1 @@");
+        assert_eq!(old, 1);
+        assert_eq!(new, 1);
+    }
 }

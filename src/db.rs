@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CueStatus {
+pub(crate) enum CueStatus {
     Inbox,
     Ready,
     Review,
@@ -55,7 +55,7 @@ impl CueStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionStatus {
+pub(crate) enum ExecutionStatus {
     Pending,
     Running,
     Completed,
@@ -84,7 +84,7 @@ impl ExecutionStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct Cue {
+pub(crate) struct Cue {
     pub id: i64,
     pub text: String,
     pub file_path: String,
@@ -96,7 +96,7 @@ pub struct Cue {
 }
 
 #[derive(Debug, Clone)]
-pub struct Execution {
+pub(crate) struct Execution {
     pub id: i64,
     pub cue_id: i64,
     pub prompt: String,
@@ -106,7 +106,7 @@ pub struct Execution {
     pub status: ExecutionStatus,
 }
 
-pub struct Database {
+pub(crate) struct Database {
     conn: Connection,
 }
 
@@ -215,6 +215,22 @@ impl Database {
 
     // -- Cue CRUD --
 
+    /// Maximum allowed length for cue text (bytes). Longer text is truncated.
+    const MAX_CUE_TEXT_LEN: usize = 100_000;
+
+    /// Truncate cue text to [`MAX_CUE_TEXT_LEN`] on a char boundary.
+    fn clamp_cue_text(text: &str) -> &str {
+        if text.len() <= Self::MAX_CUE_TEXT_LEN {
+            text
+        } else {
+            let mut end = Self::MAX_CUE_TEXT_LEN;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            &text[..end]
+        }
+    }
+
     pub fn insert_cue(
         &self,
         text: &str,
@@ -222,6 +238,7 @@ impl Database {
         line_number: usize,
         line_number_end: Option<usize>,
     ) -> Result<i64> {
+        let text = Self::clamp_cue_text(text);
         self.conn.execute(
             "INSERT INTO cues (text, file_path, line_number, line_number_end, status) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -256,6 +273,7 @@ impl Database {
     }
 
     pub fn update_cue_text(&self, id: i64, text: &str) -> Result<()> {
+        let text = Self::clamp_cue_text(text);
         self.conn.execute(
             "UPDATE cues SET text = ?1 WHERE id = ?2",
             params![text, id],
@@ -362,6 +380,7 @@ impl Database {
         source_label: &str,
         source_ref: &str,
     ) -> Result<i64> {
+        let text = Self::clamp_cue_text(text);
         self.conn.execute(
             "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, '', 0, ?2, ?3, ?4)",
             params![text, CueStatus::Inbox.as_str(), source_label, source_ref],
@@ -386,6 +405,17 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     })
 }
 
+#[cfg(test)]
+impl Database {
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()
+            .with_context(|| "opening in-memory database")?;
+        let db = Database { conn };
+        db.create_tables()?;
+        Ok(db)
+    }
+}
+
 fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
     let status_str: String = row.get(6)?;
     Ok(Execution {
@@ -397,4 +427,220 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
         log: row.get(5)?,
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Database {
+        Database::open_in_memory().expect("in-memory db")
+    }
+
+    // -- CueStatus / ExecutionStatus roundtrips --
+
+    #[test]
+    fn cue_status_roundtrip() {
+        for status in CueStatus::all() {
+            let s = status.as_str();
+            assert_eq!(CueStatus::from_str(s), Some(*status));
+        }
+    }
+
+    #[test]
+    fn cue_status_from_str_unknown_returns_none() {
+        assert_eq!(CueStatus::from_str("bogus"), None);
+    }
+
+    #[test]
+    fn execution_status_roundtrip() {
+        for status in &[
+            ExecutionStatus::Pending,
+            ExecutionStatus::Running,
+            ExecutionStatus::Completed,
+            ExecutionStatus::Failed,
+        ] {
+            assert_eq!(ExecutionStatus::from_str(status.as_str()), Some(*status));
+        }
+    }
+
+    #[test]
+    fn execution_status_from_str_unknown_returns_none() {
+        assert_eq!(ExecutionStatus::from_str("xyz"), None);
+    }
+
+    // -- Cue CRUD --
+
+    #[test]
+    fn insert_and_get_cue() {
+        let db = test_db();
+        let id = db.insert_cue("fix bug", "src/main.rs", 42, None).unwrap();
+        let cue = db.get_cue(id).unwrap().expect("cue should exist");
+        assert_eq!(cue.text, "fix bug");
+        assert_eq!(cue.file_path, "src/main.rs");
+        assert_eq!(cue.line_number, 42);
+        assert_eq!(cue.line_number_end, None);
+        assert_eq!(cue.status, CueStatus::Inbox);
+    }
+
+    #[test]
+    fn insert_cue_with_line_range() {
+        let db = test_db();
+        let id = db.insert_cue("refactor", "lib.rs", 10, Some(20)).unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.line_number, 10);
+        assert_eq!(cue.line_number_end, Some(20));
+    }
+
+    #[test]
+    fn get_nonexistent_cue_returns_none() {
+        let db = test_db();
+        assert!(db.get_cue(999).unwrap().is_none());
+    }
+
+    #[test]
+    fn update_cue_status() {
+        let db = test_db();
+        let id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        db.update_cue_status(id, CueStatus::Ready).unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.status, CueStatus::Ready);
+    }
+
+    #[test]
+    fn update_cue_text() {
+        let db = test_db();
+        let id = db.insert_cue("old", "f.rs", 1, None).unwrap();
+        db.update_cue_text(id, "new text").unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.text, "new text");
+    }
+
+    #[test]
+    fn delete_cue_removes_cue_and_executions() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        db.insert_execution(cue_id, "do something").unwrap();
+        db.delete_cue(cue_id).unwrap();
+        assert!(db.get_cue(cue_id).unwrap().is_none());
+        assert!(db.get_latest_execution(cue_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn all_cues_returns_all_ordered_by_id() {
+        let db = test_db();
+        db.insert_cue("first", "a.rs", 1, None).unwrap();
+        db.insert_cue("second", "b.rs", 2, None).unwrap();
+        db.insert_cue("third", "c.rs", 3, None).unwrap();
+        let cues = db.all_cues().unwrap();
+        assert_eq!(cues.len(), 3);
+        assert_eq!(cues[0].text, "first");
+        assert_eq!(cues[1].text, "second");
+        assert_eq!(cues[2].text, "third");
+    }
+
+    // -- Execution CRUD --
+
+    #[test]
+    fn insert_and_get_execution() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let exec_id = db.insert_execution(cue_id, "prompt text").unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.id, exec_id);
+        assert_eq!(exec.prompt, "prompt text");
+        assert_eq!(exec.status, ExecutionStatus::Pending);
+        assert!(exec.response.is_none());
+        assert!(exec.diff.is_none());
+    }
+
+    #[test]
+    fn complete_execution() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        db.complete_execution(exec_id, "response text", Some("diff content"))
+            .unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.status, ExecutionStatus::Completed);
+        assert_eq!(exec.response.as_deref(), Some("response text"));
+        assert_eq!(exec.diff.as_deref(), Some("diff content"));
+    }
+
+    #[test]
+    fn fail_execution() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        db.fail_execution(exec_id, "error msg").unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.status, ExecutionStatus::Failed);
+        assert_eq!(exec.response.as_deref(), Some("error msg"));
+    }
+
+    #[test]
+    fn update_execution_log() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        db.update_execution_log(exec_id, "log line 1\nlog line 2")
+            .unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.log.as_deref(), Some("log line 1\nlog line 2"));
+    }
+
+    #[test]
+    fn get_latest_execution_returns_most_recent() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        db.insert_execution(cue_id, "first").unwrap();
+        let second_id = db.insert_execution(cue_id, "second").unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.id, second_id);
+        assert_eq!(exec.prompt, "second");
+    }
+
+    #[test]
+    fn get_latest_execution_no_executions() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        assert!(db.get_latest_execution(cue_id).unwrap().is_none());
+    }
+
+    // -- Source integration --
+
+    #[test]
+    fn insert_cue_from_source_and_find_by_ref() {
+        let db = test_db();
+        db.insert_cue_from_source("issue title", "GitHub", "gh#42")
+            .unwrap();
+        assert!(db.cue_exists_by_source_ref("gh#42").unwrap());
+        assert!(!db.cue_exists_by_source_ref("gh#99").unwrap());
+    }
+
+    #[test]
+    fn update_cue_text_by_source_ref() {
+        let db = test_db();
+        let id = db
+            .insert_cue_from_source("old title", "GitHub", "gh#1")
+            .unwrap();
+        db.update_cue_text_by_source_ref("gh#1", "new title")
+            .unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.text, "new title");
+    }
+
+    #[test]
+    fn source_cue_has_correct_fields() {
+        let db = test_db();
+        let id = db
+            .insert_cue_from_source("body", "Notion", "notion:abc")
+            .unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.file_path, "");
+        assert_eq!(cue.line_number, 0);
+        assert_eq!(cue.source_label.as_deref(), Some("Notion"));
+        assert_eq!(cue.source_ref.as_deref(), Some("notion:abc"));
+        assert_eq!(cue.status, CueStatus::Inbox);
+    }
 }
