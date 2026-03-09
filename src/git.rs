@@ -378,7 +378,11 @@ pub fn generate_commit_message(cue_text: &str) -> String {
     } else {
         cue_text.to_string()
     };
-    format!("Dirigent: {}", summary)
+    if cue_text.len() > 68 {
+        format!("Dirigent: {}\n\n{}", summary, cue_text)
+    } else {
+        format!("Dirigent: {}", summary)
+    }
 }
 
 // -- Worktree support --
