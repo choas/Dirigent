@@ -5,7 +5,7 @@ const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     "target",
     "node_modules",
     ".DS_Store",
-    ".dirigent",
+    ".Dirigent",
     ".ralph",
     "_build",
     "deps",

@@ -419,7 +419,7 @@ impl Default for Settings {
 }
 
 pub fn load_settings(project_root: &Path) -> Settings {
-    let path = project_root.join(".dirigent").join("settings.json");
+    let path = project_root.join(".Dirigent").join("settings.json");
     match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Settings::default(),
@@ -427,7 +427,7 @@ pub fn load_settings(project_root: &Path) -> Settings {
 }
 
 pub fn save_settings(project_root: &Path, settings: &Settings) {
-    let dir = project_root.join(".dirigent");
+    let dir = project_root.join(".Dirigent");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("settings.json");
     if let Ok(json) = serde_json::to_string_pretty(settings) {

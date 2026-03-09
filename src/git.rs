@@ -238,8 +238,8 @@ pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
     use std::process::{Command, Stdio};
 
     // Strip path prefixes that don't match the working directory.
-    // Claude may generate diffs with paths like "dirigent-egui/src/foo.rs"
-    // when we're already inside "dirigent-egui/".
+    // Claude may generate diffs with paths like "Dirigent-egui/src/foo.rs"
+    // when we're already inside "Dirigent-egui/".
     let fixed_diff = fix_diff_paths(repo_path, diff_text);
 
     // Try progressively more lenient apply strategies
@@ -277,7 +277,7 @@ pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
 }
 
 /// Fix diff paths when Claude generates paths relative to a parent directory.
-/// E.g. "--- a/dirigent-egui/src/app.rs" when cwd is already "dirigent-egui/"
+/// E.g. "--- a/Dirigent-egui/src/app.rs" when cwd is already "Dirigent-egui/"
 /// becomes "--- a/src/app.rs".
 fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
     // Get the repo directory name to detect prefix issues
@@ -295,7 +295,7 @@ fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
     let mut result = String::with_capacity(diff_text.len());
     for line in diff_text.lines() {
         if line.starts_with("--- a/") || line.starts_with("+++ b/") {
-            // "--- a/dirigent-egui/src/foo.rs" -> "--- a/src/foo.rs"
+            // "--- a/Dirigent-egui/src/foo.rs" -> "--- a/src/foo.rs"
             let (prefix, rest) = line.split_at(6); // "--- a/" or "+++ b/"
             if let Some(stripped) = rest.strip_prefix(&dir_slash) {
                 result.push_str(prefix);
@@ -304,7 +304,7 @@ fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
                 result.push_str(line);
             }
         } else if line.starts_with("diff --git ") {
-            // "diff --git a/dirigent-egui/src/foo.rs b/dirigent-egui/src/foo.rs"
+            // "diff --git a/Dirigent-egui/src/foo.rs b/Dirigent-egui/src/foo.rs"
             let fixed = line
                 .replace(&format!("a/{}", dir_slash), "a/")
                 .replace(&format!("b/{}", dir_slash), "b/");
@@ -386,7 +386,7 @@ pub fn stage_and_commit(
 
     let sig = repo
         .signature()
-        .unwrap_or_else(|_| Signature::now("Dirigent", "dirigent@local").unwrap());
+        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
 
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
     let parents: Vec<&git2::Commit> = parent.iter().collect();
@@ -421,13 +421,13 @@ pub fn revert_files(repo_path: &Path, file_paths: &[String]) -> Result<(), Strin
     Ok(())
 }
 
-pub fn generate_commit_message(comment_text: &str) -> String {
-    let summary = if comment_text.len() > 68 {
-        format!("{}...", &comment_text[..65])
+pub fn generate_commit_message(cue_text: &str) -> String {
+    let summary = if cue_text.len() > 68 {
+        format!("{}...", &cue_text[..65])
     } else {
-        comment_text.to_string()
+        cue_text.to_string()
     };
-    format!("dirigent: {}", summary)
+    format!("Dirigent: {}", summary)
 }
 
 // -- Worktree support --
