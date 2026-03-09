@@ -144,6 +144,8 @@ pub struct DirigentApp {
 
     // Git info
     git_info: Option<git::GitInfo>,
+    /// Relative paths of files with uncommitted changes.
+    dirty_files: HashSet<String>,
 
     // Commit history
     commit_history: Vec<git::CommitInfo>,
@@ -246,6 +248,7 @@ impl DirigentApp {
         let file_tree = FileTree::scan(&project_root).ok();
         let cues = db.all_cues().unwrap_or_default();
         let git_info = git::read_git_info(&project_root);
+        let dirty_files = git::get_dirty_files(&project_root);
         let settings = settings::load_settings(&project_root);
         let commit_history = git::read_commit_history(&project_root, 50);
         let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
@@ -275,6 +278,7 @@ impl DirigentApp {
             claude_pending: Arc::new(Mutex::new(Vec::new())),
             diff_review: None,
             git_info,
+            dirty_files,
             commit_history,
             syntax_theme,
             settings,
@@ -358,6 +362,7 @@ impl DirigentApp {
 
     fn reload_git_info(&mut self) {
         self.git_info = git::read_git_info(&self.project_root);
+        self.dirty_files = git::get_dirty_files(&self.project_root);
     }
 
     fn reload_commit_history(&mut self) {
@@ -434,6 +439,7 @@ impl DirigentApp {
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.cues = self.db.all_cues().unwrap_or_default();
         self.git_info = git::read_git_info(&self.project_root);
+        self.dirty_files = git::get_dirty_files(&self.project_root);
         self.current_file = None;
         self.commit_history = git::read_commit_history(&self.project_root, 50);
         self.current_file_content.clear();
@@ -866,6 +872,7 @@ impl eframe::App for DirigentApp {
             self.fs_changed.store(false, Ordering::Relaxed);
             self.last_fs_rescan = Instant::now();
             self.reload_file_tree();
+            self.dirty_files = git::get_dirty_files(&self.project_root);
         }
 
         // Poll for Claude results

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use git2::{Repository, Signature, StatusOptions};
 use std::path::{Path, PathBuf};
 
@@ -83,6 +85,37 @@ pub fn read_git_info(path: &Path) -> Option<GitInfo> {
         added_count: added,
         deleted_count: deleted,
     })
+}
+
+/// Returns relative paths of all files with uncommitted changes (modified, new, deleted, staged).
+pub fn get_dirty_files(path: &Path) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let repo = match Repository::discover(path) {
+        Ok(r) => r,
+        Err(_) => return result,
+    };
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        for entry in statuses.iter() {
+            let s = entry.status();
+            if s.intersects(
+                git2::Status::WT_MODIFIED
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::WT_NEW
+                    | git2::Status::INDEX_NEW
+                    | git2::Status::WT_DELETED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::WT_RENAMED
+                    | git2::Status::INDEX_RENAMED,
+            ) {
+                if let Some(p) = entry.path() {
+                    result.insert(p.to_string());
+                }
+            }
+        }
+    }
+    result
 }
 
 pub fn format_status_summary(info: &GitInfo) -> String {
@@ -181,22 +214,6 @@ pub fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
     }
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum ApplyError {
-    SpawnFailed(std::io::Error),
-    ApplyFailed { stderr: String },
-}
-
-impl std::fmt::Display for ApplyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApplyError::SpawnFailed(e) => write!(f, "failed to spawn git apply: {e}"),
-            ApplyError::ApplyFailed { stderr } => write!(f, "git apply failed: {stderr}"),
-        }
-    }
-}
-
 /// Get the working-tree diff for specific files (or all files if empty).
 /// Returns the `git diff` output, or None if there are no changes.
 pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
@@ -234,106 +251,6 @@ pub fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
     }
 }
 
-#[allow(dead_code)]
-pub fn apply_diff(repo_path: &Path, diff_text: &str) -> Result<(), ApplyError> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    // Strip path prefixes that don't match the working directory.
-    // Claude may generate diffs with paths like "Dirigent-egui/src/foo.rs"
-    // when we're already inside "Dirigent-egui/".
-    let fixed_diff = fix_diff_paths(repo_path, diff_text);
-
-    // Try progressively more lenient apply strategies
-    let strategies: &[&[&str]] = &[
-        &["apply", "--allow-empty", "-"],
-        &["apply", "--allow-empty", "--whitespace=fix", "-"],
-        &["apply", "--allow-empty", "--whitespace=fix", "-C1", "-"],
-    ];
-
-    let mut last_err = String::new();
-    for args in strategies {
-        let mut child = Command::new("git")
-            .args(*args)
-            .current_dir(repo_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(ApplyError::SpawnFailed)?;
-
-        if let Some(ref mut stdin) = child.stdin {
-            let _ = stdin.write_all(fixed_diff.as_bytes());
-        }
-        drop(child.stdin.take());
-
-        let output = child.wait_with_output().map_err(ApplyError::SpawnFailed)?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-        last_err = String::from_utf8_lossy(&output.stderr).to_string();
-    }
-
-    Err(ApplyError::ApplyFailed { stderr: last_err })
-}
-
-/// Fix diff paths when Claude generates paths relative to a parent directory.
-/// E.g. "--- a/Dirigent-egui/src/app.rs" when cwd is already "Dirigent-egui/"
-/// becomes "--- a/src/app.rs".
-#[allow(dead_code)]
-fn fix_diff_paths(repo_path: &Path, diff_text: &str) -> String {
-    // Get the repo directory name to detect prefix issues
-    let dir_name = repo_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    if dir_name.is_empty() {
-        return diff_text.to_string();
-    }
-
-    let dir_slash = format!("{}/", dir_name);
-
-    let mut result = String::with_capacity(diff_text.len());
-    for line in diff_text.lines() {
-        if line.starts_with("--- a/") || line.starts_with("+++ b/") {
-            // "--- a/Dirigent-egui/src/foo.rs" -> "--- a/src/foo.rs"
-            let (prefix, rest) = line.split_at(6); // "--- a/" or "+++ b/"
-            if let Some(stripped) = rest.strip_prefix(&dir_slash) {
-                result.push_str(prefix);
-                result.push_str(stripped);
-            } else {
-                result.push_str(line);
-            }
-        } else if line.starts_with("diff --git ") {
-            // "diff --git a/Dirigent-egui/src/foo.rs b/Dirigent-egui/src/foo.rs"
-            let fixed = line
-                .replace(&format!("a/{}", dir_slash), "a/")
-                .replace(&format!("b/{}", dir_slash), "b/");
-            result.push_str(&fixed);
-        } else {
-            result.push_str(line);
-        }
-        result.push('\n');
-    }
-    result
-}
-
-#[allow(dead_code)]
-pub fn parse_diff_file_paths(diff_text: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for line in diff_text.lines() {
-        if let Some(rest) = line.strip_prefix("+++ b/") {
-            let path = rest.trim().to_string();
-            if !path.is_empty() && !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
-    }
-    paths
-}
-
 /// Like parse_diff_file_paths but also strips a directory prefix if present.
 /// Use this when the diff may have been generated with paths relative to a parent dir.
 pub fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<String> {
@@ -360,47 +277,6 @@ pub fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<
         }
     }
     paths
-}
-
-#[allow(dead_code)]
-pub fn stage_and_commit(
-    repo_path: &Path,
-    file_paths: &[String],
-    commit_message: &str,
-) -> Result<String, String> {
-    let repo = Repository::discover(repo_path).map_err(|e| format!("not a repo: {e}"))?;
-
-    if file_paths.is_empty() {
-        return Err("no files to stage".to_string());
-    }
-
-    let mut index = repo.index().map_err(|e| e.to_string())?;
-    for file_path in file_paths {
-        let p = Path::new(file_path);
-        let full_path = repo.workdir().unwrap_or(repo_path).join(p);
-        if full_path.exists() {
-            index.add_path(p).map_err(|e| e.to_string())?;
-        } else {
-            index.remove_path(p).map_err(|e| e.to_string())?;
-        }
-    }
-    index.write().map_err(|e| e.to_string())?;
-
-    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
-    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
-
-    let sig = repo
-        .signature()
-        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
-
-    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-
-    let oid = repo
-        .commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)
-        .map_err(|e| e.to_string())?;
-
-    Ok(format!("{}", oid))
 }
 
 /// Commit only the changes described by `diff_text`, not the full working tree state.

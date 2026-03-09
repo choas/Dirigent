@@ -18,7 +18,6 @@ impl std::fmt::Display for ClaudeError {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ClaudeResponse {
     pub stdout: String,
     pub stderr: String,
@@ -57,42 +56,6 @@ pub fn build_prompt(
             cue_text, line_ref, file_path,
         )
     }
-}
-
-/// Invoke `claude -p <prompt>` in the given project directory.
-#[allow(dead_code)]
-pub fn invoke_claude(
-    prompt: &str,
-    project_root: &Path,
-    model: &str,
-) -> Result<ClaudeResponse, ClaudeError> {
-    let which_result = Command::new("which").arg("claude").output();
-    match which_result {
-        Ok(output) if !output.status.success() => return Err(ClaudeError::NotFound),
-        Err(_) => return Err(ClaudeError::NotFound),
-        _ => {}
-    }
-
-    let mut cmd = Command::new("claude");
-    cmd.arg("-p").arg(prompt);
-    if !model.is_empty() {
-        cmd.arg("--model").arg(model);
-    }
-    let output = cmd
-        .current_dir(project_root)
-        .output()
-        .map_err(ClaudeError::SpawnFailed)?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code();
-
-    Ok(ClaudeResponse {
-        stdout,
-        stderr,
-        exit_code,
-        edited_files: Vec::new(),
-    })
 }
 
 /// Invoke `claude -p <prompt> --output-format stream-json` with live progress

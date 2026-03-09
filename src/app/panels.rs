@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
@@ -122,6 +122,8 @@ impl DirigentApp {
                                     &mut self.expanded_dirs,
                                     &self.current_file,
                                     &mut file_to_load,
+                                    &self.project_root,
+                                    &self.dirty_files,
                                 );
                             }
                             if let Some(path) = file_to_load {
