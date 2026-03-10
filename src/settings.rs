@@ -281,7 +281,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         },
         Play {
             name: "Commit changes".into(),
-            prompt: "Commit all current changes. First, check the SQLite database for cues that are in 'review' or 'done' status. Use their titles/descriptions to write a meaningful commit message summarizing what was done. Move any 'review' cues to 'done' status. Then stage all changes and create the commit.".into(),
+            prompt: "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit.".into(),
         },
     ]
 }
