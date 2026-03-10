@@ -25,8 +25,6 @@ impl std::fmt::Display for ClaudeError {
 #[derive(Debug, Clone)]
 pub(crate) struct ClaudeResponse {
     pub stdout: String,
-    pub stderr: String,
-    pub exit_code: Option<i32>,
     /// File paths that Claude edited (from Edit/Write tool_use events).
     pub edited_files: Vec<String>,
 }
@@ -277,7 +275,7 @@ pub(crate) fn invoke_claude_streaming(
     let _ = watchdog.join();
 
     // Reap the child process (works whether it exited naturally or was killed)
-    let status = child.lock().unwrap().wait().map_err(ClaudeError::SpawnFailed)?;
+    let _ = child.lock().unwrap().wait().map_err(ClaudeError::SpawnFailed)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
@@ -291,8 +289,6 @@ pub(crate) fn invoke_claude_streaming(
 
     Ok(ClaudeResponse {
         stdout: final_result,
-        stderr,
-        exit_code: status.code(),
         edited_files,
     })
 }

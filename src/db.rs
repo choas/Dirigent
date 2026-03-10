@@ -92,17 +92,23 @@ pub(crate) struct Cue {
     pub line_number_end: Option<usize>,
     pub status: CueStatus,
     pub source_label: Option<String>,
+    #[allow(dead_code)]
     pub source_ref: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Execution {
+    #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)]
     pub cue_id: i64,
+    #[allow(dead_code)]
     pub prompt: String,
+    #[allow(dead_code)]
     pub response: Option<String>,
     pub diff: Option<String>,
     pub log: Option<String>,
+    #[allow(dead_code)]
     pub status: ExecutionStatus,
 }
 
@@ -291,18 +297,6 @@ impl Database {
         self.conn
             .execute("DELETE FROM cues WHERE id = ?1", params![id])?;
         Ok(())
-    }
-
-    pub fn all_cues(&self) -> Result<Vec<Cue>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues ORDER BY id")?;
-        let rows = stmt.query_map([], |row| row_to_cue(row))?;
-        let mut cues = Vec::new();
-        for row in rows {
-            cues.push(row?);
-        }
-        Ok(cues)
     }
 
     /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
@@ -559,19 +553,6 @@ mod tests {
         db.delete_cue(cue_id).unwrap();
         assert!(db.get_cue(cue_id).unwrap().is_none());
         assert!(db.get_latest_execution(cue_id).unwrap().is_none());
-    }
-
-    #[test]
-    fn all_cues_returns_all_ordered_by_id() {
-        let db = test_db();
-        db.insert_cue("first", "a.rs", 1, None).unwrap();
-        db.insert_cue("second", "b.rs", 2, None).unwrap();
-        db.insert_cue("third", "c.rs", 3, None).unwrap();
-        let cues = db.all_cues().unwrap();
-        assert_eq!(cues.len(), 3);
-        assert_eq!(cues[0].text, "first");
-        assert_eq!(cues[1].text, "second");
-        assert_eq!(cues[2].text, "third");
     }
 
     // -- Execution CRUD --

@@ -488,13 +488,14 @@ impl DirigentApp {
             let commit_msg = git::generate_commit_message(&cue_text);
             match git::commit_diff(&self.project_root, &diff_text, &commit_msg) {
                 Ok(hash) => {
-                    eprintln!("Committed: {}", hash);
+                    let short = &hash[..7.min(hash.len())];
+                    self.set_status_message(format!("Committed: {}", short));
                     let _ = self
                         .db
                         .update_cue_status(cue_id, CueStatus::Done);
                 }
                 Err(e) => {
-                    eprintln!("Commit failed: {}", e);
+                    self.set_status_message(format!("Commit failed: {}", e));
                 }
             }
             self.reload_cues();
@@ -504,7 +505,7 @@ impl DirigentApp {
         } else if reject {
             let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, &diff_text);
             if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
-                eprintln!("Revert failed: {}", e);
+                self.set_status_message(format!("Revert failed: {}", e));
             }
             let _ = self
                 .db
@@ -529,6 +530,7 @@ impl DirigentApp {
 
         let mut open = self.show_repo_picker;
         let mut switch_to: Option<PathBuf> = None;
+        let mut error_msg: Option<String> = None;
 
         egui::Window::new("Open Repository")
             .open(&mut open)
@@ -549,10 +551,10 @@ impl DirigentApp {
                             if git2::Repository::discover(&canonical).is_ok() {
                                 switch_to = Some(canonical);
                             } else {
-                                eprintln!("Not a git repository: {}", path.display());
+                                error_msg = Some(format!("Not a git repository: {}", path.display()));
                             }
                         } else {
-                            eprintln!("Path not found: {}", path.display());
+                            error_msg = Some(format!("Path not found: {}", path.display()));
                         }
                     }
                 });
@@ -582,6 +584,9 @@ impl DirigentApp {
 
         self.show_repo_picker = open;
 
+        if let Some(msg) = error_msg {
+            self.set_status_message(msg);
+        }
         if let Some(new_root) = switch_to {
             self.show_repo_picker = false;
             self.switch_repo(new_root);
@@ -685,7 +690,7 @@ impl DirigentApp {
                     self.reload_worktrees();
                 }
                 Err(e) => {
-                    eprintln!("Failed to remove worktree: {}", e);
+                    self.set_status_message(format!("Failed to remove worktree: {}", e));
                 }
             }
         }
@@ -697,7 +702,7 @@ impl DirigentApp {
                     self.reload_worktrees();
                 }
                 Err(e) => {
-                    eprintln!("Failed to create worktree: {}", e);
+                    self.set_status_message(format!("Failed to create worktree: {}", e));
                 }
             }
         }

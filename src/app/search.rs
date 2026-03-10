@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use eframe::egui;
 
@@ -276,12 +275,10 @@ impl DirigentApp {
                 let query = self.search.in_files_query.clone();
                 let mut files = Vec::new();
                 collect_files(&tree.entries, &mut files);
-                let pending = Arc::clone(&self.search.pending_results);
+                let tx = self.search.search_result_tx.clone();
                 std::thread::spawn(move || {
                     let results = search_files_parallel(&root, &files, &query, 500);
-                    if let Ok(mut guard) = pending.lock() {
-                        *guard = Some(results);
-                    }
+                    let _ = tx.send(results);
                 });
             }
         }

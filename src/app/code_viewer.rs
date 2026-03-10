@@ -27,25 +27,7 @@ impl DirigentApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.viewer.current_file.is_none() {
-                // Ensure logo texture is loaded
-                if self.logo_texture.is_none() {
-                    let png_bytes = include_bytes!("../../assets/logo.png");
-                    let img = image::load_from_memory_with_format(
-                        png_bytes,
-                        image::ImageFormat::Png,
-                    )
-                    .expect("failed to decode logo.png")
-                    .into_rgba8();
-                    let size = [img.width() as usize, img.height() as usize];
-                    let pixels = img.into_raw();
-                    let color_image =
-                        egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                    self.logo_texture = Some(ctx.load_texture(
-                        "dirigent_logo",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                }
+                self.ensure_logo_texture(ctx);
 
                 ui.vertical_centered(|ui| {
                     let available = ui.available_height();

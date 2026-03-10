@@ -34,21 +34,7 @@ impl DirigentApp {
             return;
         }
 
-        // Lazily load the logo texture
-        if self.logo_texture.is_none() {
-            let png_bytes = include_bytes!("../../assets/logo.png");
-            let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
-                .expect("failed to decode logo.png")
-                .into_rgba8();
-            let size = [img.width() as usize, img.height() as usize];
-            let pixels = img.into_raw();
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-            self.logo_texture = Some(ctx.load_texture(
-                "dirigent_logo",
-                color_image,
-                egui::TextureOptions::LINEAR,
-            ));
-        }
+        self.ensure_logo_texture(ctx);
 
         let mut open = self.show_about;
         egui::Window::new("About Dirigent")
@@ -110,12 +96,12 @@ impl DirigentApp {
                 } else {
                     available - 24.0 // leave room for the git log header
                 };
-                egui::ScrollArea::vertical()
+                let file_to_load = egui::ScrollArea::vertical()
                     .id_salt("file_tree_scroll")
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
-                        if let Some(tree) = self.file_tree.clone() {
-                            let mut file_to_load = None;
+                        let mut file_to_load = None;
+                        if let Some(ref tree) = self.file_tree {
                             for entry in &tree.entries {
                                 Self::render_file_entry(
                                     ui,
@@ -127,11 +113,12 @@ impl DirigentApp {
                                     &self.git.dirty_files,
                                 );
                             }
-                            if let Some(path) = file_to_load {
-                                self.load_file(path);
-                            }
                         }
-                    });
+                        file_to_load
+                    }).inner;
+                if let Some(path) = file_to_load {
+                    self.load_file(path);
+                }
 
                 ui.separator();
 

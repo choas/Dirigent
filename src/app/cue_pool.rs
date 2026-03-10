@@ -306,15 +306,18 @@ impl DirigentApp {
                     for (id, action) in actions {
                         match action {
                             CueAction::StartEdit(text) => {
-                                self.editing_cue_id = Some(id);
-                                self.editing_cue_text = text;
+                                self.editing_cue = Some(super::EditingCue {
+                                    id,
+                                    text,
+                                    focus_requested: false,
+                                });
                             }
                             CueAction::CancelEdit => {
-                                self.editing_cue_id = None;
+                                self.editing_cue = None;
                             }
                             CueAction::SaveEdit(new_text) => {
                                 let _ = self.db.update_cue_text(id, &new_text);
-                                self.editing_cue_id = None;
+                                self.editing_cue = None;
                             }
                             CueAction::MoveTo(new_status) => {
                                 // Cancel the running task if moving away from Ready
@@ -390,14 +393,15 @@ impl DirigentApp {
                                             &commit_msg,
                                         ) {
                                             Ok(hash) => {
-                                                eprintln!("Committed: {}", hash);
+                                                let short = &hash[..7.min(hash.len())];
+                                                self.set_status_message(format!("Committed: {}", short));
                                                 let _ = self.db.update_cue_status(
                                                     cue_id,
                                                     CueStatus::Done,
                                                 );
                                             }
                                             Err(e) => {
-                                                eprintln!("Commit failed: {}", e);
+                                                self.set_status_message(format!("Commit failed: {}", e));
                                             }
                                         }
                                     }
@@ -415,7 +419,7 @@ impl DirigentApp {
                                             &self.project_root,
                                             &file_paths,
                                         ) {
-                                            eprintln!("Revert failed: {}", e);
+                                            self.set_status_message(format!("Revert failed: {}", e));
                                         }
                                     }
                                 }
@@ -466,22 +470,26 @@ impl DirigentApp {
             .rounding(4.0)
             .show(ui, |ui| {
                 // Cue text - inline editable for Inbox
-                if self.editing_cue_id == Some(cue.id) {
-                    let response = ui.text_edit_multiline(&mut self.editing_cue_text);
+                let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
+                if is_editing {
+                    let editing = self.editing_cue.as_mut().unwrap();
+                    let response = ui.text_edit_multiline(&mut editing.text);
                     ui.horizontal(|ui| {
                         if ui.small_button(icon("\u{2713} Save", fs)).clicked() {
                             actions.push((
                                 cue.id,
-                                CueAction::SaveEdit(self.editing_cue_text.clone()),
+                                CueAction::SaveEdit(self.editing_cue.as_ref().unwrap().text.clone()),
                             ));
                         }
                         if ui.small_button(icon("\u{2715} Cancel", fs)).clicked() {
                             actions.push((cue.id, CueAction::CancelEdit));
                         }
                     });
-                    // Request focus on first frame
-                    if response.gained_focus() || !response.has_focus() {
+                    // Request focus only once when editing starts
+                    let editing = self.editing_cue.as_mut().unwrap();
+                    if !editing.focus_requested {
                         response.request_focus();
+                        editing.focus_requested = true;
                     }
                 } else {
                     let display_text = if cue.text.len() > 60 {
@@ -491,7 +499,7 @@ impl DirigentApp {
                     };
                     let label_response = ui.label(&display_text);
                     // Double-click label to edit (Inbox only)
-                    if status == CueStatus::Inbox && label_response.double_clicked() {
+                    if status == CueStatus::Inbox && !is_editing && label_response.double_clicked() {
                         actions.push((
                             cue.id,
                             CueAction::StartEdit(cue.text.clone()),
@@ -550,7 +558,7 @@ impl DirigentApp {
                 ui.horizontal(|ui| {
                     match cue.status {
                         CueStatus::Inbox => {
-                            if self.editing_cue_id != Some(cue.id) {
+                            if !is_editing {
                                 if ui
                                     .small_button("Edit")
                                     .on_hover_text("Edit cue")

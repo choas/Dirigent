@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -160,7 +160,16 @@ pub(super) struct SearchState {
     pub(super) in_files_results: Vec<search::SearchResult>,
     pub(super) in_files_searching: bool,
     #[allow(private_interfaces)]
-    pub(super) pending_results: Arc<Mutex<Option<Vec<search::SearchResult>>>>,
+    pub(super) search_result_tx: mpsc::Sender<Vec<search::SearchResult>>,
+    #[allow(private_interfaces)]
+    pub(super) search_result_rx: mpsc::Receiver<Vec<search::SearchResult>>,
+}
+
+/// Inline cue editing state (combined to prevent desync).
+pub(super) struct EditingCue {
+    pub(super) id: i64,
+    pub(super) text: String,
+    pub(super) focus_requested: bool,
 }
 
 /// State for Claude execution and live log streaming.
@@ -205,7 +214,8 @@ pub struct DirigentApp {
     // File tree
     file_tree: Option<FileTree>,
     expanded_dirs: HashSet<PathBuf>,
-    file_tree_pending: Arc<Mutex<Option<FileTree>>>,
+    file_tree_tx: mpsc::Sender<FileTree>,
+    file_tree_rx: mpsc::Receiver<FileTree>,
     file_tree_scanning: bool,
 
     // Code viewer
@@ -237,8 +247,7 @@ pub struct DirigentApp {
     repo_path_input: String,
 
     // Inline cue editing
-    editing_cue_id: Option<i64>,
-    editing_cue_text: String,
+    pub(super) editing_cue: Option<EditingCue>,
 
     // About dialog
     show_about: bool,
@@ -307,6 +316,8 @@ impl DirigentApp {
         let (claude_tx, claude_rx) = mpsc::channel();
         let (source_tx, source_rx) = mpsc::channel();
         let (log_tx, log_rx) = mpsc::channel();
+        let (file_tree_tx, file_tree_rx) = mpsc::channel();
+        let (search_result_tx, search_result_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -319,7 +330,8 @@ impl DirigentApp {
             db,
             file_tree,
             expanded_dirs: HashSet::new(),
-            file_tree_pending: Arc::new(Mutex::new(None)),
+            file_tree_tx,
+            file_tree_rx,
             file_tree_scanning: false,
             viewer: CodeViewerState {
                 current_file: None,
@@ -360,8 +372,7 @@ impl DirigentApp {
             global_prompt_input: String::new(),
             show_repo_picker: false,
             repo_path_input: String::new(),
-            editing_cue_id: None,
-            editing_cue_text: String::new(),
+            editing_cue: None,
             show_about: false,
             logo_texture: None,
             _fs_watcher,
@@ -384,7 +395,8 @@ impl DirigentApp {
                 in_files_active: false,
                 in_files_results: Vec::new(),
                 in_files_searching: false,
-                pending_results: Arc::new(Mutex::new(None)),
+                search_result_tx,
+                search_result_rx,
             },
             task_handles: Vec::new(),
         }
@@ -404,6 +416,24 @@ impl DirigentApp {
                 preview
             })
             .unwrap_or_else(|| format!("Cue #{}", cue_id))
+    }
+
+    /// Ensure the logo texture is loaded (lazy, called once).
+    fn ensure_logo_texture(&mut self, ctx: &egui::Context) {
+        if self.logo_texture.is_none() {
+            let png_bytes = include_bytes!("../../assets/logo.png");
+            let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
+                .expect("failed to decode logo.png")
+                .into_rgba8();
+            let size = [img.width() as usize, img.height() as usize];
+            let pixels = img.into_raw();
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+            self.logo_texture = Some(ctx.load_texture(
+                "dirigent_logo",
+                color_image,
+                egui::TextureOptions::LINEAR,
+            ));
+        }
     }
 
     fn set_status_message(&mut self, msg: String) {
@@ -429,12 +459,10 @@ impl DirigentApp {
         }
         self.file_tree_scanning = true;
         let root = self.project_root.clone();
-        let pending = Arc::clone(&self.file_tree_pending);
+        let tx = self.file_tree_tx.clone();
         std::thread::spawn(move || {
             if let Ok(tree) = FileTree::scan(&root) {
-                if let Ok(mut guard) = pending.lock() {
-                    *guard = Some(tree);
-                }
+                let _ = tx.send(tree);
             }
         });
     }
@@ -524,19 +552,19 @@ impl DirigentApp {
 
         // Validate that the path is an existing directory
         if !new_root.is_dir() {
-            eprintln!("Cannot switch repo: path is not a directory: {}", new_root.display());
+            self.set_status_message(format!("Cannot switch repo: not a directory: {}", new_root.display()));
             return;
         }
         // Validate that it's inside a git repository
         if git2::Repository::discover(&new_root).is_err() {
-            eprintln!("Cannot switch repo: not a git repository: {}", new_root.display());
+            self.set_status_message(format!("Cannot switch repo: not a git repository: {}", new_root.display()));
             return;
         }
 
         self.db = match Database::open(&new_root) {
             Ok(db) => db,
             Err(e) => {
-                eprintln!("Failed to open database at {}: {}", new_root.display(), e);
+                self.set_status_message(format!("Failed to open database: {}", e));
                 return;
             }
         };
@@ -1074,19 +1102,15 @@ impl eframe::App for DirigentApp {
         self.reap_tasks();
 
         // Check for completed background file tree scan
-        if let Ok(mut guard) = self.file_tree_pending.lock() {
-            if let Some(tree) = guard.take() {
-                self.file_tree = Some(tree);
-                self.file_tree_scanning = false;
-            }
+        if let Ok(tree) = self.file_tree_rx.try_recv() {
+            self.file_tree = Some(tree);
+            self.file_tree_scanning = false;
         }
 
         // Check for completed background search
-        if let Ok(mut guard) = self.search.pending_results.lock() {
-            if let Some(results) = guard.take() {
-                self.search.in_files_results = results;
-                self.search.in_files_searching = false;
-            }
+        if let Ok(results) = self.search.search_result_rx.try_recv() {
+            self.search.in_files_results = results;
+            self.search.in_files_searching = false;
         }
 
         // Poll for Claude results
@@ -1182,17 +1206,22 @@ fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
                 let notif: *mut Object = msg_send![notif_cls, alloc];
                 let notif: *mut Object = msg_send![notif, init];
 
-                let title_c = std::ffi::CString::new(title).unwrap();
+                // Strip null bytes to prevent CString::new panics
+                let title_safe = title.replace('\0', "");
+                let subtitle_safe = subtitle.replace('\0', "");
+                let body_safe = body.replace('\0', "");
+
+                let title_c = std::ffi::CString::new(title_safe).unwrap();
                 let title_ns: *mut Object =
                     msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
                 let _: () = msg_send![notif, setTitle: title_ns];
 
-                let sub_c = std::ffi::CString::new(subtitle).unwrap();
+                let sub_c = std::ffi::CString::new(subtitle_safe).unwrap();
                 let sub_ns: *mut Object =
                     msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
                 let _: () = msg_send![notif, setSubtitle: sub_ns];
 
-                let body_c = std::ffi::CString::new(body).unwrap();
+                let body_c = std::ffi::CString::new(body_safe).unwrap();
                 let body_ns: *mut Object =
                     msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
                 let _: () = msg_send![notif, setInformativeText: body_ns];

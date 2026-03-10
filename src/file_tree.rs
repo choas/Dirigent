@@ -21,6 +21,7 @@ pub(crate) struct FileEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileTree {
+    #[allow(dead_code)]
     pub root: PathBuf,
     pub entries: Vec<FileEntry>,
 }

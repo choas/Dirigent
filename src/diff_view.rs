@@ -15,6 +15,7 @@ pub(crate) struct ParsedDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileDiff {
+    #[allow(dead_code)]
     pub old_path: String,
     pub new_path: String,
     pub hunks: Vec<DiffHunk>,
@@ -22,9 +23,12 @@ pub(crate) struct FileDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiffHunk {
+    #[allow(dead_code)]
     pub old_start: usize,
+    #[allow(dead_code)]
     pub old_count: usize,
     pub new_start: usize,
+    #[allow(dead_code)]
     pub new_count: usize,
     pub lines: Vec<DiffLine>,
 }
@@ -411,4 +415,148 @@ fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<(Option<DiffLine>, Option
     }
 
     pairs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_diff() {
+        let parsed = parse_unified_diff("");
+        assert!(parsed.files.is_empty());
+    }
+
+    #[test]
+    fn parse_single_file_diff() {
+        let diff = "\
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,4 @@
+ fn main() {
+-    println!(\"old\");
++    println!(\"new\");
++    println!(\"extra\");
+ }
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].new_path, "src/main.rs");
+        assert_eq!(parsed.files[0].hunks.len(), 1);
+        let hunk = &parsed.files[0].hunks[0];
+        assert_eq!(hunk.lines.len(), 5);
+        assert_eq!(
+            hunk.lines.iter().filter(|l| l.kind == DiffLineKind::Addition).count(),
+            2
+        );
+        assert_eq!(
+            hunk.lines.iter().filter(|l| l.kind == DiffLineKind::Deletion).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn parse_multi_file_diff() {
+        let diff = "\
+--- a/a.rs
++++ b/a.rs
+@@ -1,1 +1,1 @@
+-old_a
++new_a
+--- a/b.rs
++++ b/b.rs
+@@ -1,1 +1,1 @@
+-old_b
++new_b
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 2);
+        assert_eq!(parsed.files[0].new_path, "a.rs");
+        assert_eq!(parsed.files[1].new_path, "b.rs");
+    }
+
+    #[test]
+    fn parse_multi_hunk_diff() {
+        let diff = "\
+--- a/f.rs
++++ b/f.rs
+@@ -1,3 +1,3 @@
+ line1
+-old
++new
+@@ -10,2 +10,2 @@
+-ten_old
++ten_new
+ eleven
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].hunks.len(), 2);
+    }
+
+    #[test]
+    fn line_numbers_assigned_correctly() {
+        let diff = "\
+--- a/f.rs
++++ b/f.rs
+@@ -5,3 +5,4 @@
+ context
+-removed
++added1
++added2
+ context2
+";
+        let parsed = parse_unified_diff(diff);
+        let lines = &parsed.files[0].hunks[0].lines;
+        // Context at old:5, new:5
+        assert_eq!(lines[0].old_lineno, Some(5));
+        assert_eq!(lines[0].new_lineno, Some(5));
+        // Deletion at old:6
+        assert_eq!(lines[1].old_lineno, Some(6));
+        assert_eq!(lines[1].new_lineno, None);
+        // Addition at new:6
+        assert_eq!(lines[2].old_lineno, None);
+        assert_eq!(lines[2].new_lineno, Some(6));
+        // Addition at new:7
+        assert_eq!(lines[3].old_lineno, None);
+        assert_eq!(lines[3].new_lineno, Some(7));
+    }
+
+    #[test]
+    fn build_side_by_side_pairs_context_lines() {
+        let lines = vec![
+            DiffLine { kind: DiffLineKind::Context, old_lineno: Some(1), new_lineno: Some(1), content: "same".into() },
+        ];
+        let pairs = build_side_by_side_pairs(&lines);
+        assert_eq!(pairs.len(), 1);
+        assert!(pairs[0].0.is_some());
+        assert!(pairs[0].1.is_some());
+    }
+
+    #[test]
+    fn build_side_by_side_pairs_deletion_addition() {
+        let lines = vec![
+            DiffLine { kind: DiffLineKind::Deletion, old_lineno: Some(1), new_lineno: None, content: "old".into() },
+            DiffLine { kind: DiffLineKind::Addition, old_lineno: None, new_lineno: Some(1), content: "new".into() },
+        ];
+        let pairs = build_side_by_side_pairs(&lines);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0.as_ref().unwrap().content, "old");
+        assert_eq!(pairs[0].1.as_ref().unwrap().content, "new");
+    }
+
+    #[test]
+    fn build_side_by_side_pairs_unbalanced() {
+        let lines = vec![
+            DiffLine { kind: DiffLineKind::Deletion, old_lineno: Some(1), new_lineno: None, content: "a".into() },
+            DiffLine { kind: DiffLineKind::Deletion, old_lineno: Some(2), new_lineno: None, content: "b".into() },
+            DiffLine { kind: DiffLineKind::Addition, old_lineno: None, new_lineno: Some(1), content: "c".into() },
+        ];
+        let pairs = build_side_by_side_pairs(&lines);
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs[0].0.is_some());
+        assert!(pairs[0].1.is_some());
+        assert!(pairs[1].0.is_some());
+        assert!(pairs[1].1.is_none());
+    }
 }
