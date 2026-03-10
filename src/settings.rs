@@ -279,6 +279,10 @@ pub(crate) fn default_playbook() -> Vec<Play> {
             name: "Fix all warnings".into(),
             prompt: "Run `cargo check`, collect all warnings, and fix every one of them.".into(),
         },
+        Play {
+            name: "Commit changes".into(),
+            prompt: "Commit all current changes. First, check the SQLite database for cues that are in 'review' or 'done' status. Use their titles/descriptions to write a meaningful commit message summarizing what was done. Move any 'review' cues to 'done' status. Then stage all changes and create the commit.".into(),
+        },
     ]
 }
 
