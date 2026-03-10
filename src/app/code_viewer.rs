@@ -126,8 +126,6 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            let is_wrapping = matches!(ext, "md" | "markdown" | "mdx" | "txt" | "text" | "rst" | "adoc");
-
             let sel_start = self.viewer.selection_start;
             let sel_end = self.viewer.selection_end;
             let mut new_sel_start = sel_start;
@@ -184,16 +182,13 @@ impl DirigentApp {
                                     .color(egui::Color32::from_gray(100)),
                             );
 
-                            let mut layout_job = egui_extras::syntax_highlighting::highlight(
+                            let layout_job = egui_extras::syntax_highlighting::highlight(
                                 ui.ctx(),
                                 ui.style(),
                                 &self.viewer.syntax_theme,
                                 line_text,
                                 ext,
                             );
-                            if is_wrapping {
-                                layout_job.wrap.max_width = ui.available_width();
-                            }
                             let response = ui.label(layout_job);
 
                             let rect = response.rect.union(ui.available_rect_before_wrap());
@@ -291,16 +286,7 @@ impl DirigentApp {
                 };
             }
 
-            if is_wrapping {
-                // Markdown/text: word-wrap long lines, no row virtualization
-                let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
-                if let Some(offset) = scroll_offset {
-                    scroll_area = scroll_area.vertical_scroll_offset(offset);
-                }
-                scroll_area.show(ui, |ui| {
-                    render_lines!(ui, 0..num_lines);
-                });
-            } else {
+            {
                 // Source code: horizontal scrollbar, virtualized rows
                 let mut scroll_area = egui::ScrollArea::both().auto_shrink([false; 2]);
                 if let Some(offset) = scroll_offset {
