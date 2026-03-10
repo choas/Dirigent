@@ -72,6 +72,7 @@ impl DirigentApp {
             &cue.file_path,
             cue.line_number,
             cue.line_number_end,
+            &cue.attached_images,
         );
 
         // Insert execution record
@@ -160,6 +161,7 @@ impl DirigentApp {
             cue.line_number_end,
             &previous_diff,
             reply,
+            &cue.attached_images,
         );
 
         // Move cue to Ready (running)

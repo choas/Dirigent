@@ -256,6 +256,31 @@ impl DirigentApp {
                                     sel_end.unwrap_or(0)
                                 )
                             };
+                            // Show attached images for cue input
+                            if !self.viewer.cue_images.is_empty() {
+                                $ui.horizontal_wrapped(|ui| {
+                                    ui.label("     ");
+                                    ui.label(
+                                        egui::RichText::new("Images:")
+                                            .small()
+                                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                                    );
+                                    let mut remove_idx = None;
+                                    for (i, path) in self.viewer.cue_images.iter().enumerate() {
+                                        let name = path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| path.to_string_lossy().to_string());
+                                        ui.label(egui::RichText::new(&name).monospace().small());
+                                        if ui.small_button("\u{2715}").clicked() {
+                                            remove_idx = Some(i);
+                                        }
+                                    }
+                                    if let Some(i) = remove_idx {
+                                        self.viewer.cue_images.remove(i);
+                                    }
+                                });
+                            }
                             $ui.horizontal(|ui| {
                                 ui.label("     ");
                                 ui.label(
@@ -263,6 +288,18 @@ impl DirigentApp {
                                         .monospace()
                                         .color(egui::Color32::from_rgb(100, 200, 100)),
                                 );
+                                if ui
+                                    .button("\u{1F4CE}")
+                                    .on_hover_text("Attach images")
+                                    .clicked()
+                                {
+                                    if let Some(paths) = rfd::FileDialog::new()
+                                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                                        .pick_files()
+                                    {
+                                        self.viewer.cue_images.extend(paths);
+                                    }
+                                }
                                 let input_response = ui.add(
                                     egui::TextEdit::singleline(&mut self.viewer.cue_input)
                                         .desired_width(ui.available_width() - 80.0)
@@ -306,6 +343,7 @@ impl DirigentApp {
                 self.viewer.selection_start = new_sel_start;
                 self.viewer.selection_end = new_sel_end;
                 self.viewer.cue_input.clear();
+                self.viewer.cue_images.clear();
             }
 
             if submit_cue && !self.viewer.cue_input.is_empty() {
@@ -313,7 +351,13 @@ impl DirigentApp {
                     let end = self.viewer.selection_end.unwrap_or(start);
                     let line_end = if end > start { Some(end) } else { None };
                     let text = self.viewer.cue_input.clone();
-                    let _ = self.db.insert_cue(&text, &rel_path, start, line_end);
+                    let images: Vec<String> = self
+                        .viewer
+                        .cue_images
+                        .drain(..)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    let _ = self.db.insert_cue(&text, &rel_path, start, line_end, &images);
                     self.viewer.cue_input.clear();
                     self.reload_cues();
                 }

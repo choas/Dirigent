@@ -82,6 +82,7 @@ pub(super) struct CodeViewerState {
     /// End of the selected line range (1-based, always >= selection_start).
     pub(super) selection_end: Option<usize>,
     pub(super) cue_input: String,
+    pub(super) cue_images: Vec<PathBuf>,
     pub(super) scroll_to_line: Option<usize>,
     pub(super) syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
 }
@@ -160,6 +161,7 @@ pub struct DirigentApp {
 
     // Global prompt
     global_prompt_input: String,
+    global_prompt_images: Vec<PathBuf>,
 
     // Repo picker
     pub show_repo_picker: bool,
@@ -258,6 +260,7 @@ impl DirigentApp {
                 selection_start: None,
                 selection_end: None,
                 cue_input: String::new(),
+                cue_images: Vec::new(),
                 scroll_to_line: None,
                 syntax_theme,
             },
@@ -279,6 +282,7 @@ impl DirigentApp {
             needs_theme_apply: true,
             playbook_expanded: false,
             global_prompt_input: String::new(),
+            global_prompt_images: Vec::new(),
             show_repo_picker: false,
             repo_path_input: String::new(),
             editing_cue: None,
@@ -402,6 +406,7 @@ impl DirigentApp {
             self.viewer.selection_start = None;
             self.viewer.selection_end = None;
             self.viewer.cue_input.clear();
+            self.viewer.cue_images.clear();
             // Reset in-file search state for the new file
             self.search.in_file_active = false;
             self.search.in_file_query.clear();

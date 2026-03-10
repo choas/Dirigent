@@ -99,6 +99,8 @@ pub(crate) struct Cue {
     pub source_label: Option<String>,
     #[allow(dead_code)]
     pub source_ref: Option<String>,
+    /// Attached image file paths (stored as JSON array in DB).
+    pub attached_images: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -221,6 +223,16 @@ impl Database {
                 "ALTER TABLE cues ADD COLUMN source_ref TEXT;",
             );
         }
+        // Migration: add attached_images column to cues
+        let has_attached_images: bool = self
+            .conn
+            .prepare("SELECT attached_images FROM cues LIMIT 0")
+            .is_ok();
+        if !has_attached_images {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE cues ADD COLUMN attached_images TEXT;",
+            );
+        }
         // Index on status for faster filtered queries
         let _ = self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);",
@@ -252,16 +264,23 @@ impl Database {
         file_path: &str,
         line_number: usize,
         line_number_end: Option<usize>,
+        images: &[String],
     ) -> Result<i64> {
         let text = Self::clamp_cue_text(text);
+        let images_json = if images.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(images).unwrap_or_default())
+        };
         self.conn.execute(
-            "INSERT INTO cues (text, file_path, line_number, line_number_end, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO cues (text, file_path, line_number, line_number_end, status, attached_images) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 text,
                 file_path,
                 line_number as i64,
                 line_number_end.map(|n| n as i64),
-                CueStatus::Inbox.as_str()
+                CueStatus::Inbox.as_str(),
+                images_json,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -271,7 +290,7 @@ impl Database {
     pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_cue(row)?))
@@ -309,14 +328,14 @@ impl Database {
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
         let mut cues = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE status != 'archived' ORDER BY id",
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE status != 'archived' ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| row_to_cue(row))?;
         for row in rows {
             cues.push(row?);
         }
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![archived_limit as i64], |row| row_to_cue(row))?;
         for row in rows {
@@ -428,6 +447,10 @@ impl Database {
 fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(5)?;
     let line_end: Option<i64> = row.get(4)?;
+    let images_json: Option<String> = row.get(8)?;
+    let attached_images: Vec<String> = images_json
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
     Ok(Cue {
         id: row.get(0)?,
         text: row.get(1)?,
@@ -437,6 +460,7 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         status: CueStatus::from_str(&status_str).unwrap_or(CueStatus::Inbox),
         source_label: row.get(6)?,
         source_ref: row.get(7)?,
+        attached_images,
     })
 }
 
@@ -509,7 +533,7 @@ mod tests {
     #[test]
     fn insert_and_get_cue() {
         let db = test_db();
-        let id = db.insert_cue("fix bug", "src/main.rs", 42, None).unwrap();
+        let id = db.insert_cue("fix bug", "src/main.rs", 42, None, &[]).unwrap();
         let cue = db.get_cue(id).unwrap().expect("cue should exist");
         assert_eq!(cue.text, "fix bug");
         assert_eq!(cue.file_path, "src/main.rs");
@@ -521,7 +545,7 @@ mod tests {
     #[test]
     fn insert_cue_with_line_range() {
         let db = test_db();
-        let id = db.insert_cue("refactor", "lib.rs", 10, Some(20)).unwrap();
+        let id = db.insert_cue("refactor", "lib.rs", 10, Some(20), &[]).unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.line_number, 10);
         assert_eq!(cue.line_number_end, Some(20));
@@ -536,7 +560,7 @@ mod tests {
     #[test]
     fn update_cue_status() {
         let db = test_db();
-        let id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         db.update_cue_status(id, CueStatus::Ready).unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.status, CueStatus::Ready);
@@ -545,7 +569,7 @@ mod tests {
     #[test]
     fn update_cue_text() {
         let db = test_db();
-        let id = db.insert_cue("old", "f.rs", 1, None).unwrap();
+        let id = db.insert_cue("old", "f.rs", 1, None, &[]).unwrap();
         db.update_cue_text(id, "new text").unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.text, "new text");
@@ -554,7 +578,7 @@ mod tests {
     #[test]
     fn delete_cue_removes_cue_and_executions() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         db.insert_execution(cue_id, "do something").unwrap();
         db.delete_cue(cue_id).unwrap();
         assert!(db.get_cue(cue_id).unwrap().is_none());
@@ -566,7 +590,7 @@ mod tests {
     #[test]
     fn insert_and_get_execution() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         let exec_id = db.insert_execution(cue_id, "prompt text").unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
         assert_eq!(exec.id, exec_id);
@@ -579,7 +603,7 @@ mod tests {
     #[test]
     fn complete_execution() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
         db.complete_execution(exec_id, "response text", Some("diff content"))
             .unwrap();
@@ -592,7 +616,7 @@ mod tests {
     #[test]
     fn fail_execution() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
         db.fail_execution(exec_id, "error msg").unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
@@ -603,7 +627,7 @@ mod tests {
     #[test]
     fn update_execution_log() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
         db.update_execution_log(exec_id, "log line 1\nlog line 2")
             .unwrap();
@@ -614,7 +638,7 @@ mod tests {
     #[test]
     fn get_latest_execution_returns_most_recent() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         db.insert_execution(cue_id, "first").unwrap();
         let second_id = db.insert_execution(cue_id, "second").unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
@@ -625,7 +649,7 @@ mod tests {
     #[test]
     fn get_latest_execution_no_executions() {
         let db = test_db();
-        let cue_id = db.insert_cue("task", "f.rs", 1, None).unwrap();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
         assert!(db.get_latest_execution(cue_id).unwrap().is_none());
     }
 
@@ -664,5 +688,24 @@ mod tests {
         assert_eq!(cue.source_label.as_deref(), Some("Notion"));
         assert_eq!(cue.source_ref.as_deref(), Some("notion:abc"));
         assert_eq!(cue.status, CueStatus::Inbox);
+    }
+
+    #[test]
+    fn insert_cue_with_images() {
+        let db = test_db();
+        let images = vec!["/tmp/screenshot.png".to_string(), "/tmp/design.jpg".to_string()];
+        let id = db.insert_cue("implement design", "ui.rs", 10, None, &images).unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert_eq!(cue.attached_images.len(), 2);
+        assert_eq!(cue.attached_images[0], "/tmp/screenshot.png");
+        assert_eq!(cue.attached_images[1], "/tmp/design.jpg");
+    }
+
+    #[test]
+    fn insert_cue_without_images() {
+        let db = test_db();
+        let id = db.insert_cue("no images", "f.rs", 1, None, &[]).unwrap();
+        let cue = db.get_cue(id).unwrap().unwrap();
+        assert!(cue.attached_images.is_empty());
     }
 }

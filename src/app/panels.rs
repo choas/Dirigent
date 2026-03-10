@@ -419,11 +419,47 @@ impl DirigentApp {
     // Feature 2: Global prompt input
     pub(super) fn render_prompt_field(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("prompt_field").show(ctx, |ui| {
+            // Show attached images above the input line
+            if !self.global_prompt_images.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new("Images:")
+                            .small()
+                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                    );
+                    let mut remove_idx = None;
+                    for (i, path) in self.global_prompt_images.iter().enumerate() {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.to_string_lossy().to_string());
+                        ui.label(egui::RichText::new(&name).monospace().small());
+                        if ui.small_button("\u{2715}").on_hover_text("Remove").clicked() {
+                            remove_idx = Some(i);
+                        }
+                    }
+                    if let Some(i) = remove_idx {
+                        self.global_prompt_images.remove(i);
+                    }
+                });
+            }
             ui.horizontal(|ui| {
                 ui.label(
                     icon("\u{276F}", self.settings.font_size)
                         .color(egui::Color32::from_rgb(100, 180, 255)),
                 );
+                if ui
+                    .button(icon("\u{1F4CE}", self.settings.font_size))
+                    .on_hover_text("Attach images")
+                    .clicked()
+                {
+                    if let Some(paths) = rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                        .pick_files()
+                    {
+                        self.global_prompt_images.extend(paths);
+                    }
+                }
                 let input_response = ui.add(
                     egui::TextEdit::singleline(&mut self.global_prompt_input)
                         .desired_width(ui.available_width() - 60.0)
@@ -435,7 +471,12 @@ impl DirigentApp {
                         && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submitted && !self.global_prompt_input.is_empty() {
                     let text = self.global_prompt_input.clone();
-                    let _ = self.db.insert_cue(&text, "", 0, None);
+                    let images: Vec<String> = self
+                        .global_prompt_images
+                        .drain(..)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    let _ = self.db.insert_cue(&text, "", 0, None, &images);
                     self.global_prompt_input.clear();
                     self.reload_cues();
                 }

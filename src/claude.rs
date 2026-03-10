@@ -38,14 +38,28 @@ pub(crate) fn build_prompt(
     file_path: &str,
     line_number: usize,
     line_number_end: Option<usize>,
+    images: &[String],
 ) -> String {
+    let images_section = if images.is_empty() {
+        String::new()
+    } else {
+        let list: Vec<String> = images
+            .iter()
+            .map(|p| format!("- {}", p))
+            .collect();
+        format!(
+            "\n\n## Attached Images\n\n\
+             The following images are attached. Use the Read tool to view them:\n{}",
+            list.join("\n"),
+        )
+    };
     if file_path.is_empty() {
         format!(
-            "## Task\n\n{}\n\n\
+            "## Task\n\n{}{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text,
+            cue_text, images_section,
         )
     } else {
         let line_ref = match line_number_end {
@@ -53,13 +67,13 @@ pub(crate) fn build_prompt(
             None => format!("line {}", line_number),
         };
         format!(
-            "## Task\n\n{}\n\n\
+            "## Task\n\n{}{}\n\n\
              ## Context\n\n\
              Focus on {} in `{}`.\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, line_ref, file_path,
+            cue_text, images_section, line_ref, file_path,
         )
     }
 }
@@ -73,6 +87,7 @@ pub(crate) fn build_reply_prompt(
     line_number_end: Option<usize>,
     previous_diff: &str,
     reply: &str,
+    images: &[String],
 ) -> String {
     let context = if file_path.is_empty() {
         String::new()
@@ -87,8 +102,21 @@ pub(crate) fn build_reply_prompt(
             line_ref, file_path,
         )
     };
+    let images_section = if images.is_empty() {
+        String::new()
+    } else {
+        let list: Vec<String> = images
+            .iter()
+            .map(|p| format!("- {}", p))
+            .collect();
+        format!(
+            "\n\n## Attached Images\n\n\
+             The following images are attached. Use the Read tool to view them:\n{}",
+            list.join("\n"),
+        )
+    };
     format!(
-        "## Original Task\n\n{}\n\n\
+        "## Original Task\n\n{}{}\n\n\
          {}\
          ## Previous Changes\n\n\
          You already made the following changes (currently applied in the working tree):\n\n\
@@ -99,7 +127,7 @@ pub(crate) fn build_reply_prompt(
          build on them rather than starting over. \
          Make the requested changes directly by editing the files. \
          Do not output a diff — use your tools to edit files in place.",
-        original_cue, context, previous_diff, reply,
+        original_cue, images_section, context, previous_diff, reply,
     )
 }
 
@@ -538,14 +566,14 @@ mod tests {
 
     #[test]
     fn build_prompt_global_cue() {
-        let prompt = build_prompt("Add tests", "", 0, None);
+        let prompt = build_prompt("Add tests", "", 0, None, &[]);
         assert!(prompt.contains("Add tests"));
         assert!(!prompt.contains("Focus on"));
     }
 
     #[test]
     fn build_prompt_with_file_single_line() {
-        let prompt = build_prompt("Fix bug", "src/main.rs", 42, None);
+        let prompt = build_prompt("Fix bug", "src/main.rs", 42, None, &[]);
         assert!(prompt.contains("Fix bug"));
         assert!(prompt.contains("line 42"));
         assert!(prompt.contains("`src/main.rs`"));
@@ -553,9 +581,18 @@ mod tests {
 
     #[test]
     fn build_prompt_with_file_line_range() {
-        let prompt = build_prompt("Refactor", "lib.rs", 10, Some(20));
+        let prompt = build_prompt("Refactor", "lib.rs", 10, Some(20), &[]);
         assert!(prompt.contains("lines 10-20"));
         assert!(prompt.contains("`lib.rs`"));
+    }
+
+    #[test]
+    fn build_prompt_with_images() {
+        let images = vec!["/tmp/screenshot.png".to_string(), "/tmp/design.jpg".to_string()];
+        let prompt = build_prompt("Implement this design", "", 0, None, &images);
+        assert!(prompt.contains("Attached Images"));
+        assert!(prompt.contains("/tmp/screenshot.png"));
+        assert!(prompt.contains("/tmp/design.jpg"));
     }
 
     // -- parse_diff_from_response --

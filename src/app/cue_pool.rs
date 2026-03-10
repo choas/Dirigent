@@ -162,7 +162,7 @@ impl DirigentApp {
 
                 // Handle playbook selection
                 if let Some(prompt) = selected_play_prompt {
-                    let _ = self.db.insert_cue(&prompt, "", 0, None);
+                    let _ = self.db.insert_cue(&prompt, "", 0, None, &[]);
                     self.reload_cues();
                 }
                 if custom_cue_requested {
@@ -518,15 +518,29 @@ impl DirigentApp {
                     }
                 }
 
-                // Source label badge
-                if let Some(ref label) = cue.source_label {
+                // Source label badge and image count
+                let has_badge = cue.source_label.is_some() || !cue.attached_images.is_empty();
+                if has_badge {
                     ui.horizontal(|ui| {
-                        let badge_color = source_label_color(label);
-                        let badge = egui::RichText::new(label)
-                            .small()
-                            .background_color(badge_color)
-                            .color(egui::Color32::from_gray(220));
-                        ui.label(badge);
+                        if let Some(ref label) = cue.source_label {
+                            let badge_color = source_label_color(label);
+                            let badge = egui::RichText::new(label)
+                                .small()
+                                .background_color(badge_color)
+                                .color(egui::Color32::from_gray(220));
+                            ui.label(badge);
+                        }
+                        if !cue.attached_images.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "\u{1F4CE} {} image{}",
+                                    cue.attached_images.len(),
+                                    if cue.attached_images.len() == 1 { "" } else { "s" }
+                                ))
+                                .small()
+                                .color(egui::Color32::from_rgb(100, 180, 255)),
+                            );
+                        }
                     });
                 }
 
