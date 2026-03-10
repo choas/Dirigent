@@ -894,9 +894,24 @@ impl DirigentApp {
     fn notify_review_ready(&self, cue_id: i64) {
         if self.settings.notify_sound {
             std::thread::spawn(|| {
-                let _ = Command::new("afplay")
-                    .arg("/System/Library/Sounds/Glass.aiff")
-                    .output();
+                #[cfg(target_os = "macos")]
+                {
+                    use objc::runtime::{Class, Object, BOOL};
+                    use objc::{msg_send, sel, sel_impl};
+                    use std::ffi::CString;
+                    unsafe {
+                        let ns_cls = Class::get("NSString").unwrap();
+                        let name_c = CString::new("Glass").unwrap();
+                        let name: *mut Object = msg_send![ns_cls,
+                            stringWithUTF8String: name_c.as_ptr()];
+                        let cls = Class::get("NSSound").unwrap();
+                        let sound: *mut Object =
+                            msg_send![cls, soundNamed: name];
+                        if !sound.is_null() {
+                            let _: BOOL = msg_send![sound, play];
+                        }
+                    }
+                }
             });
         }
         if self.settings.notify_popup {
