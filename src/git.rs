@@ -220,39 +220,108 @@ pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> 
 
 /// Get the working-tree diff for specific files (or all files if empty).
 /// Returns the `git diff` output, or None if there are no changes.
+/// Also generates diffs for untracked (new) files so they appear in review and commits.
 pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
     use std::process::Command;
 
+    // Helper: make a path relative to repo root
+    let make_relative = |f: &str| -> String {
+        let path = Path::new(f);
+        if path.is_absolute() {
+            path.strip_prefix(repo_path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string()
+        } else {
+            f.to_string()
+        }
+    };
+
+    // Collect relative paths
+    let rel_files: Vec<String> = if files.is_empty() {
+        Vec::new()
+    } else {
+        files.iter().map(|f| make_relative(f)).collect()
+    };
+
+    // Get diff for tracked/modified files
     let mut cmd = Command::new("git");
     cmd.arg("diff").current_dir(repo_path);
-    if !files.is_empty() {
+    if !rel_files.is_empty() {
         cmd.arg("--");
-        for f in files {
-            // Make paths relative to repo root if they're absolute
-            let path = Path::new(f);
-            let rel = if path.is_absolute() {
-                path.strip_prefix(repo_path)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .to_string()
-            } else {
-                f.clone()
-            };
-            cmd.arg(rel);
+        for f in &rel_files {
+            cmd.arg(f);
         }
     }
 
     let output = cmd.output().ok()?;
-    if output.status.success() {
-        let diff = String::from_utf8_lossy(&output.stdout).to_string();
-        if diff.trim().is_empty() {
-            None
-        } else {
-            Some(diff)
-        }
+    let mut diff = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
     } else {
-        None
+        String::new()
+    };
+
+    // Find untracked files and generate new-file diffs for them
+    let untracked = find_untracked_files(repo_path);
+    let check_files: Vec<&String> = if rel_files.is_empty() {
+        // All untracked files
+        untracked.iter().collect()
+    } else {
+        // Only untracked files that are in our file list
+        rel_files
+            .iter()
+            .filter(|f| untracked.contains(f.as_str()))
+            .collect()
+    };
+
+    for rel_path in check_files {
+        let full_path = repo_path.join(rel_path);
+        if let Ok(contents) = std::fs::read_to_string(&full_path) {
+            let line_count = contents.lines().count().max(1);
+            diff.push_str(&format!("diff --git a/{rel_path} b/{rel_path}\n"));
+            diff.push_str("new file mode 100644\n");
+            diff.push_str("--- /dev/null\n");
+            diff.push_str(&format!("+++ b/{rel_path}\n"));
+            diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
+            for line in contents.lines() {
+                diff.push('+');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+            // Ensure trailing newline marker if file doesn't end with one
+            if !contents.ends_with('\n') {
+                diff.push_str("\\ No newline at end of file\n");
+            }
+        }
     }
+
+    if diff.trim().is_empty() {
+        None
+    } else {
+        Some(diff)
+    }
+}
+
+/// Returns relative paths of all untracked files in the repo.
+fn find_untracked_files(repo_path: &Path) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let repo = match Repository::discover(repo_path) {
+        Ok(r) => r,
+        Err(_) => return result,
+    };
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        for entry in statuses.iter() {
+            let s = entry.status();
+            if s.intersects(git2::Status::WT_NEW) && !s.intersects(git2::Status::INDEX_NEW) {
+                if let Some(p) = entry.path() {
+                    result.insert(p.to_string());
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Like parse_diff_file_paths but also strips a directory prefix if present.
