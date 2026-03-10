@@ -726,6 +726,18 @@ impl DirigentApp {
                                 ));
                             }
                             if ui
+                                .small_button(icon("\u{21A9} Reply", fs))
+                                .on_hover_text("Send follow-up feedback to Claude")
+                                .clicked()
+                            {
+                                // Toggle reply input visibility
+                                if self.reply_inputs.contains_key(&cue.id) {
+                                    self.reply_inputs.remove(&cue.id);
+                                } else {
+                                    self.reply_inputs.insert(cue.id, String::new());
+                                }
+                            }
+                            if ui
                                 .small_button(icon("\u{2193} Archive", fs))
                                 .on_hover_text("Move to Archived")
                                 .clicked()
@@ -815,7 +827,7 @@ impl DirigentApp {
                     });
                 });
 
-                // Reply input field (visible when toggled for Review cues)
+                // Reply input field (visible when toggled for Review/Done cues)
                 if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {
                     ui.add_space(2.0);
                     let response = ui.add(
