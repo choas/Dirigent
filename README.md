@@ -32,6 +32,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Git integration** — View commit history (last 50 commits), create commits, manage worktrees, see dirty-file indicators in the file tree
 - **Search** — In-file search (Cmd+F) with match navigation; project-wide search (Cmd+Shift+F) with clickable results
 - **Source integration** — Import cues from GitHub Issues, Notion, MCP, or custom shell commands with automatic deduplication and configurable polling
+- **Markdown import** — Import cues from a Markdown document (headings become cue titles); supports upsert to avoid duplicates
 - **Playbook** — Predefined prompts (e.g. "Update README", "Security audit", "Add tests") that can be run as global cues
 - **Themes** — 20 themes: 10 dark (Nord, Dracula, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Solarized) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night)
 - **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
@@ -99,6 +100,7 @@ src/
 ├── claude.rs        — Claude Code CLI invocation and stream parsing
 ├── db.rs            — SQLite persistence (cues, executions, migrations)
 ├── diff_view.rs     — Unified diff parsing, inline and side-by-side rendering
+├── error.rs         — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs     — Recursive directory scanning with ignore patterns
 ├── git.rs           — Git status, history, commit, worktree operations
 ├── settings.rs      — Themes, fonts, model, sources, playbook
@@ -114,10 +116,11 @@ src/
 | [rusqlite](https://crates.io/crates/rusqlite) | SQLite (bundled) |
 | [git2](https://crates.io/crates/git2) | Git operations via libgit2 |
 | [notify](https://crates.io/crates/notify) | Cross-platform filesystem watching |
+| [thiserror](https://crates.io/crates/thiserror) | Ergonomic error type definitions |
 
 ## Status
 
-Dirigent is in early development (v0.1.0). Core features work — file browsing, cue management, Claude Code integration, diff review, git operations, search, and source integration — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in early development (v0.1.0, 65+ commits). Core features work — file browsing, cue management, Claude Code integration, diff review, git operations, search, source integration, and markdown import — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
