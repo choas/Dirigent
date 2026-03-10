@@ -362,30 +362,10 @@ pub(crate) fn commit_diff(
     use std::io::Write;
     use std::process::Command;
 
-    // Dry-run: validate the diff before applying
-    let mut check = Command::new("git")
-        .args(["apply", "--cached", "--check"])
-        .current_dir(repo_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-
-    check
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(diff_text.as_bytes())?;
-
-    let check_output = check.wait_with_output()?;
-    if !check_output.status.success() {
-        let stderr = String::from_utf8_lossy(&check_output.stderr);
-        return Err(DirigentError::GitCommand(format!("diff validation failed: {stderr}")));
-    }
-
-    // Apply the diff to the index only (--cached), leaving working tree untouched
+    // Apply the diff to the index only (--cached), leaving working tree untouched.
+    // Use --3way to fall back to three-way merge when context lines have shifted.
     let mut child = Command::new("git")
-        .args(["apply", "--cached"])
+        .args(["apply", "--cached", "--3way"])
         .current_dir(repo_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -401,7 +381,10 @@ pub(crate) fn commit_diff(
     let output = child.wait_with_output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!("git apply --cached failed: {stderr}")));
+        return Err(DirigentError::GitCommand(format!(
+            "patch does not apply — files may have changed since the diff was generated. \
+             Try reverting and re-running the cue. ({stderr})"
+        )));
     }
 
     // Now commit whatever is staged
