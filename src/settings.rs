@@ -341,10 +341,17 @@ impl Default for Settings {
 
 pub(crate) fn load_settings(project_root: &Path) -> Settings {
     let path = project_root.join(".Dirigent").join("settings.json");
-    match std::fs::read_to_string(&path) {
+    let mut settings = match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Settings::default(),
+    };
+    // Append any new default plays that aren't already in the user's playbook
+    for default_play in default_playbook() {
+        if !settings.playbook.iter().any(|p| p.name == default_play.name) {
+            settings.playbook.push(default_play);
+        }
     }
+    settings
 }
 
 pub(crate) fn save_settings(project_root: &Path, settings: &Settings) {
