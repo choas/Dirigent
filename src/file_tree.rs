@@ -1,21 +1,16 @@
 use std::path::{Path, PathBuf};
 
-const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
-    ".git",
-    "target",
-    "node_modules",
-    ".DS_Store",
-    ".Dirigent",
-    ".ralph",
-    "_build",
-    "deps",
-];
+use git2::Repository;
+
+/// Entries that are always hidden from the file tree (not useful to display).
+const ALWAYS_HIDDEN: &[&str] = &[".git", ".DS_Store"];
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    pub is_ignored: bool,
     pub children: Vec<FileEntry>,
 }
 
@@ -28,7 +23,8 @@ pub(crate) struct FileTree {
 
 impl FileTree {
     pub fn scan(root: &Path) -> std::io::Result<Self> {
-        let entries = scan_directory(root, DEFAULT_IGNORE_PATTERNS)?;
+        let repo = Repository::discover(root).ok();
+        let entries = scan_directory(root, root, repo.as_ref())?;
         Ok(FileTree {
             root: root.to_path_buf(),
             entries,
@@ -36,7 +32,11 @@ impl FileTree {
     }
 }
 
-fn scan_directory(dir: &Path, ignore_patterns: &[&str]) -> std::io::Result<Vec<FileEntry>> {
+fn scan_directory(
+    dir: &Path,
+    root: &Path,
+    repo: Option<&Repository>,
+) -> std::io::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
 
     let read_dir = std::fs::read_dir(dir)?;
@@ -44,7 +44,7 @@ fn scan_directory(dir: &Path, ignore_patterns: &[&str]) -> std::io::Result<Vec<F
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
 
-        if ignore_patterns.iter().any(|p| *p == name) {
+        if ALWAYS_HIDDEN.iter().any(|p| *p == name) {
             continue;
         }
 
@@ -52,8 +52,15 @@ fn scan_directory(dir: &Path, ignore_patterns: &[&str]) -> std::io::Result<Vec<F
         let file_type = entry.file_type()?;
         let is_dir = file_type.is_dir();
 
+        let is_ignored = repo
+            .and_then(|r| {
+                let rel = path.strip_prefix(root).ok()?;
+                r.is_path_ignored(rel).ok()
+            })
+            .unwrap_or(false);
+
         let children = if is_dir {
-            scan_directory(&path, ignore_patterns)?
+            scan_directory(&path, root, repo)?
         } else {
             Vec::new()
         };
@@ -62,6 +69,7 @@ fn scan_directory(dir: &Path, ignore_patterns: &[&str]) -> std::io::Result<Vec<F
             name,
             path,
             is_dir,
+            is_ignored,
             children,
         });
     }

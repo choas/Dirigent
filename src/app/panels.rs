@@ -200,10 +200,14 @@ impl DirigentApp {
         project_root: &Path,
         dirty_files: &HashSet<String>,
     ) {
+        let ignored_color = ui.visuals().weak_text_color();
+
         if entry.is_dir {
             let is_expanded = expanded.contains(&entry.path);
             let dir_has_dirty = Self::dir_has_dirty_files(entry, project_root, dirty_files);
-            let header_text = if dir_has_dirty {
+            let header_text = if entry.is_ignored {
+                egui::RichText::new(&entry.name).color(ignored_color)
+            } else if dir_has_dirty {
                 egui::RichText::new(&entry.name).color(egui::Color32::from_rgb(200, 160, 50))
             } else {
                 egui::RichText::new(&entry.name)
@@ -237,7 +241,9 @@ impl DirigentApp {
                 .to_string_lossy()
                 .to_string();
             let is_dirty = dirty_files.contains(&rel);
-            let label_text = if is_dirty {
+            let label_text = if entry.is_ignored {
+                egui::RichText::new(&entry.name).color(ignored_color)
+            } else if is_dirty {
                 egui::RichText::new(format!("{} \u{25CF}", entry.name))
                     .color(egui::Color32::from_rgb(200, 160, 50))
             } else {
