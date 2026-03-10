@@ -290,6 +290,10 @@ pub(crate) fn default_playbook() -> Vec<Play> {
 pub(crate) struct Settings {
     pub theme: ThemeChoice,
     pub claude_model: String,
+    #[serde(default)]
+    pub claude_cli_path: String,
+    #[serde(default)]
+    pub claude_extra_args: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -322,6 +326,8 @@ impl Default for Settings {
         Settings {
             theme: ThemeChoice::Dark,
             claude_model: "claude-opus-4-6".to_string(),
+            claude_cli_path: String::new(),
+            claude_extra_args: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,

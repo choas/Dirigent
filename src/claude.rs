@@ -112,20 +112,24 @@ pub(crate) fn invoke_claude_streaming(
     prompt: &str,
     project_root: &Path,
     model: &str,
+    cli_path: &str,
+    extra_args: &str,
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
     use std::io::{BufRead, Read};
     use std::process::Stdio;
 
-    let which_result = Command::new("which").arg("claude").output();
+    let claude_bin = if cli_path.is_empty() { "claude" } else { cli_path };
+
+    let which_result = Command::new("which").arg(claude_bin).output();
     match which_result {
         Ok(output) if !output.status.success() => return Err(ClaudeError::NotFound),
         Err(_) => return Err(ClaudeError::NotFound),
         _ => {}
     }
 
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(claude_bin);
     cmd.arg("-p")
         .arg(prompt)
         .arg("--verbose")
@@ -134,6 +138,12 @@ pub(crate) fn invoke_claude_streaming(
         .arg("--dangerously-skip-permissions");
     if !model.is_empty() {
         cmd.arg("--model").arg(model);
+    }
+    // Append user-supplied extra arguments
+    for arg in extra_args.split_whitespace() {
+        if !arg.is_empty() {
+            cmd.arg(arg);
+        }
     }
 
     let mut child = cmd
