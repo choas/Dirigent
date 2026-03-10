@@ -75,6 +75,34 @@ impl DirigentApp {
                         });
                     ui.end_row();
 
+                    ui.label("Claude CLI Path:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.claude_cli_path)
+                            .desired_width(250.0)
+                            .hint_text("claude (default: from PATH)")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.end_row();
+
+                    ui.label("Extra Arguments:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.claude_extra_args)
+                            .desired_width(250.0)
+                            .hint_text("e.g. --max-turns 10")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.end_row();
+
+                    ui.label("Default Flags:");
+                    ui.label(
+                        egui::RichText::new(
+                            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
+                        )
+                        .monospace()
+                        .weak(),
+                    );
+                    ui.end_row();
+
                     ui.label("Font:");
                     egui::ComboBox::from_id_salt("font_combo")
                         .selected_text(&self.settings.font_family)
