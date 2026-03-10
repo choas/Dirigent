@@ -364,10 +364,14 @@ impl DirigentApp {
 
     /// Handle global keyboard shortcuts for search (called from update loop).
     pub(super) fn handle_search_shortcuts(&mut self, ctx: &egui::Context) {
-        // Cmd+F = search in file
+        // Cmd+F = search in file (or diff review)
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::F))
         {
-            if self.viewer.current_file.is_some() {
+            if self.diff_review.is_some() {
+                if let Some(ref mut review) = self.diff_review {
+                    review.search_active = true;
+                }
+            } else if self.viewer.current_file.is_some() {
                 self.search.in_file_active = true;
             }
         }
@@ -376,5 +380,27 @@ impl DirigentApp {
         if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) {
             self.search.in_files_active = true;
         }
+    }
+
+}
+
+pub(super) fn update_diff_search_matches(review: &mut super::DiffReview) {
+    review.search_matches.clear();
+    review.search_current = None;
+    if review.search_query.is_empty() {
+        return;
+    }
+    let query = review.search_query.to_lowercase();
+    for (file_idx, file) in review.parsed.files.iter().enumerate() {
+        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+            for (line_idx, line) in hunk.lines.iter().enumerate() {
+                if line.content.to_lowercase().contains(&query) {
+                    review.search_matches.push((file_idx, hunk_idx, line_idx));
+                }
+            }
+        }
+    }
+    if !review.search_matches.is_empty() {
+        review.search_current = Some(0);
     }
 }

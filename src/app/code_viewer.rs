@@ -106,6 +106,10 @@ impl DirigentApp {
                         collapsed_files: HashSet::new(),
                         prompt_expanded: false,
                         reply_text: String::new(),
+                        search_active: false,
+                        search_query: String::new(),
+                        search_matches: Vec::new(),
+                        search_current: None,
                     });
                 }
                 return;

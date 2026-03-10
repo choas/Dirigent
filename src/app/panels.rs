@@ -185,6 +185,10 @@ impl DirigentApp {
                             collapsed_files: HashSet::new(),
                             prompt_expanded: false,
                             reply_text: String::new(),
+                            search_active: false,
+                            search_query: String::new(),
+                            search_matches: Vec::new(),
+                            search_current: None,
                         });
                     }
                 }
@@ -408,6 +412,10 @@ impl DirigentApp {
                                 collapsed_files: HashSet::new(),
                                 prompt_expanded: false,
                                 reply_text: String::new(),
+                                search_active: false,
+                                search_query: String::new(),
+                                search_matches: Vec::new(),
+                                search_current: None,
                             });
                         }
                     }
@@ -423,7 +431,7 @@ impl DirigentApp {
             if !self.global_prompt_images.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        egui::RichText::new("Images:")
+                        egui::RichText::new("Attached:")
                             .small()
                             .color(egui::Color32::from_rgb(100, 180, 255)),
                     );
@@ -450,11 +458,11 @@ impl DirigentApp {
                 );
                 if ui
                     .button(icon("\u{1F4CE}", self.settings.font_size))
-                    .on_hover_text("Attach images")
+                    .on_hover_text("Attach files (or drag & drop)")
                     .clicked()
                 {
                     if let Some(paths) = rfd::FileDialog::new()
-                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                        .add_filter("All files", &["*"])
                         .pick_files()
                     {
                         self.global_prompt_images.extend(paths);

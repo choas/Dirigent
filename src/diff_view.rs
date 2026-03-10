@@ -178,7 +178,19 @@ fn parse_hunk_header(header: &str) -> (usize, usize) {
     (old_start, new_start)
 }
 
-pub(crate) fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
+/// Optional search highlight state for diff rendering.
+pub(crate) struct DiffSearchHighlight<'a> {
+    pub query_lower: &'a str,
+    /// The current match to scroll to: (file_idx, hunk_idx, line_idx).
+    pub current: Option<(usize, usize, usize)>,
+}
+
+pub(crate) fn render_inline_diff(
+    ui: &mut egui::Ui,
+    diff: &ParsedDiff,
+    collapsed_files: &mut HashSet<usize>,
+    search: Option<&DiffSearchHighlight<'_>>,
+) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);
@@ -208,8 +220,8 @@ pub(crate) fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed
         if !is_collapsed {
             ui.add_space(4.0);
 
-            for hunk in &file.hunks {
-                for line in &hunk.lines {
+            for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+                for (line_idx, line) in hunk.lines.iter().enumerate() {
                     let old_num = line
                         .old_lineno
                         .map(|n| format!("{:>4}", n))
@@ -229,20 +241,45 @@ pub(crate) fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed
                         DiffLineKind::Context => (context_text, None),
                     };
 
+                    let is_search_match = search
+                        .as_ref()
+                        .map(|s| !s.query_lower.is_empty() && line.content.to_lowercase().contains(s.query_lower))
+                        .unwrap_or(false);
+                    let is_current_match = search
+                        .as_ref()
+                        .and_then(|s| s.current)
+                        .map(|c| c == (file_idx, hunk_idx, line_idx))
+                        .unwrap_or(false);
+
                     let response = ui.horizontal(|ui| {
                         ui.label(
                             egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
                                 .monospace()
                                 .color(gutter_color),
                         );
-                        ui.label(
-                            egui::RichText::new(&line.content)
-                                .monospace()
-                                .color(text_color),
-                        );
+                        if is_search_match {
+                            render_highlighted_text(ui, &line.content, search.unwrap().query_lower, text_color);
+                        } else {
+                            ui.label(
+                                egui::RichText::new(&line.content)
+                                    .monospace()
+                                    .color(text_color),
+                            );
+                        }
                     });
 
-                    if let Some(bg) = bg_color {
+                    if is_current_match {
+                        response.response.scroll_to_me(Some(egui::Align::Center));
+                    }
+
+                    let effective_bg = if is_current_match {
+                        Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                    } else if is_search_match {
+                        Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                    } else {
+                        bg_color
+                    };
+                    if let Some(bg) = effective_bg {
                         ui.painter()
                             .rect_filled(response.response.rect, 0.0, bg);
                     }
@@ -255,7 +292,61 @@ pub(crate) fn render_inline_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed
     }
 }
 
-pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, collapsed_files: &mut HashSet<usize>) {
+/// Render text with search query highlighted.
+fn render_highlighted_text(ui: &mut egui::Ui, text: &str, query_lower: &str, base_color: egui::Color32) {
+    let highlight_bg = egui::Color32::from_rgb(180, 140, 0);
+    let highlight_fg = egui::Color32::BLACK;
+    let text_lower = text.to_lowercase();
+    let mut pos = 0;
+
+    // Lay out segments in a single horizontal flow
+    while pos < text.len() {
+        if let Some(match_start) = text_lower[pos..].find(query_lower) {
+            let abs_start = pos + match_start;
+            let abs_end = abs_start + query_lower.len();
+            // Text before match
+            if abs_start > pos {
+                ui.label(
+                    egui::RichText::new(&text[pos..abs_start])
+                        .monospace()
+                        .color(base_color),
+                );
+            }
+            // Matched text
+            let resp = ui.label(
+                egui::RichText::new(&text[abs_start..abs_end])
+                    .monospace()
+                    .color(highlight_fg)
+                    .background_color(highlight_bg),
+            );
+            // Paint highlight background behind the label
+            ui.painter().rect_filled(resp.rect, 2.0, highlight_bg);
+            // Re-paint text on top so it's visible above the rect
+            let galley = ui.painter().layout_no_wrap(
+                text[abs_start..abs_end].to_string(),
+                egui::FontId::monospace(ui.text_style_height(&egui::TextStyle::Monospace)),
+                highlight_fg,
+            );
+            ui.painter().galley(resp.rect.min, galley, highlight_fg);
+            pos = abs_end;
+        } else {
+            // Remainder
+            ui.label(
+                egui::RichText::new(&text[pos..])
+                    .monospace()
+                    .color(base_color),
+            );
+            break;
+        }
+    }
+}
+
+pub(crate) fn render_side_by_side_diff(
+    ui: &mut egui::Ui,
+    diff: &ParsedDiff,
+    collapsed_files: &mut HashSet<usize>,
+    search: Option<&DiffSearchHighlight<'_>>,
+) {
     let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
     let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
     let green_text = egui::Color32::from_rgb(100, 200, 100);
@@ -298,9 +389,17 @@ pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, col
                 .spacing([4.0, 0.0])
                 .min_col_width(0.0)
                 .show(ui, |ui| {
+                    let current_match = search.as_ref().and_then(|s| s.current);
+                    let query_lower = search.as_ref().map(|s| s.query_lower).unwrap_or("");
+
                     for (left, right) in &pairs {
+                        // Check if either side is the current search match
+                        let left_is_current = left.as_ref().map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx))).unwrap_or(false);
+                        let right_is_current = right.as_ref().map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx))).unwrap_or(false);
+                        let is_current = left_is_current || right_is_current;
+
                         // Old line number
-                        if let Some(ref line) = left {
+                        if let Some((_, ref line)) = left {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{:>4}",
@@ -316,15 +415,23 @@ pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, col
                         }
 
                         // Old content
-                        if let Some(ref line) = left {
+                        if let Some((_, ref line)) = left {
                             let (color, bg) = match line.kind {
                                 DiffLineKind::Deletion => (red_text, Some(red_bg)),
                                 _ => (context_text, None),
                             };
+                            let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
                             let resp = ui.label(
                                 egui::RichText::new(&line.content).monospace().color(color),
                             );
-                            if let Some(bg) = bg {
+                            let effective_bg = if left_is_current {
+                                Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                            } else if is_match {
+                                Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                            } else {
+                                bg
+                            };
+                            if let Some(bg) = effective_bg {
                                 ui.painter().rect_filled(resp.rect, 0.0, bg);
                             }
                         } else {
@@ -332,12 +439,15 @@ pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, col
                         }
 
                         // Separator
-                        ui.label(
+                        let sep_resp = ui.label(
                             egui::RichText::new("\u{2502}").monospace().color(sep_color),
                         );
+                        if is_current {
+                            sep_resp.scroll_to_me(Some(egui::Align::Center));
+                        }
 
                         // New line number
-                        if let Some(ref line) = right {
+                        if let Some((_, ref line)) = right {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{:>4}",
@@ -353,15 +463,23 @@ pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, col
                         }
 
                         // New content
-                        if let Some(ref line) = right {
+                        if let Some((_, ref line)) = right {
                             let (color, bg) = match line.kind {
                                 DiffLineKind::Addition => (green_text, Some(green_bg)),
                                 _ => (context_text, None),
                             };
+                            let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
                             let resp = ui.label(
                                 egui::RichText::new(&line.content).monospace().color(color),
                             );
-                            if let Some(bg) = bg {
+                            let effective_bg = if right_is_current {
+                                Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                            } else if is_match {
+                                Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                            } else {
+                                bg
+                            };
+                            if let Some(bg) = effective_bg {
                                 ui.painter().rect_filled(resp.rect, 0.0, bg);
                             }
                         } else {
@@ -379,27 +497,30 @@ pub(crate) fn render_side_by_side_diff(ui: &mut egui::Ui, diff: &ParsedDiff, col
     }
 }
 
+/// A side-by-side pair with optional original line indices.
+type SbsPair = (Option<(usize, DiffLine)>, Option<(usize, DiffLine)>);
+
 /// Build paired (old, new) lines for side-by-side rendering.
-fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<(Option<DiffLine>, Option<DiffLine>)> {
-    let mut pairs = Vec::new();
+/// Each entry carries the original index into the hunk's lines vec.
+fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair> {
+    let mut pairs: Vec<SbsPair> = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
         match lines[i].kind {
             DiffLineKind::Context => {
-                pairs.push((Some(lines[i].clone()), Some(lines[i].clone())));
+                pairs.push((Some((i, lines[i].clone())), Some((i, lines[i].clone()))));
                 i += 1;
             }
             DiffLineKind::Deletion => {
-                // Collect consecutive deletions and following additions to pair them
                 let mut dels = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Deletion {
-                    dels.push(lines[i].clone());
+                    dels.push((i, lines[i].clone()));
                     i += 1;
                 }
                 let mut adds = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Addition {
-                    adds.push(lines[i].clone());
+                    adds.push((i, lines[i].clone()));
                     i += 1;
                 }
                 let max_len = dels.len().max(adds.len());
@@ -408,7 +529,7 @@ fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<(Option<DiffLine>, Option
                 }
             }
             DiffLineKind::Addition => {
-                pairs.push((None, Some(lines[i].clone())));
+                pairs.push((None, Some((i, lines[i].clone()))));
                 i += 1;
             }
         }
@@ -541,8 +662,8 @@ mod tests {
         ];
         let pairs = build_side_by_side_pairs(&lines);
         assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0.as_ref().unwrap().content, "old");
-        assert_eq!(pairs[0].1.as_ref().unwrap().content, "new");
+        assert_eq!(pairs[0].0.as_ref().unwrap().1.content, "old");
+        assert_eq!(pairs[0].1.as_ref().unwrap().1.content, "new");
     }
 
     #[test]

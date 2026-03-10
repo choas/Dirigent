@@ -4,7 +4,7 @@ use eframe::egui;
 
 use super::{icon, DirigentApp};
 use crate::db::CueStatus;
-use crate::diff_view::{self, DiffViewMode};
+use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
 use crate::settings::{self, default_playbook, SourceConfig, SourceKind, ThemeChoice};
 
@@ -404,10 +404,18 @@ impl DirigentApp {
         let view_mode = review.view_mode;
         let read_only = review.read_only;
         let prompt_expanded = review.prompt_expanded;
+        let search_active = review.search_active;
         let reply_text = &mut review.reply_text;
         let collapsed_files = &mut review.collapsed_files;
+        let search_query = &mut review.search_query;
+        let search_matches = &review.search_matches;
+        let search_current = review.search_current;
 
         let mut toggle_prompt = false;
+        let mut search_changed = false;
+        let mut search_next = false;
+        let mut search_prev = false;
+        let mut search_close = false;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Header bar
@@ -514,7 +522,79 @@ impl DirigentApp {
                     }
                 });
             }
+
+            // Search bar
+            if search_active {
+                ui.horizontal(|ui| {
+                    ui.label("Find:");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(search_query)
+                            .desired_width(250.0)
+                            .hint_text("Search in diff...")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    response.request_focus();
+
+                    if response.changed() {
+                        search_changed = true;
+                    }
+
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if ui.input(|i| i.modifiers.shift) {
+                            search_prev = true;
+                        } else {
+                            search_next = true;
+                        }
+                        response.request_focus();
+                    }
+
+                    let match_count = search_matches.len();
+                    if !search_query.is_empty() {
+                        let label = if match_count == 0 {
+                            "No matches".to_string()
+                        } else {
+                            let current = search_current.map(|i| i + 1).unwrap_or(0);
+                            format!("{}/{}", current, match_count)
+                        };
+                        ui.label(
+                            egui::RichText::new(label)
+                                .monospace()
+                                .small()
+                                .color(if match_count == 0 {
+                                    egui::Color32::from_rgb(220, 100, 100)
+                                } else {
+                                    egui::Color32::from_gray(160)
+                                }),
+                        );
+                    }
+
+                    if ui.small_button(icon("\u{2191}", fs)).on_hover_text("Previous (Shift+Enter)").clicked() {
+                        search_prev = true;
+                    }
+                    if ui.small_button(icon("\u{2193}", fs)).on_hover_text("Next (Enter)").clicked() {
+                        search_next = true;
+                    }
+                    if ui.small_button(icon("\u{2715}", fs)).on_hover_text("Close (Esc)").clicked() {
+                        search_close = true;
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        search_close = true;
+                    }
+                });
+            }
             ui.separator();
+
+            // Build search highlight for diff rendering
+            let query_lower_owned = search_query.to_lowercase();
+            let search_highlight = if search_active && !search_query.is_empty() {
+                let current = search_current.map(|idx| search_matches[idx]);
+                Some(DiffSearchHighlight {
+                    query_lower: &query_lower_owned,
+                    current,
+                })
+            } else {
+                None
+            };
 
             // Diff content fills the rest
             egui::ScrollArea::both()
@@ -530,10 +610,10 @@ impl DirigentApp {
                     } else {
                         match view_mode {
                             DiffViewMode::Inline => {
-                                diff_view::render_inline_diff(ui, &parsed, collapsed_files);
+                                diff_view::render_inline_diff(ui, &parsed, collapsed_files, search_highlight.as_ref());
                             }
                             DiffViewMode::SideBySide => {
-                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files);
+                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files, search_highlight.as_ref());
                             }
                         }
                     }
@@ -548,6 +628,53 @@ impl DirigentApp {
         if toggle_prompt {
             if let Some(ref mut review) = self.diff_review {
                 review.prompt_expanded = !review.prompt_expanded;
+            }
+        }
+
+        // Handle diff search state changes
+        if search_changed {
+            if let Some(ref mut review) = self.diff_review {
+                crate::app::search::update_diff_search_matches(review);
+                // Expand collapsed files that contain the current match
+                if let Some(idx) = review.search_current {
+                    let (file_idx, _, _) = review.search_matches[idx];
+                    review.collapsed_files.remove(&file_idx);
+                }
+            }
+        }
+        if search_next {
+            if let Some(ref mut review) = self.diff_review {
+                if !review.search_matches.is_empty() {
+                    let next = match review.search_current {
+                        Some(i) => (i + 1) % review.search_matches.len(),
+                        None => 0,
+                    };
+                    review.search_current = Some(next);
+                    let (file_idx, _, _) = review.search_matches[next];
+                    review.collapsed_files.remove(&file_idx);
+                }
+            }
+        }
+        if search_prev {
+            if let Some(ref mut review) = self.diff_review {
+                if !review.search_matches.is_empty() {
+                    let prev = match review.search_current {
+                        Some(0) => review.search_matches.len() - 1,
+                        Some(i) => i - 1,
+                        None => 0,
+                    };
+                    review.search_current = Some(prev);
+                    let (file_idx, _, _) = review.search_matches[prev];
+                    review.collapsed_files.remove(&file_idx);
+                }
+            }
+        }
+        if search_close {
+            if let Some(ref mut review) = self.diff_review {
+                review.search_active = false;
+                review.search_query.clear();
+                review.search_matches.clear();
+                review.search_current = None;
             }
         }
 

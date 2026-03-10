@@ -57,6 +57,11 @@ struct DiffReview {
     collapsed_files: HashSet<usize>,
     prompt_expanded: bool,
     reply_text: String,
+    search_active: bool,
+    search_query: String,
+    /// Matches as (file_idx, hunk_idx, line_idx_in_hunk).
+    search_matches: Vec<(usize, usize, usize)>,
+    search_current: Option<usize>,
 }
 
 enum CueAction {
@@ -590,6 +595,39 @@ impl eframe::App for DirigentApp {
             .any(|s| s.enabled && s.poll_interval_secs > 0)
         {
             ctx.request_repaint_after(SOURCE_POLL_REPAINT);
+        }
+
+        // Handle drag & drop of files onto the window
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.global_prompt_images.extend(dropped);
+        }
+
+        // Show overlay when files are being dragged over the window
+        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            let screen = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("drop_overlay"),
+            ));
+            painter.rect_filled(
+                screen,
+                0.0,
+                egui::Color32::from_black_alpha(160),
+            );
+            painter.text(
+                screen.center(),
+                egui::Align2::CENTER_CENTER,
+                "Drop files to attach",
+                egui::FontId::proportional(24.0),
+                egui::Color32::WHITE,
+            );
         }
 
         // Handle keyboard shortcuts for search (Cmd+F, Cmd+Shift+F)
