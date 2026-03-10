@@ -2,6 +2,9 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 pub(crate) enum ClaudeError {
@@ -121,7 +124,7 @@ pub(crate) fn invoke_claude_streaming(
                     }
                     return;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::thread::sleep(WATCHDOG_POLL_INTERVAL);
             }
         })
     };
@@ -275,7 +278,10 @@ pub(crate) fn invoke_claude_streaming(
     let _ = watchdog.join();
 
     // Reap the child process (works whether it exited naturally or was killed)
-    let _ = child.lock().unwrap().wait().map_err(ClaudeError::SpawnFailed)?;
+    match child.lock() {
+        Ok(mut c) => { let _ = c.wait(); }
+        Err(poisoned) => { let _ = poisoned.into_inner().wait(); }
+    }
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {

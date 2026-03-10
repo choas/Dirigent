@@ -611,7 +611,7 @@ impl DirigentApp {
                                     CueAction::ShowRunningLog(cue.id),
                                 ));
                             }
-                            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+                            ui.ctx().request_repaint_after(super::ELAPSED_REPAINT);
                             if ui
                                 .small_button(icon("\u{2715} Cancel", fs))
                                 .on_hover_text("Cancel and move back to Inbox")

@@ -262,6 +262,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(dead_code)] // Used in tests
     pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
         let mut stmt = self
             .conn

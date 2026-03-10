@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::{icon, icon_small, DirigentApp, DiffReview};
+use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview};
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
@@ -132,8 +132,8 @@ impl DirigentApp {
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
                                 for commit in &self.git.commit_history {
-                                    let msg = if commit.message.len() > 30 {
-                                        format!("{}...", &commit.message[..27])
+                                    let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3 {
+                                        format!("{}...", &commit.message[..COMMIT_MSG_TRUNCATE_LEN])
                                     } else {
                                         commit.message.clone()
                                     };
@@ -362,8 +362,8 @@ impl DirigentApp {
                 .show(ui, |ui| {
                     let mut clicked_commit: Option<(String, String, String)> = None;
                     for commit in &self.git.commit_history {
-                        let msg = if commit.message.len() > 30 {
-                            format!("{}...", &commit.message[..27])
+                        let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3 {
+                            format!("{}...", &commit.message[..COMMIT_MSG_TRUNCATE_LEN])
                         } else {
                             commit.message.clone()
                         };

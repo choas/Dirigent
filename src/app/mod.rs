@@ -10,7 +10,22 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+// -- Timing constants --
+const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
+const LOG_SYNC_INTERVAL: Duration = Duration::from_secs(3);
+const REPAINT_FAST: Duration = Duration::from_millis(100);
+const REPAINT_SLOW: Duration = Duration::from_millis(500);
+const SOURCE_POLL_REPAINT: Duration = Duration::from_secs(30);
+const ELAPSED_REPAINT: Duration = Duration::from_secs(1);
+
+// -- UI dimension constants --
+const FONT_SCALE_SMALL: f32 = 0.75;
+const FONT_SCALE_HEADING: f32 = 1.4;
+const SEARCH_PANEL_DEFAULT_WIDTH: f32 = 220.0;
+const SEARCH_PANEL_MIN_WIDTH: f32 = 150.0;
+const COMMIT_MSG_TRUNCATE_LEN: usize = 27;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -203,6 +218,8 @@ pub(super) struct GitState {
 pub(super) struct SourceState {
     tx: mpsc::Sender<SourceItem>,
     rx: mpsc::Receiver<SourceItem>,
+    error_tx: mpsc::Sender<String>,
+    error_rx: mpsc::Receiver<String>,
     pub(super) last_poll: HashMap<String, Instant>,
     pub(super) filter: Option<String>,
 }
@@ -315,6 +332,7 @@ impl DirigentApp {
 
         let (claude_tx, claude_rx) = mpsc::channel();
         let (source_tx, source_rx) = mpsc::channel();
+        let (source_error_tx, source_error_rx) = mpsc::channel();
         let (log_tx, log_rx) = mpsc::channel();
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
@@ -383,6 +401,8 @@ impl DirigentApp {
             sources: SourceState {
                 tx: source_tx,
                 rx: source_rx,
+                error_tx: source_error_tx,
+                error_rx: source_error_rx,
                 last_poll: HashMap::new(),
                 filter: None,
             },
@@ -781,20 +801,7 @@ impl DirigentApp {
             });
         }
         if self.settings.notify_popup {
-            let preview = self
-                .db
-                .get_cue(cue_id)
-                .ok()
-                .flatten()
-                .map(|c| {
-                    let words: Vec<&str> = c.text.split_whitespace().take(6).collect();
-                    let mut preview = words.join(" ");
-                    if c.text.split_whitespace().count() > 6 {
-                        preview.push_str("\u{2026}");
-                    }
-                    preview
-                })
-                .unwrap_or_else(|| format!("Cue #{}", cue_id));
+            let preview = self.cue_preview(cue_id);
             let project_name = self
                 .project_root
                 .file_name()
@@ -836,6 +843,7 @@ impl DirigentApp {
     fn trigger_source_fetch_config(&mut self, source: settings::SourceConfig) {
         let project_root = self.project_root.clone();
         let source_tx = self.sources.tx.clone();
+        let error_tx = self.sources.error_tx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
 
@@ -857,7 +865,7 @@ impl DirigentApp {
                         &source.label,
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("Source fetch error: {e}");
+                        let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
                         Vec::new()
                     })
                 }
@@ -871,7 +879,7 @@ impl DirigentApp {
                             &source.label,
                         )
                         .unwrap_or_else(|e| {
-                            eprintln!("Source fetch error: {e}");
+                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
                             Vec::new()
                         })
                     }
@@ -905,6 +913,11 @@ impl DirigentApp {
     }
 
     fn process_source_results(&mut self) {
+        // Surface any source fetch errors to the UI
+        if let Ok(err_msg) = self.sources.error_rx.try_recv() {
+            self.set_status_message(err_msg);
+        }
+
         let items: Vec<SourceItem> = self.sources.rx.try_iter().collect();
 
         if items.is_empty() {
@@ -997,8 +1010,8 @@ impl DirigentApp {
     /// Render project-wide search panel as a left side panel (replaces file tree).
     fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("search_files_panel")
-            .default_width(220.0)
-            .min_width(150.0)
+            .default_width(SEARCH_PANEL_DEFAULT_WIDTH)
+            .min_width(SEARCH_PANEL_MIN_WIDTH)
             .show(ctx, |ui| {
                 self.render_search_in_files_panel(ui);
             });
@@ -1071,11 +1084,11 @@ impl DirigentApp {
         ctx.set_fonts(font_def);
 
         // Scale all text styles based on the chosen font size
-        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::new(size * 0.75, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::new(size * FONT_SCALE_SMALL, egui::FontFamily::Proportional));
         style.text_styles.insert(egui::TextStyle::Body, egui::FontId::new(size, egui::FontFamily::Proportional));
         style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::new(size, egui::FontFamily::Monospace));
         style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(size, egui::FontFamily::Proportional));
-        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(size * 1.4, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(size * FONT_SCALE_HEADING, egui::FontFamily::Proportional));
         ctx.set_style(style);
     }
 }
@@ -1090,7 +1103,7 @@ impl eframe::App for DirigentApp {
 
         // Check for filesystem changes and rescan file tree (debounced)
         if self.fs_changed.load(Ordering::Relaxed)
-            && self.last_fs_rescan.elapsed() >= std::time::Duration::from_secs(2)
+            && self.last_fs_rescan.elapsed() >= FS_RESCAN_DEBOUNCE
         {
             self.fs_changed.store(false, Ordering::Relaxed);
             self.last_fs_rescan = Instant::now();
@@ -1122,7 +1135,7 @@ impl eframe::App for DirigentApp {
 
         // Periodically sync running logs to/from DB (every 3s)
         if !self.claude.exec_ids.is_empty() || self.claude.show_log.is_some() {
-            if self.claude.last_log_flush.elapsed() >= std::time::Duration::from_secs(3) {
+            if self.claude.last_log_flush.elapsed() >= LOG_SYNC_INTERVAL {
                 self.sync_running_logs();
             }
         }
@@ -1135,14 +1148,14 @@ impl eframe::App for DirigentApp {
         {
             // Repaint faster when log window is open for live streaming
             let interval = if self.claude.show_log.is_some() {
-                100
+                REPAINT_FAST
             } else {
-                500
+                REPAINT_SLOW
             };
-            ctx.request_repaint_after(std::time::Duration::from_millis(interval));
+            ctx.request_repaint_after(interval);
         } else if self.fs_changed.load(Ordering::Relaxed) {
             // Ensure we repaint to pick up filesystem changes after debounce
-            ctx.request_repaint_after(std::time::Duration::from_secs(2));
+            ctx.request_repaint_after(FS_RESCAN_DEBOUNCE);
         }
         // Ensure periodic repaint for source polling
         if self
@@ -1151,7 +1164,7 @@ impl eframe::App for DirigentApp {
             .iter()
             .any(|s| s.enabled && s.poll_interval_secs > 0)
         {
-            ctx.request_repaint_after(std::time::Duration::from_secs(30));
+            ctx.request_repaint_after(SOURCE_POLL_REPAINT);
         }
 
         // Handle keyboard shortcuts for search (Cmd+F, Cmd+Shift+F)

@@ -762,7 +762,7 @@ impl DirigentApp {
                         icon(&status, fs)
                             .color(egui::Color32::from_rgb(100, 180, 255)),
                     );
-                    ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+                    ui.ctx().request_repaint_after(super::ELAPSED_REPAINT);
                 } else {
                     ui.label(
                         icon("\u{2713} Completed", fs)
