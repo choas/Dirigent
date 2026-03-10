@@ -503,8 +503,8 @@ impl DirigentApp {
                         cue.text.clone()
                     };
                     let label_response = ui.label(&display_text);
-                    // Double-click label to edit (Inbox only)
-                    if status == CueStatus::Inbox && !is_editing && label_response.double_clicked() {
+                    // Double-click label to edit (Inbox/Backlog)
+                    if matches!(status, CueStatus::Inbox | CueStatus::Backlog) && !is_editing && label_response.double_clicked() {
                         actions.push((
                             cue.id,
                             CueAction::StartEdit(cue.text.clone()),
@@ -593,6 +593,16 @@ impl DirigentApp {
                                 actions.push((
                                     cue.id,
                                     CueAction::MoveTo(CueStatus::Done),
+                                ));
+                            }
+                            if ui
+                                .small_button(icon("\u{2193} Backlog", fs))
+                                .on_hover_text("Move to Backlog")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Backlog),
                                 ));
                             }
                         }
@@ -735,6 +745,40 @@ impl DirigentApp {
                                 actions.push((
                                     cue.id,
                                     CueAction::MoveTo(CueStatus::Done),
+                                ));
+                            }
+                        }
+                        CueStatus::Backlog => {
+                            if !is_editing {
+                                if ui
+                                    .small_button("Edit")
+                                    .on_hover_text("Edit cue")
+                                    .clicked()
+                                {
+                                    actions.push((
+                                        cue.id,
+                                        CueAction::StartEdit(cue.text.clone()),
+                                    ));
+                                }
+                            }
+                            if ui
+                                .small_button(icon("\u{2191} Inbox", fs))
+                                .on_hover_text("Move to Inbox")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Inbox),
+                                ));
+                            }
+                            if ui
+                                .small_button(icon("\u{25B6} Run", fs))
+                                .on_hover_text("Send to Claude")
+                                .clicked()
+                            {
+                                actions.push((
+                                    cue.id,
+                                    CueAction::MoveTo(CueStatus::Ready),
                                 ));
                             }
                         }

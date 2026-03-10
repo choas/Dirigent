@@ -9,6 +9,7 @@ pub(crate) enum CueStatus {
     Review,
     Done,
     Archived,
+    Backlog,
 }
 
 impl CueStatus {
@@ -19,6 +20,7 @@ impl CueStatus {
             CueStatus::Review => "review",
             CueStatus::Done => "done",
             CueStatus::Archived => "archived",
+            CueStatus::Backlog => "backlog",
         }
     }
 
@@ -29,6 +31,7 @@ impl CueStatus {
             "review" => Some(CueStatus::Review),
             "done" => Some(CueStatus::Done),
             "archived" => Some(CueStatus::Archived),
+            "backlog" => Some(CueStatus::Backlog),
             _ => None,
         }
     }
@@ -40,6 +43,7 @@ impl CueStatus {
             CueStatus::Review,
             CueStatus::Done,
             CueStatus::Archived,
+            CueStatus::Backlog,
         ]
     }
 
@@ -50,6 +54,7 @@ impl CueStatus {
             CueStatus::Review => "Review",
             CueStatus::Done => "Done",
             CueStatus::Archived => "Archived",
+            CueStatus::Backlog => "Backlog",
         }
     }
 }
