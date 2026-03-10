@@ -370,6 +370,7 @@ impl DirigentApp {
                                             read_only,
                                             collapsed_files: HashSet::new(),
                                             prompt_expanded: false,
+                                            reply_text: String::new(),
                                         });
                                     }
                                 }
@@ -433,6 +434,10 @@ impl DirigentApp {
                                     self.load_file(p);
                                 }
                                 self.reload_git_info();
+                            }
+                            CueAction::ReplyReview(cue_id, reply_text) => {
+                                self.reply_inputs.remove(&cue_id);
+                                self.trigger_claude_reply(cue_id, &reply_text);
                             }
                             CueAction::ShowRunningLog(cue_id) => {
                                 // Load log from DB if not already in memory
@@ -643,6 +648,18 @@ impl DirigentApp {
                                 ));
                             }
                             if ui
+                                .small_button(icon("\u{21A9} Reply", fs))
+                                .on_hover_text("Send feedback to Claude for another iteration")
+                                .clicked()
+                            {
+                                // Toggle reply input visibility
+                                if self.reply_inputs.contains_key(&cue.id) {
+                                    self.reply_inputs.remove(&cue.id);
+                                } else {
+                                    self.reply_inputs.insert(cue.id, String::new());
+                                }
+                            }
+                            if ui
                                 .small_button(icon("\u{2713} Commit", fs))
                                 .on_hover_text("Commit the applied changes")
                                 .clicked()
@@ -733,6 +750,33 @@ impl DirigentApp {
                         }
                     });
                 });
+
+                // Reply input field (visible when toggled for Review cues)
+                if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {
+                    ui.add_space(2.0);
+                    let response = ui.add(
+                        egui::TextEdit::multiline(reply_text)
+                            .desired_rows(2)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Describe what needs to change..."),
+                    );
+                    // Submit on Cmd+Enter
+                    let submit = ui
+                        .small_button(icon("\u{25B6} Send", fs))
+                        .on_hover_text("Send feedback to Claude (also Cmd+Enter)")
+                        .clicked()
+                        || (response.has_focus()
+                            && ui.input(|i| {
+                                i.key_pressed(egui::Key::Enter)
+                                    && i.modifiers.command
+                            }));
+                    if submit && !reply_text.trim().is_empty() {
+                        actions.push((
+                            cue.id,
+                            CueAction::ReplyReview(cue.id, reply_text.clone()),
+                        ));
+                    }
+                }
             });
 
         ui.add_space(2.0);

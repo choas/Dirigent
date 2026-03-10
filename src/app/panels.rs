@@ -184,6 +184,7 @@ impl DirigentApp {
                             read_only: true,
                             collapsed_files: HashSet::new(),
                             prompt_expanded: false,
+                            reply_text: String::new(),
                         });
                     }
                 }
@@ -400,6 +401,7 @@ impl DirigentApp {
                                 read_only: true,
                                 collapsed_files: HashSet::new(),
                                 prompt_expanded: false,
+                                reply_text: String::new(),
                             });
                         }
                     }

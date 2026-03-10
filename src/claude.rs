@@ -64,6 +64,45 @@ pub(crate) fn build_prompt(
     }
 }
 
+/// Build a follow-up prompt for replying to a Review cue with feedback.
+/// Includes the original task, the previous diff, and the user's reply.
+pub(crate) fn build_reply_prompt(
+    original_cue: &str,
+    file_path: &str,
+    line_number: usize,
+    line_number_end: Option<usize>,
+    previous_diff: &str,
+    reply: &str,
+) -> String {
+    let context = if file_path.is_empty() {
+        String::new()
+    } else {
+        let line_ref = match line_number_end {
+            Some(end) => format!("lines {}-{}", line_number, end),
+            None => format!("line {}", line_number),
+        };
+        format!(
+            "## Context\n\n\
+             Focus on {} in `{}`.\n\n",
+            line_ref, file_path,
+        )
+    };
+    format!(
+        "## Original Task\n\n{}\n\n\
+         {}\
+         ## Previous Changes\n\n\
+         You already made the following changes (currently applied in the working tree):\n\n\
+         ```diff\n{}\n```\n\n\
+         ## Feedback\n\n{}\n\n\
+         ## Instructions\n\n\
+         Adjust the code based on the feedback above. The previous changes are already applied — \
+         build on them rather than starting over. \
+         Make the requested changes directly by editing the files. \
+         Do not output a diff — use your tools to edit files in place.",
+        original_cue, context, previous_diff, reply,
+    )
+}
+
 /// Invoke `claude -p <prompt> --output-format stream-json` with live progress
 /// streaming to a shared log buffer. Parses JSON events from stdout in real-time.
 ///

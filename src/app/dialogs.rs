@@ -348,6 +348,7 @@ impl DirigentApp {
         let mut close = false;
         let mut accept = false;
         let mut reject = false;
+        let mut reply_send: Option<String> = None;
         let mut toggle_mode = None;
         let fs = self.settings.font_size;
 
@@ -359,6 +360,7 @@ impl DirigentApp {
         let view_mode = review.view_mode;
         let read_only = review.read_only;
         let prompt_expanded = review.prompt_expanded;
+        let reply_text = &mut review.reply_text;
         let collapsed_files = &mut review.collapsed_files;
 
         let mut toggle_prompt = false;
@@ -447,6 +449,27 @@ impl DirigentApp {
                     }
                 });
             });
+            // Reply field (only for actionable reviews)
+            if !read_only {
+                ui.horizontal(|ui| {
+                    let te = ui.add(
+                        egui::TextEdit::singleline(reply_text)
+                            .desired_width(ui.available_width() - 80.0)
+                            .hint_text("Reply with feedback..."),
+                    );
+                    let send = ui
+                        .button(icon("\u{21A9} Reply", fs))
+                        .on_hover_text("Send feedback to Claude for another iteration")
+                        .clicked()
+                        || (te.has_focus()
+                            && ui.input(|i| {
+                                i.key_pressed(egui::Key::Enter) && i.modifiers.command
+                            }));
+                    if send && !reply_text.trim().is_empty() {
+                        reply_send = Some(reply_text.clone());
+                    }
+                });
+            }
             ui.separator();
 
             // Diff content fills the rest
@@ -517,6 +540,8 @@ impl DirigentApp {
             self.reload_cues();
             self.reload_git_info();
             self.diff_review = None;
+        } else if let Some(reply) = reply_send {
+            self.trigger_claude_reply(cue_id, &reply);
         } else if close {
             self.diff_review = None;
         }

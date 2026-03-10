@@ -132,6 +132,7 @@ struct DiffReview {
     read_only: bool,
     collapsed_files: HashSet<usize>,
     prompt_expanded: bool,
+    reply_text: String,
 }
 
 enum CueAction {
@@ -144,6 +145,7 @@ enum CueAction {
     ShowDiff(i64),
     CommitReview(i64),
     RevertReview(i64),
+    ReplyReview(i64, String),
     ShowRunningLog(i64),
 }
 
@@ -265,6 +267,9 @@ pub struct DirigentApp {
 
     // Inline cue editing
     pub(super) editing_cue: Option<EditingCue>,
+
+    // Reply inputs for Review cues (cue_id -> text)
+    pub(super) reply_inputs: HashMap<i64, String>,
 
     // About dialog
     show_about: bool,
@@ -391,6 +396,7 @@ impl DirigentApp {
             show_repo_picker: false,
             repo_path_input: String::new(),
             editing_cue: None,
+            reply_inputs: HashMap::new(),
             show_about: false,
             logo_texture: None,
             _fs_watcher,
@@ -692,6 +698,99 @@ impl DirigentApp {
             cue_id: Some(cue_id),
             exec_id: Some(exec_id),
         });
+    }
+
+    fn trigger_claude_reply(&mut self, cue_id: i64, reply: &str) {
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        // Get the previous diff from the latest execution
+        let previous_diff = self
+            .db
+            .get_latest_execution(cue_id)
+            .ok()
+            .flatten()
+            .and_then(|e| e.diff)
+            .unwrap_or_default();
+
+        let prompt = claude::build_reply_prompt(
+            &cue.text,
+            &cue.file_path,
+            cue.line_number,
+            cue.line_number_end,
+            &previous_diff,
+            reply,
+        );
+
+        // Move cue to Ready (running)
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.claude.expand_running = true;
+        self.reload_cues();
+
+        // Insert execution record
+        let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
+
+        // Initialize log buffer for this cue
+        self.claude.running_logs.insert(cue_id, String::new());
+        self.claude.start_times.insert(cue_id, Instant::now());
+        self.claude.exec_ids.insert(cue_id, exec_id);
+
+        let project_root = self.project_root.clone();
+        let claude_tx = self.claude.tx.clone();
+        let log_tx = self.claude.log_tx.clone();
+        let model = self.settings.claude_model.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_thread = Arc::clone(&cancel);
+
+        let join_handle = std::thread::spawn(move || {
+            let on_log = |text: &str| {
+                let _ = log_tx.send(LogUpdate {
+                    cue_id,
+                    text: text.to_string(),
+                });
+            };
+            let result =
+                match claude::invoke_claude_streaming(
+                    &prompt, &project_root, &model, on_log, cancel_thread,
+                ) {
+                    Ok(response) => {
+                        let diff = if response.edited_files.is_empty() {
+                            claude::parse_diff_from_response(&response.stdout)
+                        } else {
+                            git::get_working_diff(&project_root, &response.edited_files)
+                        };
+                        ClaudeResult {
+                            cue_id,
+                            exec_id,
+                            diff,
+                            response: response.stdout,
+                            error: None,
+                        }
+                    }
+                    Err(e) => ClaudeResult {
+                        cue_id,
+                        exec_id,
+                        diff: None,
+                        response: String::new(),
+                        error: Some(e.to_string()),
+                    },
+                };
+            let _ = claude_tx.send(result);
+        });
+
+        self.task_handles.push(TaskHandle {
+            join_handle,
+            cancel,
+            cue_id: Some(cue_id),
+            exec_id: Some(exec_id),
+        });
+
+        // Close diff review if open for this cue
+        if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
+            self.diff_review = None;
+        }
     }
 
     fn process_claude_results(&mut self) {
@@ -1270,7 +1369,12 @@ fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
             msg_send![nsstring, stringWithUTF8String: fw_path_c.as_ptr()];
         let fw_bundle: *mut Object = msg_send![bundle_cls, bundleWithPath: fw_path_ns];
 
-        if !fw_bundle.is_null() {
+        // UNUserNotificationCenter requires a bundle identifier; without one
+        // (e.g. running from terminal) it throws an unrecoverable NSException.
+        let main_bundle: *mut Object = msg_send![bundle_cls, mainBundle];
+        let bundle_id: *mut Object = msg_send![main_bundle, bundleIdentifier];
+
+        if !fw_bundle.is_null() && !bundle_id.is_null() {
             let loaded: bool = msg_send![fw_bundle, load];
             if loaded {
                 if let Some(center_cls) = Class::get("UNUserNotificationCenter") {
