@@ -262,7 +262,7 @@ pub struct DirigentApp {
     global_prompt_input: String,
 
     // Repo picker
-    show_repo_picker: bool,
+    pub show_repo_picker: bool,
     repo_path_input: String,
 
     // Inline cue editing

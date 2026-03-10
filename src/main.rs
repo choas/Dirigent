@@ -128,13 +128,39 @@ fn load_logo_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
-    let project_root = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().expect("failed to get cwd"));
+    // Filter out macOS Process Serial Number args (passed by Finder/Launch Services)
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| !a.starts_with("-psn"))
+        .collect();
+
+    let explicit_path = args.first().map(PathBuf::from);
+
+    // Detect Finder launch: no explicit path and running from inside an .app bundle
+    let launched_from_app_bundle = explicit_path.is_none()
+        && std::env::current_exe()
+            .map(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"))
+            .unwrap_or(false);
+
+    let project_root = if let Some(path) = explicit_path {
+        path
+    } else {
+        std::env::current_dir().expect("failed to get cwd")
+    };
 
     let project_root = std::fs::canonicalize(&project_root)
         .unwrap_or(project_root);
+
+    // When launched from Finder, use the home directory as a temporary root
+    // and auto-show the repo picker so the user can choose a project.
+    let (project_root, show_repo_picker) = if launched_from_app_bundle {
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or(project_root);
+        (home, true)
+    } else {
+        (project_root, false)
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -170,7 +196,11 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "macos")]
             setup_macos_about_panel();
 
-            Ok(Box::new(app::DirigentApp::new(project_root)))
+            let mut app = app::DirigentApp::new(project_root);
+            if show_repo_picker {
+                app.show_repo_picker = true;
+            }
+            Ok(Box::new(app))
         }),
     )
 }
