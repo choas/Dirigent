@@ -257,6 +257,7 @@ pub struct DirigentApp {
     settings: Settings,
     show_settings: bool,
     needs_theme_apply: bool,
+    playbook_expanded: bool,
 
     // Global prompt
     global_prompt_input: String,
@@ -392,6 +393,7 @@ impl DirigentApp {
             settings,
             show_settings: false,
             needs_theme_apply: true,
+            playbook_expanded: false,
             global_prompt_input: String::new(),
             show_repo_picker: false,
             repo_path_input: String::new(),
@@ -650,6 +652,8 @@ impl DirigentApp {
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
         let model = self.settings.claude_model.clone();
+        let cli_path = self.settings.claude_cli_path.clone();
+        let extra_args = self.settings.claude_extra_args.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
 
@@ -662,7 +666,7 @@ impl DirigentApp {
             };
             let result =
                 match claude::invoke_claude_streaming(
-                    &prompt, &project_root, &model, on_log, cancel_thread,
+                    &prompt, &project_root, &model, &cli_path, &extra_args, on_log, cancel_thread,
                 ) {
                     Ok(response) => {
                         // Claude Code edits files directly via tools.
@@ -741,6 +745,8 @@ impl DirigentApp {
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
         let model = self.settings.claude_model.clone();
+        let cli_path = self.settings.claude_cli_path.clone();
+        let extra_args = self.settings.claude_extra_args.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
 
@@ -753,7 +759,7 @@ impl DirigentApp {
             };
             let result =
                 match claude::invoke_claude_streaming(
-                    &prompt, &project_root, &model, on_log, cancel_thread,
+                    &prompt, &project_root, &model, &cli_path, &extra_args, on_log, cancel_thread,
                 ) {
                     Ok(response) => {
                         let diff = if response.edited_files.is_empty() {

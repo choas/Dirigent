@@ -289,70 +289,83 @@ impl DirigentApp {
             ui.separator();
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.strong("Playbook");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("+ Add Play").clicked() {
-                        self.settings.playbook.push(settings::Play {
-                            name: "New Play".to_string(),
-                            prompt: String::new(),
-                        });
-                    }
-                    if ui.small_button("Reset Defaults").clicked() {
-                        self.settings.playbook = default_playbook();
-                    }
-                });
-            });
-            ui.add_space(4.0);
-
-            if self.settings.playbook.is_empty() {
+                let arrow = if self.playbook_expanded { "\u{25BC}" } else { "\u{25B6}" };
+                if ui.button(icon(&format!("{} Playbook", arrow), fs)).clicked() {
+                    self.playbook_expanded = !self.playbook_expanded;
+                }
                 ui.label(
-                    egui::RichText::new("No plays configured. Add a play or reset to defaults.")
-                        .italics()
-                        .color(egui::Color32::from_gray(120)),
+                    egui::RichText::new(format!("({} plays)", self.settings.playbook.len()))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
                 );
-            }
+                if self.playbook_expanded {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("+ Add Play").clicked() {
+                            self.settings.playbook.push(settings::Play {
+                                name: "New Play".to_string(),
+                                prompt: String::new(),
+                            });
+                        }
+                        if ui.small_button("Reset Defaults").clicked() {
+                            self.settings.playbook = default_playbook();
+                        }
+                    });
+                }
+            });
 
-            let mut remove_play_idx = None;
-            let num_plays = self.settings.playbook.len();
+            if self.playbook_expanded {
+                ui.add_space(4.0);
 
-            for i in 0..num_plays {
-                egui::Frame::none()
-                    .inner_margin(6.0)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
-                    .rounding(4.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                if self.settings.playbook.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No plays configured. Add a play or reset to defaults.")
+                            .italics()
+                            .color(egui::Color32::from_gray(120)),
+                    );
+                }
+
+                let mut remove_play_idx = None;
+                let num_plays = self.settings.playbook.len();
+
+                for i in 0..num_plays {
+                    egui::Frame::none()
+                        .inner_margin(6.0)
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                        .rounding(4.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.settings.playbook[i].name)
+                                        .desired_width(200.0)
+                                        .font(egui::TextStyle::Body),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .small_button(icon("\u{2715}", fs))
+                                            .on_hover_text("Delete play")
+                                            .clicked()
+                                        {
+                                            remove_play_idx = Some(i);
+                                        }
+                                    },
+                                );
+                            });
                             ui.add(
-                                egui::TextEdit::singleline(&mut self.settings.playbook[i].name)
-                                    .desired_width(200.0)
-                                    .font(egui::TextStyle::Body),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui
-                                        .small_button(icon("\u{2715}", fs))
-                                        .on_hover_text("Delete play")
-                                        .clicked()
-                                    {
-                                        remove_play_idx = Some(i);
-                                    }
-                                },
+                                egui::TextEdit::multiline(&mut self.settings.playbook[i].prompt)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(3)
+                                    .hint_text("Prompt text...")
+                                    .font(egui::TextStyle::Monospace),
                             );
                         });
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.settings.playbook[i].prompt)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(3)
-                                .hint_text("Prompt text...")
-                                .font(egui::TextStyle::Monospace),
-                        );
-                    });
-                ui.add_space(4.0);
-            }
+                    ui.add_space(4.0);
+                }
 
-            if let Some(idx) = remove_play_idx {
-                self.settings.playbook.remove(idx);
+                if let Some(idx) = remove_play_idx {
+                    self.settings.playbook.remove(idx);
+                }
             }
 
             ui.add_space(12.0);
