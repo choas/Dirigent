@@ -406,6 +406,19 @@ impl Database {
         }
     }
 
+    /// Get all executions for a cue, ordered by id (oldest first).
+    pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cue_id, prompt, response, diff, log, status FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
+        let mut execs = Vec::new();
+        for row in rows {
+            execs.push(row?);
+        }
+        Ok(execs)
+    }
+
     // -- Source integration --
 
     /// Check if a cue with the given source_ref already exists (for deduplication).

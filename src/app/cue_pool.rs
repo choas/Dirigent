@@ -444,16 +444,18 @@ impl DirigentApp {
                                 self.trigger_claude_reply(cue_id, &reply_text);
                             }
                             CueAction::ShowRunningLog(cue_id) => {
-                                // Load log from DB if not already in memory
-                                if !self.claude.running_logs.contains_key(&cue_id) {
-                                    if let Ok(Some(exec)) =
-                                        self.db.get_latest_execution(cue_id)
-                                    {
-                                        if let Some(log_text) = exec.log {
-                                            self.claude.running_logs
-                                                .insert(cue_id, log_text);
+                                // Load all executions for conversation history
+                                if let Ok(execs) = self.db.get_all_executions(cue_id) {
+                                    // Load the latest log into running_logs if not already in memory
+                                    if !self.claude.running_logs.contains_key(&cue_id) {
+                                        if let Some(last) = execs.last() {
+                                            if let Some(ref log_text) = last.log {
+                                                self.claude.running_logs
+                                                    .insert(cue_id, log_text.clone());
+                                            }
                                         }
                                     }
+                                    self.claude.conversation_history = execs;
                                 }
                                 self.dismiss_central_overlays();
                                 self.claude.show_log = Some(cue_id);

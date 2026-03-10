@@ -376,6 +376,29 @@ pub(crate) fn invoke_claude_streaming(
     })
 }
 
+/// Extract the user-facing text from a structured prompt.
+///
+/// For an initial prompt, returns the text between "## Task" and the next section.
+/// For a reply prompt, returns the text from "## Feedback".
+/// Falls back to the full prompt if no structure is found.
+pub(crate) fn extract_user_text_from_prompt(prompt: &str) -> String {
+    // Reply prompt: extract feedback section
+    if let Some(pos) = prompt.find("## Feedback\n\n") {
+        let start = pos + "## Feedback\n\n".len();
+        let rest = &prompt[start..];
+        let end = rest.find("\n\n## ").unwrap_or(rest.len());
+        return rest[..end].trim().to_string();
+    }
+    // Initial prompt: extract task section
+    if let Some(pos) = prompt.find("## Task\n\n") {
+        let start = pos + "## Task\n\n".len();
+        let rest = &prompt[start..];
+        let end = rest.find("\n\n## ").unwrap_or(rest.len());
+        return rest[..end].trim().to_string();
+    }
+    prompt.to_string()
+}
+
 /// Parse diff content from a Claude response.
 pub(crate) fn parse_diff_from_response(response: &str) -> Option<String> {
     if let Some(diff) = extract_fenced_diff(response) {
@@ -715,5 +738,30 @@ Done!";
         let (old, new, _) = parse_hunk_header("@@ -1 +1 @@");
         assert_eq!(old, 1);
         assert_eq!(new, 1);
+    }
+
+    // -- extract_user_text_from_prompt --
+
+    #[test]
+    fn extract_task_from_initial_prompt() {
+        let prompt = build_prompt("Fix the bug", "src/main.rs", 42, None, &[]);
+        assert_eq!(extract_user_text_from_prompt(&prompt), "Fix the bug");
+    }
+
+    #[test]
+    fn extract_task_from_global_prompt() {
+        let prompt = build_prompt("Add tests", "", 0, None, &[]);
+        assert_eq!(extract_user_text_from_prompt(&prompt), "Add tests");
+    }
+
+    #[test]
+    fn extract_feedback_from_reply_prompt() {
+        let prompt = build_reply_prompt("original task", "f.rs", 1, None, "some diff", "please fix the typo", &[]);
+        assert_eq!(extract_user_text_from_prompt(&prompt), "please fix the typo");
+    }
+
+    #[test]
+    fn extract_from_plain_text() {
+        assert_eq!(extract_user_text_from_prompt("just plain text"), "just plain text");
     }
 }

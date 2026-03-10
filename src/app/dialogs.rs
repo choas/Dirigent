@@ -904,19 +904,13 @@ impl DirigentApp {
         }
     }
 
-    // Claude progress rendered in the central panel (replaces code viewer)
+    // Claude conversation rendered in the central panel (replaces code viewer)
     pub(super) fn render_running_log_central(&mut self, ctx: &egui::Context) {
         let cue_id = self.claude.show_log.unwrap();
         let fs = self.settings.font_size;
 
         // Drain any pending log updates before rendering
         self.drain_log_channel();
-
-        let log_text = self
-            .claude.running_logs
-            .get(&cue_id)
-            .cloned()
-            .unwrap_or_default();
 
         let is_running = self
             .cues
@@ -936,6 +930,16 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
+        // Collect conversation data: past executions + current running log
+        let past_execs = self.claude.conversation_history.clone();
+        let current_running_log = self
+            .claude
+            .running_logs
+            .get(&cue_id)
+            .cloned()
+            .unwrap_or_default();
+        let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
+
         let mut close = false;
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -945,7 +949,7 @@ impl DirigentApp {
                     close = true;
                 }
                 ui.separator();
-                ui.strong("Claude Progress");
+                ui.strong("Conversation");
                 ui.separator();
                 if is_running {
                     let elapsed = self.format_elapsed(cue_id);
@@ -974,12 +978,15 @@ impl DirigentApp {
             });
             ui.separator();
 
-            // Log content fills the rest
+            // Conversation scroll area
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    if log_text.is_empty() {
+                    let user_color = egui::Color32::from_rgb(100, 180, 255);
+                    let claude_color = egui::Color32::from_rgb(200, 160, 100);
+
+                    if past_execs.is_empty() && current_running_log.is_empty() {
                         let msg = if is_running {
                             "Waiting for output..."
                         } else {
@@ -990,8 +997,118 @@ impl DirigentApp {
                                 .italics()
                                 .color(egui::Color32::from_gray(120)),
                         );
-                    } else {
-                        ui.label(egui::RichText::new(&log_text).monospace().small());
+                    }
+
+                    for (idx, exec) in past_execs.iter().enumerate() {
+                        let is_current_running = current_exec_id == Some(exec.id);
+
+                        // -- User message --
+                        let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("You")
+                                    .strong()
+                                    .color(user_color),
+                            );
+                            if idx > 0 {
+                                ui.label(
+                                    egui::RichText::new(format!("(reply #{})", idx))
+                                        .small()
+                                        .color(egui::Color32::from_gray(120)),
+                                );
+                            }
+                        });
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .show(ui, |ui| {
+                                ui.label(&user_text);
+                            });
+
+                        // -- Claude response --
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Claude")
+                                    .strong()
+                                    .color(claude_color),
+                            );
+                        });
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .show(ui, |ui| {
+                                if is_current_running {
+                                    // Show live streaming log for the currently running execution
+                                    if current_running_log.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new("Waiting for output...")
+                                                .italics()
+                                                .color(egui::Color32::from_gray(120)),
+                                        );
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new(&current_running_log)
+                                                .monospace()
+                                                .small(),
+                                        );
+                                    }
+                                } else if let Some(ref log_text) = exec.log {
+                                    if !log_text.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(log_text)
+                                                .monospace()
+                                                .small(),
+                                        );
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("(no output)")
+                                                .italics()
+                                                .color(egui::Color32::from_gray(120)),
+                                        );
+                                    }
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new("(no output)")
+                                            .italics()
+                                            .color(egui::Color32::from_gray(120)),
+                                    );
+                                }
+                            });
+
+                        if idx < past_execs.len() - 1 {
+                            ui.separator();
+                        }
+                    }
+
+                    // If currently running but not yet in past_execs (just started)
+                    if is_running && current_exec_id.is_some()
+                        && !past_execs.iter().any(|e| Some(e.id) == current_exec_id)
+                    {
+                        if !past_execs.is_empty() {
+                            ui.separator();
+                        }
+                        // Show the user's prompt from running_logs context
+                        // (the execution hasn't been saved to history yet)
+                        ui.label(
+                            egui::RichText::new("Claude")
+                                .strong()
+                                .color(claude_color),
+                        );
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .show(ui, |ui| {
+                                if current_running_log.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("Waiting for output...")
+                                            .italics()
+                                            .color(egui::Color32::from_gray(120)),
+                                    );
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(&current_running_log)
+                                            .monospace()
+                                            .small(),
+                                    );
+                                }
+                            });
                     }
                 });
         });

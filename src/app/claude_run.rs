@@ -4,7 +4,7 @@ use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use crate::claude;
-use crate::db::CueStatus;
+use crate::db::{CueStatus, Execution};
 use crate::git;
 
 use super::notifications::send_macos_notification;
@@ -39,6 +39,8 @@ pub(crate) struct ClaudeRunState {
     pub(super) last_log_flush: Instant,
     /// Expand the "Running" section on next frame (after user clicks Run).
     pub(super) expand_running: bool,
+    /// Cached past executions for the conversation view (loaded on open).
+    pub(super) conversation_history: Vec<Execution>,
 }
 
 impl ClaudeRunState {
@@ -56,6 +58,7 @@ impl ClaudeRunState {
             show_log: None,
             last_log_flush: Instant::now(),
             expand_running: false,
+            conversation_history: Vec::new(),
         }
     }
 }
@@ -82,6 +85,11 @@ impl DirigentApp {
         self.claude.running_logs.insert(cue_id, String::new());
         self.claude.start_times.insert(cue_id, Instant::now());
         self.claude.exec_ids.insert(cue_id, exec_id);
+
+        // Load conversation history for the log view
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
 
         let project_root = self.project_root.clone();
         let claude_tx = self.claude.tx.clone();
@@ -176,6 +184,11 @@ impl DirigentApp {
         self.claude.running_logs.insert(cue_id, String::new());
         self.claude.start_times.insert(cue_id, Instant::now());
         self.claude.exec_ids.insert(cue_id, exec_id);
+
+        // Load conversation history for the log view
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
 
         let project_root = self.project_root.clone();
         let claude_tx = self.claude.tx.clone();
