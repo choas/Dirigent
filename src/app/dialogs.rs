@@ -22,6 +22,9 @@ impl DirigentApp {
                     if ui.button(icon("\u{2715}", fs)).on_hover_text("Close settings").clicked() {
                         close = true;
                     }
+                    if ui.button("Save").clicked() {
+                        save = true;
+                    }
                 });
             });
             ui.separator();
