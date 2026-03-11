@@ -190,6 +190,9 @@ pub struct DirigentApp {
     // Reply inputs for Review cues (cue_id -> text)
     pub(super) reply_inputs: HashMap<i64, String>,
 
+    // Reply input for the conversation log view
+    pub(super) conversation_reply: String,
+
     // About dialog
     show_about: bool,
     logo_texture: Option<egui::TextureHandle>,
@@ -319,6 +322,7 @@ impl DirigentApp {
             repo_path_input: String::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
+            conversation_reply: String::new(),
             show_about: false,
             logo_texture: None,
             _fs_watcher,

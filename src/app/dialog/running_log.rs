@@ -42,6 +42,45 @@ impl DirigentApp {
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
 
         let mut close = false;
+        let mut reply_send: Option<String> = None;
+
+        let cue_status = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.status);
+        let can_reply = !is_running
+            && matches!(
+                cue_status,
+                Some(CueStatus::Review) | Some(CueStatus::Done)
+            );
+
+        // Reply field at the bottom – rendered as a bottom panel so it stays visible
+        if can_reply {
+            egui::TopBottomPanel::bottom("conversation_reply_panel").show(ctx, |ui| {
+                ui.add_space(SPACE_XS);
+                ui.horizontal(|ui| {
+                    let reply_text = &mut self.conversation_reply;
+                    let response = ui.add(
+                        egui::TextEdit::singleline(reply_text)
+                            .desired_width(ui.available_width() - 80.0)
+                            .hint_text("Reply with feedback..."),
+                    );
+                    let send = ui
+                        .button(icon("\u{21A9} Send", fs))
+                        .on_hover_text("Send feedback to Claude (Cmd+Enter)")
+                        .clicked()
+                        || (response.has_focus()
+                            && ui.input(|i| {
+                                i.key_pressed(egui::Key::Enter) && i.modifiers.command
+                            }));
+                    if send && !reply_text.trim().is_empty() {
+                        reply_send = Some(reply_text.clone());
+                    }
+                });
+                ui.add_space(SPACE_XS);
+            });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Header bar
@@ -219,10 +258,16 @@ impl DirigentApp {
                             });
                     }
                 });
+
         });
 
         if close {
             self.claude.show_log = None;
+        }
+
+        if let Some(reply) = reply_send {
+            self.conversation_reply.clear();
+            self.trigger_claude_reply(cue_id, &reply);
         }
     }
 }
