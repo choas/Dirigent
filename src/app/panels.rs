@@ -22,6 +22,11 @@ impl DirigentApp {
                         ui.close_menu();
                     }
                     ui.separator();
+                    if ui.button("New Window  \u{2318}N").clicked() {
+                        crate::spawn_new_instance();
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("Settings...").clicked() {
                         self.dismiss_central_overlays();
                         self.show_settings = true;

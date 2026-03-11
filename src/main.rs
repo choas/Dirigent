@@ -14,6 +14,24 @@ mod sources;
 use eframe::egui;
 use std::path::PathBuf;
 
+/// Launch a new instance of the Dirigent app bundle (via `open -n`).
+/// Falls back to spawning the raw binary when not running from a bundle.
+pub fn spawn_new_instance() {
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy().to_string();
+        if let Some(app_pos) = exe_str.find(".app/") {
+            let bundle_path = &exe_str[..app_pos + 4];
+            let _ = std::process::Command::new("open")
+                .arg("-n")
+                .arg(bundle_path)
+                .spawn();
+        } else {
+            // Running from terminal — just launch the binary again
+            let _ = std::process::Command::new(&exe).spawn();
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn setup_macos_about_panel() {
     use objc::declare::ClassDecl;

@@ -659,6 +659,11 @@ impl eframe::App for DirigentApp {
         // Handle keyboard shortcuts for search (Cmd+F, Cmd+Shift+F)
         self.handle_search_shortcuts(ctx);
 
+        // Cmd+N = open a new Dirigent window
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
+            crate::spawn_new_instance();
+        }
+
         // Render all panels (order matters for layout)
         self.render_menu_bar(ctx); // macOS-style menu bar
         self.render_repo_bar(ctx); // top
