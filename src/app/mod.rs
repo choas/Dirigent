@@ -243,9 +243,7 @@ fn start_fs_watcher(
             if let Ok(event) = res {
                 use notify::EventKind;
                 match event.kind {
-                    EventKind::Create(_)
-                    | EventKind::Remove(_)
-                    | EventKind::Modify(_) => {
+                    EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) => {
                         flag.store(true, Ordering::Relaxed);
                         if let Some(ctx) = ctx.get() {
                             ctx.request_repaint();
