@@ -768,7 +768,7 @@ impl ThemeChoice {
         } else {
             SemanticColors {
                 accent,
-                success: egui::Color32::from_rgb(30, 140, 30),
+                success: egui::Color32::from_rgb(10, 100, 10),
                 warning: egui::Color32::from_rgb(160, 110, 0),
                 danger: egui::Color32::from_rgb(200, 50, 50),
                 secondary_text: egui::Color32::from_gray(100),
