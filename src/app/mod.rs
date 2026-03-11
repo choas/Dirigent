@@ -549,10 +549,15 @@ impl DirigentApp {
         self.diff_review = None;
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
 
-        // Update recent repos
+        // Load project-specific settings if the new repo has them,
+        // carrying over recent_repos from the current session.
+        let recent_repos = self.settings.recent_repos.clone();
+        self.settings = settings::load_settings(&self.project_root);
+        self.settings.recent_repos = recent_repos;
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
         settings::save_settings(&self.project_root, &self.settings);
+        self.needs_theme_apply = true;
     }
 
     // -- Worktrees --
