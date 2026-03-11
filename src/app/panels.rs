@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview};
-use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -284,25 +283,22 @@ impl DirigentApp {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if let Some(ref info) = self.git.info {
-                    ui.label(
+                    let branch_label = ui.label(
                         icon_small(&format!("\u{25CF} {}", info.branch), self.settings.font_size),
                     );
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} {}",
-                            info.last_commit_hash, info.last_commit_message
-                        ))
-                        .monospace()
-                        .small()
-                        .color(egui::Color32::from_gray(140)),
-                    );
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(git::format_status_summary(info))
-                            .monospace()
-                            .small(),
-                    );
+                    branch_label.on_hover_text(format!(
+                        "{} {}",
+                        info.last_commit_hash, info.last_commit_message
+                    ));
+                    let summary = git::format_status_summary(info);
+                    if !summary.is_empty() {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(summary)
+                                .monospace()
+                                .small(),
+                        );
+                    }
                 } else {
                     ui.label(
                         egui::RichText::new("not a git repository")
@@ -312,114 +308,34 @@ impl DirigentApp {
                     );
                 }
 
-                // Show transient status message (auto-dismiss after 10s)
-                let expired = matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 10);
+                // Show transient status message (auto-dismiss after 6s, fade during last 2s)
+                let expired = matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 6);
                 if expired {
                     self.status_message = None;
                 }
-                if let Some((ref msg, _)) = self.status_message {
+                if let Some((ref msg, ref when)) = self.status_message {
+                    let elapsed = when.elapsed().as_secs_f32();
+                    let alpha = if elapsed > 4.0 {
+                        // Fade out over the last 2 seconds
+                        ((6.0 - elapsed) / 2.0).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let color = egui::Color32::from_rgba_unmultiplied(
+                        180, 180, 140, (alpha * 255.0) as u8,
+                    );
                     ui.separator();
                     ui.label(
                         egui::RichText::new(msg.as_str())
                             .monospace()
                             .small()
-                            .color(egui::Color32::from_rgb(255, 200, 60)),
+                            .color(color),
                     );
+                    // Keep repainting during fade
+                    if elapsed > 4.0 {
+                        ctx.request_repaint();
+                    }
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Settings gear button
-                    if ui
-                        .small_button(icon("\u{2699}", self.settings.font_size))
-                        .on_hover_text("Settings")
-                        .clicked()
-                    {
-                        if !self.show_settings {
-                            self.dismiss_central_overlays();
-                        }
-                        self.show_settings = !self.show_settings;
-                    }
-
-                    ui.separator();
-
-                    let total = self.cues.len();
-                    let inbox = self
-                        .cues
-                        .iter()
-                        .filter(|c| c.status == CueStatus::Inbox)
-                        .count();
-                    let review = self
-                        .cues
-                        .iter()
-                        .filter(|c| c.status == CueStatus::Review)
-                        .count();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} cues ({} inbox, {} review)",
-                            total, inbox, review
-                        ))
-                        .monospace()
-                        .small(),
-                    );
-                });
-
-                ui.add_space(8.0);
-                ui.separator();
-                egui::CollapsingHeader::new(format!(
-                    "Commits ({})",
-                    self.git.commit_history.len()
-                ))
-                .default_open(false)
-                .show(ui, |ui| {
-                    let mut clicked_commit: Option<(String, String, String)> = None;
-                    for commit in &self.git.commit_history {
-                        let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3 {
-                            format!("{}...", &commit.message[..COMMIT_MSG_TRUNCATE_LEN])
-                        } else {
-                            commit.message.clone()
-                        };
-                        let label = format!("{} {}", commit.short_hash, msg);
-                        if ui
-                            .selectable_label(
-                                false,
-                                egui::RichText::new(&label).monospace().small(),
-                            )
-                            .on_hover_text(format!(
-                                "{}\n{}\n{}",
-                                commit.short_hash, commit.message, commit.time_ago
-                            ))
-                            .clicked()
-                        {
-                            clicked_commit = Some((commit.short_hash.clone(), commit.message.clone(), commit.body.clone()));
-                        }
-                    }
-                    if let Some((hash, message, body)) = clicked_commit {
-                        if let Some(diff_text) = git::get_commit_diff(&self.project_root, &hash) {
-                            let parsed = diff_view::parse_unified_diff(&diff_text);
-                            let cue_text = if body.len() > message.len() {
-                                body
-                            } else {
-                                format!("Commit {}", hash)
-                            };
-                            self.dismiss_central_overlays();
-                            self.diff_review = Some(DiffReview {
-                                cue_id: 0,
-                                diff: diff_text,
-                                cue_text,
-                                parsed,
-                                view_mode: DiffViewMode::Inline,
-                                read_only: true,
-                                collapsed_files: HashSet::new(),
-                                prompt_expanded: false,
-                                reply_text: String::new(),
-                                search_active: false,
-                                search_query: String::new(),
-                                search_matches: Vec::new(),
-                                search_current: None,
-                            });
-                        }
-                    }
-                });
             });
         });
     }

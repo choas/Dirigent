@@ -131,7 +131,29 @@ impl DirigentApp {
                 let mut custom_cue_requested = false;
                 let mut import_requested = false;
                 ui.horizontal(|ui| {
-                    ui.heading("Cues");
+                    let inbox = self
+                        .cues
+                        .iter()
+                        .filter(|c| c.status == CueStatus::Inbox)
+                        .count();
+                    let review = self
+                        .cues
+                        .iter()
+                        .filter(|c| c.status == CueStatus::Review)
+                        .count();
+                    let counts: Vec<String> = [
+                        if inbox > 0 { Some(format!("{} inbox", inbox)) } else { None },
+                        if review > 0 { Some(format!("{} review", review)) } else { None },
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    let heading_text = if counts.is_empty() {
+                        "Cues".to_string()
+                    } else {
+                        format!("Cues ({})", counts.join(", "))
+                    };
+                    ui.heading(heading_text);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let plus_btn = ui.button("+").on_hover_text("Playbook");
                         if ui.button("\u{21E9}").on_hover_text("Import from document").clicked() {
