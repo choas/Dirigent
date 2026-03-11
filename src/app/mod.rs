@@ -245,7 +245,7 @@ fn start_fs_watcher(
                 match event.kind {
                     EventKind::Create(_)
                     | EventKind::Remove(_)
-                    | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                    | EventKind::Modify(_) => {
                         flag.store(true, Ordering::Relaxed);
                         if let Some(ctx) = ctx.get() {
                             ctx.request_repaint();
@@ -280,7 +280,7 @@ impl DirigentApp {
             dirty_files,
             commit_history,
             worktrees,
-            _fs_watcher,
+            mut _fs_watcher,
         ) = if skip_scan {
             let _fs_changed_dummy = Arc::new(AtomicBool::new(false));
             (
@@ -301,9 +301,6 @@ impl DirigentApp {
             let dirty_files = git::get_dirty_files(&project_root);
             let commit_history = git::read_commit_history(&project_root, 50);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
-            let fs_changed_ref = Arc::new(AtomicBool::new(false));
-            let egui_ctx_ref = Arc::new(OnceLock::new());
-            let watcher = start_fs_watcher(&project_root, &fs_changed_ref, &egui_ctx_ref);
             (
                 file_tree,
                 cues,
@@ -312,12 +309,18 @@ impl DirigentApp {
                 dirty_files,
                 commit_history,
                 worktrees,
-                watcher,
+                None,
             )
         };
 
         let fs_changed = Arc::new(AtomicBool::new(false));
         let egui_ctx = Arc::new(OnceLock::new());
+
+        // Start the watcher using the same Arcs the app will store,
+        // so the watcher can actually signal changes to the app.
+        if !skip_scan {
+            _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
+        }
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
@@ -631,6 +634,12 @@ impl eframe::App for DirigentApp {
             self.last_fs_rescan = Instant::now();
             self.reload_file_tree();
             self.git.dirty_files = git::get_dirty_files(&self.project_root);
+            // Reload the currently open file so the code viewer shows fresh content
+            if let Some(ref path) = self.viewer.current_file {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    self.viewer.content = content.lines().map(String::from).collect();
+                }
+            }
         }
 
         // Reap finished/panicked worker threads
