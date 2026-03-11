@@ -411,12 +411,10 @@ pub(crate) fn commit_diff(
 
     let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
 
-    // Reset the index back to HEAD so it doesn't stay staged
-    let head_commit = repo
-        .head()?
-        .peel_to_commit()
-        .map_err(|e| DirigentError::Git(e))?;
-    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)?;
+    // Reset the index back to the newly created commit so it doesn't stay staged.
+    // Use the returned OID rather than repo.head() to avoid stale refdb cache.
+    let new_commit = repo.find_commit(oid)?;
+    repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
 
     Ok(format!("{}", oid))
 }
@@ -483,12 +481,10 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
     let parents: Vec<&git2::Commit> = parent.iter().collect();
     let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
 
-    // Reset index so it doesn't stay staged
-    let head_commit = repo
-        .head()?
-        .peel_to_commit()
-        .map_err(|e| DirigentError::Git(e))?;
-    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)?;
+    // Reset index so it doesn't stay staged.
+    // Use the returned OID rather than repo.head() to avoid stale refdb cache.
+    let new_commit = repo.find_commit(oid)?;
+    repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
 
     Ok(format!("{}", oid))
 }
