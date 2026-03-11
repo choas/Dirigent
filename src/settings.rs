@@ -580,6 +580,14 @@ impl SemanticColors {
         }
     }
 
+    pub fn muted_text(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(140, 140, 140)
+        } else {
+            egui::Color32::from_rgb(120, 120, 120)
+        }
+    }
+
     pub fn global_label(&self) -> egui::Color32 {
         if self.is_dark {
             egui::Color32::from_rgb(180, 140, 255)

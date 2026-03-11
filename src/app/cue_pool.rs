@@ -352,6 +352,7 @@ impl DirigentApp {
                             }
                             CueAction::SaveEdit(new_text) => {
                                 let _ = self.db.update_cue_text(id, &new_text);
+                                let _ = self.db.log_activity(id, "Edited");
                                 self.editing_cue = None;
                             }
                             CueAction::MoveTo(new_status) => {
@@ -360,6 +361,7 @@ impl DirigentApp {
                                     self.cancel_cue_task(id);
                                 }
                                 let _ = self.db.update_cue_status(id, new_status);
+                                let _ = self.db.log_activity(id, &format!("Moved to {}", new_status.label()));
                                 self.cue_move_flash.insert(id, Instant::now());
                                 if new_status == CueStatus::Ready {
                                     self.claude.expand_running = true;
@@ -440,6 +442,7 @@ impl DirigentApp {
                                                     cue_id,
                                                     CueStatus::Done,
                                                 );
+                                                let _ = self.db.log_activity(cue_id, &format!("Committed ({})", short));
                                             }
                                             Err(e) => {
                                                 self.set_status_message(format!("Commit failed: {}", e));
@@ -468,6 +471,7 @@ impl DirigentApp {
                                     cue_id,
                                     CueStatus::Inbox,
                                 );
+                                let _ = self.db.log_activity(cue_id, "Reverted");
                                 // Reload file to show reverted content
                                 if let Some(ref path) = self.viewer.current_file {
                                     let p = path.clone();
@@ -477,6 +481,7 @@ impl DirigentApp {
                             }
                             CueAction::ReplyReview(cue_id, reply_text) => {
                                 self.reply_inputs.remove(&cue_id);
+                                let _ = self.db.log_activity(cue_id, "Reply sent");
                                 self.trigger_claude_reply(cue_id, &reply_text);
                             }
                             CueAction::ShowRunningLog(cue_id) => {
@@ -542,6 +547,7 @@ impl DirigentApp {
                                                     *cue_id,
                                                     CueStatus::Done,
                                                 );
+                                                let _ = self.db.log_activity(*cue_id, &format!("Committed ({})", short));
                                             }
                                         }
                                         Err(e) => {
@@ -882,6 +888,31 @@ impl DirigentApp {
                         && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
                 if submit && !reply_text.trim().is_empty() {
                     actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
+                }
+            }
+
+            // Activity logbook (collapsible)
+            let is_expanded = self.logbook_expanded.contains(&cue.id);
+            let toggle_label = if is_expanded { "\u{25BE} Activity" } else { "\u{25B8} Activity" };
+            if ui.small_button(egui::RichText::new(toggle_label).small().color(self.semantic.muted_text())).clicked() {
+                if is_expanded {
+                    self.logbook_expanded.remove(&cue.id);
+                } else {
+                    self.logbook_expanded.insert(cue.id);
+                }
+            }
+            if is_expanded {
+                if let Ok(entries) = self.db.get_activities(cue.id) {
+                    if entries.is_empty() {
+                        ui.label(egui::RichText::new("No activity yet").small().color(self.semantic.muted_text()));
+                    } else {
+                        for entry in &entries {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&entry.timestamp).small().color(self.semantic.muted_text()));
+                                ui.label(egui::RichText::new(&entry.event).small());
+                            });
+                        }
+                    }
                 }
             }
         });

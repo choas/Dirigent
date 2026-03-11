@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -122,6 +123,12 @@ pub(crate) struct Execution {
     pub provider: CliProvider,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ActivityEntry {
+    pub timestamp: String,
+    pub event: String,
+}
+
 pub(crate) struct Database {
     conn: Connection,
 }
@@ -242,10 +249,22 @@ impl Database {
                 .conn
                 .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
         }
+        // Activity log table for cue lifecycle timestamps
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cue_activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cue_id INTEGER NOT NULL REFERENCES cues(id),
+                timestamp TEXT NOT NULL,
+                event TEXT NOT NULL
+            );",
+        )?;
         // Index on status for faster filtered queries
         let _ = self
             .conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);");
+        let _ = self
+            .conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);");
         Ok(())
     }
 
@@ -292,7 +311,9 @@ impl Database {
                 images_json,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        let _ = self.log_activity(id, "Created");
+        Ok(id)
     }
 
     #[allow(dead_code)] // Used in tests
@@ -324,6 +345,8 @@ impl Database {
     }
 
     pub fn delete_cue(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM cue_activity_log WHERE cue_id = ?1", params![id])?;
         self.conn
             .execute("DELETE FROM executions WHERE cue_id = ?1", params![id])?;
         self.conn
@@ -465,7 +488,49 @@ impl Database {
             "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, '', 0, ?2, ?3, ?4)",
             params![text, CueStatus::Inbox.as_str(), source_label, source_ref],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        let _ = self.log_activity(id, &format!("Created from {}", source_label));
+        Ok(id)
+    }
+
+    // -- Activity log --
+
+    /// Record a timestamped activity event for a cue.
+    pub fn log_activity(&self, cue_id: i64, event: &str) -> Result<()> {
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        self.conn.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![cue_id, timestamp, event],
+        )?;
+        Ok(())
+    }
+
+    /// Get all activity entries for a cue, ordered oldest first.
+    pub fn get_activities(&self, cue_id: i64) -> Result<Vec<ActivityEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, event FROM cue_activity_log WHERE cue_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![cue_id], |row| {
+            Ok(ActivityEntry {
+                timestamp: row.get(0)?,
+                event: row.get(1)?,
+            })
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+
+    /// Delete all activity log entries for a cue (used when deleting the cue).
+    #[allow(dead_code)]
+    pub fn delete_activities(&self, cue_id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cue_activity_log WHERE cue_id = ?1",
+            params![cue_id],
+        )?;
+        Ok(())
     }
 }
 

@@ -417,12 +417,14 @@ impl DirigentApp {
                 self.set_status_message(format!("Claude error for \"{}\": {}", preview, error));
                 let _ = self.db.fail_execution(result.exec_id, error);
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+                let _ = self.db.log_activity(result.cue_id, "Run failed");
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
                 let _ = self
                     .db
                     .complete_execution(result.exec_id, &result.response, Some(diff));
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
+                let _ = self.db.log_activity(result.cue_id, "Run completed — review ready");
                 self.notify_review_ready(result.cue_id);
                 // Reload current file so user sees changes
                 if let Some(ref path) = self.viewer.current_file {
@@ -441,6 +443,7 @@ impl DirigentApp {
                     preview
                 ));
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+                let _ = self.db.log_activity(result.cue_id, "Run completed — no changes");
             }
             self.reload_cues();
         }

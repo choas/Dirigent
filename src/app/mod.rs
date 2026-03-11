@@ -218,6 +218,9 @@ pub struct DirigentApp {
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
 
+    // Expanded activity logbooks (cue IDs with open logbook)
+    logbook_expanded: HashSet<i64>,
+
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
 }
@@ -361,6 +364,7 @@ impl DirigentApp {
             },
             task_handles: Vec::new(),
             cue_move_flash: HashMap::new(),
+            logbook_expanded: HashSet::new(),
             opencode_models: Vec::new(),
         }
     }
