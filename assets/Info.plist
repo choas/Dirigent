@@ -28,5 +28,7 @@
     <true/>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
+    <key>LSMultipleInstancesProhibited</key>
+    <false/>
 </dict>
 </plist>
