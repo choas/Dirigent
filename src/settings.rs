@@ -99,19 +99,7 @@ impl ThemeChoice {
 
     /// Returns custom egui Visuals for this theme.
     pub fn visuals(&self) -> egui::Visuals {
-        let mut v = match self {
-            ThemeChoice::Dark => egui::Visuals::dark(),
-            ThemeChoice::Light => egui::Visuals::light(),
-            _ => return self.palette().apply(self.is_dark()),
-        };
-        let accent = match self {
-            ThemeChoice::Dark => egui::Color32::from_rgb(100, 180, 255),
-            ThemeChoice::Light => egui::Color32::from_rgb(0, 100, 220),
-            _ => unreachable!(),
-        };
-        apply_rounding_and_depth(&mut v, self.is_dark());
-        apply_interactive_visuals(&mut v, accent);
-        v
+        self.palette().apply(self.is_dark())
     }
 
     fn palette(&self) -> ThemePalette {
@@ -136,7 +124,9 @@ impl ThemeChoice {
             OneLight          => palette!([250, 250, 250], [240, 240, 240], [255, 255, 255], [240, 240, 240], [ 56,  58,  66], [198, 216, 240], [240, 240, 240], [232, 232, 232], [218, 218, 218], [ 64, 120, 242], [  1, 132, 188]),
             NordLight         => palette!([236, 239, 244], [229, 233, 240], [242, 245, 250], [229, 233, 240], [ 59,  66,  82], [136, 192, 208], [229, 233, 240], [216, 222, 233], [208, 214, 225], [ 94, 129, 172], [ 94, 129, 172]),
             TokyoNightLight   => palette!([213, 214, 219], [224, 225, 228], [235, 236, 240], [224, 225, 228], [ 52,  54,  86], [180, 182, 200], [224, 225, 228], [210, 211, 216], [198, 199, 206], [ 52,  84, 223], [118, 105, 199]),
-            Dark | Light => unreachable!(),
+            //                            panel_fill         window_fill        extreme_bg         faint_bg           text               selection          noninteractive     inactive           hovered            active             hyperlink
+            Dark              => palette!([ 32,  33,  38], [ 42,  44,  52], [ 22,  23,  26], [ 38,  40,  46], [210, 214, 222], [ 42,  62, 110], [ 42,  44,  52], [ 48,  50,  60], [ 58,  62,  74], [100, 180, 255], [100, 180, 255]),
+            Light             => palette!([244, 245, 248], [252, 252, 255], [255, 255, 255], [236, 238, 243], [ 30,  32,  42], [178, 210, 250], [236, 238, 243], [224, 226, 234], [212, 216, 226], [  0, 100, 220], [  0, 100, 220]),
         }
     }
 }
@@ -261,7 +251,7 @@ impl SemanticColors {
 
     pub fn addition_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(30, 80, 30, 60)
+            egui::Color32::from_rgba_premultiplied(25, 80, 35, 70)
         } else {
             egui::Color32::from_rgba_premultiplied(30, 120, 30, 35)
         }
@@ -269,7 +259,7 @@ impl SemanticColors {
 
     pub fn deletion_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(80, 30, 30, 60)
+            egui::Color32::from_rgba_premultiplied(80, 25, 25, 70)
         } else {
             egui::Color32::from_rgba_premultiplied(120, 30, 30, 35)
         }
@@ -425,32 +415,32 @@ impl SemanticColors {
     /// Slightly elevated card surface color.
     fn card_surface(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_white_alpha(6)
+            egui::Color32::from_white_alpha(12)
         } else {
-            egui::Color32::from_black_alpha(4)
+            egui::Color32::from_black_alpha(6)
         }
     }
 
     /// Frame for inline cards (cue cards, source configs, playbook items) —
     /// subtle shadow and elevated fill instead of a flat border.
     pub fn card_frame(&self) -> egui::Frame {
-        let shadow_alpha = if self.is_dark { 60 } else { 20 };
+        let shadow_alpha = if self.is_dark { 70 } else { 25 };
         egui::Frame::none()
-            .inner_margin(8.0)
+            .inner_margin(10.0)
             .fill(self.card_surface())
             .rounding(8.0)
             .shadow(egui::epaint::Shadow {
-                offset: egui::vec2(0.0, 1.0),
-                blur: 4.0,
+                offset: egui::vec2(0.0, 2.0),
+                blur: 6.0,
                 spread: 0.0,
                 color: egui::Color32::from_black_alpha(shadow_alpha),
             })
             .stroke(egui::Stroke::new(
                 0.5,
                 if self.is_dark {
-                    egui::Color32::from_white_alpha(10)
+                    egui::Color32::from_white_alpha(15)
                 } else {
-                    egui::Color32::from_black_alpha(8)
+                    egui::Color32::from_black_alpha(10)
                 },
             ))
     }
@@ -499,9 +489,9 @@ impl ThemeChoice {
         if dark {
             SemanticColors {
                 accent,
-                success: egui::Color32::from_rgb(100, 200, 100),
-                warning: egui::Color32::from_rgb(200, 160, 50),
-                danger: egui::Color32::from_rgb(220, 100, 100),
+                success: egui::Color32::from_rgb(80, 190, 110),
+                warning: egui::Color32::from_rgb(200, 165, 60),
+                danger: egui::Color32::from_rgb(210, 95, 95),
                 secondary_text: egui::Color32::from_gray(160),
                 tertiary_text: egui::Color32::from_gray(120),
                 separator: egui::Color32::from_gray(60),

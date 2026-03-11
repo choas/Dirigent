@@ -505,8 +505,10 @@ impl DirigentApp {
         status: CueStatus,
     ) {
         let fs = self.settings.font_size;
+        let avail_w = ui.available_width();
         let frame_resp = self.semantic.card_frame()
             .show(ui, |ui| {
+                ui.set_min_width(avail_w - 22.0);
                 // Cue text - inline editable for Inbox
                 let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
                 if is_editing {
