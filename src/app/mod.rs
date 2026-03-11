@@ -1,3 +1,4 @@
+mod agents_poll;
 mod claude_run;
 mod code_viewer;
 mod cue_pool;
@@ -42,6 +43,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use eframe::egui;
 
+use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::file_tree::FileTree;
@@ -175,6 +177,7 @@ pub struct DirigentApp {
     show_settings: bool,
     needs_theme_apply: bool,
     playbook_expanded: bool,
+    agents_expanded: bool,
 
     // Global prompt
     global_prompt_input: String,
@@ -214,6 +217,9 @@ pub struct DirigentApp {
 
     // Task lifecycle management
     task_handles: Vec<TaskHandle>,
+
+    // Agent system (format, lint, build, test)
+    pub(super) agent_state: AgentRunState,
 
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
@@ -334,6 +340,7 @@ impl DirigentApp {
             show_settings: false,
             needs_theme_apply: true,
             playbook_expanded: false,
+            agents_expanded: false,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
             show_repo_picker: false,
@@ -363,6 +370,7 @@ impl DirigentApp {
                 search_result_rx,
             },
             task_handles: Vec::new(),
+            agent_state: AgentRunState::new(),
             cue_move_flash: HashMap::new(),
             logbook_expanded: HashSet::new(),
             opencode_models: Vec::new(),
@@ -616,6 +624,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for Claude results
         self.process_claude_results();
+
+        // Poll for agent results (format, lint, build, test)
+        self.process_agent_results();
 
         // Poll external sources for new cues
         self.poll_sources();

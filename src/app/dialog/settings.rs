@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::agents::{AgentTrigger, default_agents};
 use crate::opencode;
 use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 
@@ -367,6 +368,129 @@ impl DirigentApp {
 
             if let Some(idx) = remove_idx {
                 self.settings.sources.remove(idx);
+            }
+
+            // Agents section
+            ui.add_space(SPACE_MD);
+            ui.separator();
+            ui.add_space(SPACE_SM);
+            ui.horizontal(|ui| {
+                let arrow = if self.agents_expanded { "\u{25BC}" } else { "\u{25B6}" };
+                if ui.button(icon(&format!("{} Agents", arrow), fs)).clicked() {
+                    self.agents_expanded = !self.agents_expanded;
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "({} agents)",
+                        self.settings.agents.iter().filter(|a| a.enabled).count()
+                    ))
+                    .small()
+                    .color(self.semantic.secondary_text),
+                );
+                if self.agents_expanded {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Reset Defaults").clicked() {
+                            self.settings.agents = default_agents();
+                        }
+                    });
+                }
+            });
+
+            if self.agents_expanded {
+                ui.add_space(SPACE_SM);
+
+                let num_agents = self.settings.agents.len();
+                for i in 0..num_agents {
+                    self.semantic.card_frame()
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(self.settings.agents[i].kind.label())
+                                        .strong(),
+                                );
+                                ui.checkbox(&mut self.settings.agents[i].enabled, "Enabled");
+                            });
+
+                            egui::Grid::new(format!("agent_grid_{}", i))
+                                .num_columns(2)
+                                .spacing([SPACE_SM, SPACE_XS])
+                                .show(ui, |ui| {
+                                    ui.label("Command:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.settings.agents[i].command,
+                                        )
+                                        .desired_width(300.0)
+                                        .hint_text("shell command")
+                                        .font(egui::TextStyle::Monospace),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("Trigger:");
+                                    egui::ComboBox::from_id_salt(format!("agent_trigger_{}", i))
+                                        .selected_text(
+                                            self.settings.agents[i].trigger.display_name(),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for trigger in AgentTrigger::all() {
+                                                ui.selectable_value(
+                                                    &mut self.settings.agents[i].trigger,
+                                                    trigger.clone(),
+                                                    trigger.display_name(),
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+
+                                    ui.label("Timeout:");
+                                    ui.horizontal(|ui| {
+                                        let mut secs =
+                                            self.settings.agents[i].timeout_secs as f64;
+                                        ui.add(
+                                            egui::DragValue::new(&mut secs)
+                                                .range(5.0..=600.0)
+                                                .speed(5.0)
+                                                .suffix("s"),
+                                        );
+                                        self.settings.agents[i].timeout_secs = secs as u64;
+                                    });
+                                    ui.end_row();
+                                });
+
+                            ui.horizontal(|ui| {
+                                if ui.small_button("Run Now").clicked() {
+                                    self.trigger_agent_manual(self.settings.agents[i].kind);
+                                }
+                                if let Some(status) =
+                                    self.agent_state.statuses.get(&self.settings.agents[i].kind)
+                                {
+                                    let (icon_str, color) = match status {
+                                        crate::agents::AgentStatus::Running => {
+                                            ("\u{21BB} running", self.semantic.accent)
+                                        }
+                                        crate::agents::AgentStatus::Passed => {
+                                            ("\u{2713} passed", self.semantic.success)
+                                        }
+                                        crate::agents::AgentStatus::Failed => {
+                                            ("\u{2717} failed", self.semantic.danger)
+                                        }
+                                        crate::agents::AgentStatus::Error => {
+                                            ("! error", self.semantic.danger)
+                                        }
+                                        _ => ("", self.semantic.tertiary_text),
+                                    };
+                                    if !icon_str.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(icon_str)
+                                                .small()
+                                                .color(color),
+                                        );
+                                    }
+                                }
+                            });
+                        });
+                    ui.add_space(SPACE_SM);
+                }
             }
 
             // Playbook section
