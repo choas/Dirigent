@@ -1,10 +1,11 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_XS, SPACE_SM};
+use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 use crate::db::CueStatus;
+use crate::settings::CliProvider;
 
 impl DirigentApp {
-    // Claude conversation rendered in the central panel (replaces code viewer)
+    // AI provider conversation rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_running_log_central(&mut self, ctx: &egui::Context) {
         let cue_id = self.claude.show_log.unwrap();
         let fs = self.settings.font_size;
@@ -32,12 +33,14 @@ impl DirigentApp {
 
         // Collect conversation data: past executions + current running log
         let past_execs = self.claude.conversation_history.clone();
-        let current_running_log = self
+        let (current_running_log, current_provider) = self
             .claude
             .running_logs
             .get(&cue_id)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or((String::new(), CliProvider::Claude));
+        let provider_name = current_provider.display_name();
+        let provider_color = self.semantic.provider_color(&current_provider);
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
 
         let mut close = false;
@@ -58,16 +61,11 @@ impl DirigentApp {
                     } else {
                         format!("\u{25CF} Running ({})", elapsed)
                     };
-                    ui.label(
-                        icon(&status, fs)
-                            .color(self.semantic.accent),
-                    );
-                    ui.ctx().request_repaint_after(super::super::ELAPSED_REPAINT);
+                    ui.label(icon(&status, fs).color(self.semantic.accent));
+                    ui.ctx()
+                        .request_repaint_after(super::super::ELAPSED_REPAINT);
                 } else {
-                    ui.label(
-                        icon("\u{2713} Completed", fs)
-                            .color(self.semantic.success),
-                    );
+                    ui.label(icon("\u{2713} Completed", fs).color(self.semantic.success));
                 }
                 ui.separator();
                 ui.label(
@@ -84,7 +82,6 @@ impl DirigentApp {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     let user_color = self.semantic.accent;
-                    let claude_color = self.semantic.claude_color();
 
                     if past_execs.is_empty() && current_running_log.is_empty() {
                         let msg = if is_running {
@@ -105,11 +102,7 @@ impl DirigentApp {
                         // -- User message --
                         let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("You")
-                                    .strong()
-                                    .color(user_color),
-                            );
+                            ui.label(egui::RichText::new("You").strong().color(user_color));
                             if idx > 0 {
                                 ui.label(
                                     egui::RichText::new(format!("(reply #{})", idx))
@@ -119,21 +112,31 @@ impl DirigentApp {
                             }
                         });
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
+                            .inner_margin(egui::Margin {
+                                left: SPACE_SM,
+                                top: SPACE_XS,
+                                right: SPACE_XS,
+                                bottom: SPACE_SM,
+                            })
                             .show(ui, |ui| {
                                 ui.label(&user_text);
                             });
 
-                        // -- Claude response --
+                        // -- Provider response --
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new("Claude")
+                                egui::RichText::new(provider_name)
                                     .strong()
-                                    .color(claude_color),
+                                    .color(provider_color),
                             );
                         });
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
+                            .inner_margin(egui::Margin {
+                                left: SPACE_SM,
+                                top: SPACE_XS,
+                                right: SPACE_XS,
+                                bottom: SPACE_SM,
+                            })
                             .show(ui, |ui| {
                                 if is_current_running {
                                     // Show live streaming log for the currently running execution
@@ -152,11 +155,7 @@ impl DirigentApp {
                                     }
                                 } else if let Some(ref log_text) = exec.log {
                                     if !log_text.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(log_text)
-                                                .monospace()
-                                                .small(),
-                                        );
+                                        ui.label(egui::RichText::new(log_text).monospace().small());
                                     } else {
                                         ui.label(
                                             egui::RichText::new("(no output)")
@@ -179,7 +178,8 @@ impl DirigentApp {
                     }
 
                     // If currently running but not yet in past_execs (just started)
-                    if is_running && current_exec_id.is_some()
+                    if is_running
+                        && current_exec_id.is_some()
                         && !past_execs.iter().any(|e| Some(e.id) == current_exec_id)
                     {
                         if !past_execs.is_empty() {
@@ -188,12 +188,17 @@ impl DirigentApp {
                         // Show the user's prompt from running_logs context
                         // (the execution hasn't been saved to history yet)
                         ui.label(
-                            egui::RichText::new("Claude")
+                            egui::RichText::new(provider_name)
                                 .strong()
-                                .color(claude_color),
+                                .color(provider_color),
                         );
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
+                            .inner_margin(egui::Margin {
+                                left: SPACE_SM,
+                                top: SPACE_XS,
+                                right: SPACE_XS,
+                                bottom: SPACE_SM,
+                            })
                             .show(ui, |ui| {
                                 if current_running_log.is_empty() {
                                     ui.label(

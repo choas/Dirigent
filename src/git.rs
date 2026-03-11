@@ -175,11 +175,7 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         let hash = format!("{}", commit.id());
         let short_hash = hash.chars().take(7).collect::<String>();
         let full_message = commit.message().unwrap_or("");
-        let message = full_message
-            .lines()
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let message = full_message.lines().next().unwrap_or("").to_string();
         let body = full_message.trim().to_string();
         let author = commit.author().name().unwrap_or("").to_string();
         let secs = commit.time().seconds();
@@ -413,8 +409,7 @@ pub(crate) fn commit_diff(
 
     let parents: Vec<&git2::Commit> = parent.iter().collect();
 
-    let oid = repo
-        .commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
+    let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
 
     // Reset the index back to HEAD so it doesn't stay staged
     let head_commit = repo
@@ -438,9 +433,7 @@ pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::er
     for f in file_paths {
         cmd.arg(f);
     }
-    let output = cmd
-        .current_dir(repo_path)
-        .output()?;
+    let output = cmd.current_dir(repo_path).output()?;
 
     if !output.status.success() {
         return Err(DirigentError::GitCommand(
@@ -461,7 +454,10 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!("git add -A failed: {}", stderr)));
+        return Err(DirigentError::GitCommand(format!(
+            "git add -A failed: {}",
+            stderr
+        )));
     }
 
     // Commit
@@ -547,8 +543,7 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
         if line.is_empty() {
             if let Some(p) = wt_path.take() {
                 if !is_bare {
-                    let canon_wt =
-                        std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+                    let canon_wt = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
                     let name = branch
                         .take()
                         .and_then(|b| b.rsplit('/').next().map(|s| s.to_string()))
@@ -597,13 +592,7 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     let wt_path = parent.join(name);
 
     let output = Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            name,
-            &wt_path.to_string_lossy(),
-        ])
+        .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
         .current_dir(repo_path)
         .output()?;
 
@@ -760,9 +749,7 @@ mod tests {
             let mut index = repo.index().unwrap();
             let file_path = dir.path().join("hello.txt");
             std::fs::write(&file_path, "hello").unwrap();
-            index
-                .add_path(std::path::Path::new("hello.txt"))
-                .unwrap();
+            index.add_path(std::path::Path::new("hello.txt")).unwrap();
             index.write().unwrap();
             index.write_tree().unwrap()
         };
@@ -798,9 +785,7 @@ mod tests {
         let tree_id = {
             let mut index = repo.index().unwrap();
             std::fs::write(dir.path().join("tracked.txt"), "v1").unwrap();
-            index
-                .add_path(std::path::Path::new("tracked.txt"))
-                .unwrap();
+            index.add_path(std::path::Path::new("tracked.txt")).unwrap();
             index.write().unwrap();
             index.write_tree().unwrap()
         };

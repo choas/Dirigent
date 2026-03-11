@@ -28,12 +28,8 @@ pub(super) fn collect_files(entries: &[FileEntry], out: &mut Vec<PathBuf>) {
 }
 
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg",
-    "woff", "woff2", "ttf", "otf",
-    "zip", "tar", "gz", "bz2",
-    "exe", "dll", "so", "dylib",
-    "o", "a", "lib",
-    "pdf", "db", "sqlite",
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg", "woff", "woff2", "ttf", "otf", "zip", "tar",
+    "gz", "bz2", "exe", "dll", "so", "dylib", "o", "a", "lib", "pdf", "db", "sqlite",
 ];
 
 fn is_binary_ext(path: &Path) -> bool {
@@ -203,25 +199,34 @@ impl DirigentApp {
                     let current = self.search.in_file_current.map(|i| i + 1).unwrap_or(0);
                     format!("{}/{}", current, match_count)
                 };
-                ui.label(
-                    egui::RichText::new(label)
-                        .monospace()
-                        .small()
-                        .color(if match_count == 0 {
-                            self.semantic.danger
-                        } else {
-                            self.semantic.secondary_text
-                        }),
-                );
+                ui.label(egui::RichText::new(label).monospace().small().color(
+                    if match_count == 0 {
+                        self.semantic.danger
+                    } else {
+                        self.semantic.secondary_text
+                    },
+                ));
             }
 
-            if ui.small_button(icon("\u{2191}", fs)).on_hover_text("Previous (Shift+Enter)").clicked() {
+            if ui
+                .small_button(icon("\u{2191}", fs))
+                .on_hover_text("Previous (Shift+Enter)")
+                .clicked()
+            {
                 self.search_in_file_prev();
             }
-            if ui.small_button(icon("\u{2193}", fs)).on_hover_text("Next (Enter)").clicked() {
+            if ui
+                .small_button(icon("\u{2193}", fs))
+                .on_hover_text("Next (Enter)")
+                .clicked()
+            {
                 self.search_in_file_next();
             }
-            if ui.small_button(icon("\u{2715}", fs)).on_hover_text("Close (Esc)").clicked() {
+            if ui
+                .small_button(icon("\u{2715}", fs))
+                .on_hover_text("Close (Esc)")
+                .clicked()
+            {
                 close = true;
             }
 
@@ -249,7 +254,11 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             ui.strong("Search in Files");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button(icon("\u{2715}", fs)).on_hover_text("Close search").clicked() {
+                if ui
+                    .small_button(icon("\u{2715}", fs))
+                    .on_hover_text("Close search")
+                    .clicked()
+                {
                     self.search.in_files_active = false;
                 }
             });
@@ -318,8 +327,10 @@ impl DirigentApp {
                             .italics()
                             .color(self.semantic.tertiary_text),
                     );
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-                } else if self.search.in_files_results.is_empty() && !self.search.in_files_query.is_empty()
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(100));
+                } else if self.search.in_files_results.is_empty()
+                    && !self.search.in_files_query.is_empty()
                 {
                     ui.label(
                         egui::RichText::new("No results found.")
@@ -350,10 +361,7 @@ impl DirigentApp {
                     let text = format!("{} {}", line_label, content_preview.trim());
 
                     if ui
-                        .selectable_label(
-                            false,
-                            egui::RichText::new(&text).monospace().small(),
-                        )
+                        .selectable_label(false, egui::RichText::new(&text).monospace().small())
                         .clicked()
                     {
                         navigate_to = Some((result.file_path.clone(), result.line_number));
@@ -370,8 +378,7 @@ impl DirigentApp {
     /// Handle global keyboard shortcuts for search (called from update loop).
     pub(super) fn handle_search_shortcuts(&mut self, ctx: &egui::Context) {
         // Cmd+F = search in file (or diff review)
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::F))
-        {
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::F)) {
             if self.diff_review.is_some() {
                 if let Some(ref mut review) = self.diff_review {
                     review.search_active = true;
@@ -386,7 +393,6 @@ impl DirigentApp {
             self.search.in_files_active = true;
         }
     }
-
 }
 
 pub(super) fn update_diff_search_matches(review: &mut super::DiffReview) {

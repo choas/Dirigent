@@ -47,9 +47,18 @@ impl DirigentApp {
                 ui.separator();
                 ui.strong("Diff Review");
                 ui.separator();
-                let arrow = if prompt_expanded { "\u{25BC}" } else { "\u{25B6}" };
-                if ui.button(icon(&format!("{} {}", arrow, prefix), fs))
-                    .on_hover_text(if prompt_expanded { "Hide prompt" } else { "Show prompt" })
+                let arrow = if prompt_expanded {
+                    "\u{25BC}"
+                } else {
+                    "\u{25B6}"
+                };
+                if ui
+                    .button(icon(&format!("{} {}", arrow, prefix), fs))
+                    .on_hover_text(if prompt_expanded {
+                        "Hide prompt"
+                    } else {
+                        "Show prompt"
+                    })
                     .clicked()
                 {
                     toggle_prompt = true;
@@ -60,10 +69,7 @@ impl DirigentApp {
                     } else {
                         cue_text.clone()
                     };
-                    ui.label(
-                        egui::RichText::new(truncated)
-                            .color(self.semantic.secondary_text),
-                    );
+                    ui.label(egui::RichText::new(truncated).color(self.semantic.secondary_text));
                 }
             });
             if prompt_expanded {
@@ -73,8 +79,7 @@ impl DirigentApp {
                         .max_height(150.0)
                         .show(ui, |ui| {
                             ui.label(
-                                egui::RichText::new(&cue_text)
-                                    .color(self.semantic.secondary_text),
+                                egui::RichText::new(&cue_text).color(self.semantic.secondary_text),
                             );
                         });
                 });
@@ -99,20 +104,14 @@ impl DirigentApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !read_only {
                         if ui
-                            .button(
-                                icon("\u{21BA} Revert", fs)
-                                    .color(self.semantic.danger),
-                            )
+                            .button(icon("\u{21BA} Revert", fs).color(self.semantic.danger))
                             .on_hover_text("Revert changes back to previous state")
                             .clicked()
                         {
                             reject = true;
                         }
                         if ui
-                            .button(
-                                icon("\u{2713} Commit", fs)
-                                    .color(self.semantic.success),
-                            )
+                            .button(icon("\u{2713} Commit", fs).color(self.semantic.success))
                             .on_hover_text("Commit the applied changes")
                             .clicked()
                         {
@@ -134,9 +133,8 @@ impl DirigentApp {
                         .on_hover_text("Send feedback to Claude for another iteration")
                         .clicked()
                         || (te.has_focus()
-                            && ui.input(|i| {
-                                i.key_pressed(egui::Key::Enter) && i.modifiers.command
-                            }));
+                            && ui
+                                .input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
                     if send && !reply_text.trim().is_empty() {
                         reply_send = Some(reply_text.clone());
                     }
@@ -176,25 +174,34 @@ impl DirigentApp {
                             let current = search_current.map(|i| i + 1).unwrap_or(0);
                             format!("{}/{}", current, match_count)
                         };
-                        ui.label(
-                            egui::RichText::new(label)
-                                .monospace()
-                                .small()
-                                .color(if match_count == 0 {
-                                    self.semantic.danger
-                                } else {
-                                    self.semantic.secondary_text
-                                }),
-                        );
+                        ui.label(egui::RichText::new(label).monospace().small().color(
+                            if match_count == 0 {
+                                self.semantic.danger
+                            } else {
+                                self.semantic.secondary_text
+                            },
+                        ));
                     }
 
-                    if ui.small_button(icon("\u{2191}", fs)).on_hover_text("Previous (Shift+Enter)").clicked() {
+                    if ui
+                        .small_button(icon("\u{2191}", fs))
+                        .on_hover_text("Previous (Shift+Enter)")
+                        .clicked()
+                    {
                         search_prev = true;
                     }
-                    if ui.small_button(icon("\u{2193}", fs)).on_hover_text("Next (Enter)").clicked() {
+                    if ui
+                        .small_button(icon("\u{2193}", fs))
+                        .on_hover_text("Next (Enter)")
+                        .clicked()
+                    {
                         search_next = true;
                     }
-                    if ui.small_button(icon("\u{2715}", fs)).on_hover_text("Close (Esc)").clicked() {
+                    if ui
+                        .small_button(icon("\u{2715}", fs))
+                        .on_hover_text("Close (Esc)")
+                        .clicked()
+                    {
                         search_close = true;
                     }
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -230,10 +237,22 @@ impl DirigentApp {
                     } else {
                         match view_mode {
                             DiffViewMode::Inline => {
-                                diff_view::render_inline_diff(ui, &parsed, collapsed_files, search_highlight.as_ref(), &sem);
+                                diff_view::render_inline_diff(
+                                    ui,
+                                    &parsed,
+                                    collapsed_files,
+                                    search_highlight.as_ref(),
+                                    &sem,
+                                );
                             }
                             DiffViewMode::SideBySide => {
-                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files, search_highlight.as_ref(), &sem);
+                                diff_view::render_side_by_side_diff(
+                                    ui,
+                                    &parsed,
+                                    collapsed_files,
+                                    search_highlight.as_ref(),
+                                    &sem,
+                                );
                             }
                         }
                     }
@@ -304,9 +323,7 @@ impl DirigentApp {
                 Ok(hash) => {
                     let short = &hash[..7.min(hash.len())];
                     self.set_status_message(format!("Committed: {}", short));
-                    let _ = self
-                        .db
-                        .update_cue_status(cue_id, CueStatus::Done);
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
                 }
                 Err(e) => {
                     self.set_status_message(format!("Commit failed: {}", e));
@@ -321,9 +338,7 @@ impl DirigentApp {
             if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
                 self.set_status_message(format!("Revert failed: {}", e));
             }
-            let _ = self
-                .db
-                .update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             if let Some(ref path) = self.viewer.current_file {
                 let p = path.clone();
                 self.load_file(p);

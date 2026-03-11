@@ -43,10 +43,7 @@ pub(crate) fn build_prompt(
     let images_section = if images.is_empty() {
         String::new()
     } else {
-        let list: Vec<String> = images
-            .iter()
-            .map(|p| format!("- {}", p))
-            .collect();
+        let list: Vec<String> = images.iter().map(|p| format!("- {}", p)).collect();
         format!(
             "\n\n## Attached Images\n\n\
              The following images are attached. Use the Read tool to view them:\n{}",
@@ -105,10 +102,7 @@ pub(crate) fn build_reply_prompt(
     let images_section = if images.is_empty() {
         String::new()
     } else {
-        let list: Vec<String> = images
-            .iter()
-            .map(|p| format!("- {}", p))
-            .collect();
+        let list: Vec<String> = images.iter().map(|p| format!("- {}", p)).collect();
         format!(
             "\n\n## Attached Images\n\n\
              The following images are attached. Use the Read tool to view them:\n{}",
@@ -148,7 +142,11 @@ pub(crate) fn invoke_claude_streaming(
     use std::io::{BufRead, Read};
     use std::process::Stdio;
 
-    let claude_bin = if cli_path.is_empty() { "claude" } else { cli_path };
+    let claude_bin = if cli_path.is_empty() {
+        "claude"
+    } else {
+        cli_path
+    };
 
     let which_result = Command::new("which").arg(claude_bin).output();
     match which_result {
@@ -239,10 +237,7 @@ pub(crate) fn invoke_claude_streaming(
             }
         };
 
-        let event_type = event
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match event_type {
             "assistant" => {
@@ -252,24 +247,18 @@ pub(crate) fn invoke_claude_streaming(
                     .and_then(|c| c.as_array())
                 {
                     for block in content {
-                        let block_type =
-                            block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         match block_type {
                             "text" => {
-                                if let Some(text) =
-                                    block.get("text").and_then(|t| t.as_str())
-                                {
+                                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                                     on_log(text);
                                     on_log("\n");
                                 }
                             }
                             "tool_use" => {
-                                let name = block
-                                    .get("name")
-                                    .and_then(|n| n.as_str())
-                                    .unwrap_or("?");
-                                let input =
-                                    block.get("input").cloned().unwrap_or_default();
+                                let name =
+                                    block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                let input = block.get("input").cloned().unwrap_or_default();
                                 // Track files edited by Claude
                                 if matches!(name, "Edit" | "Write" | "NotebookEdit") {
                                     if let Some(path) =
@@ -283,10 +272,7 @@ pub(crate) fn invoke_claude_streaming(
                                 let detail = if let Some(cmd) =
                                     input.get("command").and_then(|c| c.as_str())
                                 {
-                                    format!(
-                                        " $ {}",
-                                        cmd.lines().next().unwrap_or("")
-                                    )
+                                    format!(" $ {}", cmd.lines().next().unwrap_or(""))
                                 } else if let Some(path) =
                                     input.get("file_path").and_then(|p| p.as_str())
                                 {
@@ -298,10 +284,7 @@ pub(crate) fn invoke_claude_streaming(
                                 } else {
                                     String::new()
                                 };
-                                on_log(&format!(
-                                    "\u{2192} {}{}\n",
-                                    name, detail
-                                ));
+                                on_log(&format!("\u{2192} {}{}\n", name, detail));
                             }
                             _ => {}
                         }
@@ -309,9 +292,7 @@ pub(crate) fn invoke_claude_streaming(
                 }
             }
             "result" => {
-                if let Some(result) =
-                    event.get("result").and_then(|r| r.as_str())
-                {
+                if let Some(result) = event.get("result").and_then(|r| r.as_str()) {
                     final_result = result.to_string();
                 }
                 // Show cost and duration
@@ -323,10 +304,7 @@ pub(crate) fn invoke_claude_streaming(
                     .get("duration_ms")
                     .and_then(|d| d.as_u64())
                     .unwrap_or(0);
-                let turns = event
-                    .get("num_turns")
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(0);
+                let turns = event.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0);
                 on_log(&format!(
                     "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
                     turns,
@@ -335,9 +313,7 @@ pub(crate) fn invoke_claude_streaming(
                 ));
             }
             "system" => {
-                if let Some(subtype) =
-                    event.get("subtype").and_then(|s| s.as_str())
-                {
+                if let Some(subtype) = event.get("subtype").and_then(|s| s.as_str()) {
                     on_log(&format!("[{}]\n", subtype));
                 }
             }
@@ -356,8 +332,12 @@ pub(crate) fn invoke_claude_streaming(
 
     // Reap the child process (works whether it exited naturally or was killed)
     match child.lock() {
-        Ok(mut c) => { let _ = c.wait(); }
-        Err(poisoned) => { let _ = poisoned.into_inner().wait(); }
+        Ok(mut c) => {
+            let _ = c.wait();
+        }
+        Err(poisoned) => {
+            let _ = poisoned.into_inner().wait();
+        }
     }
     let stderr = stderr_thread.join().unwrap_or_default();
 
@@ -456,10 +436,7 @@ fn extract_unified_diff(response: &str) -> Option<String> {
     let mut i = 0;
 
     while i < lines.len() {
-        if lines[i].starts_with("--- ")
-            && i + 1 < lines.len()
-            && lines[i + 1].starts_with("+++ ")
-        {
+        if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
             result.push(lines[i]);
             i += 1;
             result.push(lines[i]);
@@ -611,7 +588,10 @@ mod tests {
 
     #[test]
     fn build_prompt_with_images() {
-        let images = vec!["/tmp/screenshot.png".to_string(), "/tmp/design.jpg".to_string()];
+        let images = vec![
+            "/tmp/screenshot.png".to_string(),
+            "/tmp/design.jpg".to_string(),
+        ];
         let prompt = build_prompt("Implement this design", "", 0, None, &images);
         assert!(prompt.contains("Attached Images"));
         assert!(prompt.contains("/tmp/screenshot.png"));
@@ -756,12 +736,26 @@ Done!";
 
     #[test]
     fn extract_feedback_from_reply_prompt() {
-        let prompt = build_reply_prompt("original task", "f.rs", 1, None, "some diff", "please fix the typo", &[]);
-        assert_eq!(extract_user_text_from_prompt(&prompt), "please fix the typo");
+        let prompt = build_reply_prompt(
+            "original task",
+            "f.rs",
+            1,
+            None,
+            "some diff",
+            "please fix the typo",
+            &[],
+        );
+        assert_eq!(
+            extract_user_text_from_prompt(&prompt),
+            "please fix the typo"
+        );
     }
 
     #[test]
     fn extract_from_plain_text() {
-        assert_eq!(extract_user_text_from_prompt("just plain text"), "just plain text");
+        assert_eq!(
+            extract_user_text_from_prompt("just plain text"),
+            "just plain text"
+        );
     }
 }

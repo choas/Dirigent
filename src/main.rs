@@ -7,6 +7,7 @@ mod diff_view;
 mod error;
 mod file_tree;
 mod git;
+mod opencode;
 mod settings;
 mod sources;
 
@@ -70,8 +71,7 @@ fn setup_macos_about_panel() {
                         stringWithUTF8String: b"ApplicationIcon\0".as_ptr()];
                     let _: () = msg_send![dict, setObject:icon forKey:key];
 
-                    let _: () =
-                        msg_send![app, orderFrontStandardAboutPanelWithOptions:dict];
+                    let _: () = msg_send![app, orderFrontStandardAboutPanelWithOptions:dict];
                 }
             }
 
@@ -88,20 +88,17 @@ fn setup_macos_about_panel() {
             if !main_menu.is_null() {
                 let count: isize = msg_send![main_menu, numberOfItems];
                 if count > 0 {
-                    let app_menu_item: *mut Object =
-                        msg_send![main_menu, itemAtIndex:0_isize];
+                    let app_menu_item: *mut Object = msg_send![main_menu, itemAtIndex:0_isize];
                     let submenu: *mut Object = msg_send![app_menu_item, submenu];
                     if !submenu.is_null() {
                         let sub_count: isize = msg_send![submenu, numberOfItems];
                         let about_sel = sel!(orderFrontStandardAboutPanel:);
                         for i in 0..sub_count {
-                            let item: *mut Object =
-                                msg_send![submenu, itemAtIndex:i];
+                            let item: *mut Object = msg_send![submenu, itemAtIndex:i];
                             let action: Sel = msg_send![item, action];
                             if action == about_sel {
                                 let _: () = msg_send![item, setTarget:helper];
-                                let _: () =
-                                    msg_send![item, setAction:sel!(showAbout:)];
+                                let _: () = msg_send![item, setAction:sel!(showAbout:)];
                                 break;
                             }
                         }
@@ -148,8 +145,7 @@ fn main() -> eframe::Result {
         std::env::current_dir().expect("failed to get cwd")
     };
 
-    let project_root = std::fs::canonicalize(&project_root)
-        .unwrap_or(project_root);
+    let project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root);
 
     // When launched from Finder, use the home directory as a temporary root
     // and auto-show the repo picker so the user can choose a project.
@@ -186,14 +182,13 @@ fn main() -> eframe::Result {
             // fonts".  apply_theme() will overwrite this with the real setup.
             {
                 let mut fd = egui::FontDefinitions::default();
-                let mono = fd.families
+                let mono = fd
+                    .families
                     .get(&egui::FontFamily::Monospace)
                     .cloned()
                     .unwrap_or_default();
-                fd.families.insert(
-                    egui::FontFamily::Name("Icons".into()),
-                    mono,
-                );
+                fd.families
+                    .insert(egui::FontFamily::Name("Icons".into()), mono);
                 cc.egui_ctx.set_fonts(fd);
             }
 

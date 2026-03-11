@@ -37,7 +37,8 @@ impl DirigentApp {
                             if git2::Repository::discover(&canonical).is_ok() {
                                 switch_to = Some(canonical);
                             } else {
-                                error_msg = Some(format!("Not a git repository: {}", path.display()));
+                                error_msg =
+                                    Some(format!("Not a git repository: {}", path.display()));
                             }
                         } else {
                             error_msg = Some(format!("Path not found: {}", path.display()));

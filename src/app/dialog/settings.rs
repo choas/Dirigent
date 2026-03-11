@@ -1,14 +1,22 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_XS, SPACE_SM, SPACE_MD};
-use crate::settings::{self, default_playbook, SourceConfig, SourceKind, ThemeChoice};
+use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::opencode;
+use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_panel(&mut self, ctx: &egui::Context) {
         let mut save = false;
         let mut close = false;
         let mut fetch_idx: Option<usize> = None;
+        let mut refresh_models = false;
         let fs = self.settings.font_size;
+
+        // Load OpenCode models if not already loaded
+        if self.opencode_models.is_empty() {
+            let cli_path = self.settings.opencode_cli_path.clone();
+            self.opencode_models = opencode::get_available_models(&cli_path);
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -53,50 +61,135 @@ impl DirigentApp {
                         });
                     ui.end_row();
 
-                    ui.label("Claude Model:");
-                    egui::ComboBox::from_id_salt("model_combo")
-                        .selected_text(&self.settings.claude_model)
+                    ui.label("CLI Provider:");
+                    let provider_label = self.settings.cli_provider.display_name();
+                    egui::ComboBox::from_id_salt("provider_combo")
+                        .selected_text(provider_label)
                         .show_ui(ui, |ui| {
-                            for model in &[
-                                "claude-opus-4-6",
-                                "claude-sonnet-4-6",
-                            ] {
+                            for provider in CliProvider::all() {
                                 ui.selectable_value(
-                                    &mut self.settings.claude_model,
-                                    model.to_string(),
-                                    *model,
+                                    &mut self.settings.cli_provider,
+                                    provider.clone(),
+                                    provider.display_name(),
                                 );
                             }
                         });
                     ui.end_row();
 
-                    ui.label("Claude CLI Path:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.claude_cli_path)
-                            .desired_width(250.0)
-                            .hint_text("claude (default: from PATH)")
-                            .font(egui::TextStyle::Monospace),
-                    );
+                    ui.label("Model:");
+                    match self.settings.cli_provider {
+                        CliProvider::Claude => {
+                            egui::ComboBox::from_id_salt("model_combo")
+                                .selected_text(&self.settings.claude_model)
+                                .show_ui(ui, |ui| {
+                                    for model in &[
+                                        "claude-opus-4-6",
+                                        "claude-sonnet-4-6",
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut self.settings.claude_model,
+                                            model.to_string(),
+                                            *model,
+                                        );
+                                    }
+                                });
+                        }
+                        CliProvider::OpenCode => {
+                            ui.horizontal(|ui| {
+                                egui::ComboBox::from_id_salt("model_combo")
+                                    .selected_text(&self.settings.opencode_model)
+                                    .show_ui(ui, |ui| {
+                                        let models = if self.opencode_models.is_empty() {
+                                            vec![
+                                                "openai/o1".to_string(),
+                                                "openai/o1-mini".to_string(),
+                                                "openai/o3".to_string(),
+                                                "openai/o3-mini".to_string(),
+                                                "anthropic/claude-sonnet-4-6".to_string(),
+                                                "anthropic/claude-opus-4-6".to_string(),
+                                                "google/gemini-2.5-pro".to_string(),
+                                                "google/gemini-2.5-flash".to_string(),
+                                            ]
+                                        } else {
+                                            self.opencode_models.clone()
+                                        };
+                                        for model in &models {
+                                            ui.selectable_value(
+                                                &mut self.settings.opencode_model,
+                                                model.clone(),
+                                                model.as_str(),
+                                            );
+                                        }
+                                    });
+                                if ui.button(icon("\u{21bb}", fs))
+                                    .on_hover_text("Refresh models from OpenCode")
+                                    .clicked()
+                                {
+                                    refresh_models = true;
+                                }
+                            });
+                        }
+                    }
                     ui.end_row();
 
-                    ui.label("Extra Arguments:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.claude_extra_args)
-                            .desired_width(250.0)
-                            .hint_text("e.g. --max-turns 10")
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    ui.end_row();
+                    match self.settings.cli_provider {
+                        CliProvider::Claude => {
+                            ui.label("CLI Path:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.claude_cli_path)
+                                    .desired_width(250.0)
+                                    .hint_text("claude (default: from PATH)")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
 
-                    ui.label("Default Flags:");
-                    ui.label(
-                        egui::RichText::new(
-                            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
-                        )
-                        .monospace()
-                        .weak(),
-                    );
-                    ui.end_row();
+                            ui.label("Extra Arguments:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.claude_extra_args)
+                                    .desired_width(250.0)
+                                    .hint_text("e.g. --max-turns 10")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Default Flags:");
+                            ui.label(
+                                egui::RichText::new(
+                                    "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
+                                )
+                                .monospace()
+                                .weak(),
+                            );
+                            ui.end_row();
+                        }
+                        CliProvider::OpenCode => {
+                            ui.label("CLI Path:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.opencode_cli_path)
+                                    .desired_width(250.0)
+                                    .hint_text("opencode (default: from PATH)")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Extra Arguments:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.opencode_extra_args)
+                                    .desired_width(250.0)
+                                    .hint_text("e.g. --mcp-server ...")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Default Flags:");
+                            ui.label(
+                                egui::RichText::new("run <prompt> --format json --print-logs")
+                                    .monospace()
+                                    .weak(),
+                            );
+                            ui.end_row();
+                        }
+                    }
 
                     ui.label("Font:");
                     egui::ComboBox::from_id_salt("font_combo")
@@ -370,6 +463,10 @@ impl DirigentApp {
         if save {
             settings::save_settings(&self.project_root, &self.settings);
             self.needs_theme_apply = true;
+        }
+        if refresh_models {
+            let cli_path = self.settings.opencode_cli_path.clone();
+            self.opencode_models = opencode::get_available_models(&cli_path);
         }
         if let Some(idx) = fetch_idx {
             self.trigger_source_fetch(idx);

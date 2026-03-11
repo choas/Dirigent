@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview, FONT_SCALE_SUBHEADING, SPACE_XS, SPACE_SM, SPACE_MD};
+use super::{
+    icon, icon_small, DiffReview, DirigentApp, COMMIT_MSG_TRUNCATE_LEN, FONT_SCALE_SUBHEADING,
+    SPACE_MD, SPACE_SM, SPACE_XS,
+};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -55,8 +58,10 @@ impl DirigentApp {
                     ui.label(format!("Version {}", env!("BUILD_VERSION")));
                     ui.add_space(SPACE_SM);
                     ui.label(
-                        egui::RichText::new("A read-only code viewer where humans direct and AI performs.")
-                            .weak(),
+                        egui::RichText::new(
+                            "A read-only code viewer where humans direct and AI performs.",
+                        )
+                        .weak(),
                     );
                     ui.add_space(24.0);
                 });
@@ -68,9 +73,10 @@ impl DirigentApp {
     pub(super) fn render_repo_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("repo_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    icon_small(&format!("\u{25B6} {}", self.project_root.display()), self.settings.font_size),
-                );
+                ui.label(icon_small(
+                    &format!("\u{25B6} {}", self.project_root.display()),
+                    self.settings.font_size,
+                ));
                 if ui.small_button("Change...").clicked() {
                     self.repo_path_input = self.project_root.to_string_lossy().to_string();
                     self.show_repo_picker = true;
@@ -88,7 +94,11 @@ impl DirigentApp {
             .default_width(220.0)
             .min_width(150.0)
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new("Files").size(self.settings.font_size * FONT_SCALE_SUBHEADING).strong());
+                ui.label(
+                    egui::RichText::new("Files")
+                        .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                        .strong(),
+                );
                 ui.separator();
                 // File tree takes remaining space above git log
                 let git_log_open = self.git.show_log;
@@ -120,7 +130,8 @@ impl DirigentApp {
                             }
                         }
                         file_to_load
-                    }).inner;
+                    })
+                    .inner;
                 if let Some(path) = file_to_load {
                     self.load_file(path);
                 }
@@ -137,19 +148,17 @@ impl DirigentApp {
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
                                 for commit in &self.git.commit_history {
-                                    let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3 {
+                                    let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3
+                                    {
                                         format!("{}...", &commit.message[..COMMIT_MSG_TRUNCATE_LEN])
                                     } else {
                                         commit.message.clone()
                                     };
-                                    let label =
-                                        format!("{} {}", commit.short_hash, msg);
+                                    let label = format!("{} {}", commit.short_hash, msg);
                                     if ui
                                         .selectable_label(
                                             false,
-                                            egui::RichText::new(&label)
-                                                .monospace()
-                                                .small(),
+                                            egui::RichText::new(&label).monospace().small(),
                                         )
                                         .on_hover_text(format!(
                                             "{} - {}\n{}\n{}",
@@ -160,8 +169,11 @@ impl DirigentApp {
                                         ))
                                         .clicked()
                                     {
-                                        clicked_commit =
-                                            Some((commit.full_hash.clone(), commit.message.clone(), commit.body.clone()));
+                                        clicked_commit = Some((
+                                            commit.full_hash.clone(),
+                                            commit.message.clone(),
+                                            commit.body.clone(),
+                                        ));
                                     }
                                 }
                             });
@@ -308,11 +320,8 @@ impl DirigentApp {
 
             // Selected highlight
             if is_selected {
-                ui.painter().rect_filled(
-                    row_rect,
-                    0.0,
-                    semantic.selection_bg(),
-                );
+                ui.painter()
+                    .rect_filled(row_rect, 0.0, semantic.selection_bg());
             }
 
             // Hover highlight
@@ -455,90 +464,95 @@ impl DirigentApp {
         egui::TopBottomPanel::bottom("prompt_field")
             .frame(prompt_frame)
             .show(ctx, |ui| {
-            // Top border line to visually separate from content above
-            let rect = ui.available_rect_before_wrap();
-            ui.painter().hline(
-                rect.x_range(),
-                rect.top(),
-                egui::Stroke::new(1.0, self.semantic.prompt_border()),
-            );
+                // Top border line to visually separate from content above
+                let rect = ui.available_rect_before_wrap();
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.top(),
+                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                );
 
-            // Show attached images above the input line
-            if !self.global_prompt_images.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new("Attached:")
-                            .small()
-                            .color(self.semantic.accent),
-                    );
-                    let mut remove_idx = None;
-                    for (i, path) in self.global_prompt_images.iter().enumerate() {
-                        let name = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.to_string_lossy().to_string());
-                        ui.label(egui::RichText::new(&name).monospace().small());
-                        if ui.small_button("\u{2715}").on_hover_text("Remove").clicked() {
-                            remove_idx = Some(i);
+                // Show attached images above the input line
+                if !self.global_prompt_images.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("Attached:")
+                                .small()
+                                .color(self.semantic.accent),
+                        );
+                        let mut remove_idx = None;
+                        for (i, path) in self.global_prompt_images.iter().enumerate() {
+                            let name = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.to_string_lossy().to_string());
+                            ui.label(egui::RichText::new(&name).monospace().small());
+                            if ui
+                                .small_button("\u{2715}")
+                                .on_hover_text("Remove")
+                                .clicked()
+                            {
+                                remove_idx = Some(i);
+                            }
                         }
-                    }
-                    if let Some(i) = remove_idx {
-                        self.global_prompt_images.remove(i);
-                    }
-                });
-                ui.add_space(SPACE_XS);
-            }
-            ui.horizontal(|ui| {
-                ui.label(
-                    icon("\u{25B6}", self.settings.font_size)
-                        .color(self.semantic.accent),
-                );
-                if ui
-                    .button(icon("+", self.settings.font_size))
-                    .on_hover_text("Attach files (or drag & drop)")
-                    .clicked()
-                {
-                    if let Some(paths) = rfd::FileDialog::new()
-                        .add_filter("All files", &["*"])
-                        .pick_files()
-                    {
-                        self.global_prompt_images.extend(paths);
-                    }
+                        if let Some(i) = remove_idx {
+                            self.global_prompt_images.remove(i);
+                        }
+                    });
+                    ui.add_space(SPACE_XS);
                 }
-                let input_response = ui.add(
-                    egui::TextEdit::multiline(&mut self.global_prompt_input)
-                        .desired_width(ui.available_width() - 44.0)
-                        .desired_rows(2)
-                        .hint_text("Describe what you want...")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.vertical_centered(|ui| {
-                    let input_h = input_response.rect.height();
-                    let btn_size = self.settings.font_size + 12.0;
-                    ui.add_space((input_h - btn_size) / 2.0);
-                    let send_btn = egui::Button::new(
-                        icon("\u{2191}", self.settings.font_size).color(self.semantic.accent_text()),
-                    ).fill(self.semantic.accent).rounding(btn_size / 2.0)
-                     .min_size(egui::vec2(btn_size, btn_size));
-                    let btn_clicked = ui.add(send_btn).on_hover_text("Create cue").clicked();
-                    let enter_submitted = input_response.has_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-                    if (btn_clicked || enter_submitted) && !self.global_prompt_input.is_empty() {
-                        // Strip the trailing newline that Enter inserts before we consume
-                        let text = self.global_prompt_input.trim().to_string();
-                        let images: Vec<String> = self
-                            .global_prompt_images
-                            .drain(..)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .collect();
-                        if !text.is_empty() {
-                            let _ = self.db.insert_cue(&text, "", 0, None, &images);
+                ui.horizontal(|ui| {
+                    ui.label(icon("\u{25B6}", self.settings.font_size).color(self.semantic.accent));
+                    if ui
+                        .button(icon("+", self.settings.font_size))
+                        .on_hover_text("Attach files (or drag & drop)")
+                        .clicked()
+                    {
+                        if let Some(paths) = rfd::FileDialog::new()
+                            .add_filter("All files", &["*"])
+                            .pick_files()
+                        {
+                            self.global_prompt_images.extend(paths);
                         }
-                        self.global_prompt_input.clear();
-                        self.reload_cues();
                     }
+                    let input_response = ui.add(
+                        egui::TextEdit::multiline(&mut self.global_prompt_input)
+                            .desired_width(ui.available_width() - 44.0)
+                            .desired_rows(2)
+                            .hint_text("Describe what you want...")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.vertical_centered(|ui| {
+                        let input_h = input_response.rect.height();
+                        let btn_size = self.settings.font_size + 12.0;
+                        ui.add_space((input_h - btn_size) / 2.0);
+                        let send_btn = egui::Button::new(
+                            icon("\u{2191}", self.settings.font_size)
+                                .color(self.semantic.accent_text()),
+                        )
+                        .fill(self.semantic.accent)
+                        .rounding(btn_size / 2.0)
+                        .min_size(egui::vec2(btn_size, btn_size));
+                        let btn_clicked = ui.add(send_btn).on_hover_text("Create cue").clicked();
+                        let enter_submitted = input_response.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+                        if (btn_clicked || enter_submitted) && !self.global_prompt_input.is_empty()
+                        {
+                            // Strip the trailing newline that Enter inserts before we consume
+                            let text = self.global_prompt_input.trim().to_string();
+                            let images: Vec<String> = self
+                                .global_prompt_images
+                                .drain(..)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect();
+                            if !text.is_empty() {
+                                let _ = self.db.insert_cue(&text, "", 0, None, &images);
+                            }
+                            self.global_prompt_input.clear();
+                            self.reload_cues();
+                        }
+                    });
                 });
             });
-        });
     }
 }

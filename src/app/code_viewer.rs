@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp, DiffReview, FONT_SCALE_HEADING, FONT_SCALE_LINE_NUM, SPACE_SM, SPACE_MD};
+use super::{
+    icon, DiffReview, DirigentApp, FONT_SCALE_HEADING, FONT_SCALE_LINE_NUM, SPACE_MD, SPACE_SM,
+};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 

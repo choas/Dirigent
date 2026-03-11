@@ -57,10 +57,7 @@ pub(crate) fn fetch_github_issues(
             let number = issue.get("number")?.as_i64()?;
             let title = issue.get("title")?.as_str()?;
             let url = issue.get("url")?.as_str()?;
-            let body = issue
-                .get("body")
-                .and_then(|b| b.as_str())
-                .unwrap_or("");
+            let body = issue.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
             let text = if body.is_empty() {
                 format!("[#{}] {}", number, title)
@@ -104,9 +101,10 @@ fn validate_command(command: &str) -> Result<(), String> {
         return Err("command contains null byte".to_string());
     }
     // Reject control characters other than tab/newline/carriage-return
-    if let Some(pos) = command.chars().position(|c| {
-        c.is_control() && c != '\t' && c != '\n' && c != '\r'
-    }) {
+    if let Some(pos) = command
+        .chars()
+        .position(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r')
+    {
         return Err(format!(
             "command contains control character at position {}",
             pos
@@ -115,10 +113,7 @@ fn validate_command(command: &str) -> Result<(), String> {
     // Reject shell metacharacters to prevent injection
     for &meta in SHELL_METACHARACTERS {
         if command.contains(meta) {
-            return Err(format!(
-                "command contains shell metacharacter '{}'",
-                meta
-            ));
+            return Err(format!("command contains shell metacharacter '{}'", meta));
         }
     }
     Ok(())
@@ -299,8 +294,7 @@ mod tests {
 
     #[test]
     fn parse_source_object_valid() {
-        let obj: serde_json::Value =
-            serde_json::from_str(r#"{"id":"x","text":"hello"}"#).unwrap();
+        let obj: serde_json::Value = serde_json::from_str(r#"{"id":"x","text":"hello"}"#).unwrap();
         let item = parse_source_object(&obj, "lbl").unwrap();
         assert_eq!(item.external_id, "x");
         assert_eq!(item.text, "hello");
@@ -309,8 +303,7 @@ mod tests {
 
     #[test]
     fn parse_source_object_missing_id() {
-        let obj: serde_json::Value =
-            serde_json::from_str(r#"{"text":"hello"}"#).unwrap();
+        let obj: serde_json::Value = serde_json::from_str(r#"{"text":"hello"}"#).unwrap();
         assert!(parse_source_object(&obj, "lbl").is_none());
     }
 }

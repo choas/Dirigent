@@ -214,6 +214,9 @@ pub struct DirigentApp {
 
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
+
+    // OpenCode models (cached from CLI)
+    pub(super) opencode_models: Vec<String>,
 }
 
 fn start_fs_watcher(
@@ -223,21 +226,27 @@ fn start_fs_watcher(
 ) -> Option<RecommendedWatcher> {
     let flag = Arc::clone(changed);
     let ctx = Arc::clone(egui_ctx);
-    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-        if let Ok(event) = res {
-            use notify::EventKind;
-            match event.kind {
-                EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                    flag.store(true, Ordering::Relaxed);
-                    if let Some(ctx) = ctx.get() {
-                        ctx.request_repaint();
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                use notify::EventKind;
+                match event.kind {
+                    EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                        flag.store(true, Ordering::Relaxed);
+                        if let Some(ctx) = ctx.get() {
+                            ctx.request_repaint();
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-    }).ok()?;
-    watcher.watch(root.as_path(), RecursiveMode::Recursive).ok()?;
+        })
+        .ok()?;
+    watcher
+        .watch(root.as_path(), RecursiveMode::Recursive)
+        .ok()?;
     Some(watcher)
 }
 
@@ -333,6 +342,7 @@ impl DirigentApp {
             },
             task_handles: Vec::new(),
             cue_move_flash: HashMap::new(),
+            opencode_models: Vec::new(),
         }
     }
 
@@ -362,11 +372,8 @@ impl DirigentApp {
             let size = [img.width() as usize, img.height() as usize];
             let pixels = img.into_raw();
             let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-            self.logo_texture = Some(ctx.load_texture(
-                "dirigent_logo",
-                color_image,
-                egui::TextureOptions::LINEAR,
-            ));
+            self.logo_texture =
+                Some(ctx.load_texture("dirigent_logo", color_image, egui::TextureOptions::LINEAR));
         }
     }
 
@@ -450,10 +457,7 @@ impl DirigentApp {
     fn file_cues(&self) -> Vec<&Cue> {
         if let Some(ref current) = self.viewer.current_file {
             let rel = self.relative_path(current);
-            self.cues
-                .iter()
-                .filter(|c| c.file_path == rel)
-                .collect()
+            self.cues.iter().filter(|c| c.file_path == rel).collect()
         } else {
             Vec::new()
         }
@@ -487,12 +491,18 @@ impl DirigentApp {
 
         // Validate that the path is an existing directory
         if !new_root.is_dir() {
-            self.set_status_message(format!("Cannot switch repo: not a directory: {}", new_root.display()));
+            self.set_status_message(format!(
+                "Cannot switch repo: not a directory: {}",
+                new_root.display()
+            ));
             return;
         }
         // Validate that it's inside a git repository
         if git2::Repository::discover(&new_root).is_err() {
-            self.set_status_message(format!("Cannot switch repo: not a git repository: {}", new_root.display()));
+            self.set_status_message(format!(
+                "Cannot switch repo: not a git repository: {}",
+                new_root.display()
+            ));
             return;
         }
 
@@ -591,11 +601,7 @@ impl eframe::App for DirigentApp {
         }
 
         // Request repaint while Claude tasks are running
-        if self
-            .cues
-            .iter()
-            .any(|c| c.status == CueStatus::Ready)
-        {
+        if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
             // Repaint faster when log window is open for live streaming
             let interval = if self.claude.show_log.is_some() {
                 REPAINT_FAST
@@ -636,11 +642,7 @@ impl eframe::App for DirigentApp {
                 egui::Order::Foreground,
                 egui::Id::new("drop_overlay"),
             ));
-            painter.rect_filled(
-                screen,
-                0.0,
-                egui::Color32::from_black_alpha(160),
-            );
+            painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(160));
             painter.text(
                 screen.center(),
                 egui::Align2::CENTER_CENTER,
@@ -673,11 +675,9 @@ impl eframe::App for DirigentApp {
                 .order(egui::Order::Middle)
                 .fixed_pos(screen.min)
                 .show(ctx, |ui| {
-                    let (rect, resp) = ui.allocate_exact_size(
-                        screen.size(),
-                        egui::Sense::click(),
-                    );
-                    ui.painter().rect_filled(rect, 0.0, self.semantic.modal_overlay());
+                    let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+                    ui.painter()
+                        .rect_filled(rect, 0.0, self.semantic.modal_overlay());
                     // Click on overlay dismisses the topmost modal
                     if resp.clicked() {
                         if self.show_about {

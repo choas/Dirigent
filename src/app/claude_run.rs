@@ -6,6 +6,8 @@ use std::time::Instant;
 use crate::claude;
 use crate::db::{CueStatus, Execution};
 use crate::git;
+use crate::opencode;
+use crate::settings::CliProvider;
 
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
@@ -24,6 +26,7 @@ struct ClaudeResult {
 struct LogUpdate {
     cue_id: i64,
     text: String,
+    provider: CliProvider,
 }
 
 /// State for Claude execution and live log streaming.
@@ -32,7 +35,7 @@ pub(crate) struct ClaudeRunState {
     rx: mpsc::Receiver<ClaudeResult>,
     log_tx: mpsc::Sender<LogUpdate>,
     log_rx: mpsc::Receiver<LogUpdate>,
-    pub(super) running_logs: HashMap<i64, String>,
+    pub(super) running_logs: HashMap<i64, (String, CliProvider)>,
     pub(super) start_times: HashMap<i64, Instant>,
     pub(super) exec_ids: HashMap<i64, i64>,
     pub(super) show_log: Option<i64>,
@@ -70,19 +73,31 @@ impl DirigentApp {
             None => return,
         };
 
-        let prompt = claude::build_prompt(
-            &cue.text,
-            &cue.file_path,
-            cue.line_number,
-            cue.line_number_end,
-            &cue.attached_images,
-        );
+        let prompt = match self.settings.cli_provider {
+            CliProvider::Claude => claude::build_prompt(
+                &cue.text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &cue.attached_images,
+            ),
+            CliProvider::OpenCode => opencode::build_prompt(
+                &cue.text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &cue.attached_images,
+            ),
+        };
 
         // Insert execution record
         let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
 
         // Initialize log buffer for this cue
-        self.claude.running_logs.insert(cue_id, String::new());
+        let provider = self.settings.cli_provider.clone();
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
         self.claude.exec_ids.insert(cue_id, exec_id);
 
@@ -94,48 +109,98 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
-        let model = self.settings.claude_model.clone();
-        let cli_path = self.settings.claude_cli_path.clone();
-        let extra_args = self.settings.claude_extra_args.clone();
+        let model = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_model.clone(),
+            CliProvider::OpenCode => self.settings.opencode_model.clone(),
+        };
+        let cli_path = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_cli_path.clone(),
+            CliProvider::OpenCode => self.settings.opencode_cli_path.clone(),
+        };
+        let extra_args = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_extra_args.clone(),
+            CliProvider::OpenCode => self.settings.opencode_extra_args.clone(),
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
+        let provider_for_log = provider.clone();
 
         let join_handle = std::thread::spawn(move || {
             let on_log = |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
                     text: text.to_string(),
+                    provider: provider_for_log.clone(),
                 });
             };
-            let result =
-                match claude::invoke_claude_streaming(
-                    &prompt, &project_root, &model, &cli_path, &extra_args, on_log, cancel_thread,
-                ) {
-                    Ok(response) => {
-                        // Claude Code edits files directly via tools.
-                        // Capture the actual changes via git diff on edited files.
-                        let diff = if response.edited_files.is_empty() {
-                            // Fallback: try parsing response text for a diff
-                            claude::parse_diff_from_response(&response.stdout)
-                        } else {
-                            git::get_working_diff(&project_root, &response.edited_files)
-                        };
-                        ClaudeResult {
+            let result = match provider {
+                CliProvider::Claude => {
+                    match claude::invoke_claude_streaming(
+                        &prompt,
+                        &project_root,
+                        &model,
+                        &cli_path,
+                        &extra_args,
+                        on_log,
+                        cancel_thread,
+                    ) {
+                        Ok(response) => {
+                            let diff = if response.edited_files.is_empty() {
+                                claude::parse_diff_from_response(&response.stdout)
+                            } else {
+                                git::get_working_diff(&project_root, &response.edited_files)
+                            };
+                            ClaudeResult {
+                                cue_id,
+                                exec_id,
+                                diff,
+                                response: response.stdout,
+                                error: None,
+                            }
+                        }
+                        Err(e) => ClaudeResult {
                             cue_id,
                             exec_id,
-                            diff,
-                            response: response.stdout,
-                            error: None,
-                        }
+                            diff: None,
+                            response: String::new(),
+                            error: Some(e.to_string()),
+                        },
                     }
-                    Err(e) => ClaudeResult {
-                        cue_id,
-                        exec_id,
-                        diff: None,
-                        response: String::new(),
-                        error: Some(e.to_string()),
-                    },
-                };
+                }
+                CliProvider::OpenCode => {
+                    match opencode::invoke_opencode_streaming(
+                        &prompt,
+                        &project_root,
+                        &model,
+                        &cli_path,
+                        &extra_args,
+                        on_log,
+                        cancel_thread,
+                    ) {
+                        Ok(response) => {
+                            let diff = if response.edited_files.is_empty() {
+                                opencode::parse_diff_from_response(&response.stdout)
+                            } else {
+                                git::get_working_diff(&project_root, &response.edited_files)
+                            };
+                            ClaudeResult {
+                                cue_id,
+                                exec_id,
+                                diff,
+                                response: response.stdout,
+                                error: None,
+                            }
+                        }
+                        Err(e) => ClaudeResult {
+                            cue_id,
+                            exec_id,
+                            diff: None,
+                            response: String::new(),
+                            error: Some(e.to_string()),
+                        },
+                    }
+                }
+            };
             let _ = claude_tx.send(result);
         });
 
@@ -153,7 +218,6 @@ impl DirigentApp {
             None => return,
         };
 
-        // Get the previous diff from the latest execution
         let previous_diff = self
             .db
             .get_latest_execution(cue_id)
@@ -162,15 +226,26 @@ impl DirigentApp {
             .and_then(|e| e.diff)
             .unwrap_or_default();
 
-        let prompt = claude::build_reply_prompt(
-            &cue.text,
-            &cue.file_path,
-            cue.line_number,
-            cue.line_number_end,
-            &previous_diff,
-            reply,
-            &cue.attached_images,
-        );
+        let prompt = match self.settings.cli_provider {
+            CliProvider::Claude => claude::build_reply_prompt(
+                &cue.text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                reply,
+                &cue.attached_images,
+            ),
+            CliProvider::OpenCode => opencode::build_reply_prompt(
+                &cue.text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                reply,
+                &cue.attached_images,
+            ),
+        };
 
         // Move cue to Ready (running)
         let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
@@ -181,7 +256,10 @@ impl DirigentApp {
         let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
 
         // Initialize log buffer for this cue
-        self.claude.running_logs.insert(cue_id, String::new());
+        let provider = self.settings.cli_provider.clone();
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
         self.claude.exec_ids.insert(cue_id, exec_id);
 
@@ -193,45 +271,98 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
-        let model = self.settings.claude_model.clone();
-        let cli_path = self.settings.claude_cli_path.clone();
-        let extra_args = self.settings.claude_extra_args.clone();
+        let model = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_model.clone(),
+            CliProvider::OpenCode => self.settings.opencode_model.clone(),
+        };
+        let cli_path = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_cli_path.clone(),
+            CliProvider::OpenCode => self.settings.opencode_cli_path.clone(),
+        };
+        let extra_args = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_extra_args.clone(),
+            CliProvider::OpenCode => self.settings.opencode_extra_args.clone(),
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
+        let provider_for_log = provider.clone();
 
         let join_handle = std::thread::spawn(move || {
             let on_log = |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
                     text: text.to_string(),
+                    provider: provider_for_log.clone(),
                 });
             };
-            let result =
-                match claude::invoke_claude_streaming(
-                    &prompt, &project_root, &model, &cli_path, &extra_args, on_log, cancel_thread,
-                ) {
-                    Ok(response) => {
-                        let diff = if response.edited_files.is_empty() {
-                            claude::parse_diff_from_response(&response.stdout)
-                        } else {
-                            git::get_working_diff(&project_root, &response.edited_files)
-                        };
-                        ClaudeResult {
+            let result = match provider {
+                CliProvider::Claude => {
+                    match claude::invoke_claude_streaming(
+                        &prompt,
+                        &project_root,
+                        &model,
+                        &cli_path,
+                        &extra_args,
+                        on_log,
+                        cancel_thread,
+                    ) {
+                        Ok(response) => {
+                            let diff = if response.edited_files.is_empty() {
+                                claude::parse_diff_from_response(&response.stdout)
+                            } else {
+                                git::get_working_diff(&project_root, &response.edited_files)
+                            };
+                            ClaudeResult {
+                                cue_id,
+                                exec_id,
+                                diff,
+                                response: response.stdout,
+                                error: None,
+                            }
+                        }
+                        Err(e) => ClaudeResult {
                             cue_id,
                             exec_id,
-                            diff,
-                            response: response.stdout,
-                            error: None,
-                        }
+                            diff: None,
+                            response: String::new(),
+                            error: Some(e.to_string()),
+                        },
                     }
-                    Err(e) => ClaudeResult {
-                        cue_id,
-                        exec_id,
-                        diff: None,
-                        response: String::new(),
-                        error: Some(e.to_string()),
-                    },
-                };
+                }
+                CliProvider::OpenCode => {
+                    match opencode::invoke_opencode_streaming(
+                        &prompt,
+                        &project_root,
+                        &model,
+                        &cli_path,
+                        &extra_args,
+                        on_log,
+                        cancel_thread,
+                    ) {
+                        Ok(response) => {
+                            let diff = if response.edited_files.is_empty() {
+                                opencode::parse_diff_from_response(&response.stdout)
+                            } else {
+                                git::get_working_diff(&project_root, &response.edited_files)
+                            };
+                            ClaudeResult {
+                                cue_id,
+                                exec_id,
+                                diff,
+                                response: response.stdout,
+                                error: None,
+                            }
+                        }
+                        Err(e) => ClaudeResult {
+                            cue_id,
+                            exec_id,
+                            diff: None,
+                            response: String::new(),
+                            error: Some(e.to_string()),
+                        },
+                    }
+                }
+            };
             let _ = claude_tx.send(result);
         });
 
@@ -256,7 +387,7 @@ impl DirigentApp {
 
         for result in results {
             // Save the running log to DB before processing
-            if let Some(log_text) = self.claude.running_logs.get(&result.cue_id) {
+            if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
                 let _ = self.db.update_execution_log(result.exec_id, log_text);
             }
             // Clean up runtime tracking (keep running_logs for viewing)
@@ -267,18 +398,13 @@ impl DirigentApp {
                 let preview = self.cue_preview(result.cue_id);
                 self.set_status_message(format!("Claude error for \"{}\": {}", preview, error));
                 let _ = self.db.fail_execution(result.exec_id, error);
-                let _ = self
-                    .db
-                    .update_cue_status(result.cue_id, CueStatus::Inbox);
+                let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
-                let _ =
-                    self.db
-                        .complete_execution(result.exec_id, &result.response, Some(diff));
-                let _ = self.db.update_cue_status(
-                    result.cue_id,
-                    CueStatus::Review,
-                );
+                let _ = self
+                    .db
+                    .complete_execution(result.exec_id, &result.response, Some(diff));
+                let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
                 self.notify_review_ready(result.cue_id);
                 // Reload current file so user sees changes
                 if let Some(ref path) = self.viewer.current_file {
@@ -288,17 +414,15 @@ impl DirigentApp {
                 self.reload_git_info();
             } else {
                 // Claude ran but no files were changed
-                let _ =
-                    self.db
-                        .complete_execution(result.exec_id, &result.response, None);
+                let _ = self
+                    .db
+                    .complete_execution(result.exec_id, &result.response, None);
                 let preview = self.cue_preview(result.cue_id);
                 self.set_status_message(format!(
                     "Claude completed but no file changes detected for \"{}\"",
                     preview
                 ));
-                let _ = self
-                    .db
-                    .update_cue_status(result.cue_id, CueStatus::Done);
+                let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
             }
             self.reload_cues();
         }
@@ -307,9 +431,11 @@ impl DirigentApp {
     /// Drain the log channel, appending text to the per-cue log buffers.
     pub(super) fn drain_log_channel(&mut self) {
         for update in self.claude.log_rx.try_iter() {
-            self.claude.running_logs
+            self.claude
+                .running_logs
                 .entry(update.cue_id)
-                .or_default()
+                .or_insert_with(|| (String::new(), update.provider.clone()))
+                .0
                 .push_str(&update.text);
         }
     }
@@ -320,7 +446,7 @@ impl DirigentApp {
         self.drain_log_channel();
 
         // Flush local running logs to DB
-        for (&cue_id, log_text) in &self.claude.running_logs {
+        for (&cue_id, (log_text, _)) in &self.claude.running_logs {
             if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id) {
                 let _ = self.db.update_execution_log(exec_id, log_text);
             }
@@ -336,7 +462,9 @@ impl DirigentApp {
                 if is_running {
                     if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
                         if let Some(log_text) = exec.log {
-                            self.claude.running_logs.insert(cue_id, log_text);
+                            self.claude
+                                .running_logs
+                                .insert(cue_id, (log_text, CliProvider::Claude));
                         }
                     }
                 }

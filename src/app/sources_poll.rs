@@ -44,19 +44,16 @@ impl DirigentApp {
             .filter(|s| {
                 s.enabled
                     && s.poll_interval_secs > 0
-                    && self
-                        .sources.last_poll
-                        .get(&s.name)
-                        .map_or(true, |last| {
-                            last.elapsed()
-                                >= std::time::Duration::from_secs(s.poll_interval_secs)
-                        })
+                    && self.sources.last_poll.get(&s.name).map_or(true, |last| {
+                        last.elapsed() >= std::time::Duration::from_secs(s.poll_interval_secs)
+                    })
             })
             .cloned()
             .collect();
 
         for source in to_poll {
-            self.sources.last_poll
+            self.sources
+                .last_poll
                 .insert(source.name.clone(), Instant::now());
             self.trigger_source_fetch_config(source);
         }
@@ -80,30 +77,21 @@ impl DirigentApp {
                     } else {
                         Some(source.filter.as_str())
                     };
-                    sources::fetch_github_issues(
-                        &project_root,
-                        label_filter,
-                        None,
-                        &source.label,
-                    )
-                    .unwrap_or_else(|e| {
-                        let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                        Vec::new()
-                    })
+                    sources::fetch_github_issues(&project_root, label_filter, None, &source.label)
+                        .unwrap_or_else(|e| {
+                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
+                            Vec::new()
+                        })
                 }
                 SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
                     if source.command.is_empty() {
                         Vec::new()
                     } else {
-                        sources::fetch_custom_command(
-                            &project_root,
-                            &source.command,
-                            &source.label,
-                        )
-                        .unwrap_or_else(|e| {
-                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                            Vec::new()
-                        })
+                        sources::fetch_custom_command(&project_root, &source.command, &source.label)
+                            .unwrap_or_else(|e| {
+                                let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
+                                Vec::new()
+                            })
                     }
                 }
             };
@@ -126,7 +114,8 @@ impl DirigentApp {
     /// Trigger a manual fetch for a source by its index in settings.
     pub(super) fn trigger_source_fetch(&mut self, idx: usize) {
         if let Some(source) = self.settings.sources.get(idx).cloned() {
-            self.sources.last_poll
+            self.sources
+                .last_poll
                 .insert(source.name.clone(), Instant::now());
             let msg = format!("Fetching from \"{}\"...", source.name);
             self.trigger_source_fetch_config(source);

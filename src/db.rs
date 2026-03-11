@@ -142,16 +142,12 @@ impl Database {
 
     fn create_tables(&self) -> Result<()> {
         // Migration: rename comments -> cues if old table exists
-        let has_old_table: bool = self
-            .conn
-            .prepare("SELECT 1 FROM comments LIMIT 0")
-            .is_ok();
+        let has_old_table: bool = self.conn.prepare("SELECT 1 FROM comments LIMIT 0").is_ok();
         if has_old_table {
             // Drop empty cues table if it was already created, so rename can succeed
             let _ = self.conn.execute_batch("DROP TABLE IF EXISTS cues;");
-            self.conn.execute_batch(
-                "ALTER TABLE comments RENAME TO cues;",
-            )?;
+            self.conn
+                .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
         }
 
         self.conn.execute_batch(
@@ -180,9 +176,9 @@ impl Database {
             .prepare("SELECT line_number_end FROM cues LIMIT 0")
             .is_ok();
         if !has_col {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE cues ADD COLUMN line_number_end INTEGER;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE cues ADD COLUMN line_number_end INTEGER;");
         }
         // Migration: rename comment_id -> cue_id in executions
         let has_old_col: bool = self
@@ -190,9 +186,9 @@ impl Database {
             .prepare("SELECT comment_id FROM executions LIMIT 0")
             .is_ok();
         if has_old_col {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;");
         }
         // Migration: add log column to executions
         let has_log_col: bool = self
@@ -200,9 +196,9 @@ impl Database {
             .prepare("SELECT log FROM executions LIMIT 0")
             .is_ok();
         if !has_log_col {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE executions ADD COLUMN log TEXT;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE executions ADD COLUMN log TEXT;");
         }
         // Migration: add source_label and source_ref columns to cues
         let has_source_label: bool = self
@@ -210,18 +206,18 @@ impl Database {
             .prepare("SELECT source_label FROM cues LIMIT 0")
             .is_ok();
         if !has_source_label {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE cues ADD COLUMN source_label TEXT;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE cues ADD COLUMN source_label TEXT;");
         }
         let has_source_ref: bool = self
             .conn
             .prepare("SELECT source_ref FROM cues LIMIT 0")
             .is_ok();
         if !has_source_ref {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE cues ADD COLUMN source_ref TEXT;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE cues ADD COLUMN source_ref TEXT;");
         }
         // Migration: add attached_images column to cues
         let has_attached_images: bool = self
@@ -229,14 +225,14 @@ impl Database {
             .prepare("SELECT attached_images FROM cues LIMIT 0")
             .is_ok();
         if !has_attached_images {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE cues ADD COLUMN attached_images TEXT;",
-            );
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;");
         }
         // Index on status for faster filtered queries
-        let _ = self.conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);",
-        );
+        let _ = self
+            .conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);");
         Ok(())
     }
 
@@ -309,10 +305,8 @@ impl Database {
 
     pub fn update_cue_text(&self, id: i64, text: &str) -> Result<()> {
         let text = Self::clamp_cue_text(text);
-        self.conn.execute(
-            "UPDATE cues SET text = ?1 WHERE id = ?2",
-            params![text, id],
-        )?;
+        self.conn
+            .execute("UPDATE cues SET text = ?1 WHERE id = ?2", params![text, id])?;
         Ok(())
     }
 
@@ -365,12 +359,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn complete_execution(
-        &self,
-        id: i64,
-        response: &str,
-        diff: Option<&str>,
-    ) -> Result<()> {
+    pub fn complete_execution(&self, id: i64, response: &str, diff: Option<&str>) -> Result<()> {
         self.conn.execute(
             "UPDATE executions SET response = ?1, diff = ?2, status = ?3 WHERE id = ?4",
             params![response, diff, ExecutionStatus::Completed.as_str(), id],
@@ -454,7 +443,6 @@ impl Database {
         )?;
         Ok(self.conn.last_insert_rowid())
     }
-
 }
 
 fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
@@ -480,8 +468,7 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
 #[cfg(test)]
 impl Database {
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .with_context(|| "opening in-memory database")?;
+        let conn = Connection::open_in_memory().with_context(|| "opening in-memory database")?;
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)
@@ -546,7 +533,9 @@ mod tests {
     #[test]
     fn insert_and_get_cue() {
         let db = test_db();
-        let id = db.insert_cue("fix bug", "src/main.rs", 42, None, &[]).unwrap();
+        let id = db
+            .insert_cue("fix bug", "src/main.rs", 42, None, &[])
+            .unwrap();
         let cue = db.get_cue(id).unwrap().expect("cue should exist");
         assert_eq!(cue.text, "fix bug");
         assert_eq!(cue.file_path, "src/main.rs");
@@ -558,7 +547,9 @@ mod tests {
     #[test]
     fn insert_cue_with_line_range() {
         let db = test_db();
-        let id = db.insert_cue("refactor", "lib.rs", 10, Some(20), &[]).unwrap();
+        let id = db
+            .insert_cue("refactor", "lib.rs", 10, Some(20), &[])
+            .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.line_number, 10);
         assert_eq!(cue.line_number_end, Some(20));
@@ -706,8 +697,13 @@ mod tests {
     #[test]
     fn insert_cue_with_images() {
         let db = test_db();
-        let images = vec!["/tmp/screenshot.png".to_string(), "/tmp/design.jpg".to_string()];
-        let id = db.insert_cue("implement design", "ui.rs", 10, None, &images).unwrap();
+        let images = vec![
+            "/tmp/screenshot.png".to_string(),
+            "/tmp/design.jpg".to_string(),
+        ];
+        let id = db
+            .insert_cue("implement design", "ui.rs", 10, None, &images)
+            .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.attached_images.len(), 2);
         assert_eq!(cue.attached_images[0], "/tmp/screenshot.png");
