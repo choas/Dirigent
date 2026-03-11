@@ -1,7 +1,10 @@
 mod claude_run;
 mod code_viewer;
 mod cue_pool;
-mod dialogs;
+mod dialog_diff_review;
+mod dialog_repo;
+mod dialog_running_log;
+mod dialog_settings;
 mod notifications;
 mod panels;
 mod search;
