@@ -107,9 +107,10 @@ fn clean_body(lines: &[&str]) -> String {
     result
 }
 
-fn pick_markdown_file() -> Option<PathBuf> {
+fn pick_markdown_file(start_dir: &std::path::Path) -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Import Markdown Document")
+        .set_directory(start_dir)
         .add_filter("Text files", &["md", "txt", "markdown"])
         .pick_file()
 }
@@ -190,7 +191,7 @@ impl DirigentApp {
                     self.global_prompt_input.clear();
                 }
                 if import_requested {
-                    if let Some(path) = pick_markdown_file() {
+                    if let Some(path) = pick_markdown_file(&self.project_root) {
                         if let Ok(content) = std::fs::read_to_string(&path) {
                             let stem = path.file_stem()
                                 .and_then(|s| s.to_str())
