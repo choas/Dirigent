@@ -861,8 +861,18 @@ impl DirigentApp {
                     ui,
                     popup_id,
                     &more_btn,
-                    egui::PopupCloseBehavior::CloseOnClick,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
                     |ui| {
+                        ui.set_min_width(140.0);
+                        let is_expanded = self.logbook_expanded.contains(&cue.id);
+                        let activity_label = if is_expanded { "\u{25BE} Activity" } else { "\u{25B8} Activity" };
+                        if ui.button(activity_label).clicked() {
+                            if is_expanded {
+                                self.logbook_expanded.remove(&cue.id);
+                            } else {
+                                self.logbook_expanded.insert(cue.id);
+                            }
+                        }
                         if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                             actions.push((cue.id, CueAction::Delete));
                         }
@@ -891,17 +901,8 @@ impl DirigentApp {
                 }
             }
 
-            // Activity logbook (collapsible)
-            let is_expanded = self.logbook_expanded.contains(&cue.id);
-            let toggle_label = if is_expanded { "\u{25BE} Activity" } else { "\u{25B8} Activity" };
-            if ui.small_button(egui::RichText::new(toggle_label).small().color(self.semantic.muted_text())).clicked() {
-                if is_expanded {
-                    self.logbook_expanded.remove(&cue.id);
-                } else {
-                    self.logbook_expanded.insert(cue.id);
-                }
-            }
-            if is_expanded {
+            // Activity logbook (shown when expanded via overflow menu)
+            if self.logbook_expanded.contains(&cue.id) {
                 if let Ok(entries) = self.db.get_activities(cue.id) {
                     if entries.is_empty() {
                         ui.label(egui::RichText::new("No activity yet").small().color(self.semantic.muted_text()));
