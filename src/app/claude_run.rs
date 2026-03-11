@@ -91,10 +91,13 @@ impl DirigentApp {
         };
 
         // Insert execution record
-        let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
+        let provider = self.settings.cli_provider.clone();
+        let exec_id = self
+            .db
+            .insert_execution(cue_id, &prompt, &provider)
+            .unwrap_or(0);
 
         // Initialize log buffer for this cue
-        let provider = self.settings.cli_provider.clone();
         self.claude
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
@@ -182,6 +185,9 @@ impl DirigentApp {
                                 opencode::parse_diff_from_response(&response.stdout)
                             } else {
                                 git::get_working_diff(&project_root, &response.edited_files)
+                                    .or_else(|| {
+                                        opencode::parse_diff_from_response(&response.stdout)
+                                    })
                             };
                             ClaudeResult {
                                 cue_id,
@@ -253,10 +259,13 @@ impl DirigentApp {
         self.reload_cues();
 
         // Insert execution record
-        let exec_id = self.db.insert_execution(cue_id, &prompt).unwrap_or(0);
+        let provider = self.settings.cli_provider.clone();
+        let exec_id = self
+            .db
+            .insert_execution(cue_id, &prompt, &provider)
+            .unwrap_or(0);
 
         // Initialize log buffer for this cue
-        let provider = self.settings.cli_provider.clone();
         self.claude
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
@@ -344,6 +353,9 @@ impl DirigentApp {
                                 opencode::parse_diff_from_response(&response.stdout)
                             } else {
                                 git::get_working_diff(&project_root, &response.edited_files)
+                                    .or_else(|| {
+                                        opencode::parse_diff_from_response(&response.stdout)
+                                    })
                             };
                             ClaudeResult {
                                 cue_id,
@@ -479,9 +491,16 @@ impl DirigentApp {
             std::thread::spawn(|| {
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = std::process::Command::new("afplay")
-                        .arg("/System/Library/Sounds/Glass.aiff")
-                        .output();
+                    // Use AudioToolbox system sound — no permissions required
+                    #[link(name = "AudioToolbox", kind = "framework")]
+                    extern "C" {
+                        fn AudioServicesPlaySystemSound(sound_id: u32);
+                    }
+                    // 1007 = "Glass" system sound (aka Tink/Basso family)
+                    // Standard system sound IDs don't trigger permission dialogs
+                    unsafe {
+                        AudioServicesPlaySystemSound(1007);
+                    }
                 }
             });
         }

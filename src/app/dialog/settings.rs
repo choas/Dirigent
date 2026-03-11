@@ -183,7 +183,7 @@ impl DirigentApp {
 
                             ui.label("Default Flags:");
                             ui.label(
-                                egui::RichText::new("run <prompt> --format json --print-logs")
+                                egui::RichText::new("run <prompt> --format json")
                                     .monospace()
                                     .weak(),
                             );

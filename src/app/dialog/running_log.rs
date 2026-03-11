@@ -39,8 +39,6 @@ impl DirigentApp {
             .get(&cue_id)
             .cloned()
             .unwrap_or((String::new(), CliProvider::Claude));
-        let provider_name = current_provider.display_name();
-        let provider_color = self.semantic.provider_color(&current_provider);
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
 
         let mut close = false;
@@ -98,6 +96,8 @@ impl DirigentApp {
 
                     for (idx, exec) in past_execs.iter().enumerate() {
                         let is_current_running = current_exec_id == Some(exec.id);
+                        let exec_provider_name = exec.provider.display_name();
+                        let exec_provider_color = self.semantic.provider_color(&exec.provider);
 
                         // -- User message --
                         let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
@@ -125,9 +125,9 @@ impl DirigentApp {
                         // -- Provider response --
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new(provider_name)
+                                egui::RichText::new(exec_provider_name)
                                     .strong()
-                                    .color(provider_color),
+                                    .color(exec_provider_color),
                             );
                         });
                         egui::Frame::none()
@@ -185,12 +185,15 @@ impl DirigentApp {
                         if !past_execs.is_empty() {
                             ui.separator();
                         }
+                        let current_provider_name = current_provider.display_name();
+                        let current_provider_color =
+                            self.semantic.provider_color(&current_provider);
                         // Show the user's prompt from running_logs context
                         // (the execution hasn't been saved to history yet)
                         ui.label(
-                            egui::RichText::new(provider_name)
+                            egui::RichText::new(current_provider_name)
                                 .strong()
-                                .color(provider_color),
+                                .color(current_provider_color),
                         );
                         egui::Frame::none()
                             .inner_margin(egui::Margin {

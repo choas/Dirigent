@@ -166,9 +166,11 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    // Use a per-process app ID so multiple instances don't fight over the
-    // same eframe persistence storage.
-    let app_id = format!("Dirigent-{}", std::process::id());
+    // Use a unique app ID so each launch creates a new instance rather than
+    // activating an existing one (which is macOS default behavior for apps
+    // with the same bundle identifier).
+    let unique_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let app_id = format!("Dirigent-{}", unique_id);
 
     eframe::run_native(
         &app_id,

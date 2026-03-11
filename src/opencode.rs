@@ -81,11 +81,7 @@ pub(crate) fn invoke_opencode_streaming(
     }
 
     let mut cmd = Command::new(opencode_bin);
-    cmd.arg("run")
-        .arg(prompt)
-        .arg("--format")
-        .arg("json")
-        .arg("--print-logs");
+    cmd.arg("run").arg(prompt).arg("--format").arg("json");
     if !model.is_empty() {
         cmd.arg("--model").arg(model);
     }
@@ -158,13 +154,18 @@ pub(crate) fn invoke_opencode_streaming(
 
         match event_type {
             "text" => {
-                if let Some(text) = event
+                let text = event
                     .get("part")
                     .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                {
+                    .and_then(|t| t.as_str());
+                if let Some(text) = text {
                     on_log(text);
                     on_log("\n");
+                } else {
+                    on_log(&format!(
+                        "[DEBUG] text event but no text found: {:?}\n",
+                        event
+                    ));
                 }
             }
             "tool_use" | "tool" => {
@@ -178,7 +179,7 @@ pub(crate) fn invoke_opencode_streaming(
                     .and_then(|p| p.get("input"))
                     .cloned()
                     .unwrap_or_default();
-                if matches!(name, "Write" | "Edit" | "Bash") {
+                if matches!(name, "Write" | "Edit" | "Bash" | "Task") {
                     if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
                         if !edited_files.contains(&path.to_string()) {
                             edited_files.push(path.to_string());

@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+use crate::settings::CliProvider;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CueStatus {
@@ -59,7 +62,7 @@ impl CueStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ExecutionStatus {
     Pending,
     Running,
@@ -103,7 +106,7 @@ pub(crate) struct Cue {
     pub attached_images: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Execution {
     #[allow(dead_code)]
     pub id: i64,
@@ -111,12 +114,12 @@ pub(crate) struct Execution {
     pub cue_id: i64,
     #[allow(dead_code)]
     pub prompt: String,
-    #[allow(dead_code)]
     pub response: Option<String>,
     pub diff: Option<String>,
     pub log: Option<String>,
     #[allow(dead_code)]
     pub status: ExecutionStatus,
+    pub provider: CliProvider,
 }
 
 pub(crate) struct Database {
@@ -228,6 +231,16 @@ impl Database {
             let _ = self
                 .conn
                 .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;");
+        }
+        // Migration: add provider column to executions
+        let has_provider_col: bool = self
+            .conn
+            .prepare("SELECT provider FROM executions LIMIT 0")
+            .is_ok();
+        if !has_provider_col {
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
         }
         // Index on status for faster filtered queries
         let _ = self
@@ -351,10 +364,21 @@ impl Database {
 
     // -- Execution CRUD --
 
-    pub fn insert_execution(&self, cue_id: i64, prompt: &str) -> Result<i64> {
+    pub fn insert_execution(
+        &self,
+        cue_id: i64,
+        prompt: &str,
+        provider: &CliProvider,
+    ) -> Result<i64> {
+        let provider_str = provider.display_name();
         self.conn.execute(
-            "INSERT INTO executions (cue_id, prompt, status) VALUES (?1, ?2, ?3)",
-            params![cue_id, prompt, ExecutionStatus::Pending.as_str()],
+            "INSERT INTO executions (cue_id, prompt, status, provider) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                cue_id,
+                prompt,
+                ExecutionStatus::Pending.as_str(),
+                provider_str
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -385,7 +409,7 @@ impl Database {
 
     pub fn get_latest_execution(&self, cue_id: i64) -> Result<Option<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id])?;
         if let Some(row) = rows.next()? {
@@ -398,7 +422,7 @@ impl Database {
     /// Get all executions for a cue, ordered by id (oldest first).
     pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
         let mut execs = Vec::new();
@@ -477,6 +501,11 @@ impl Database {
 
 fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
     let status_str: String = row.get(6)?;
+    let provider_str: String = row.get(7)?;
+    let provider = match provider_str.as_str() {
+        "OpenCode" => CliProvider::OpenCode,
+        _ => CliProvider::Claude,
+    };
     Ok(Execution {
         id: row.get(0)?,
         cue_id: row.get(1)?,
@@ -485,6 +514,7 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
         diff: row.get(4)?,
         log: row.get(5)?,
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
+        provider,
     })
 }
 
@@ -583,7 +613,8 @@ mod tests {
     fn delete_cue_removes_cue_and_executions() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        db.insert_execution(cue_id, "do something").unwrap();
+        db.insert_execution(cue_id, "do something", &CliProvider::Claude)
+            .unwrap();
         db.delete_cue(cue_id).unwrap();
         assert!(db.get_cue(cue_id).unwrap().is_none());
         assert!(db.get_latest_execution(cue_id).unwrap().is_none());
@@ -595,7 +626,9 @@ mod tests {
     fn insert_and_get_execution() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        let exec_id = db.insert_execution(cue_id, "prompt text").unwrap();
+        let exec_id = db
+            .insert_execution(cue_id, "prompt text", &CliProvider::Claude)
+            .unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
         assert_eq!(exec.id, exec_id);
         assert_eq!(exec.prompt, "prompt text");
@@ -608,7 +641,9 @@ mod tests {
     fn complete_execution() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        let exec_id = db
+            .insert_execution(cue_id, "prompt", &CliProvider::Claude)
+            .unwrap();
         db.complete_execution(exec_id, "response text", Some("diff content"))
             .unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
@@ -621,7 +656,9 @@ mod tests {
     fn fail_execution() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        let exec_id = db
+            .insert_execution(cue_id, "prompt", &CliProvider::Claude)
+            .unwrap();
         db.fail_execution(exec_id, "error msg").unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
         assert_eq!(exec.status, ExecutionStatus::Failed);
@@ -632,7 +669,9 @@ mod tests {
     fn update_execution_log() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        let exec_id = db.insert_execution(cue_id, "prompt").unwrap();
+        let exec_id = db
+            .insert_execution(cue_id, "prompt", &CliProvider::Claude)
+            .unwrap();
         db.update_execution_log(exec_id, "log line 1\nlog line 2")
             .unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
@@ -643,8 +682,11 @@ mod tests {
     fn get_latest_execution_returns_most_recent() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
-        db.insert_execution(cue_id, "first").unwrap();
-        let second_id = db.insert_execution(cue_id, "second").unwrap();
+        db.insert_execution(cue_id, "first", &CliProvider::Claude)
+            .unwrap();
+        let second_id = db
+            .insert_execution(cue_id, "second", &CliProvider::Claude)
+            .unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
         assert_eq!(exec.id, second_id);
         assert_eq!(exec.prompt, "second");
