@@ -450,6 +450,53 @@ pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::er
     Ok(())
 }
 
+/// Stage all changes (tracked + untracked) and commit with the given message.
+pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error::Result<String> {
+    use std::process::Command;
+
+    // Stage all changes including untracked files
+    let output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!("git add -A failed: {}", stderr)));
+    }
+
+    // Commit
+    let repo = Repository::discover(repo_path)?;
+    let mut index = repo.index()?;
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
+
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+
+    if let Some(ref parent_commit) = parent {
+        if parent_commit.tree_id() == tree_id {
+            return Err(DirigentError::GitCommand(
+                "nothing to commit — no uncommitted changes".into(),
+            ));
+        }
+    }
+
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
+
+    // Reset index so it doesn't stay staged
+    let head_commit = repo
+        .head()?
+        .peel_to_commit()
+        .map_err(|e| DirigentError::Git(e))?;
+    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, None)?;
+
+    Ok(format!("{}", oid))
+}
+
 pub(crate) fn generate_commit_message(cue_text: &str) -> String {
     let summary = if cue_text.len() > 68 {
         format!("{}...", &cue_text[..65])

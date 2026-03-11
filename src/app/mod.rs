@@ -84,6 +84,7 @@ enum CueAction {
     RevertReview(i64),
     ReplyReview(i64, String),
     ShowRunningLog(i64),
+    CommitAll,
 }
 
 /// State for the code viewer panel.

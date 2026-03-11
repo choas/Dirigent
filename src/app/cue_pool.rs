@@ -322,6 +322,17 @@ impl DirigentApp {
                                             .color(self.semantic.tertiary_text),
                                     );
                                 }
+                                // "Commit All" button for the Review column
+                                if status == CueStatus::Review && section_cues.len() > 1 {
+                                    if ui
+                                        .small_button(icon("\u{2713} Commit All", self.settings.font_size))
+                                        .on_hover_text("Commit all uncommitted changes and move all Review cues to Done")
+                                        .clicked()
+                                    {
+                                        actions.push((0, CueAction::CommitAll));
+                                    }
+                                    ui.add_space(SPACE_XS);
+                                }
                                 for cue in &section_cues {
                                     self.render_cue_card(ui, cue, &mut actions, status);
                                 }
@@ -489,6 +500,63 @@ impl DirigentApp {
                                 }
                                 self.dismiss_central_overlays();
                                 self.claude.show_log = Some(cue_id);
+                            }
+                            CueAction::CommitAll => {
+                                // Gather summaries from all Review cues
+                                let review_cues: Vec<&Cue> = self
+                                    .cues
+                                    .iter()
+                                    .filter(|c| c.status == CueStatus::Review)
+                                    .collect();
+                                if review_cues.is_empty() {
+                                    self.set_status_message("No cues in Review".into());
+                                } else {
+                                    // Build commit message summarizing all Review cues
+                                    let summary_lines: Vec<String> = review_cues
+                                        .iter()
+                                        .map(|c| {
+                                            let text: String = c.text.lines().next().unwrap_or(&c.text).to_string();
+                                            if text.len() > 80 {
+                                                format!("- {}...", &text[..77])
+                                            } else {
+                                                format!("- {}", text)
+                                            }
+                                        })
+                                        .collect();
+                                    let commit_msg = format!(
+                                        "Dirigent: {} cue{} committed\n\n{}",
+                                        review_cues.len(),
+                                        if review_cues.len() == 1 { "" } else { "s" },
+                                        summary_lines.join("\n"),
+                                    );
+                                    let review_ids: Vec<i64> =
+                                        review_cues.iter().map(|c| c.id).collect();
+                                    match git::commit_all(&self.project_root, &commit_msg) {
+                                        Ok(hash) => {
+                                            let short = &hash[..7.min(hash.len())];
+                                            self.set_status_message(format!(
+                                                "Committed all: {} ({} cue{})",
+                                                short,
+                                                review_ids.len(),
+                                                if review_ids.len() == 1 { "" } else { "s" },
+                                            ));
+                                            for cue_id in &review_ids {
+                                                let _ = self.db.update_cue_status(
+                                                    *cue_id,
+                                                    CueStatus::Done,
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            self.set_status_message(format!(
+                                                "Commit all failed: {}",
+                                                e
+                                            ));
+                                        }
+                                    }
+                                    self.reload_git_info();
+                                    self.reload_commit_history();
+                                }
                             }
                         }
                         self.reload_cues();
