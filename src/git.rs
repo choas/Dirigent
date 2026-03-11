@@ -351,38 +351,65 @@ pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) 
     paths
 }
 
-/// Commit only the changes described by `diff_text`, not the full working tree state.
-/// Uses `git apply --cached` so each cue commits exactly its own diff.
+/// Commit the working-tree state of files touched by `diff_text`.
+/// This stages the actual files the user sees (including any post-run formatting),
+/// so the committed state matches the working tree and files appear clean afterwards.
 pub(crate) fn commit_diff(
     repo_path: &Path,
     diff_text: &str,
     commit_message: &str,
 ) -> crate::error::Result<String> {
-    use std::io::Write;
     use std::process::Command;
 
-    // Apply the diff to the index only (--cached), leaving working tree untouched.
-    // Use --3way to fall back to three-way merge when context lines have shifted.
-    let mut child = Command::new("git")
-        .args(["apply", "--cached", "--3way"])
+    // Parse all file paths from the diff (both source and destination) to handle
+    // additions, modifications, and deletions.
+    let dir_name = repo_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dir_prefix = if dir_name.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dir_name)
+    };
+
+    let mut file_paths = Vec::new();
+    for line in diff_text.lines() {
+        let rest = if let Some(r) = line.strip_prefix("+++ b/") {
+            Some(r)
+        } else if let Some(r) = line.strip_prefix("--- a/") {
+            Some(r)
+        } else {
+            None
+        };
+        if let Some(rest) = rest {
+            let path = rest.trim();
+            let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
+            let path = path.to_string();
+            if !path.is_empty() && !file_paths.contains(&path) {
+                file_paths.push(path);
+            }
+        }
+    }
+
+    if file_paths.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "no files to commit — diff contains no file paths".into(),
+        ));
+    }
+
+    // Stage the working-tree state of the affected files.
+    let output = Command::new("git")
+        .arg("add")
+        .arg("-A")
+        .arg("--")
+        .args(&file_paths)
         .current_dir(repo_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(diff_text.as_bytes())?;
-
-    let output = child.wait_with_output()?;
+        .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DirigentError::GitCommand(format!(
-            "patch does not apply — files may have changed since the diff was generated. \
-             Try reverting and re-running the cue. ({stderr})"
+            "staging files failed: {stderr}"
         )));
     }
 
