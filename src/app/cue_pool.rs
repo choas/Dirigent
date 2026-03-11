@@ -478,7 +478,7 @@ impl DirigentApp {
         egui::Frame::none()
             .inner_margin(4.0)
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
-            .rounding(4.0)
+            .rounding(8.0)
             .show(ui, |ui| {
                 // Cue text - inline editable for Inbox
                 let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);

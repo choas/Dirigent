@@ -171,7 +171,7 @@ impl DirigentApp {
                 egui::Frame::none()
                     .inner_margin(6.0)
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
-                    .rounding(4.0)
+                    .rounding(8.0)
                     .show(ui, |ui| {
                         // Header: name + enabled + delete
                         ui.horizontal(|ui| {
@@ -331,7 +331,7 @@ impl DirigentApp {
                     egui::Frame::none()
                         .inner_margin(6.0)
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
-                        .rounding(4.0)
+                        .rounding(8.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(

@@ -99,11 +99,13 @@ impl ThemeChoice {
 
     /// Returns custom egui Visuals for this theme.
     pub fn visuals(&self) -> egui::Visuals {
-        match self {
+        let mut v = match self {
             ThemeChoice::Dark => egui::Visuals::dark(),
             ThemeChoice::Light => egui::Visuals::light(),
-            _ => self.palette().apply(self.is_dark()),
-        }
+            _ => return self.palette().apply(self.is_dark()),
+        };
+        apply_rounding(&mut v);
+        v
     }
 
     fn palette(&self) -> ThemePalette {
@@ -166,6 +168,19 @@ struct ThemePalette {
     hyperlink: egui::Color32,
 }
 
+/// Apply generous, Apple-style corner rounding to all visual elements.
+/// 4px for small widgets, 8px for menus, 12px for dialog windows.
+fn apply_rounding(v: &mut egui::Visuals) {
+    let r = egui::Rounding::same;
+    v.window_rounding = r(12.0);
+    v.menu_rounding = r(8.0);
+    v.widgets.noninteractive.rounding = r(4.0);
+    v.widgets.inactive.rounding = r(4.0);
+    v.widgets.hovered.rounding = r(6.0);
+    v.widgets.active.rounding = r(4.0);
+    v.widgets.open.rounding = r(4.0);
+}
+
 impl ThemePalette {
     fn apply(self, dark: bool) -> egui::Visuals {
         let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
@@ -180,6 +195,7 @@ impl ThemePalette {
         v.widgets.hovered.bg_fill = self.hovered;
         v.widgets.active.bg_fill = self.active;
         v.hyperlink_color = self.hyperlink;
+        apply_rounding(&mut v);
         v
     }
 }
