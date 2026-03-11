@@ -104,7 +104,6 @@ impl DirigentApp {
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
                         let mut file_to_load = None;
-                        let mut row_index: usize = 0;
                         if let Some(ref tree) = self.file_tree {
                             for entry in &tree.entries {
                                 Self::render_file_entry(
@@ -117,7 +116,6 @@ impl DirigentApp {
                                     &self.git.dirty_files,
                                     &self.semantic,
                                     0,
-                                    &mut row_index,
                                 );
                             }
                         }
@@ -212,14 +210,9 @@ impl DirigentApp {
         dirty_files: &HashMap<String, char>,
         semantic: &SemanticColors,
         depth: usize,
-        row_index: &mut usize,
     ) {
         let ignored_color = ui.visuals().weak_text_color();
         let indent = depth as f32 * 16.0;
-
-        // Alternating row background for scanability
-        let is_odd = *row_index % 2 == 1;
-        *row_index += 1;
 
         if entry.is_dir {
             let is_expanded = expanded.contains(&entry.path);
@@ -232,16 +225,6 @@ impl DirigentApp {
                 egui::vec2(available_width, row_height),
                 egui::Sense::click(),
             );
-
-            // Alternating row tint
-            if is_odd {
-                let tint = if ui.visuals().dark_mode {
-                    egui::Color32::from_white_alpha(6)
-                } else {
-                    egui::Color32::from_black_alpha(6)
-                };
-                ui.painter().rect_filled(row_rect, 0.0, tint);
-            }
 
             // Hover highlight
             if response.hovered() {
@@ -302,7 +285,6 @@ impl DirigentApp {
                         dirty_files,
                         semantic,
                         depth + 1,
-                        row_index,
                     );
                 }
             }
@@ -331,14 +313,6 @@ impl DirigentApp {
                     0.0,
                     semantic.selection_bg(),
                 );
-            } else if is_odd {
-                // Alternating row tint (only when not selected)
-                let tint = if ui.visuals().dark_mode {
-                    egui::Color32::from_white_alpha(6)
-                } else {
-                    egui::Color32::from_black_alpha(6)
-                };
-                ui.painter().rect_filled(row_rect, 0.0, tint);
             }
 
             // Hover highlight
@@ -533,17 +507,20 @@ impl DirigentApp {
                 }
                 let input_response = ui.add(
                     egui::TextEdit::multiline(&mut self.global_prompt_input)
-                        .desired_width(ui.available_width() - 80.0)
+                        .desired_width(ui.available_width() - 44.0)
                         .desired_rows(2)
                         .hint_text("Describe what you want...")
                         .font(egui::TextStyle::Monospace),
                 );
-                ui.vertical(|ui| {
-                    ui.add_space(SPACE_XS);
+                ui.vertical_centered(|ui| {
+                    let input_h = input_response.rect.height();
+                    let btn_size = self.settings.font_size + 12.0;
+                    ui.add_space((input_h - btn_size) / 2.0);
                     let send_btn = egui::Button::new(
-                        egui::RichText::new("  Send  ").color(self.semantic.accent_text()),
-                    ).fill(self.semantic.accent).rounding(6.0);
-                    let btn_clicked = ui.add(send_btn).clicked();
+                        icon("\u{2191}", self.settings.font_size).color(self.semantic.accent_text()),
+                    ).fill(self.semantic.accent).rounding(btn_size / 2.0)
+                     .min_size(egui::vec2(btn_size, btn_size));
+                    let btn_clicked = ui.add(send_btn).on_hover_text("Create cue").clicked();
                     let enter_submitted = input_response.has_focus()
                         && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
                     if (btn_clicked || enter_submitted) && !self.global_prompt_input.is_empty() {
