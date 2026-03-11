@@ -174,11 +174,11 @@ fn apply_rounding(v: &mut egui::Visuals) {
     let r = egui::Rounding::same;
     v.window_rounding = r(12.0);
     v.menu_rounding = r(8.0);
-    v.widgets.noninteractive.rounding = r(4.0);
-    v.widgets.inactive.rounding = r(4.0);
-    v.widgets.hovered.rounding = r(6.0);
-    v.widgets.active.rounding = r(4.0);
-    v.widgets.open.rounding = r(4.0);
+    v.widgets.noninteractive.rounding = r(6.0);
+    v.widgets.inactive.rounding = r(6.0);
+    v.widgets.hovered.rounding = r(8.0);
+    v.widgets.active.rounding = r(6.0);
+    v.widgets.open.rounding = r(6.0);
 }
 
 impl ThemePalette {
@@ -197,6 +197,191 @@ impl ThemePalette {
         v.hyperlink_color = self.hyperlink;
         apply_rounding(&mut v);
         v
+    }
+}
+
+/// Semantic colors that adapt to the current theme, replacing hardcoded RGB values.
+/// Every UI element should use these instead of raw Color32 literals.
+#[derive(Clone, Copy)]
+pub(crate) struct SemanticColors {
+    pub accent: egui::Color32,
+    pub success: egui::Color32,
+    pub warning: egui::Color32,
+    pub danger: egui::Color32,
+    pub secondary_text: egui::Color32,
+    pub tertiary_text: egui::Color32,
+    pub separator: egui::Color32,
+    pub badge_text: egui::Color32,
+    is_dark: bool,
+}
+
+impl SemanticColors {
+    pub fn selection_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(60, 60, 120, 80)
+        } else {
+            egui::Color32::from_rgba_premultiplied(60, 100, 180, 50)
+        }
+    }
+
+    pub fn addition_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(30, 80, 30, 60)
+        } else {
+            egui::Color32::from_rgba_premultiplied(30, 120, 30, 35)
+        }
+    }
+
+    pub fn deletion_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(80, 30, 30, 60)
+        } else {
+            egui::Color32::from_rgba_premultiplied(120, 30, 30, 35)
+        }
+    }
+
+    pub fn search_current_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(100, 80, 0, 80)
+        } else {
+            egui::Color32::from_rgba_premultiplied(180, 150, 0, 60)
+        }
+    }
+
+    pub fn search_match_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(80, 80, 0, 40)
+        } else {
+            egui::Color32::from_rgba_premultiplied(180, 180, 0, 30)
+        }
+    }
+
+    pub fn search_highlight_bg(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(180, 140, 0)
+        } else {
+            egui::Color32::from_rgb(200, 160, 0)
+        }
+    }
+
+    pub fn code_search_current(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(200, 120, 0, 60)
+        } else {
+            egui::Color32::from_rgba_premultiplied(255, 180, 0, 80)
+        }
+    }
+
+    pub fn code_search_match(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_premultiplied(180, 160, 0, 35)
+        } else {
+            egui::Color32::from_rgba_premultiplied(220, 200, 0, 40)
+        }
+    }
+
+    pub fn diff_header(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(150, 150, 220)
+        } else {
+            egui::Color32::from_rgb(60, 60, 140)
+        }
+    }
+
+    pub fn claude_color(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(200, 160, 100)
+        } else {
+            egui::Color32::from_rgb(140, 100, 40)
+        }
+    }
+
+    pub fn global_label(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(180, 140, 255)
+        } else {
+            egui::Color32::from_rgb(100, 60, 180)
+        }
+    }
+
+    pub fn status_message_with_alpha(&self, alpha: f32) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgba_unmultiplied(180, 180, 140, (alpha * 255.0) as u8)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(100, 100, 40, (alpha * 255.0) as u8)
+        }
+    }
+
+    pub fn modal_overlay(&self) -> egui::Color32 {
+        egui::Color32::from_black_alpha(77) // ~30% opacity
+    }
+
+    /// Contrasting text color for use on accent-colored backgrounds.
+    pub fn accent_text(&self) -> egui::Color32 {
+        let [r, g, b, _] = self.accent.to_array();
+        let luminance = r as u16 + g as u16 + b as u16;
+        if luminance > 380 {
+            egui::Color32::from_gray(30)
+        } else {
+            egui::Color32::WHITE
+        }
+    }
+}
+
+impl ThemeChoice {
+    pub fn semantic_colors(&self) -> SemanticColors {
+        use ThemeChoice::*;
+        let dark = self.is_dark();
+
+        // Accent color follows each theme's identity (hyperlink) color
+        let accent = match self {
+            Dark              => egui::Color32::from_rgb(100, 180, 255),
+            Nord              => egui::Color32::from_rgb(136, 192, 208),
+            Dracula           => egui::Color32::from_rgb(139, 233, 253),
+            SolarizedDark     => egui::Color32::from_rgb( 38, 139, 210),
+            Monokai           => egui::Color32::from_rgb(102, 217, 239),
+            GruvboxDark       => egui::Color32::from_rgb(131, 165, 152),
+            TokyoNight        => egui::Color32::from_rgb(125, 207, 255),
+            OneDark           => egui::Color32::from_rgb( 86, 182, 194),
+            CatppuccinMocha   => egui::Color32::from_rgb(116, 199, 236),
+            EverforestDark    => egui::Color32::from_rgb(127, 187, 179),
+            Light             => egui::Color32::from_rgb(  0, 100, 220),
+            SolarizedLight    => egui::Color32::from_rgb( 38, 139, 210),
+            GruvboxLight      => egui::Color32::from_rgb(  7, 102, 120),
+            GitHubLight       => egui::Color32::from_rgb(  3,  47,  98),
+            CatppuccinLatte   => egui::Color32::from_rgb( 32, 159, 181),
+            EverforestLight   => egui::Color32::from_rgb( 53, 162, 147),
+            RosePineDawn      => egui::Color32::from_rgb( 40, 105, 131),
+            OneLight          => egui::Color32::from_rgb(  1, 132, 188),
+            NordLight         => egui::Color32::from_rgb( 94, 129, 172),
+            TokyoNightLight   => egui::Color32::from_rgb(118, 105, 199),
+        };
+
+        if dark {
+            SemanticColors {
+                accent,
+                success: egui::Color32::from_rgb(100, 200, 100),
+                warning: egui::Color32::from_rgb(200, 160, 50),
+                danger: egui::Color32::from_rgb(220, 100, 100),
+                secondary_text: egui::Color32::from_gray(160),
+                tertiary_text: egui::Color32::from_gray(120),
+                separator: egui::Color32::from_gray(60),
+                badge_text: egui::Color32::from_gray(220),
+                is_dark: true,
+            }
+        } else {
+            SemanticColors {
+                accent,
+                success: egui::Color32::from_rgb( 30, 140,  30),
+                warning: egui::Color32::from_rgb(160, 110,   0),
+                danger: egui::Color32::from_rgb(200,  50,  50),
+                secondary_text: egui::Color32::from_gray(100),
+                tertiary_text: egui::Color32::from_gray(150),
+                separator: egui::Color32::from_gray(200),
+                badge_text: egui::Color32::from_gray(255),
+                is_dark: false,
+            }
+        }
     }
 }
 

@@ -67,6 +67,7 @@ impl DirigentApp {
         }
         self.needs_theme_apply = false;
         ctx.set_visuals(self.settings.theme.visuals());
+        self.semantic = self.settings.theme.semantic_colors();
         self.viewer.syntax_theme = if self.settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(self.settings.font_size)
         } else {

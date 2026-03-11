@@ -44,7 +44,7 @@ use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::file_tree::FileTree;
 use crate::git;
-use crate::settings::{self, Settings};
+use crate::settings::{self, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
@@ -164,8 +164,9 @@ pub struct DirigentApp {
     // Git state
     pub(super) git: GitState,
 
-    // Settings
+    // Settings & theme
     settings: Settings,
+    pub(super) semantic: SemanticColors,
     show_settings: bool,
     needs_theme_apply: bool,
     playbook_expanded: bool,
@@ -257,6 +258,8 @@ impl DirigentApp {
             egui_extras::syntax_highlighting::CodeTheme::light(12.0)
         };
 
+        let semantic = settings.theme.semantic_colors();
+
         DirigentApp {
             project_root,
             db,
@@ -289,6 +292,7 @@ impl DirigentApp {
                 show_worktree_panel: false,
             },
             settings,
+            semantic,
             show_settings: false,
             needs_theme_apply: true,
             playbook_expanded: false,
@@ -651,6 +655,17 @@ impl eframe::App for DirigentApp {
         }
         self.render_cue_pool(ctx); // right side
         self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
+
+        // Modal overlay dimming behind floating windows
+        if self.show_repo_picker || self.git.show_worktree_panel || self.show_about {
+            let screen = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new("modal_dim"),
+            ));
+            painter.rect_filled(screen, 0.0, self.semantic.modal_overlay());
+        }
+
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
         self.render_about_dialog(ctx); // floating

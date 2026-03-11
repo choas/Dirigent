@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use crate::app::{SPACE_XS, SPACE_SM};
+use crate::settings::SemanticColors;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DiffViewMode {
@@ -192,13 +193,14 @@ pub(crate) fn render_inline_diff(
     diff: &ParsedDiff,
     collapsed_files: &mut HashSet<usize>,
     search: Option<&DiffSearchHighlight<'_>>,
+    colors: &SemanticColors,
 ) {
-    let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
-    let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
-    let green_text = egui::Color32::from_rgb(100, 200, 100);
-    let red_text = egui::Color32::from_rgb(220, 100, 100);
-    let context_text = egui::Color32::from_gray(180);
-    let gutter_color = egui::Color32::from_gray(100);
+    let green_bg = colors.addition_bg();
+    let red_bg = colors.deletion_bg();
+    let green_text = colors.success;
+    let red_text = colors.danger;
+    let context_text = colors.secondary_text;
+    let gutter_color = colors.tertiary_text;
 
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
@@ -210,7 +212,7 @@ pub(crate) fn render_inline_diff(
         if ui.add(egui::Label::new(
             egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
                 .strong()
-                .color(egui::Color32::from_rgb(150, 150, 220)),
+                .color(colors.diff_header()),
         ).sense(egui::Sense::click())).clicked() {
             if is_collapsed {
                 collapsed_files.remove(&file_idx);
@@ -260,7 +262,7 @@ pub(crate) fn render_inline_diff(
                                 .color(gutter_color),
                         );
                         if is_search_match {
-                            render_highlighted_text(ui, &line.content, search.unwrap().query_lower, text_color);
+                            render_highlighted_text(ui, &line.content, search.unwrap().query_lower, text_color, colors);
                         } else {
                             ui.label(
                                 egui::RichText::new(&line.content)
@@ -275,9 +277,9 @@ pub(crate) fn render_inline_diff(
                     }
 
                     let effective_bg = if is_current_match {
-                        Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                        Some(colors.search_current_bg())
                     } else if is_search_match {
-                        Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                        Some(colors.search_match_bg())
                     } else {
                         bg_color
                     };
@@ -295,9 +297,9 @@ pub(crate) fn render_inline_diff(
 }
 
 /// Render text with search query highlighted.
-fn render_highlighted_text(ui: &mut egui::Ui, text: &str, query_lower: &str, base_color: egui::Color32) {
-    let highlight_bg = egui::Color32::from_rgb(180, 140, 0);
-    let highlight_fg = egui::Color32::BLACK;
+fn render_highlighted_text(ui: &mut egui::Ui, text: &str, query_lower: &str, base_color: egui::Color32, colors: &SemanticColors) {
+    let highlight_bg = colors.search_highlight_bg();
+    let highlight_fg = colors.accent_text();
     let text_lower = text.to_lowercase();
     let mut pos = 0;
 
@@ -348,14 +350,15 @@ pub(crate) fn render_side_by_side_diff(
     diff: &ParsedDiff,
     collapsed_files: &mut HashSet<usize>,
     search: Option<&DiffSearchHighlight<'_>>,
+    colors: &SemanticColors,
 ) {
-    let green_bg = egui::Color32::from_rgba_premultiplied(30, 80, 30, 60);
-    let red_bg = egui::Color32::from_rgba_premultiplied(80, 30, 30, 60);
-    let green_text = egui::Color32::from_rgb(100, 200, 100);
-    let red_text = egui::Color32::from_rgb(220, 100, 100);
-    let context_text = egui::Color32::from_gray(180);
-    let gutter_color = egui::Color32::from_gray(100);
-    let sep_color = egui::Color32::from_gray(60);
+    let green_bg = colors.addition_bg();
+    let red_bg = colors.deletion_bg();
+    let green_text = colors.success;
+    let red_text = colors.danger;
+    let context_text = colors.secondary_text;
+    let gutter_color = colors.tertiary_text;
+    let sep_color = colors.separator;
 
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
@@ -367,7 +370,7 @@ pub(crate) fn render_side_by_side_diff(
         if ui.add(egui::Label::new(
             egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
                 .strong()
-                .color(egui::Color32::from_rgb(150, 150, 220)),
+                .color(colors.diff_header()),
         ).sense(egui::Sense::click())).clicked() {
             if is_collapsed {
                 collapsed_files.remove(&file_idx);
@@ -427,9 +430,9 @@ pub(crate) fn render_side_by_side_diff(
                                 egui::RichText::new(&line.content).monospace().color(color),
                             );
                             let effective_bg = if left_is_current {
-                                Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                                Some(colors.search_current_bg())
                             } else if is_match {
-                                Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                                Some(colors.search_match_bg())
                             } else {
                                 bg
                             };
@@ -475,9 +478,9 @@ pub(crate) fn render_side_by_side_diff(
                                 egui::RichText::new(&line.content).monospace().color(color),
                             );
                             let effective_bg = if right_is_current {
-                                Some(egui::Color32::from_rgba_premultiplied(100, 80, 0, 80))
+                                Some(colors.search_current_bg())
                             } else if is_match {
-                                Some(egui::Color32::from_rgba_premultiplied(80, 80, 0, 40))
+                                Some(colors.search_match_bg())
                             } else {
                                 bg
                             };

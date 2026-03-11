@@ -160,7 +160,7 @@ impl DirigentApp {
                 ui.label(
                     egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Notion, MCP, or custom commands.")
                         .italics()
-                        .color(egui::Color32::from_gray(120)),
+                        .color(self.semantic.tertiary_text),
                 );
             }
 
@@ -170,7 +170,7 @@ impl DirigentApp {
             for i in 0..num_sources {
                 egui::Frame::none()
                     .inner_margin(SPACE_SM)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                    .stroke(egui::Stroke::new(1.0, self.semantic.separator))
                     .rounding(8.0)
                     .show(ui, |ui| {
                         // Header: name + enabled + delete
@@ -265,7 +265,7 @@ impl DirigentApp {
                                     ui.label(
                                         egui::RichText::new("(0 = manual only)")
                                             .small()
-                                            .color(egui::Color32::from_gray(120)),
+                                            .color(self.semantic.tertiary_text),
                                     );
                                 });
                                 ui.end_row();
@@ -296,7 +296,7 @@ impl DirigentApp {
                 ui.label(
                     egui::RichText::new(format!("({} plays)", self.settings.playbook.len()))
                         .small()
-                        .color(egui::Color32::from_gray(140)),
+                        .color(self.semantic.secondary_text),
                 );
                 if self.playbook_expanded {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -320,7 +320,7 @@ impl DirigentApp {
                     ui.label(
                         egui::RichText::new("No plays configured. Add a play or reset to defaults.")
                             .italics()
-                            .color(egui::Color32::from_gray(120)),
+                            .color(self.semantic.tertiary_text),
                     );
                 }
 
@@ -330,7 +330,7 @@ impl DirigentApp {
                 for i in 0..num_plays {
                     egui::Frame::none()
                         .inner_margin(SPACE_SM)
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                        .stroke(egui::Stroke::new(1.0, self.semantic.separator))
                         .rounding(8.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -395,6 +395,7 @@ impl DirigentApp {
         let mut reply_send: Option<String> = None;
         let mut toggle_mode = None;
         let fs = self.settings.font_size;
+        let sem = self.semantic;
 
         let review = self.diff_review.as_mut().unwrap();
         let cue_id = review.cue_id;
@@ -442,7 +443,7 @@ impl DirigentApp {
                     };
                     ui.label(
                         egui::RichText::new(truncated)
-                            .color(egui::Color32::from_gray(180)),
+                            .color(self.semantic.secondary_text),
                     );
                 }
             });
@@ -454,7 +455,7 @@ impl DirigentApp {
                         .show(ui, |ui| {
                             ui.label(
                                 egui::RichText::new(&cue_text)
-                                    .color(egui::Color32::from_gray(180)),
+                                    .color(self.semantic.secondary_text),
                             );
                         });
                 });
@@ -481,7 +482,7 @@ impl DirigentApp {
                         if ui
                             .button(
                                 icon("\u{21BA} Revert", fs)
-                                    .color(egui::Color32::from_rgb(220, 100, 100)),
+                                    .color(self.semantic.danger),
                             )
                             .on_hover_text("Revert changes back to previous state")
                             .clicked()
@@ -491,7 +492,7 @@ impl DirigentApp {
                         if ui
                             .button(
                                 icon("\u{2713} Commit", fs)
-                                    .color(egui::Color32::from_rgb(100, 200, 100)),
+                                    .color(self.semantic.success),
                             )
                             .on_hover_text("Commit the applied changes")
                             .clicked()
@@ -561,9 +562,9 @@ impl DirigentApp {
                                 .monospace()
                                 .small()
                                 .color(if match_count == 0 {
-                                    egui::Color32::from_rgb(220, 100, 100)
+                                    self.semantic.danger
                                 } else {
-                                    egui::Color32::from_gray(160)
+                                    self.semantic.secondary_text
                                 }),
                         );
                     }
@@ -605,15 +606,15 @@ impl DirigentApp {
                         ui.label(
                             egui::RichText::new("No file changes in this commit.")
                                 .italics()
-                                .color(egui::Color32::from_rgb(150, 150, 150)),
+                                .color(self.semantic.secondary_text),
                         );
                     } else {
                         match view_mode {
                             DiffViewMode::Inline => {
-                                diff_view::render_inline_diff(ui, &parsed, collapsed_files, search_highlight.as_ref());
+                                diff_view::render_inline_diff(ui, &parsed, collapsed_files, search_highlight.as_ref(), &sem);
                             }
                             DiffViewMode::SideBySide => {
-                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files, search_highlight.as_ref());
+                                diff_view::render_side_by_side_diff(ui, &parsed, collapsed_files, search_highlight.as_ref(), &sem);
                             }
                         }
                     }
@@ -772,7 +773,7 @@ impl DirigentApp {
                             ui.label(
                                 egui::RichText::new("(none)")
                                     .italics()
-                                    .color(egui::Color32::from_gray(120)),
+                                    .color(self.semantic.tertiary_text),
                             );
                         }
                     });
@@ -823,7 +824,7 @@ impl DirigentApp {
                                 ui.label(
                                     egui::RichText::new(wt.path.to_string_lossy().as_ref())
                                         .small()
-                                        .color(egui::Color32::from_gray(140)),
+                                        .color(self.semantic.secondary_text),
                                 );
 
                                 ui.with_layout(
@@ -849,7 +850,7 @@ impl DirigentApp {
                             ui.label(
                                 egui::RichText::new("No worktrees found")
                                     .italics()
-                                    .color(egui::Color32::from_gray(120)),
+                                    .color(self.semantic.tertiary_text),
                             );
                         }
                     });
@@ -960,20 +961,20 @@ impl DirigentApp {
                     };
                     ui.label(
                         icon(&status, fs)
-                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                            .color(self.semantic.accent),
                     );
                     ui.ctx().request_repaint_after(super::ELAPSED_REPAINT);
                 } else {
                     ui.label(
                         icon("\u{2713} Completed", fs)
-                            .color(egui::Color32::from_rgb(100, 200, 100)),
+                            .color(self.semantic.success),
                     );
                 }
                 ui.separator();
                 ui.label(
                     egui::RichText::new(&cue_text)
                         .small()
-                        .color(egui::Color32::from_gray(160)),
+                        .color(self.semantic.secondary_text),
                 );
             });
             ui.separator();
@@ -983,8 +984,8 @@ impl DirigentApp {
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    let user_color = egui::Color32::from_rgb(100, 180, 255);
-                    let claude_color = egui::Color32::from_rgb(200, 160, 100);
+                    let user_color = self.semantic.accent;
+                    let claude_color = self.semantic.claude_color();
 
                     if past_execs.is_empty() && current_running_log.is_empty() {
                         let msg = if is_running {
@@ -995,7 +996,7 @@ impl DirigentApp {
                         ui.label(
                             egui::RichText::new(msg)
                                 .italics()
-                                .color(egui::Color32::from_gray(120)),
+                                .color(self.semantic.tertiary_text),
                         );
                     }
 
@@ -1014,7 +1015,7 @@ impl DirigentApp {
                                 ui.label(
                                     egui::RichText::new(format!("(reply #{})", idx))
                                         .small()
-                                        .color(egui::Color32::from_gray(120)),
+                                        .color(self.semantic.tertiary_text),
                                 );
                             }
                         });
@@ -1041,7 +1042,7 @@ impl DirigentApp {
                                         ui.label(
                                             egui::RichText::new("Waiting for output...")
                                                 .italics()
-                                                .color(egui::Color32::from_gray(120)),
+                                                .color(self.semantic.tertiary_text),
                                         );
                                     } else {
                                         ui.label(
@@ -1061,14 +1062,14 @@ impl DirigentApp {
                                         ui.label(
                                             egui::RichText::new("(no output)")
                                                 .italics()
-                                                .color(egui::Color32::from_gray(120)),
+                                                .color(self.semantic.tertiary_text),
                                         );
                                     }
                                 } else {
                                     ui.label(
                                         egui::RichText::new("(no output)")
                                             .italics()
-                                            .color(egui::Color32::from_gray(120)),
+                                            .color(self.semantic.tertiary_text),
                                     );
                                 }
                             });
@@ -1099,7 +1100,7 @@ impl DirigentApp {
                                     ui.label(
                                         egui::RichText::new("Waiting for output...")
                                             .italics()
-                                            .color(egui::Color32::from_gray(120)),
+                                            .color(self.semantic.tertiary_text),
                                     );
                                 } else {
                                     ui.label(

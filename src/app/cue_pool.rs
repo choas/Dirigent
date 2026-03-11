@@ -312,7 +312,7 @@ impl DirigentApp {
                                     ui.label(
                                         egui::RichText::new("(empty)")
                                             .italics()
-                                            .color(egui::Color32::from_gray(120)),
+                                            .color(self.semantic.tertiary_text),
                                     );
                                 }
                                 for cue in &section_cues {
@@ -499,7 +499,7 @@ impl DirigentApp {
         let fs = self.settings.font_size;
         egui::Frame::none()
             .inner_margin(SPACE_SM)
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+            .stroke(egui::Stroke::new(1.0, self.semantic.separator))
             .rounding(8.0)
             .show(ui, |ui| {
                 // Cue text - inline editable for Inbox
@@ -555,7 +555,7 @@ impl DirigentApp {
                             let badge = egui::RichText::new(label)
                                 .small()
                                 .background_color(badge_color)
-                                .color(egui::Color32::from_gray(220));
+                                .color(self.semantic.badge_text);
                             ui.label(badge);
                         }
                         if !cue.attached_images.is_empty() {
@@ -566,7 +566,7 @@ impl DirigentApp {
                                     if cue.attached_images.len() == 1 { "" } else { "s" }
                                 ))
                                 .small()
-                                .color(egui::Color32::from_rgb(100, 180, 255)),
+                                .color(self.semantic.accent),
                             );
                         }
                     });
@@ -577,7 +577,7 @@ impl DirigentApp {
                     ui.label(
                         egui::RichText::new("Global")
                             .small()
-                            .color(egui::Color32::from_rgb(180, 140, 255)),
+                            .color(self.semantic.global_label()),
                     );
                 } else {
                     let location = if let Some(end) = cue.line_number_end {
@@ -658,7 +658,7 @@ impl DirigentApp {
                             if ui
                                 .small_button(
                                     icon(&label, fs)
-                                        .color(egui::Color32::from_rgb(100, 180, 255)),
+                                        .color(self.semantic.accent),
                                 )
                                 .on_hover_text("View Claude's progress")
                                 .clicked()
@@ -735,7 +735,7 @@ impl DirigentApp {
                         CueStatus::Done => {
                             ui.label(
                                 icon("\u{2713}", fs)
-                                    .color(egui::Color32::from_rgb(100, 200, 100)),
+                                    .color(self.semantic.success),
                             );
                             if ui
                                 .small_button(icon("Log", fs))

@@ -13,69 +13,6 @@ mod sources;
 use eframe::egui;
 use std::path::PathBuf;
 
-/// Install a macOS Apple-Event handler so that clicking the Dock icon (or
-/// running `open Dirigent.app`) while the app is already running spawns a
-/// brand-new instance instead of merely bringing the existing window to front.
-#[cfg(target_os = "macos")]
-fn setup_macos_reopen_handler() {
-    use objc::declare::ClassDecl;
-    use objc::runtime::{Class, Object, Sel};
-    use objc::{msg_send, sel, sel_impl};
-
-    unsafe {
-        let superclass = Class::get("NSObject").unwrap();
-        if let Some(mut decl) = ClassDecl::new("DirigentReopenHandler", superclass) {
-            extern "C" fn handle_reopen(
-                _this: &Object,
-                _sel: Sel,
-                _event: *mut Object,
-                _reply: *mut Object,
-            ) {
-                let Ok(exe) = std::env::current_exe() else { return };
-                let exe_str = exe.to_string_lossy();
-                if exe_str.contains(".app/Contents/MacOS/") {
-                    // Running inside an .app bundle – use `open -n` on the bundle
-                    if let Some(bundle) = exe
-                        .parent()
-                        .and_then(|p| p.parent())
-                        .and_then(|p| p.parent())
-                    {
-                        let _ = std::process::Command::new("open")
-                            .arg("-n")
-                            .arg(bundle)
-                            .spawn();
-                    }
-                } else {
-                    // Running the bare binary
-                    let _ = std::process::Command::new(&exe).spawn();
-                }
-            }
-
-            decl.add_method(
-                sel!(handleReopenEvent:withReplyEvent:),
-                handle_reopen as extern "C" fn(&Object, Sel, *mut Object, *mut Object),
-            );
-
-            let cls = decl.register();
-            let handler: *mut Object = msg_send![cls, new];
-
-            let em_cls = Class::get("NSAppleEventManager").unwrap();
-            let em: *mut Object = msg_send![em_cls, sharedAppleEventManager];
-
-            // kCoreEventClass = 'aevt' = 0x6165_7674
-            // kAEReopenApplication = 'rapp' = 0x7261_7070
-            let _: () = msg_send![em,
-                setEventHandler: handler
-                andSelector: sel!(handleReopenEvent:withReplyEvent:)
-                forEventClass: 0x6165_7674u32
-                andEventID: 0x7261_7070u32
-            ];
-
-            let _ = handler; // prevent deallocation – intentionally leaked
-        }
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn setup_macos_about_panel() {
     use objc::declare::ClassDecl;
@@ -261,10 +198,7 @@ fn main() -> eframe::Result {
             }
 
             #[cfg(target_os = "macos")]
-            {
-                setup_macos_about_panel();
-                setup_macos_reopen_handler();
-            }
+            setup_macos_about_panel();
 
             let mut app = app::DirigentApp::new(project_root);
             if show_repo_picker {

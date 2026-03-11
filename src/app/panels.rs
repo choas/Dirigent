@@ -7,6 +7,7 @@ use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview, 
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
+use crate::settings::SemanticColors;
 
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
@@ -110,6 +111,7 @@ impl DirigentApp {
                                     &mut file_to_load,
                                     &self.project_root,
                                     &self.git.dirty_files,
+                                    &self.semantic,
                                 );
                             }
                         }
@@ -202,6 +204,7 @@ impl DirigentApp {
         file_to_load: &mut Option<PathBuf>,
         project_root: &Path,
         dirty_files: &HashSet<String>,
+        semantic: &SemanticColors,
     ) {
         let ignored_color = ui.visuals().weak_text_color();
 
@@ -211,7 +214,7 @@ impl DirigentApp {
             let header_text = if entry.is_ignored {
                 egui::RichText::new(&entry.name).color(ignored_color)
             } else if dir_has_dirty {
-                egui::RichText::new(&entry.name).color(egui::Color32::from_rgb(200, 160, 50))
+                egui::RichText::new(&entry.name).color(semantic.warning)
             } else {
                 egui::RichText::new(&entry.name)
             };
@@ -227,6 +230,7 @@ impl DirigentApp {
                             file_to_load,
                             project_root,
                             dirty_files,
+                            semantic,
                         );
                     }
                 });
@@ -248,7 +252,7 @@ impl DirigentApp {
                 egui::RichText::new(&entry.name).color(ignored_color)
             } else if is_dirty {
                 egui::RichText::new(format!("{} \u{25CF}", entry.name))
-                    .color(egui::Color32::from_rgb(200, 160, 50))
+                    .color(semantic.warning)
             } else {
                 egui::RichText::new(&entry.name)
             };
@@ -304,7 +308,7 @@ impl DirigentApp {
                         egui::RichText::new("not a git repository")
                             .monospace()
                             .small()
-                            .color(egui::Color32::from_gray(100)),
+                            .color(self.semantic.tertiary_text),
                     );
                 }
 
@@ -321,9 +325,7 @@ impl DirigentApp {
                     } else {
                         1.0
                     };
-                    let color = egui::Color32::from_rgba_unmultiplied(
-                        180, 180, 140, (alpha * 255.0) as u8,
-                    );
+                    let color = self.semantic.status_message_with_alpha(alpha);
                     ui.separator();
                     ui.label(
                         egui::RichText::new(msg.as_str())
@@ -349,7 +351,7 @@ impl DirigentApp {
                     ui.label(
                         egui::RichText::new("Attached:")
                             .small()
-                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                            .color(self.semantic.accent),
                     );
                     let mut remove_idx = None;
                     for (i, path) in self.global_prompt_images.iter().enumerate() {
@@ -370,7 +372,7 @@ impl DirigentApp {
             ui.horizontal(|ui| {
                 ui.label(
                     icon("\u{25B6}", self.settings.font_size)
-                        .color(egui::Color32::from_rgb(100, 180, 255)),
+                        .color(self.semantic.accent),
                 );
                 if ui
                     .button(icon("+", self.settings.font_size))
@@ -390,7 +392,10 @@ impl DirigentApp {
                         .hint_text("Global prompt (no file context)...")
                         .font(egui::TextStyle::Monospace),
                 );
-                let submitted = ui.button("Send").clicked()
+                let send_btn = egui::Button::new(
+                    egui::RichText::new("Send").color(self.semantic.accent_text()),
+                ).fill(self.semantic.accent).rounding(6.0);
+                let submitted = ui.add(send_btn).clicked()
                     || (input_response.lost_focus()
                         && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submitted && !self.global_prompt_input.is_empty() {

@@ -60,7 +60,7 @@ impl DirigentApp {
                 if is_dirty {
                     ui.label(
                         egui::RichText::new("\u{25CF}")
-                            .color(egui::Color32::from_rgb(200, 160, 50)),
+                            .color(self.semantic.warning),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -168,11 +168,11 @@ impl DirigentApp {
                             match cue_state {
                                 Some(&true) => {
                                     // Archived cue: grey dot
-                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(egui::Color32::from_gray(140)));
+                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(self.semantic.secondary_text));
                                 }
                                 Some(&false) => {
                                     // Active cue: yellow dot
-                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(egui::Color32::from_rgb(255, 180, 50)));
+                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(self.semantic.warning));
                                 }
                                 None => {
                                     ui.label(" ");
@@ -183,7 +183,7 @@ impl DirigentApp {
                             ui.label(
                                 egui::RichText::new(num_text)
                                     .monospace()
-                                    .color(egui::Color32::from_gray(100)),
+                                    .color(self.semantic.tertiary_text),
                             );
 
                             let layout_job = egui_extras::syntax_highlighting::highlight(
@@ -206,23 +206,21 @@ impl DirigentApp {
                                 ui.painter().rect_filled(
                                     rect,
                                     0.0,
-                                    egui::Color32::from_rgba_premultiplied(60, 60, 120, 80),
+                                    self.semantic.selection_bg(),
                                 );
                             }
 
                             if is_current_search_match {
-                                // Current search match: bright orange highlight
                                 ui.painter().rect_filled(
                                     rect,
                                     0.0,
-                                    egui::Color32::from_rgba_premultiplied(200, 120, 0, 60),
+                                    self.semantic.code_search_current(),
                                 );
                             } else if is_search_match {
-                                // Other search matches: subtle yellow highlight
                                 ui.painter().rect_filled(
                                     rect,
                                     0.0,
-                                    egui::Color32::from_rgba_premultiplied(180, 160, 0, 35),
+                                    self.semantic.code_search_match(),
                                 );
                             }
 
@@ -267,7 +265,7 @@ impl DirigentApp {
                                     ui.label(
                                         egui::RichText::new("Images:")
                                             .small()
-                                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                                            .color(self.semantic.accent),
                                     );
                                     let mut remove_idx = None;
                                     for (i, path) in self.viewer.cue_images.iter().enumerate() {
@@ -290,7 +288,7 @@ impl DirigentApp {
                                 ui.label(
                                     egui::RichText::new(range_label)
                                         .monospace()
-                                        .color(egui::Color32::from_rgb(100, 200, 100)),
+                                        .color(self.semantic.success),
                                 );
                                 if ui
                                     .button("+")

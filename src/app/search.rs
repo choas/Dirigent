@@ -204,9 +204,9 @@ impl DirigentApp {
                         .monospace()
                         .small()
                         .color(if match_count == 0 {
-                            egui::Color32::from_rgb(220, 100, 100)
+                            self.semantic.danger
                         } else {
-                            egui::Color32::from_gray(160)
+                            self.semantic.secondary_text
                         }),
                 );
             }
@@ -297,7 +297,7 @@ impl DirigentApp {
                     }
                 ))
                 .small()
-                .color(egui::Color32::from_gray(140)),
+                .color(self.semantic.secondary_text),
             );
             ui.separator();
         }
@@ -311,7 +311,7 @@ impl DirigentApp {
                     ui.label(
                         egui::RichText::new("Searching...")
                             .italics()
-                            .color(egui::Color32::from_gray(120)),
+                            .color(self.semantic.tertiary_text),
                     );
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
                 } else if self.search.in_files_results.is_empty() && !self.search.in_files_query.is_empty()
@@ -319,7 +319,7 @@ impl DirigentApp {
                     ui.label(
                         egui::RichText::new("No results found.")
                             .italics()
-                            .color(egui::Color32::from_gray(120)),
+                            .color(self.semantic.tertiary_text),
                     );
                 }
 
@@ -332,7 +332,7 @@ impl DirigentApp {
                             egui::RichText::new(&result.rel_path)
                                 .strong()
                                 .small()
-                                .color(egui::Color32::from_rgb(100, 180, 255)),
+                                .color(self.semantic.accent),
                         );
                     }
 
