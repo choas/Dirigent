@@ -258,6 +258,21 @@ impl Database {
                 event TEXT NOT NULL
             );",
         )?;
+        // Agent runs table
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_runs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_kind    TEXT NOT NULL,
+                cue_id        INTEGER,
+                command       TEXT NOT NULL,
+                status        TEXT NOT NULL,
+                output        TEXT,
+                diagnostics   TEXT,
+                duration_ms   INTEGER,
+                started_at    TEXT NOT NULL,
+                finished_at   TEXT
+            );",
+        )?;
         // Index on status for faster filtered queries
         let _ = self
             .conn
@@ -265,6 +280,9 @@ impl Database {
         let _ = self
             .conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);");
+        let _ = self
+            .conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);");
         Ok(())
     }
 
@@ -531,6 +549,28 @@ impl Database {
             params![cue_id],
         )?;
         Ok(())
+    }
+
+    // -- Agent runs --
+
+    /// Record a completed agent run.
+    pub fn insert_agent_run(
+        &self,
+        agent_kind: &str,
+        cue_id: Option<i64>,
+        command: &str,
+        status: &str,
+        output: &str,
+        diagnostics_json: Option<&str>,
+        duration_ms: u64,
+    ) -> Result<i64> {
+        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        self.conn.execute(
+            "INSERT INTO agent_runs (agent_kind, cue_id, command, status, output, diagnostics, duration_ms, started_at, finished_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![agent_kind, cue_id, command, status, output, diagnostics_json, duration_ms as i64, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
     }
 }
 

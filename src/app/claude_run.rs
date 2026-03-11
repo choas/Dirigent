@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
+use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::{CueStatus, Execution};
 use crate::git;
@@ -426,6 +427,8 @@ impl DirigentApp {
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
                 let _ = self.db.log_activity(result.cue_id, "Run completed — review ready");
                 self.notify_review_ready(result.cue_id);
+                // Trigger post-run agents (format, lint, etc.)
+                self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id));
                 // Reload current file so user sees changes
                 if let Some(ref path) = self.viewer.current_file {
                     let p = path.clone();

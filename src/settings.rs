@@ -2,6 +2,8 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::agents::{AgentConfig, default_agents};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ThemeChoice {
     // Dark themes
@@ -935,6 +937,8 @@ pub(crate) struct Settings {
     pub sources: Vec<SourceConfig>,
     #[serde(default = "default_playbook")]
     pub playbook: Vec<Play>,
+    #[serde(default = "default_agents")]
+    pub agents: Vec<AgentConfig>,
 }
 
 fn default_true() -> bool {
@@ -967,6 +971,7 @@ impl Default for Settings {
             font_size: default_font_size(),
             sources: Vec::new(),
             playbook: default_playbook(),
+            agents: default_agents(),
         }
     }
 }
@@ -985,6 +990,16 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
             .any(|p| p.name == default_play.name)
         {
             settings.playbook.push(default_play);
+        }
+    }
+    // Append any new default agents that aren't already configured
+    for default_agent in default_agents() {
+        if !settings
+            .agents
+            .iter()
+            .any(|a| a.kind == default_agent.kind)
+        {
+            settings.agents.push(default_agent);
         }
     }
     settings

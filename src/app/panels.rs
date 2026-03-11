@@ -7,6 +7,7 @@ use super::{
     icon, icon_small, DiffReview, DirigentApp, COMMIT_MSG_TRUNCATE_LEN, FONT_SCALE_SUBHEADING,
     SPACE_MD, SPACE_SM, SPACE_XS,
 };
+use crate::agents::AgentStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -428,6 +429,68 @@ impl DirigentApp {
                             .small()
                             .color(self.semantic.tertiary_text),
                     );
+                }
+
+                // Agent status indicators (format, lint, build, test)
+                {
+                    let has_any_status = self.settings.agents.iter().any(|a| {
+                        a.enabled && self.agent_state.statuses.contains_key(&a.kind)
+                    });
+                    if has_any_status {
+                        ui.separator();
+                        for config in &self.settings.agents {
+                            if !config.enabled {
+                                continue;
+                            }
+                            let status = self
+                                .agent_state
+                                .statuses
+                                .get(&config.kind)
+                                .copied()
+                                .unwrap_or(AgentStatus::Idle);
+                            let (icon_str, color) = match status {
+                                AgentStatus::Idle => continue,
+                                AgentStatus::Running => ("\u{21BB}", self.semantic.accent),
+                                AgentStatus::Passed => ("\u{2713}", self.semantic.success),
+                                AgentStatus::Failed => ("\u{2717}", self.semantic.danger),
+                                AgentStatus::Error => ("!", self.semantic.danger),
+                            };
+                            let label_text = format!("{} {}", config.kind.label(), icon_str);
+                            let mut resp = ui.label(
+                                egui::RichText::new(&label_text)
+                                    .monospace()
+                                    .small()
+                                    .color(color),
+                            );
+                            // Show output on hover
+                            if let Some(output) = self.agent_state.latest_output.get(&config.kind)
+                            {
+                                let preview = if output.len() > 300 {
+                                    format!("{}...", &output[..300])
+                                } else {
+                                    output.clone()
+                                };
+                                resp = resp.on_hover_text(preview);
+                            }
+                            // Click to show/hide full output
+                            if resp.clicked() {
+                                if self.agent_state.show_output == Some(config.kind) {
+                                    self.agent_state.show_output = None;
+                                } else {
+                                    self.agent_state.show_output = Some(config.kind);
+                                }
+                            }
+                        }
+                    }
+                    // Request repaint while agents are running
+                    if self
+                        .agent_state
+                        .statuses
+                        .values()
+                        .any(|s| *s == AgentStatus::Running)
+                    {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+                    }
                 }
 
                 // Show transient status message (auto-dismiss after 6s, fade during last 2s)

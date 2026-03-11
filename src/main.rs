@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)]
 
+mod agents;
 mod app;
 mod claude;
 mod db;

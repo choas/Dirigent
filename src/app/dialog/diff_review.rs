@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_LG};
+use crate::agents::AgentTrigger;
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
@@ -324,6 +325,8 @@ impl DirigentApp {
                     let short = &hash[..7.min(hash.len())];
                     self.set_status_message(format!("Committed: {}", short));
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+                    // Trigger post-commit agents (format, lint, etc.)
+                    self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id));
                 }
                 Err(e) => {
                     self.set_status_message(format!("Commit failed: {}", e));
