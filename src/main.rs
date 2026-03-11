@@ -180,7 +180,13 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
-            .with_title(format!("Dirigent - {}", project_root.display()))
+            .with_title(format!(
+                "Dirigent - {}",
+                project_root
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_else(|| project_root.to_string_lossy())
+            ))
             .with_icon(std::sync::Arc::new(load_logo_icon())),
         ..Default::default()
     };

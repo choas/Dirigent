@@ -599,6 +599,19 @@ impl DirigentApp {
         settings::add_recent_repo(&mut self.settings, &path_str);
         settings::save_settings(&self.project_root, &self.settings);
         self.needs_theme_apply = true;
+
+        // Update window title to show the new folder name
+        if let Some(ctx) = self.egui_ctx.get() {
+            let folder = self
+                .project_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| self.project_root.to_string_lossy().to_string());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "Dirigent - {}",
+                folder
+            )));
+        }
     }
 
     // -- Worktrees --
