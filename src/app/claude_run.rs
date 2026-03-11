@@ -183,6 +183,9 @@ impl DirigentApp {
                         Ok(response) => {
                             let diff = if response.edited_files.is_empty() {
                                 opencode::parse_diff_from_response(&response.stdout)
+                                    // Fallback: OpenCode may use tool names we don't
+                                    // recognise, so check git for any working-tree changes.
+                                    .or_else(|| git::get_working_diff(&project_root, &[]))
                             } else {
                                 git::get_working_diff(&project_root, &response.edited_files)
                                     .or_else(|| {
@@ -351,6 +354,9 @@ impl DirigentApp {
                         Ok(response) => {
                             let diff = if response.edited_files.is_empty() {
                                 opencode::parse_diff_from_response(&response.stdout)
+                                    // Fallback: OpenCode may use tool names we don't
+                                    // recognise, so check git for any working-tree changes.
+                                    .or_else(|| git::get_working_diff(&project_root, &[]))
                             } else {
                                 git::get_working_diff(&project_root, &response.edited_files)
                                     .or_else(|| {
@@ -491,15 +497,28 @@ impl DirigentApp {
             std::thread::spawn(|| {
                 #[cfg(target_os = "macos")]
                 {
-                    // Use AudioToolbox system sound — no permissions required
-                    #[link(name = "AudioToolbox", kind = "framework")]
-                    extern "C" {
-                        fn AudioServicesPlaySystemSound(sound_id: u32);
-                    }
-                    // 1007 = "Glass" system sound (aka Tink/Basso family)
-                    // Standard system sound IDs don't trigger permission dialogs
+                    // Play the system Glass sound by direct file path.
+                    // IMPORTANT: Do NOT use `NSSound soundNamed:` — its name-resolution
+                    // loads MediaToolbox which triggers the macOS TCC "would like to
+                    // access Apple Music" permission dialog. Loading by path avoids this.
+                    use objc::runtime::{Class, Object, BOOL};
+                    use objc::{msg_send, sel, sel_impl};
                     unsafe {
-                        AudioServicesPlaySystemSound(1007);
+                        let cls = Class::get("NSSound").unwrap();
+                        let ns = Class::get("NSString").unwrap();
+                        let path_c = std::ffi::CString::new(
+                            "/System/Library/Sounds/Glass.aiff",
+                        )
+                        .unwrap();
+                        let path_ns: *mut Object =
+                            msg_send![ns, stringWithUTF8String: path_c.as_ptr()];
+                        let sound: *mut Object = msg_send![cls, alloc];
+                        let sound: *mut Object = msg_send![sound,
+                            initWithContentsOfFile: path_ns
+                            byReference: true as BOOL];
+                        if !sound.is_null() {
+                            let _: bool = msg_send![sound, play];
+                        }
                     }
                 }
             });

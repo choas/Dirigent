@@ -171,7 +171,7 @@ pub(crate) fn invoke_opencode_streaming(
             "tool_use" | "tool" => {
                 let name = event
                     .get("part")
-                    .and_then(|p| p.get("tool"))
+                    .and_then(|p| p.get("tool").or_else(|| p.get("name")))
                     .and_then(|n| n.as_str())
                     .unwrap_or("?");
                 let input = event
@@ -179,13 +179,30 @@ pub(crate) fn invoke_opencode_streaming(
                     .and_then(|p| p.get("input"))
                     .cloned()
                     .unwrap_or_default();
-                if matches!(name, "Write" | "Edit" | "Bash" | "Task") {
-                    if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
+                let name_lower = name.to_ascii_lowercase();
+                let is_file_tool = matches!(
+                    name,
+                    "Write" | "Edit" | "Bash" | "Task"
+                ) || matches!(
+                    name_lower.as_str(),
+                    "write" | "edit" | "bash" | "task"
+                        | "write_file" | "edit_file" | "create_file"
+                        | "str_replace_editor" | "file_editor"
+                        | "write_to_file" | "apply_diff"
+                );
+                if is_file_tool {
+                    // Check common field names for file paths
+                    let path = input
+                        .get("file_path")
+                        .or_else(|| input.get("path"))
+                        .or_else(|| input.get("file"))
+                        .and_then(|p| p.as_str());
+                    if let Some(path) = path {
                         if !edited_files.contains(&path.to_string()) {
                             edited_files.push(path.to_string());
                         }
                     } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-                        if name == "Bash" {
+                        if name_lower == "bash" {
                             on_log(&format!(
                                 "\u{2192} {} {}\n",
                                 name,
