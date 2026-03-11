@@ -142,36 +142,140 @@ pub(crate) struct AgentConfig {
 }
 
 pub(crate) fn default_agents() -> Vec<AgentConfig> {
-    vec![
-        AgentConfig {
-            kind: AgentKind::Format,
-            enabled: true,
-            command: "cargo fmt".to_string(),
-            trigger: AgentTrigger::AfterRun,
-            timeout_secs: 30,
-        },
-        AgentConfig {
-            kind: AgentKind::Lint,
-            enabled: false,
-            command: "cargo clippy --message-format=json 2>&1".to_string(),
-            trigger: AgentTrigger::AfterRun,
-            timeout_secs: 120,
-        },
-        AgentConfig {
-            kind: AgentKind::Build,
-            enabled: false,
-            command: "cargo build --message-format=json 2>&1".to_string(),
-            trigger: AgentTrigger::Manual,
-            timeout_secs: 120,
-        },
-        AgentConfig {
-            kind: AgentKind::Test,
-            enabled: false,
-            command: "cargo test 2>&1".to_string(),
-            trigger: AgentTrigger::Manual,
-            timeout_secs: 300,
-        },
-    ]
+    agents_for_language(AgentLanguage::Rust)
+}
+
+// ---------------------------------------------------------------------------
+// Language presets for agent initialization
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentLanguage {
+    Rust,
+    TypeScript,
+    Python,
+    Go,
+    Java,
+    CSharp,
+    Ruby,
+    Swift,
+    Kotlin,
+    Cpp,
+    Elixir,
+    Zig,
+}
+
+impl AgentLanguage {
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentLanguage::Rust => "Rust",
+            AgentLanguage::TypeScript => "TypeScript",
+            AgentLanguage::Python => "Python",
+            AgentLanguage::Go => "Go",
+            AgentLanguage::Java => "Java",
+            AgentLanguage::CSharp => "C#",
+            AgentLanguage::Ruby => "Ruby",
+            AgentLanguage::Swift => "Swift",
+            AgentLanguage::Kotlin => "Kotlin",
+            AgentLanguage::Cpp => "C/C++",
+            AgentLanguage::Elixir => "Elixir",
+            AgentLanguage::Zig => "Zig",
+        }
+    }
+
+    pub fn all() -> &'static [AgentLanguage] {
+        &[
+            AgentLanguage::Rust,
+            AgentLanguage::TypeScript,
+            AgentLanguage::Python,
+            AgentLanguage::Go,
+            AgentLanguage::Java,
+            AgentLanguage::CSharp,
+            AgentLanguage::Ruby,
+            AgentLanguage::Swift,
+            AgentLanguage::Kotlin,
+            AgentLanguage::Cpp,
+            AgentLanguage::Elixir,
+            AgentLanguage::Zig,
+        ]
+    }
+}
+
+pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
+    match lang {
+        AgentLanguage::Rust => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "cargo fmt".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "cargo clippy --message-format=json 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "cargo build --message-format=json 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "cargo test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::TypeScript => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "npx prettier --write .".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "npx eslint . 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "npx tsc --noEmit 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "npx jest 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Python => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "black .".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "ruff check . 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "python -m py_compile *.py 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "pytest 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Go => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "gofmt -w .".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "golangci-lint run 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "go build ./... 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "go test ./... 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Java => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "mvn spotless:apply 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "mvn checkstyle:check 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "mvn compile 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 180 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "mvn test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::CSharp => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "dotnet format 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "dotnet format --verify-no-changes 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "dotnet build 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 180 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "dotnet test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Ruby => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "bundle exec rubocop -a 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "bundle exec rubocop 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "ruby -c **/*.rb 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "bundle exec rspec 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Swift => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "swift-format format -i -r . 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "swiftlint 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "swift build 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 180 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "swift test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Kotlin => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "ktlint --format 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 60 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "ktlint 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "./gradlew compileKotlin 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 180 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "./gradlew test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Cpp => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "find . -name '*.cpp' -o -name '*.h' | xargs clang-format -i".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "cppcheck --enable=all . 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "cmake --build build 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 180 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "ctest --test-dir build 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Elixir => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "mix format".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "mix credo 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "mix compile 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "mix test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+        AgentLanguage::Zig => vec![
+            AgentConfig { kind: AgentKind::Format, enabled: true, command: "zig fmt .".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 30 },
+            AgentConfig { kind: AgentKind::Lint, enabled: false, command: "zig build 2>&1".into(), trigger: AgentTrigger::AfterRun, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Build, enabled: false, command: "zig build 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 120 },
+            AgentConfig { kind: AgentKind::Test, enabled: false, command: "zig build test 2>&1".into(), trigger: AgentTrigger::Manual, timeout_secs: 300 },
+        ],
+    }
 }
 
 // ---------------------------------------------------------------------------

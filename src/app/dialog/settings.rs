@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::agents::{default_agents, AgentTrigger};
+use crate::agents::{agents_for_language, default_agents, AgentLanguage, AgentTrigger};
 use crate::opencode;
 use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 
@@ -399,16 +399,44 @@ impl DirigentApp {
             if self.agents_expanded {
                 ui.add_space(SPACE_SM);
 
+                // Initialize from language preset
+                ui.horizontal(|ui| {
+                    ui.label("Language:");
+                    egui::ComboBox::from_id_salt("agent_init_language")
+                        .selected_text(self.agents_init_language.label())
+                        .show_ui(ui, |ui| {
+                            for lang in AgentLanguage::all() {
+                                ui.selectable_value(
+                                    &mut self.agents_init_language,
+                                    *lang,
+                                    lang.label(),
+                                );
+                            }
+                        });
+                    if ui.button("Initialize").clicked() {
+                        self.settings.agents = agents_for_language(self.agents_init_language);
+                    }
+                });
+                ui.add_space(SPACE_SM);
+
+                let card_width = ui.available_width();
+                let mut delete_idx: Option<usize> = None;
                 let num_agents = self.settings.agents.len();
                 for i in 0..num_agents {
                     self.semantic.card_frame()
                         .show(ui, |ui| {
+                            ui.set_width(card_width);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(self.settings.agents[i].kind.label())
                                         .strong(),
                                 );
                                 ui.checkbox(&mut self.settings.agents[i].enabled, "Enabled");
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("\u{2715}").on_hover_text("Delete agent").clicked() {
+                                        delete_idx = Some(i);
+                                    }
+                                });
                             });
 
                             egui::Grid::new(format!("agent_grid_{}", i))
@@ -490,6 +518,9 @@ impl DirigentApp {
                             });
                         });
                     ui.add_space(SPACE_SM);
+                }
+                if let Some(idx) = delete_idx {
+                    self.settings.agents.remove(idx);
                 }
             }
 
