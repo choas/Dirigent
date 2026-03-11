@@ -89,7 +89,7 @@ impl DirigentApp {
                 .insert(0, font_family.clone());
         }
         // Add symbol fallback fonts so icons render even when the chosen
-        // code font lacks glyphs like ⚙, ❯, ↺, etc.
+        // code font lacks glyphs like ▶, ●, ↺, etc.
         // SF Mono has the best coverage for our icon characters, so it comes first.
         let symbol_fonts: &[(&str, &str, u32)] = &[
             ("DiriSymFallback_SFMono", "/System/Library/Fonts/SFNSMono.ttf", 0),
