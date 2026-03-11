@@ -31,6 +31,8 @@ pub(crate) const SPACE_LG: f32 = 24.0;
 
 // -- UI dimension constants --
 const FONT_SCALE_SMALL: f32 = 0.75;
+const FONT_SCALE_LINE_NUM: f32 = 0.85;
+const FONT_SCALE_SUBHEADING: f32 = 1.15;
 const FONT_SCALE_HEADING: f32 = 1.4;
 const SEARCH_PANEL_DEFAULT_WIDTH: f32 = 220.0;
 const SEARCH_PANEL_MIN_WIDTH: f32 = 150.0;
@@ -105,6 +107,8 @@ pub(super) struct SearchState {
     pub(super) in_file_active: bool,
     pub(super) in_file_matches: Vec<usize>,
     pub(super) in_file_current: Option<usize>,
+    /// Flash timestamp for search navigation (briefly highlights current match)
+    pub(super) in_file_nav_flash: Option<Instant>,
 
     // Search in files (Cmd+Shift+F)
     pub(super) in_files_query: String,
@@ -128,8 +132,8 @@ pub(super) struct EditingCue {
 /// State for git information, dirty files, commit history, and worktrees.
 pub(super) struct GitState {
     pub(super) info: Option<git::GitInfo>,
-    /// Relative paths of files with uncommitted changes.
-    pub(super) dirty_files: HashSet<String>,
+    /// Relative paths of files with uncommitted changes, mapped to status letter.
+    pub(super) dirty_files: HashMap<String, char>,
     pub(super) commit_history: Vec<git::CommitInfo>,
     pub(super) show_log: bool,
     pub(super) worktrees: Vec<git::WorktreeInfo>,
@@ -206,6 +210,9 @@ pub struct DirigentApp {
 
     // Task lifecycle management
     task_handles: Vec<TaskHandle>,
+
+    // Animation: highlight flash when cue moves between kanban columns
+    cue_move_flash: HashMap<i64, Instant>,
 }
 
 fn start_fs_watcher(
@@ -315,6 +322,7 @@ impl DirigentApp {
                 in_file_active: false,
                 in_file_matches: Vec::new(),
                 in_file_current: None,
+                in_file_nav_flash: None,
                 in_files_query: String::new(),
                 in_files_active: false,
                 in_files_results: Vec::new(),
@@ -323,6 +331,7 @@ impl DirigentApp {
                 search_result_rx,
             },
             task_handles: Vec::new(),
+            cue_move_flash: HashMap::new(),
         }
     }
 
@@ -656,14 +665,29 @@ impl eframe::App for DirigentApp {
         self.render_cue_pool(ctx); // right side
         self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
 
-        // Modal overlay dimming behind floating windows
+        // Modal overlay dimming behind floating windows — blocks interaction
         if self.show_repo_picker || self.git.show_worktree_panel || self.show_about {
             let screen = ctx.screen_rect();
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Middle,
-                egui::Id::new("modal_dim"),
-            ));
-            painter.rect_filled(screen, 0.0, self.semantic.modal_overlay());
+            egui::Area::new(egui::Id::new("modal_dim"))
+                .order(egui::Order::Middle)
+                .fixed_pos(screen.min)
+                .show(ctx, |ui| {
+                    let (rect, resp) = ui.allocate_exact_size(
+                        screen.size(),
+                        egui::Sense::click(),
+                    );
+                    ui.painter().rect_filled(rect, 0.0, self.semantic.modal_overlay());
+                    // Click on overlay dismisses the topmost modal
+                    if resp.clicked() {
+                        if self.show_about {
+                            self.show_about = false;
+                        } else if self.git.show_worktree_panel {
+                            self.git.show_worktree_panel = false;
+                        } else if self.show_repo_picker {
+                            self.show_repo_picker = false;
+                        }
+                    }
+                });
         }
 
         self.render_repo_picker(ctx); // floating

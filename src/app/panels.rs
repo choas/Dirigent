@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview, SPACE_XS, SPACE_SM, SPACE_MD};
+use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview, FONT_SCALE_SUBHEADING, SPACE_XS, SPACE_SM, SPACE_MD};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -41,21 +41,24 @@ impl DirigentApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .title_bar(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.about_dialog_frame())
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     if let Some(ref tex) = self.logo_texture {
                         ui.add(egui::Image::new(tex).max_size(egui::vec2(128.0, 128.0)));
                     }
-                    ui.add_space(SPACE_SM);
+                    ui.add_space(SPACE_MD);
                     ui.heading("Dirigent");
-                    ui.label(format!("Version {}", env!("BUILD_VERSION")));
                     ui.add_space(SPACE_XS);
+                    ui.label(format!("Version {}", env!("BUILD_VERSION")));
+                    ui.add_space(SPACE_SM);
                     ui.label(
                         egui::RichText::new("A read-only code viewer where humans direct and AI performs.")
                             .weak(),
                     );
-                    ui.add_space(SPACE_MD);
+                    ui.add_space(24.0);
                 });
             });
         self.show_about = open;
@@ -85,7 +88,7 @@ impl DirigentApp {
             .default_width(220.0)
             .min_width(150.0)
             .show(ctx, |ui| {
-                ui.heading("Files");
+                ui.label(egui::RichText::new("Files").size(self.settings.font_size * FONT_SCALE_SUBHEADING).strong());
                 ui.separator();
                 // File tree takes remaining space above git log
                 let git_log_open = self.git.show_log;
@@ -101,6 +104,7 @@ impl DirigentApp {
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
                         let mut file_to_load = None;
+                        let mut row_index: usize = 0;
                         if let Some(ref tree) = self.file_tree {
                             for entry in &tree.entries {
                                 Self::render_file_entry(
@@ -112,6 +116,8 @@ impl DirigentApp {
                                     &self.project_root,
                                     &self.git.dirty_files,
                                     &self.semantic,
+                                    0,
+                                    &mut row_index,
                                 );
                             }
                         }
@@ -203,41 +209,102 @@ impl DirigentApp {
         current_file: &Option<PathBuf>,
         file_to_load: &mut Option<PathBuf>,
         project_root: &Path,
-        dirty_files: &HashSet<String>,
+        dirty_files: &HashMap<String, char>,
         semantic: &SemanticColors,
+        depth: usize,
+        row_index: &mut usize,
     ) {
         let ignored_color = ui.visuals().weak_text_color();
+        let indent = depth as f32 * 16.0;
+
+        // Alternating row background for scanability
+        let is_odd = *row_index % 2 == 1;
+        *row_index += 1;
 
         if entry.is_dir {
             let is_expanded = expanded.contains(&entry.path);
             let dir_has_dirty = Self::dir_has_dirty_files(entry, project_root, dirty_files);
-            let header_text = if entry.is_ignored {
-                egui::RichText::new(&entry.name).color(ignored_color)
+
+            // Allocate a full-width row
+            let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
+            let available_width = ui.available_width();
+            let (row_rect, response) = ui.allocate_exact_size(
+                egui::vec2(available_width, row_height),
+                egui::Sense::click(),
+            );
+
+            // Alternating row tint
+            if is_odd {
+                let tint = if ui.visuals().dark_mode {
+                    egui::Color32::from_white_alpha(6)
+                } else {
+                    egui::Color32::from_black_alpha(6)
+                };
+                ui.painter().rect_filled(row_rect, 0.0, tint);
+            }
+
+            // Hover highlight
+            if response.hovered() {
+                let hover = if ui.visuals().dark_mode {
+                    egui::Color32::from_white_alpha(15)
+                } else {
+                    egui::Color32::from_black_alpha(12)
+                };
+                ui.painter().rect_filled(row_rect, 0.0, hover);
+            }
+
+            // Disclosure triangle
+            let triangle = if is_expanded { "\u{25BC}" } else { "\u{25B6}" };
+            let triangle_color = ui.visuals().weak_text_color();
+            let text_pos = row_rect.left_center() + egui::vec2(indent, 0.0);
+            ui.painter().text(
+                egui::pos2(text_pos.x + 6.0, text_pos.y),
+                egui::Align2::LEFT_CENTER,
+                triangle,
+                egui::FontId::proportional(10.0),
+                triangle_color,
+            );
+
+            // Directory name
+            let name_color = if entry.is_ignored {
+                ignored_color
             } else if dir_has_dirty {
-                egui::RichText::new(&entry.name).color(semantic.warning)
+                semantic.warning
             } else {
-                egui::RichText::new(&entry.name)
+                ui.visuals().text_color()
             };
-            let header = egui::CollapsingHeader::new(header_text)
-                .default_open(is_expanded)
-                .show(ui, |ui| {
-                    for child in &entry.children {
-                        Self::render_file_entry(
-                            ui,
-                            child,
-                            expanded,
-                            current_file,
-                            file_to_load,
-                            project_root,
-                            dirty_files,
-                            semantic,
-                        );
-                    }
-                });
-            if header.fully_open() {
-                expanded.insert(entry.path.clone());
-            } else {
-                expanded.remove(&entry.path);
+            ui.painter().text(
+                egui::pos2(text_pos.x + 20.0, text_pos.y),
+                egui::Align2::LEFT_CENTER,
+                &entry.name,
+                egui::FontId::proportional(ui.text_style_height(&egui::TextStyle::Body)),
+                name_color,
+            );
+
+            if response.clicked() {
+                if is_expanded {
+                    expanded.remove(&entry.path);
+                } else {
+                    expanded.insert(entry.path.clone());
+                }
+            }
+
+            // Render children if expanded
+            if is_expanded {
+                for child in &entry.children {
+                    Self::render_file_entry(
+                        ui,
+                        child,
+                        expanded,
+                        current_file,
+                        file_to_load,
+                        project_root,
+                        dirty_files,
+                        semantic,
+                        depth + 1,
+                        row_index,
+                    );
+                }
             }
         } else {
             let is_selected = current_file.as_ref() == Some(&entry.path);
@@ -247,16 +314,79 @@ impl DirigentApp {
                 .unwrap_or(&entry.path)
                 .to_string_lossy()
                 .to_string();
-            let is_dirty = dirty_files.contains(&rel);
-            let label_text = if entry.is_ignored {
-                egui::RichText::new(&entry.name).color(ignored_color)
-            } else if is_dirty {
-                egui::RichText::new(format!("{} \u{25CF}", entry.name))
-                    .color(semantic.warning)
+            let status_letter = dirty_files.get(&rel).copied();
+
+            // Allocate a full-width row
+            let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
+            let available_width = ui.available_width();
+            let (row_rect, response) = ui.allocate_exact_size(
+                egui::vec2(available_width, row_height),
+                egui::Sense::click(),
+            );
+
+            // Selected highlight
+            if is_selected {
+                ui.painter().rect_filled(
+                    row_rect,
+                    0.0,
+                    semantic.selection_bg(),
+                );
+            } else if is_odd {
+                // Alternating row tint (only when not selected)
+                let tint = if ui.visuals().dark_mode {
+                    egui::Color32::from_white_alpha(6)
+                } else {
+                    egui::Color32::from_black_alpha(6)
+                };
+                ui.painter().rect_filled(row_rect, 0.0, tint);
+            }
+
+            // Hover highlight
+            if response.hovered() && !is_selected {
+                let hover = if ui.visuals().dark_mode {
+                    egui::Color32::from_white_alpha(15)
+                } else {
+                    egui::Color32::from_black_alpha(12)
+                };
+                ui.painter().rect_filled(row_rect, 0.0, hover);
+            }
+
+            // File name (indented with extra space to align past disclosure triangles)
+            let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
+            let name_color = if entry.is_ignored {
+                ignored_color
+            } else if status_letter.is_some() {
+                semantic.warning
             } else {
-                egui::RichText::new(&entry.name)
+                ui.visuals().text_color()
             };
-            if ui.selectable_label(is_selected, label_text).clicked() {
+            ui.painter().text(
+                text_pos,
+                egui::Align2::LEFT_CENTER,
+                &entry.name,
+                egui::FontId::proportional(ui.text_style_height(&egui::TextStyle::Body)),
+                name_color,
+            );
+
+            // Git status badge (right-aligned)
+            if let Some(letter) = status_letter {
+                let badge_color = match letter {
+                    'D' => semantic.danger,
+                    'A' | '?' => semantic.success,
+                    _ => semantic.warning,
+                };
+                let badge_text = format!("{}", letter);
+                let badge_pos = egui::pos2(row_rect.right() - 14.0, row_rect.center().y);
+                ui.painter().text(
+                    badge_pos,
+                    egui::Align2::CENTER_CENTER,
+                    &badge_text,
+                    egui::FontId::monospace(10.0),
+                    badge_color,
+                );
+            }
+
+            if response.clicked() {
                 *file_to_load = Some(entry.path.clone());
             }
         }
@@ -266,7 +396,7 @@ impl DirigentApp {
     fn dir_has_dirty_files(
         entry: &FileEntry,
         project_root: &Path,
-        dirty_files: &HashSet<String>,
+        dirty_files: &HashMap<String, char>,
     ) -> bool {
         if !entry.is_dir {
             let rel = entry
@@ -275,7 +405,7 @@ impl DirigentApp {
                 .unwrap_or(&entry.path)
                 .to_string_lossy()
                 .to_string();
-            return dirty_files.contains(&rel);
+            return dirty_files.contains_key(&rel);
         }
         entry
             .children
@@ -344,7 +474,21 @@ impl DirigentApp {
 
     // Feature 2: Global prompt input
     pub(super) fn render_prompt_field(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("prompt_field").show(ctx, |ui| {
+        let prompt_frame = egui::Frame::none()
+            .fill(self.semantic.prompt_surface())
+            .inner_margin(egui::Margin::symmetric(SPACE_SM, SPACE_SM));
+
+        egui::TopBottomPanel::bottom("prompt_field")
+            .frame(prompt_frame)
+            .show(ctx, |ui| {
+            // Top border line to visually separate from content above
+            let rect = ui.available_rect_before_wrap();
+            ui.painter().hline(
+                rect.x_range(),
+                rect.top(),
+                egui::Stroke::new(1.0, self.semantic.prompt_border()),
+            );
+
             // Show attached images above the input line
             if !self.global_prompt_images.is_empty() {
                 ui.horizontal_wrapped(|ui| {
@@ -368,6 +512,7 @@ impl DirigentApp {
                         self.global_prompt_images.remove(i);
                     }
                 });
+                ui.add_space(SPACE_XS);
             }
             ui.horizontal(|ui| {
                 ui.label(
@@ -387,28 +532,35 @@ impl DirigentApp {
                     }
                 }
                 let input_response = ui.add(
-                    egui::TextEdit::singleline(&mut self.global_prompt_input)
-                        .desired_width(ui.available_width() - 60.0)
-                        .hint_text("Global prompt (no file context)...")
+                    egui::TextEdit::multiline(&mut self.global_prompt_input)
+                        .desired_width(ui.available_width() - 80.0)
+                        .desired_rows(2)
+                        .hint_text("Describe what you want...")
                         .font(egui::TextStyle::Monospace),
                 );
-                let send_btn = egui::Button::new(
-                    egui::RichText::new("Send").color(self.semantic.accent_text()),
-                ).fill(self.semantic.accent).rounding(6.0);
-                let submitted = ui.add(send_btn).clicked()
-                    || (input_response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                if submitted && !self.global_prompt_input.is_empty() {
-                    let text = self.global_prompt_input.clone();
-                    let images: Vec<String> = self
-                        .global_prompt_images
-                        .drain(..)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .collect();
-                    let _ = self.db.insert_cue(&text, "", 0, None, &images);
-                    self.global_prompt_input.clear();
-                    self.reload_cues();
-                }
+                ui.vertical(|ui| {
+                    ui.add_space(SPACE_XS);
+                    let send_btn = egui::Button::new(
+                        egui::RichText::new("  Send  ").color(self.semantic.accent_text()),
+                    ).fill(self.semantic.accent).rounding(6.0);
+                    let btn_clicked = ui.add(send_btn).clicked();
+                    let enter_submitted = input_response.has_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+                    if (btn_clicked || enter_submitted) && !self.global_prompt_input.is_empty() {
+                        // Strip the trailing newline that Enter inserts before we consume
+                        let text = self.global_prompt_input.trim().to_string();
+                        let images: Vec<String> = self
+                            .global_prompt_images
+                            .drain(..)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        if !text.is_empty() {
+                            let _ = self.db.insert_cue(&text, "", 0, None, &images);
+                        }
+                        self.global_prompt_input.clear();
+                        self.reload_cues();
+                    }
+                });
             });
         });
     }

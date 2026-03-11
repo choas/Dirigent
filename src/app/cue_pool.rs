@@ -1,9 +1,10 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use eframe::egui;
 
-use super::{icon, CueAction, DirigentApp, SPACE_XS, SPACE_SM};
+use super::{icon, CueAction, DirigentApp, FONT_SCALE_SUBHEADING, SPACE_XS};
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
@@ -122,6 +123,9 @@ fn pick_markdown_file() -> Option<PathBuf> {
 
 impl DirigentApp {
     pub(super) fn render_cue_pool(&mut self, ctx: &egui::Context) {
+        // Clean up expired transition flashes
+        self.cue_move_flash.retain(|_, when| when.elapsed().as_secs_f32() < 1.0);
+
         egui::SidePanel::right("cue_pool")
             .default_width(250.0)
             .min_width(200.0)
@@ -153,7 +157,7 @@ impl DirigentApp {
                     } else {
                         format!("Cues ({})", counts.join(", "))
                     };
-                    ui.heading(heading_text);
+                    ui.label(egui::RichText::new(heading_text).size(self.settings.font_size * FONT_SCALE_SUBHEADING).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let plus_btn = ui.button("+").on_hover_text("Playbook");
                         if ui.button("\u{2193}").on_hover_text("Import from document").clicked() {
@@ -299,7 +303,10 @@ impl DirigentApp {
                         } else {
                             format!("{} ({})", status.label(), section_cues.len())
                         };
-                        let mut collapsing = egui::CollapsingHeader::new(header)
+                        let header_rt = egui::RichText::new(header)
+                            .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                            .strong();
+                        let mut collapsing = egui::CollapsingHeader::new(header_rt)
                             .id_salt(status.label())
                             .default_open(
                                 status == CueStatus::Inbox || status == CueStatus::Review,
@@ -347,6 +354,7 @@ impl DirigentApp {
                                     self.cancel_cue_task(id);
                                 }
                                 let _ = self.db.update_cue_status(id, new_status);
+                                self.cue_move_flash.insert(id, Instant::now());
                                 if new_status == CueStatus::Ready {
                                     self.claude.expand_running = true;
                                     self.reload_cues();
@@ -497,10 +505,7 @@ impl DirigentApp {
         status: CueStatus,
     ) {
         let fs = self.settings.font_size;
-        egui::Frame::none()
-            .inner_margin(SPACE_SM)
-            .stroke(egui::Stroke::new(1.0, self.semantic.separator))
-            .rounding(8.0)
+        let frame_resp = self.semantic.card_frame()
             .show(ui, |ui| {
                 // Cue text - inline editable for Inbox
                 let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
@@ -525,12 +530,9 @@ impl DirigentApp {
                         editing.focus_requested = true;
                     }
                 } else {
-                    let display_text = if cue.text.len() > 60 {
-                        format!("{}...", &cue.text[..57])
-                    } else {
-                        cue.text.clone()
-                    };
-                    let label_response = ui.label(&display_text);
+                    let label_response = ui.add(
+                        egui::Label::new(&cue.text).wrap(),
+                    );
                     // Double-click label to edit (Inbox/Backlog)
                     if matches!(status, CueStatus::Inbox | CueStatus::Backlog) && !is_editing && label_response.double_clicked() {
                         actions.push((
@@ -601,8 +603,9 @@ impl DirigentApp {
                     }
                 }
 
-                // Action buttons
-                ui.horizontal(|ui| {
+                // Action buttons — separated from content zone
+                ui.add_space(SPACE_XS);
+                ui.horizontal_wrapped(|ui| {
                     match cue.status {
                         CueStatus::Inbox => {
                             if !is_editing {
@@ -838,12 +841,14 @@ impl DirigentApp {
                         }
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button(icon("\u{2715}", fs))
-                            .on_hover_text("Delete cue")
-                            .clicked()
-                        {
+                    // Overflow menu
+                    let more_btn = ui.small_button("\u{2026}").on_hover_text("More actions");
+                    let popup_id = ui.make_persistent_id(("cue_more", cue.id));
+                    if more_btn.clicked() {
+                        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                    }
+                    egui::popup_below_widget(ui, popup_id, &more_btn, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                        if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                             actions.push((cue.id, CueAction::Delete));
                         }
                     });
@@ -877,6 +882,21 @@ impl DirigentApp {
                 }
             });
 
+        // Transition flash overlay when cue moves between columns
+        if let Some(&when) = self.cue_move_flash.get(&cue.id) {
+            let elapsed = when.elapsed().as_secs_f32();
+            if elapsed < 0.6 {
+                let alpha = ((0.6 - elapsed) / 0.6 * 50.0) as u8;
+                let [r, g, b, _] = self.semantic.accent.to_array();
+                ui.painter().rect_filled(
+                    frame_resp.response.rect,
+                    8.0,
+                    egui::Color32::from_rgba_premultiplied(r, g, b, alpha),
+                );
+                ui.ctx().request_repaint();
+            }
+        }
+
         ui.add_space(SPACE_XS);
     }
 }
@@ -887,14 +907,14 @@ fn source_label_color(label: &str) -> egui::Color32 {
         .bytes()
         .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     let colors = [
-        egui::Color32::from_rgb(50, 90, 150),
-        egui::Color32::from_rgb(120, 65, 120),
-        egui::Color32::from_rgb(140, 85, 45),
-        egui::Color32::from_rgb(45, 115, 85),
-        egui::Color32::from_rgb(140, 50, 65),
-        egui::Color32::from_rgb(65, 110, 140),
-        egui::Color32::from_rgb(100, 100, 50),
-        egui::Color32::from_rgb(80, 60, 130),
+        egui::Color32::from_rgb(60, 120, 216),  // royal blue
+        egui::Color32::from_rgb(163, 68, 168),  // vivid purple
+        egui::Color32::from_rgb(206, 120, 36),  // tangerine
+        egui::Color32::from_rgb(38, 154, 108),  // emerald
+        egui::Color32::from_rgb(210, 60, 78),   // coral
+        egui::Color32::from_rgb(44, 138, 186),  // cerulean
+        egui::Color32::from_rgb(188, 82, 148),  // magenta
+        egui::Color32::from_rgb(108, 72, 190),  // violet
     ];
     colors[(hash as usize) % colors.len()]
 }

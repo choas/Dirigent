@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use eframe::egui;
 
@@ -130,6 +131,7 @@ impl DirigentApp {
         if !self.search.in_file_matches.is_empty() {
             self.search.in_file_current = Some(0);
             self.viewer.scroll_to_line = Some(self.search.in_file_matches[0]);
+            self.search.in_file_nav_flash = Some(Instant::now());
         }
     }
 
@@ -144,6 +146,7 @@ impl DirigentApp {
         };
         self.search.in_file_current = Some(next);
         self.viewer.scroll_to_line = Some(self.search.in_file_matches[next]);
+        self.search.in_file_nav_flash = Some(Instant::now());
     }
 
     /// Navigate to the previous match in the current file.
@@ -158,6 +161,7 @@ impl DirigentApp {
         };
         self.search.in_file_current = Some(prev);
         self.viewer.scroll_to_line = Some(self.search.in_file_matches[prev]);
+        self.search.in_file_nav_flash = Some(Instant::now());
     }
 
     /// Render the search-in-file bar (shown at top of code viewer when active).
@@ -232,6 +236,7 @@ impl DirigentApp {
             self.search.in_file_query.clear();
             self.search.in_file_matches.clear();
             self.search.in_file_current = None;
+            self.search.in_file_nav_flash = None;
         }
 
         close

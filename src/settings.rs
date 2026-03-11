@@ -104,7 +104,13 @@ impl ThemeChoice {
             ThemeChoice::Light => egui::Visuals::light(),
             _ => return self.palette().apply(self.is_dark()),
         };
-        apply_rounding(&mut v);
+        let accent = match self {
+            ThemeChoice::Dark => egui::Color32::from_rgb(100, 180, 255),
+            ThemeChoice::Light => egui::Color32::from_rgb(0, 100, 220),
+            _ => unreachable!(),
+        };
+        apply_rounding_and_depth(&mut v, self.is_dark());
+        apply_interactive_visuals(&mut v, accent);
         v
     }
 
@@ -168,9 +174,9 @@ struct ThemePalette {
     hyperlink: egui::Color32,
 }
 
-/// Apply generous, Apple-style corner rounding to all visual elements.
+/// Apply generous, Apple-style corner rounding and subtle depth to all visual elements.
 /// 4px for small widgets, 8px for menus, 12px for dialog windows.
-fn apply_rounding(v: &mut egui::Visuals) {
+fn apply_rounding_and_depth(v: &mut egui::Visuals, dark: bool) {
     let r = egui::Rounding::same;
     v.window_rounding = r(12.0);
     v.menu_rounding = r(8.0);
@@ -179,6 +185,34 @@ fn apply_rounding(v: &mut egui::Visuals) {
     v.widgets.hovered.rounding = r(8.0);
     v.widgets.active.rounding = r(6.0);
     v.widgets.open.rounding = r(6.0);
+
+    // Subtle drop shadows for floating windows and popups
+    let shadow_alpha = if dark { 100 } else { 40 };
+    v.window_shadow = egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 4.0),
+        blur: 16.0,
+        spread: 2.0,
+        color: egui::Color32::from_black_alpha(shadow_alpha),
+    };
+    v.popup_shadow = egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 2.0),
+        blur: 8.0,
+        spread: 1.0,
+        color: egui::Color32::from_black_alpha(shadow_alpha),
+    };
+}
+
+/// Apply interactive visual polish: press-in effect, accent-colored focus ring.
+fn apply_interactive_visuals(v: &mut egui::Visuals, accent: egui::Color32) {
+    // Press-in: shrink the painted background when pressed (hover expands +1, press shrinks −0.5)
+    v.widgets.active.expansion = -0.5;
+
+    // Focus ring: accent-colored stroke on active/focused widgets
+    v.selection.stroke = egui::Stroke::new(1.5, accent);
+    let [r, g, b, _] = accent.to_array();
+    v.widgets.hovered.bg_stroke =
+        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(r, g, b, 80));
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.5, accent);
 }
 
 impl ThemePalette {
@@ -195,7 +229,8 @@ impl ThemePalette {
         v.widgets.hovered.bg_fill = self.hovered;
         v.widgets.active.bg_fill = self.active;
         v.hyperlink_color = self.hyperlink;
-        apply_rounding(&mut v);
+        apply_rounding_and_depth(&mut v, dark);
+        apply_interactive_visuals(&mut v, self.hyperlink);
         v
     }
 }
@@ -314,6 +349,110 @@ impl SemanticColors {
 
     pub fn modal_overlay(&self) -> egui::Color32 {
         egui::Color32::from_black_alpha(77) // ~30% opacity
+    }
+
+    /// Slightly elevated surface for the prompt field area.
+    pub fn prompt_surface(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_white_alpha(8)
+        } else {
+            egui::Color32::from_black_alpha(8)
+        }
+    }
+
+    /// Top border color for the prompt field.
+    pub fn prompt_border(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_white_alpha(20)
+        } else {
+            egui::Color32::from_black_alpha(15)
+        }
+    }
+
+    /// Slightly elevated surface color for dialog windows.
+    pub fn dialog_surface(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_gray(38)
+        } else {
+            egui::Color32::from_gray(248)
+        }
+    }
+
+    /// Shadow color for dialog windows.
+    pub fn dialog_shadow(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_black_alpha(120)
+        } else {
+            egui::Color32::from_black_alpha(50)
+        }
+    }
+
+    /// Frame for modal dialog windows — elevated surface, shadow, rounded corners.
+    pub fn dialog_frame(&self) -> egui::Frame {
+        egui::Frame::window(&egui::Style::default())
+            .fill(self.dialog_surface())
+            .rounding(egui::Rounding::same(8.0))
+            .shadow(egui::epaint::Shadow {
+                offset: egui::vec2(0.0, 4.0),
+                blur: 16.0,
+                spread: 4.0,
+                color: self.dialog_shadow(),
+            })
+            .inner_margin(egui::Margin::same(16.0))
+            .stroke(egui::Stroke::new(
+                1.0,
+                if self.is_dark {
+                    egui::Color32::from_white_alpha(20)
+                } else {
+                    egui::Color32::from_black_alpha(15)
+                },
+            ))
+    }
+
+    /// Special frame for the About dialog — larger padding and more prominent shadow.
+    pub fn about_dialog_frame(&self) -> egui::Frame {
+        self.dialog_frame()
+            .inner_margin(egui::Margin::same(24.0))
+            .shadow(egui::epaint::Shadow {
+                offset: egui::vec2(0.0, 8.0),
+                blur: 24.0,
+                spread: 8.0,
+                color: self.dialog_shadow(),
+            })
+            .rounding(egui::Rounding::same(12.0))
+    }
+
+    /// Slightly elevated card surface color.
+    fn card_surface(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_white_alpha(6)
+        } else {
+            egui::Color32::from_black_alpha(4)
+        }
+    }
+
+    /// Frame for inline cards (cue cards, source configs, playbook items) —
+    /// subtle shadow and elevated fill instead of a flat border.
+    pub fn card_frame(&self) -> egui::Frame {
+        let shadow_alpha = if self.is_dark { 60 } else { 20 };
+        egui::Frame::none()
+            .inner_margin(8.0)
+            .fill(self.card_surface())
+            .rounding(8.0)
+            .shadow(egui::epaint::Shadow {
+                offset: egui::vec2(0.0, 1.0),
+                blur: 4.0,
+                spread: 0.0,
+                color: egui::Color32::from_black_alpha(shadow_alpha),
+            })
+            .stroke(egui::Stroke::new(
+                0.5,
+                if self.is_dark {
+                    egui::Color32::from_white_alpha(10)
+                } else {
+                    egui::Color32::from_black_alpha(8)
+                },
+            ))
     }
 
     /// Contrasting text color for use on accent-colored backgrounds.

@@ -168,10 +168,7 @@ impl DirigentApp {
             let num_sources = self.settings.sources.len();
 
             for i in 0..num_sources {
-                egui::Frame::none()
-                    .inner_margin(SPACE_SM)
-                    .stroke(egui::Stroke::new(1.0, self.semantic.separator))
-                    .rounding(8.0)
+                self.semantic.card_frame()
                     .show(ui, |ui| {
                         // Header: name + enabled + delete
                         ui.horizontal(|ui| {
@@ -328,10 +325,7 @@ impl DirigentApp {
                 let num_plays = self.settings.playbook.len();
 
                 for i in 0..num_plays {
-                    egui::Frame::none()
-                        .inner_margin(SPACE_SM)
-                        .stroke(egui::Stroke::new(1.0, self.semantic.separator))
-                        .rounding(8.0)
+                    self.semantic.card_frame()
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(
@@ -734,6 +728,8 @@ impl DirigentApp {
             .collapsible(false)
             .resizable(false)
             .default_size([450.0, 300.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Path:");
@@ -807,6 +803,8 @@ impl DirigentApp {
             .collapsible(false)
             .resizable(true)
             .default_size([400.0, 300.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(200.0)

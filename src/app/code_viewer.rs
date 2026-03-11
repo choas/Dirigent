@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp, DiffReview, SPACE_SM, SPACE_MD};
+use super::{icon, DirigentApp, DiffReview, FONT_SCALE_HEADING, FONT_SCALE_LINE_NUM, SPACE_SM, SPACE_MD};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 
@@ -54,9 +54,9 @@ impl DirigentApp {
 
             let mut close_file = false;
             let mut show_file_diff = false;
-            let is_dirty = self.git.dirty_files.contains(&rel_path);
+            let is_dirty = self.git.dirty_files.contains_key(&rel_path);
             ui.horizontal(|ui| {
-                ui.strong(&rel_path);
+                ui.label(egui::RichText::new(&rel_path).size(self.settings.font_size * FONT_SCALE_HEADING).strong());
                 if is_dirty {
                     ui.label(
                         egui::RichText::new("\u{25CF}")
@@ -183,6 +183,7 @@ impl DirigentApp {
                             ui.label(
                                 egui::RichText::new(num_text)
                                     .monospace()
+                                    .size(self.settings.font_size * FONT_SCALE_LINE_NUM)
                                     .color(self.semantic.tertiary_text),
                             );
 
@@ -216,6 +217,19 @@ impl DirigentApp {
                                     0.0,
                                     self.semantic.code_search_current(),
                                 );
+                                // Flash brighter when navigating between matches
+                                if let Some(when) = self.search.in_file_nav_flash {
+                                    let elapsed = when.elapsed().as_secs_f32();
+                                    if elapsed < 0.4 {
+                                        let alpha = ((0.4 - elapsed) / 0.4 * 100.0) as u8;
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            0.0,
+                                            egui::Color32::from_rgba_premultiplied(255, 200, 50, alpha),
+                                        );
+                                        ui.ctx().request_repaint();
+                                    }
+                                }
                             } else if is_search_match {
                                 ui.painter().rect_filled(
                                     rect,

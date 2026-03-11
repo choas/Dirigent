@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use git2::{Repository, Signature, StatusOptions};
 use std::path::{Path, PathBuf};
@@ -89,9 +89,10 @@ pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
     })
 }
 
-/// Returns relative paths of all files with uncommitted changes (modified, new, deleted, staged).
-pub(crate) fn get_dirty_files(path: &Path) -> HashSet<String> {
-    let mut result = HashSet::new();
+/// Returns relative paths of all files with uncommitted changes, mapped to their
+/// git status letter (M = modified, A = added/new, D = deleted, R = renamed, ? = untracked).
+pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
+    let mut result = HashMap::new();
     let repo = match Repository::discover(path) {
         Ok(r) => r,
         Err(_) => return result,
@@ -101,19 +102,21 @@ pub(crate) fn get_dirty_files(path: &Path) -> HashSet<String> {
     if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
         for entry in statuses.iter() {
             let s = entry.status();
-            if s.intersects(
-                git2::Status::WT_MODIFIED
-                    | git2::Status::INDEX_MODIFIED
-                    | git2::Status::WT_NEW
-                    | git2::Status::INDEX_NEW
-                    | git2::Status::WT_DELETED
-                    | git2::Status::INDEX_DELETED
-                    | git2::Status::WT_RENAMED
-                    | git2::Status::INDEX_RENAMED,
-            ) {
-                if let Some(p) = entry.path() {
-                    result.insert(p.to_string());
-                }
+            let letter = if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+                'D'
+            } else if s.intersects(git2::Status::WT_RENAMED | git2::Status::INDEX_RENAMED) {
+                'R'
+            } else if s.intersects(git2::Status::WT_MODIFIED | git2::Status::INDEX_MODIFIED) {
+                'M'
+            } else if s.intersects(git2::Status::INDEX_NEW) {
+                'A'
+            } else if s.intersects(git2::Status::WT_NEW) {
+                '?'
+            } else {
+                continue;
+            };
+            if let Some(p) = entry.path() {
+                result.insert(p.to_string(), letter);
             }
         }
     }
@@ -763,7 +766,7 @@ mod tests {
         std::fs::write(dir.path().join("new.txt"), "new").unwrap();
 
         let dirty = get_dirty_files(dir.path());
-        assert!(dirty.contains("tracked.txt"));
-        assert!(dirty.contains("new.txt"));
+        assert_eq!(dirty.get("tracked.txt"), Some(&'M'));
+        assert_eq!(dirty.get("new.txt"), Some(&'?'));
     }
 }
