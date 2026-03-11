@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
+use crate::app::{SPACE_XS, SPACE_SM};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DiffViewMode {
     Inline,
@@ -218,7 +220,7 @@ pub(crate) fn render_inline_diff(
         }
 
         if !is_collapsed {
-            ui.add_space(4.0);
+            ui.add_space(SPACE_XS);
 
             for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
                 for (line_idx, line) in hunk.lines.iter().enumerate() {
@@ -284,7 +286,7 @@ pub(crate) fn render_inline_diff(
                             .rect_filled(response.response.rect, 0.0, bg);
                     }
                 }
-                ui.add_space(8.0);
+                ui.add_space(SPACE_SM);
             }
         }
 
@@ -379,14 +381,14 @@ pub(crate) fn render_side_by_side_diff(
             continue;
         }
 
-        ui.add_space(4.0);
+        ui.add_space(SPACE_XS);
 
         for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
             let pairs = build_side_by_side_pairs(&hunk.lines);
 
             egui::Grid::new(format!("sbs_{}_{}_{}", file.new_path, hunk_idx, hunk.new_start))
                 .num_columns(5)
-                .spacing([4.0, 0.0])
+                .spacing([SPACE_XS, 0.0])
                 .min_col_width(0.0)
                 .show(ui, |ui| {
                     let current_match = search.as_ref().and_then(|s| s.current);
@@ -490,7 +492,7 @@ pub(crate) fn render_side_by_side_diff(
                     }
                 });
 
-            ui.add_space(8.0);
+            ui.add_space(SPACE_SM);
         }
 
         ui.separator();

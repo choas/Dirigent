@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp, DiffReview};
+use super::{icon, DirigentApp, DiffReview, SPACE_SM, SPACE_MD};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 
@@ -37,10 +37,10 @@ impl DirigentApp {
                             egui::Image::new(tex).max_size(egui::vec2(96.0, 96.0)),
                         );
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_SM);
                     ui.heading("Dirigent");
                     ui.label(format!("Version {}", env!("BUILD_VERSION")));
-                    ui.add_space(16.0);
+                    ui.add_space(SPACE_MD);
                     ui.label(
                         egui::RichText::new("Select a file from the tree to view")
                             .weak(),
@@ -168,11 +168,11 @@ impl DirigentApp {
                             match cue_state {
                                 Some(&true) => {
                                     // Archived cue: grey dot
-                                    ui.label(icon("\u{2022}", self.settings.font_size).color(egui::Color32::from_gray(140)));
+                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(egui::Color32::from_gray(140)));
                                 }
                                 Some(&false) => {
                                     // Active cue: yellow dot
-                                    ui.label(icon("\u{2022}", self.settings.font_size).color(egui::Color32::from_rgb(255, 180, 50)));
+                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(egui::Color32::from_rgb(255, 180, 50)));
                                 }
                                 None => {
                                     ui.label(" ");
@@ -293,7 +293,7 @@ impl DirigentApp {
                                         .color(egui::Color32::from_rgb(100, 200, 100)),
                                 );
                                 if ui
-                                    .button("\u{1F4CE}")
+                                    .button("+")
                                     .on_hover_text("Attach images")
                                     .clicked()
                                 {

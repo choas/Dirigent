@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use eframe::egui;
 
-use super::{icon, DirigentApp};
+use super::{icon, DirigentApp, SPACE_SM};
 use crate::file_tree::FileEntry;
 
 /// A single match from project-wide search.
@@ -262,7 +262,7 @@ impl DirigentApp {
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 trigger_search = true;
             }
-            if ui.small_button(icon("\u{1F50D}", fs)).clicked() {
+            if ui.small_button(icon("\u{2192}", fs)).clicked() {
                 trigger_search = true;
             }
         });
@@ -327,7 +327,7 @@ impl DirigentApp {
                 for result in &self.search.in_files_results {
                     if current_file != Some(&result.rel_path) {
                         current_file = Some(&result.rel_path);
-                        ui.add_space(4.0);
+                        ui.add_space(SPACE_SM);
                         ui.label(
                             egui::RichText::new(&result.rel_path)
                                 .strong()

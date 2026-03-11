@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{icon, CueAction, DirigentApp};
+use super::{icon, CueAction, DirigentApp, SPACE_XS, SPACE_SM};
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
@@ -156,7 +156,7 @@ impl DirigentApp {
                     ui.heading(heading_text);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let plus_btn = ui.button("+").on_hover_text("Playbook");
-                        if ui.button("\u{21E9}").on_hover_text("Import from document").clicked() {
+                        if ui.button("\u{2193}").on_hover_text("Import from document").clicked() {
                             import_requested = true;
                         }
                         let popup_id = ui.make_persistent_id("playbook_popup");
@@ -498,7 +498,7 @@ impl DirigentApp {
     ) {
         let fs = self.settings.font_size;
         egui::Frame::none()
-            .inner_margin(4.0)
+            .inner_margin(SPACE_SM)
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
             .rounding(8.0)
             .show(ui, |ui| {
@@ -561,7 +561,7 @@ impl DirigentApp {
                         if !cue.attached_images.is_empty() {
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "\u{1F4CE} {} image{}",
+                                    "{} image{}",
                                     cue.attached_images.len(),
                                     if cue.attached_images.len() == 1 { "" } else { "s" }
                                 ))
@@ -651,9 +651,9 @@ impl DirigentApp {
                         CueStatus::Ready => {
                             let elapsed = self.format_elapsed(cue.id);
                             let label = if elapsed.is_empty() {
-                                "\u{2022} Running...".to_string()
+                                "\u{25CF} Running...".to_string()
                             } else {
-                                format!("\u{2022} Running... {}", elapsed)
+                                format!("\u{25CF} Running... {}", elapsed)
                             };
                             if ui
                                 .small_button(
@@ -851,7 +851,7 @@ impl DirigentApp {
 
                 // Reply input field (visible when toggled for Review/Done cues)
                 if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {
-                    ui.add_space(2.0);
+                    ui.add_space(SPACE_XS);
                     let response = ui.add(
                         egui::TextEdit::multiline(reply_text)
                             .desired_rows(2)
@@ -877,7 +877,7 @@ impl DirigentApp {
                 }
             });
 
-        ui.add_space(2.0);
+        ui.add_space(SPACE_XS);
     }
 }
 

@@ -23,6 +23,12 @@ const REPAINT_SLOW: Duration = Duration::from_millis(500);
 const SOURCE_POLL_REPAINT: Duration = Duration::from_secs(30);
 const ELAPSED_REPAINT: Duration = Duration::from_secs(1);
 
+// -- Spacing scale (4/8/16/24 point grid) --
+pub(crate) const SPACE_XS: f32 = 4.0;
+pub(crate) const SPACE_SM: f32 = 8.0;
+pub(crate) const SPACE_MD: f32 = 16.0;
+pub(crate) const SPACE_LG: f32 = 24.0;
+
 // -- UI dimension constants --
 const FONT_SCALE_SMALL: f32 = 0.75;
 const FONT_SCALE_HEADING: f32 = 1.4;

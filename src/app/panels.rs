@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview};
+use super::{icon, icon_small, COMMIT_MSG_TRUNCATE_LEN, DirigentApp, DiffReview, SPACE_XS, SPACE_SM, SPACE_MD};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -46,15 +46,15 @@ impl DirigentApp {
                     if let Some(ref tex) = self.logo_texture {
                         ui.add(egui::Image::new(tex).max_size(egui::vec2(128.0, 128.0)));
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_SM);
                     ui.heading("Dirigent");
                     ui.label(format!("Version {}", env!("BUILD_VERSION")));
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_XS);
                     ui.label(
                         egui::RichText::new("A read-only code viewer where humans direct and AI performs.")
                             .weak(),
                     );
-                    ui.add_space(12.0);
+                    ui.add_space(SPACE_MD);
                 });
             });
         self.show_about = open;
@@ -65,7 +65,7 @@ impl DirigentApp {
         egui::TopBottomPanel::top("repo_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    icon_small(&format!("\u{25B8} {}", self.project_root.display()), self.settings.font_size),
+                    icon_small(&format!("\u{25B6} {}", self.project_root.display()), self.settings.font_size),
                 );
                 if ui.small_button("Change...").clicked() {
                     self.repo_path_input = self.project_root.to_string_lossy().to_string();
@@ -369,11 +369,11 @@ impl DirigentApp {
             }
             ui.horizontal(|ui| {
                 ui.label(
-                    icon("\u{276F}", self.settings.font_size)
+                    icon("\u{25B6}", self.settings.font_size)
                         .color(egui::Color32::from_rgb(100, 180, 255)),
                 );
                 if ui
-                    .button(icon("\u{1F4CE}", self.settings.font_size))
+                    .button(icon("+", self.settings.font_size))
                     .on_hover_text("Attach files (or drag & drop)")
                     .clicked()
                 {

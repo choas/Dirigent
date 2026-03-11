@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp};
+use super::{icon, DirigentApp, SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG};
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
@@ -32,11 +32,11 @@ impl DirigentApp {
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-            ui.add_space(8.0);
+            ui.add_space(SPACE_SM);
 
             egui::Grid::new("settings_grid")
                 .num_columns(2)
-                .spacing([12.0, 8.0])
+                .spacing([SPACE_MD, SPACE_SM])
                 .show(ui, |ui| {
                     ui.label("Theme:");
                     let theme_label = self.settings.theme.display_name();
@@ -143,9 +143,9 @@ impl DirigentApp {
                 });
 
             // Sources section
-            ui.add_space(12.0);
+            ui.add_space(SPACE_MD);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(SPACE_SM);
             ui.horizontal(|ui| {
                 ui.strong("Sources");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -154,7 +154,7 @@ impl DirigentApp {
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(SPACE_SM);
 
             if self.settings.sources.is_empty() {
                 ui.label(
@@ -169,7 +169,7 @@ impl DirigentApp {
 
             for i in 0..num_sources {
                 egui::Frame::none()
-                    .inner_margin(6.0)
+                    .inner_margin(SPACE_SM)
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
                     .rounding(8.0)
                     .show(ui, |ui| {
@@ -197,7 +197,7 @@ impl DirigentApp {
 
                         egui::Grid::new(format!("source_grid_{}", i))
                             .num_columns(2)
-                            .spacing([8.0, 4.0])
+                            .spacing([SPACE_SM, SPACE_XS])
                             .show(ui, |ui| {
                                 ui.label("Kind:");
                                 egui::ComboBox::from_id_salt(format!("source_kind_{}", i))
@@ -277,7 +277,7 @@ impl DirigentApp {
                             }
                         });
                     });
-                ui.add_space(4.0);
+                ui.add_space(SPACE_SM);
             }
 
             if let Some(idx) = remove_idx {
@@ -285,9 +285,9 @@ impl DirigentApp {
             }
 
             // Playbook section
-            ui.add_space(12.0);
+            ui.add_space(SPACE_MD);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(SPACE_SM);
             ui.horizontal(|ui| {
                 let arrow = if self.playbook_expanded { "\u{25BC}" } else { "\u{25B6}" };
                 if ui.button(icon(&format!("{} Playbook", arrow), fs)).clicked() {
@@ -314,7 +314,7 @@ impl DirigentApp {
             });
 
             if self.playbook_expanded {
-                ui.add_space(4.0);
+                ui.add_space(SPACE_SM);
 
                 if self.settings.playbook.is_empty() {
                     ui.label(
@@ -329,7 +329,7 @@ impl DirigentApp {
 
                 for i in 0..num_plays {
                     egui::Frame::none()
-                        .inner_margin(6.0)
+                        .inner_margin(SPACE_SM)
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
                         .rounding(8.0)
                         .show(ui, |ui| {
@@ -360,7 +360,7 @@ impl DirigentApp {
                                     .font(egui::TextStyle::Monospace),
                             );
                         });
-                    ui.add_space(4.0);
+                    ui.add_space(SPACE_SM);
                 }
 
                 if let Some(idx) = remove_play_idx {
@@ -368,7 +368,7 @@ impl DirigentApp {
                 }
             }
 
-            ui.add_space(12.0);
+            ui.add_space(SPACE_MD);
             if ui.button("Save").clicked() {
                 save = true;
             }
@@ -601,7 +601,7 @@ impl DirigentApp {
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     if parsed.files.is_empty() {
-                        ui.add_space(20.0);
+                        ui.add_space(SPACE_LG);
                         ui.label(
                             egui::RichText::new("No file changes in this commit.")
                                 .italics()
@@ -854,7 +854,7 @@ impl DirigentApp {
                         }
                     });
 
-                ui.add_space(8.0);
+                ui.add_space(SPACE_SM);
                 ui.label("Create new worktree:");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -954,9 +954,9 @@ impl DirigentApp {
                 if is_running {
                     let elapsed = self.format_elapsed(cue_id);
                     let status = if elapsed.is_empty() {
-                        "\u{2022} Running".to_string()
+                        "\u{25CF} Running".to_string()
                     } else {
-                        format!("\u{2022} Running ({})", elapsed)
+                        format!("\u{25CF} Running ({})", elapsed)
                     };
                     ui.label(
                         icon(&status, fs)
@@ -1019,7 +1019,7 @@ impl DirigentApp {
                             }
                         });
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
                             .show(ui, |ui| {
                                 ui.label(&user_text);
                             });
@@ -1033,7 +1033,7 @@ impl DirigentApp {
                             );
                         });
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
                             .show(ui, |ui| {
                                 if is_current_running {
                                     // Show live streaming log for the currently running execution
@@ -1093,7 +1093,7 @@ impl DirigentApp {
                                 .color(claude_color),
                         );
                         egui::Frame::none()
-                            .inner_margin(egui::Margin { left: 12.0, top: 2.0, right: 4.0, bottom: 6.0 })
+                            .inner_margin(egui::Margin { left: SPACE_SM, top: SPACE_XS, right: SPACE_XS, bottom: SPACE_SM })
                             .show(ui, |ui| {
                                 if current_running_log.is_empty() {
                                     ui.label(
