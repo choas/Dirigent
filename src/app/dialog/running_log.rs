@@ -44,16 +44,9 @@ impl DirigentApp {
         let mut close = false;
         let mut reply_send: Option<String> = None;
 
-        let cue_status = self
-            .cues
-            .iter()
-            .find(|c| c.id == cue_id)
-            .map(|c| c.status);
-        let can_reply = !is_running
-            && matches!(
-                cue_status,
-                Some(CueStatus::Review) | Some(CueStatus::Done)
-            );
+        let cue_status = self.cues.iter().find(|c| c.id == cue_id).map(|c| c.status);
+        let can_reply =
+            !is_running && matches!(cue_status, Some(CueStatus::Review) | Some(CueStatus::Done));
 
         // Reply field at the bottom – rendered as a bottom panel so it stays visible
         if can_reply {
@@ -71,9 +64,8 @@ impl DirigentApp {
                         .on_hover_text("Send feedback to Claude (Cmd+Enter)")
                         .clicked()
                         || (response.has_focus()
-                            && ui.input(|i| {
-                                i.key_pressed(egui::Key::Enter) && i.modifiers.command
-                            }));
+                            && ui
+                                .input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
                     if send && !reply_text.trim().is_empty() {
                         reply_send = Some(reply_text.clone());
                     }
@@ -258,7 +250,6 @@ impl DirigentApp {
                             });
                     }
                 });
-
         });
 
         if close {

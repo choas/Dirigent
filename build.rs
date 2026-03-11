@@ -29,7 +29,16 @@ fn main() {
     let month_days = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut m = 0usize;
     for &md in &month_days {
@@ -45,7 +54,12 @@ fn main() {
     let version = format!(
         "{}-dev{:04}{:02}{:02}{:02}{:02}{:02}",
         env!("CARGO_PKG_VERSION"),
-        y, m, d, hours, minutes, seconds
+        y,
+        m,
+        d,
+        hours,
+        minutes,
+        seconds
     );
     println!("cargo:rustc-env=BUILD_VERSION={version}");
     // Rebuild only when Cargo.toml changes (version) or enough time passes

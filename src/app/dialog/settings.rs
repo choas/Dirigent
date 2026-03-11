@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::agents::{AgentTrigger, default_agents};
+use crate::agents::{default_agents, AgentTrigger};
 use crate::opencode;
 use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 

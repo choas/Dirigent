@@ -31,9 +31,7 @@ impl DirigentApp {
             );
 
             // Update runtime state
-            self.agent_state
-                .statuses
-                .insert(result.kind, result.status);
+            self.agent_state.statuses.insert(result.kind, result.status);
             self.agent_state
                 .latest_output
                 .insert(result.kind, result.output);

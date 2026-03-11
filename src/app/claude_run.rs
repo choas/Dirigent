@@ -425,7 +425,9 @@ impl DirigentApp {
                     .db
                     .complete_execution(result.exec_id, &result.response, Some(diff));
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
-                let _ = self.db.log_activity(result.cue_id, "Run completed — review ready");
+                let _ = self
+                    .db
+                    .log_activity(result.cue_id, "Run completed — review ready");
                 self.notify_review_ready(result.cue_id);
                 // Trigger post-run agents (format, lint, etc.)
                 self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id));
@@ -446,7 +448,9 @@ impl DirigentApp {
                     preview
                 ));
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-                let _ = self.db.log_activity(result.cue_id, "Run completed — no changes");
+                let _ = self
+                    .db
+                    .log_activity(result.cue_id, "Run completed — no changes");
             }
             self.reload_cues();
         }

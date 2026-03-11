@@ -277,12 +277,12 @@ impl Database {
         let _ = self
             .conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);");
-        let _ = self
-            .conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);");
-        let _ = self
-            .conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);");
+        let _ = self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);",
+        );
+        let _ = self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
+        );
         Ok(())
     }
 
@@ -363,8 +363,10 @@ impl Database {
     }
 
     pub fn delete_cue(&self, id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM cue_activity_log WHERE cue_id = ?1", params![id])?;
+        self.conn.execute(
+            "DELETE FROM cue_activity_log WHERE cue_id = ?1",
+            params![id],
+        )?;
         self.conn
             .execute("DELETE FROM executions WHERE cue_id = ?1", params![id])?;
         self.conn

@@ -865,7 +865,11 @@ impl DirigentApp {
                     |ui| {
                         ui.set_min_width(140.0);
                         let is_expanded = self.logbook_expanded.contains(&cue.id);
-                        let activity_label = if is_expanded { "\u{25BE} Activity" } else { "\u{25B8} Activity" };
+                        let activity_label = if is_expanded {
+                            "\u{25BE} Activity"
+                        } else {
+                            "\u{25B8} Activity"
+                        };
                         if ui.button(activity_label).clicked() {
                             if is_expanded {
                                 self.logbook_expanded.remove(&cue.id);
@@ -905,11 +909,19 @@ impl DirigentApp {
             if self.logbook_expanded.contains(&cue.id) {
                 if let Ok(entries) = self.db.get_activities(cue.id) {
                     if entries.is_empty() {
-                        ui.label(egui::RichText::new("No activity yet").small().color(self.semantic.muted_text()));
+                        ui.label(
+                            egui::RichText::new("No activity yet")
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        );
                     } else {
                         for entry in &entries {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&entry.timestamp).small().color(self.semantic.muted_text()));
+                                ui.label(
+                                    egui::RichText::new(&entry.timestamp)
+                                        .small()
+                                        .color(self.semantic.muted_text()),
+                                );
                                 ui.label(egui::RichText::new(&entry.event).small());
                             });
                         }

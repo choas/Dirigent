@@ -2,7 +2,7 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::agents::{AgentConfig, default_agents};
+use crate::agents::{default_agents, AgentConfig};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ThemeChoice {
@@ -994,11 +994,7 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     }
     // Append any new default agents that aren't already configured
     for default_agent in default_agents() {
-        if !settings
-            .agents
-            .iter()
-            .any(|a| a.kind == default_agent.kind)
-        {
+        if !settings.agents.iter().any(|a| a.kind == default_agent.kind) {
             settings.agents.push(default_agent);
         }
     }

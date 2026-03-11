@@ -180,16 +180,21 @@ pub(crate) fn invoke_opencode_streaming(
                     .cloned()
                     .unwrap_or_default();
                 let name_lower = name.to_ascii_lowercase();
-                let is_file_tool = matches!(
-                    name,
-                    "Write" | "Edit" | "Bash" | "Task"
-                ) || matches!(
-                    name_lower.as_str(),
-                    "write" | "edit" | "bash" | "task"
-                        | "write_file" | "edit_file" | "create_file"
-                        | "str_replace_editor" | "file_editor"
-                        | "write_to_file" | "apply_diff"
-                );
+                let is_file_tool = matches!(name, "Write" | "Edit" | "Bash" | "Task")
+                    || matches!(
+                        name_lower.as_str(),
+                        "write"
+                            | "edit"
+                            | "bash"
+                            | "task"
+                            | "write_file"
+                            | "edit_file"
+                            | "create_file"
+                            | "str_replace_editor"
+                            | "file_editor"
+                            | "write_to_file"
+                            | "apply_diff"
+                    );
                 if is_file_tool {
                     // Check common field names for file paths
                     let path = input
