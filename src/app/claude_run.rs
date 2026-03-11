@@ -495,32 +495,23 @@ impl DirigentApp {
     fn notify_review_ready(&self, cue_id: i64) {
         if self.settings.notify_sound {
             std::thread::spawn(|| {
-                #[cfg(target_os = "macos")]
-                {
-                    // Play the system Glass sound by direct file path.
-                    // IMPORTANT: Do NOT use `NSSound soundNamed:` — its name-resolution
-                    // loads MediaToolbox which triggers the macOS TCC "would like to
-                    // access Apple Music" permission dialog. Loading by path avoids this.
-                    use objc::runtime::{Class, Object, BOOL};
-                    use objc::{msg_send, sel, sel_impl};
-                    unsafe {
-                        let cls = Class::get("NSSound").unwrap();
-                        let ns = Class::get("NSString").unwrap();
-                        let path_c = std::ffi::CString::new(
-                            "/System/Library/Sounds/Glass.aiff",
-                        )
-                        .unwrap();
-                        let path_ns: *mut Object =
-                            msg_send![ns, stringWithUTF8String: path_c.as_ptr()];
-                        let sound: *mut Object = msg_send![cls, alloc];
-                        let sound: *mut Object = msg_send![sound,
-                            initWithContentsOfFile: path_ns
-                            byReference: true as BOOL];
-                        if !sound.is_null() {
-                            let _: bool = msg_send![sound, play];
-                        }
+                // Play the embedded Glass sound via `afplay` (a separate process).
+                // We CANNOT use NSSound or any Apple audio framework in-process —
+                // they all load CoreAudio/MediaToolbox which triggers the macOS
+                // TCC "would like to access Apple Music" permission dialog.
+                use std::io::Write;
+                static GLASS_AIFF: &[u8] = include_bytes!("../../assets/Glass.aiff");
+                let tmp = std::env::temp_dir().join("dirigent_glass.aiff");
+                if !tmp.exists() {
+                    if let Ok(mut f) = std::fs::File::create(&tmp) {
+                        let _ = f.write_all(GLASS_AIFF);
                     }
                 }
+                let _ = std::process::Command::new("/usr/bin/afplay")
+                    .arg(&tmp)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
             });
         }
         if self.settings.notify_popup {

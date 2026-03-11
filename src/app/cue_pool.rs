@@ -108,22 +108,10 @@ fn clean_body(lines: &[&str]) -> String {
 }
 
 fn pick_markdown_file() -> Option<PathBuf> {
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(
-            r#"POSIX path of (choose file of type {"public.text"} with prompt "Import Markdown Document")"#,
-        )
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(path))
-    }
+    rfd::FileDialog::new()
+        .set_title("Import Markdown Document")
+        .add_filter("Text files", &["md", "txt", "markdown"])
+        .pick_file()
 }
 
 impl DirigentApp {

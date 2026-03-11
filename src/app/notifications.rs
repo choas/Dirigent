@@ -1,12 +1,11 @@
 /// Send a macOS notification via `UNUserNotificationCenter` (modern API).
 /// Clicking the notification activates the Dirigent process that sent it.
-/// Falls back to the deprecated `NSUserNotificationCenter`, then to `osascript`.
+/// Falls back to the deprecated `NSUserNotificationCenter`.
 #[cfg(target_os = "macos")]
 pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
     use std::ffi::CString;
-    use std::process::Command;
 
     // Objective-C block layout (no captures) for completion handlers.
     #[repr(C)]
@@ -136,24 +135,14 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
                     let _: () = msg_send![notif, setInformativeText: body_ns];
 
                     let _: () = msg_send![center, deliverNotification: notif];
-                    delivered = true;
                 }
             }
         }
 
-        // ── Final fallback: osascript (notification attributed to Script Editor) ──
-        if !delivered {
-            fn escape(s: &str) -> String {
-                s.replace('\\', "\\\\").replace('"', "\\\"")
-            }
-            let script = format!(
-                "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
-                escape(body),
-                escape(title),
-                escape(subtitle),
-            );
-            let _ = Command::new("osascript").arg("-e").arg(&script).output();
-        }
+        // osascript fallback removed — it triggers macOS TCC permission
+        // dialogs (including "would like to access Apple Music").
+        // UNUserNotificationCenter + NSUserNotificationCenter cover all
+        // supported macOS versions.
 
         let _: () = msg_send![pool, drain];
     }

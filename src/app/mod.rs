@@ -254,20 +254,35 @@ fn start_fs_watcher(
 }
 
 impl DirigentApp {
-    pub fn new(project_root: PathBuf) -> Self {
+    pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
-        let file_tree = FileTree::scan(&project_root).ok();
-        let cues = db.all_cues_limited_archived(200).unwrap_or_default();
-        let archived_cue_count = db.archived_cue_count().unwrap_or(0);
-        let git_info = git::read_git_info(&project_root);
-        let dirty_files = git::get_dirty_files(&project_root);
         let settings = settings::load_settings(&project_root);
-        let commit_history = git::read_commit_history(&project_root, 50);
-        let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
+
+        // When launched from Finder without a project (skip_scan=true), the
+        // project_root is $HOME.  Scanning $HOME recursively touches ~/Music,
+        // ~/Movies, and ~/Library which triggers the macOS TCC "would like to
+        // access Apple Music" permission dialog.  Skip everything that walks
+        // the file system until the user picks a real repo.
+        let (file_tree, cues, archived_cue_count, git_info, dirty_files, commit_history, worktrees, _fs_watcher) =
+            if skip_scan {
+                let _fs_changed_dummy = Arc::new(AtomicBool::new(false));
+                (None, Vec::new(), 0_usize, None, HashMap::new(), Vec::new(), Vec::new(), None)
+            } else {
+                let file_tree = FileTree::scan(&project_root).ok();
+                let cues = db.all_cues_limited_archived(200).unwrap_or_default();
+                let archived_cue_count = db.archived_cue_count().unwrap_or(0);
+                let git_info = git::read_git_info(&project_root);
+                let dirty_files = git::get_dirty_files(&project_root);
+                let commit_history = git::read_commit_history(&project_root, 50);
+                let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
+                let fs_changed_ref = Arc::new(AtomicBool::new(false));
+                let egui_ctx_ref = Arc::new(OnceLock::new());
+                let watcher = start_fs_watcher(&project_root, &fs_changed_ref, &egui_ctx_ref);
+                (file_tree, cues, archived_cue_count, git_info, dirty_files, commit_history, worktrees, watcher)
+            };
 
         let fs_changed = Arc::new(AtomicBool::new(false));
         let egui_ctx = Arc::new(OnceLock::new());
-        let _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();

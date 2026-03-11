@@ -215,7 +215,7 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "macos")]
             setup_macos_about_panel();
 
-            let mut app = app::DirigentApp::new(project_root);
+            let mut app = app::DirigentApp::new(project_root, show_repo_picker);
             if show_repo_picker {
                 app.show_repo_picker = true;
             }
