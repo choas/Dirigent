@@ -152,7 +152,7 @@ src/
 
 ## Status
 
-Dirigent is in early development (v0.1.1, 100+ commits). Core features work — file browsing, cue management, Claude Code integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in early development (v0.1.2, 100+ commits). Core features work — file browsing, cue management, Claude Code integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
