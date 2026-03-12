@@ -228,6 +228,9 @@ pub struct DirigentApp {
     // Expanded activity logbooks (cue IDs with open logbook)
     logbook_expanded: HashSet<i64>,
 
+    // Expanded agent output entries in activity logbook (agent_run IDs)
+    agent_output_expanded: HashSet<(i64, String)>,
+
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
 }
@@ -402,6 +405,7 @@ impl DirigentApp {
             agent_state: AgentRunState::new(),
             cue_move_flash: HashMap::new(),
             logbook_expanded: HashSet::new(),
+            agent_output_expanded: HashSet::new(),
             opencode_models: Vec::new(),
         }
     }

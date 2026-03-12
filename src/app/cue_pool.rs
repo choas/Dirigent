@@ -915,6 +915,9 @@ impl DirigentApp {
                                 .color(self.semantic.muted_text()),
                         );
                     } else {
+                        // Fetch agent runs for this cue (for expandable output)
+                        let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
+
                         for entry in &entries {
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -922,8 +925,104 @@ impl DirigentApp {
                                         .small()
                                         .color(self.semantic.muted_text()),
                                 );
-                                ui.label(egui::RichText::new(&entry.event).small());
+                                // Check if this is an agent event with output
+                                let is_agent_event = entry.event.contains("passed")
+                                    || entry.event.contains("failed")
+                                    || entry.event.contains("error");
+                                let agent_kind_for_event = if is_agent_event {
+                                    ["Format", "Lint", "Build", "Test"]
+                                        .iter()
+                                        .find(|k| entry.event.starts_with(*k))
+                                        .map(|k| k.to_string())
+                                } else {
+                                    None
+                                };
+
+                                if agent_kind_for_event.is_some() {
+                                    let key = (cue.id, entry.timestamp.clone());
+                                    let is_expanded = self.agent_output_expanded.contains(&key);
+                                    let arrow = if is_expanded { "\u{25BE}" } else { "\u{25B8}" };
+                                    if ui
+                                        .add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!(
+                                                    "{} {}",
+                                                    arrow, &entry.event
+                                                ))
+                                                .small(),
+                                            )
+                                            .sense(egui::Sense::click()),
+                                        )
+                                        .clicked()
+                                    {
+                                        if is_expanded {
+                                            self.agent_output_expanded.remove(&key);
+                                        } else {
+                                            self.agent_output_expanded.insert(key);
+                                        }
+                                    }
+                                } else {
+                                    ui.label(egui::RichText::new(&entry.event).small());
+                                }
                             });
+
+                            // Render agent output block outside the horizontal layout
+                            if let Some(ref kind_label) = {
+                                let is_agent_event = entry.event.contains("passed")
+                                    || entry.event.contains("failed")
+                                    || entry.event.contains("error");
+                                if is_agent_event {
+                                    ["Format", "Lint", "Build", "Test"]
+                                        .iter()
+                                        .find(|k| entry.event.starts_with(*k))
+                                        .map(|k| k.to_string())
+                                } else {
+                                    None
+                                }
+                            } {
+                                let key = (cue.id, entry.timestamp.clone());
+                                if self.agent_output_expanded.contains(&key) {
+                                    let kind_str = kind_label.to_lowercase();
+                                    if let Some(run) = agent_runs
+                                        .iter()
+                                        .find(|r| {
+                                            r.agent_kind == kind_str
+                                                && r.started_at == entry.timestamp
+                                        })
+                                        .or_else(|| {
+                                            agent_runs.iter().find(|r| r.agent_kind == kind_str)
+                                        })
+                                    {
+                                        let output = if run.output.len() > 2000 {
+                                            format!(
+                                                "{}...\n(truncated, {} bytes total)",
+                                                &run.output[..2000],
+                                                run.output.len()
+                                            )
+                                        } else if run.output.trim().is_empty() {
+                                            "(no output)".to_string()
+                                        } else {
+                                            run.output.clone()
+                                        };
+                                        egui::Frame::none()
+                                            .inner_margin(egui::Margin::same(4.0))
+                                            .rounding(4.0)
+                                            .fill(self.semantic.selection_bg())
+                                            .show(ui, |ui| {
+                                                egui::ScrollArea::vertical()
+                                                    .max_height(200.0)
+                                                    .show(ui, |ui| {
+                                                        ui.label(
+                                                            egui::RichText::new(&output)
+                                                                .monospace()
+                                                                .small()
+                                                                .color(self.semantic.muted_text()),
+                                                        );
+                                                    });
+                                            });
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -574,6 +574,39 @@ impl Database {
         )?;
         Ok(self.conn.last_insert_rowid())
     }
+
+    /// Get agent run output for a specific cue, most recent first.
+    pub fn get_agent_runs_for_cue(&self, cue_id: i64) -> Result<Vec<AgentRunEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT agent_kind, status, output, duration_ms, started_at
+             FROM agent_runs WHERE cue_id = ?1 ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map(params![cue_id], |row| {
+            Ok(AgentRunEntry {
+                agent_kind: row.get(0)?,
+                status: row.get(1)?,
+                output: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                duration_ms: row.get::<_, i64>(3)? as u64,
+                started_at: row.get(4)?,
+            })
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+}
+
+/// An agent run entry returned by [`Database::get_agent_runs_for_cue`].
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct AgentRunEntry {
+    pub agent_kind: String,
+    pub status: String,
+    pub output: String,
+    pub duration_ms: u64,
+    pub started_at: String,
 }
 
 fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {

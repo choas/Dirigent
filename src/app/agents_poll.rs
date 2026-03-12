@@ -39,15 +39,15 @@ impl DirigentApp {
                 .latest_diagnostics
                 .insert(result.kind, result.diagnostics);
 
-            // Status bar message
+            // Status bar message + Activity log for associated cue
             let label = result.kind.label();
+            let dur = if result.duration_ms < 1000 {
+                format!("{}ms", result.duration_ms)
+            } else {
+                format!("{:.1}s", result.duration_ms as f64 / 1000.0)
+            };
             match result.status {
                 AgentStatus::Passed => {
-                    let dur = if result.duration_ms < 1000 {
-                        format!("{}ms", result.duration_ms)
-                    } else {
-                        format!("{:.1}s", result.duration_ms as f64 / 1000.0)
-                    };
                     self.set_status_message(format!("{} passed ({})", label, dur));
 
                     // After format passes, reload the current file to show reformatted code
@@ -66,6 +66,34 @@ impl DirigentApp {
                     self.set_status_message(format!("{} error", label));
                 }
                 _ => {}
+            }
+
+            // Log agent outcome to the cue's Activity logbook
+            if let Some(cue_id) = result.cue_id {
+                let event = match result.status {
+                    AgentStatus::Passed => format!("{} passed ({})", label, dur),
+                    AgentStatus::Failed => {
+                        // Include first line of output as a hint
+                        let hint = self
+                            .agent_state
+                            .latest_output
+                            .get(&result.kind)
+                            .and_then(|o| {
+                                o.lines()
+                                    .find(|l| !l.trim().is_empty())
+                                    .map(|l| l.chars().take(80).collect::<String>())
+                            })
+                            .unwrap_or_default();
+                        if hint.is_empty() {
+                            format!("{} failed ({})", label, dur)
+                        } else {
+                            format!("{} failed ({}) — {}", label, dur, hint)
+                        }
+                    }
+                    AgentStatus::Error => format!("{} error ({})", label, dur),
+                    _ => format!("{} completed ({})", label, dur),
+                };
+                let _ = self.db.log_activity(cue_id, &event);
             }
         }
     }
