@@ -1,0 +1,531 @@
+use eframe::egui;
+
+use super::super::{icon, CueAction, DirigentApp, SPACE_XS};
+use crate::db::{Cue, CueStatus};
+
+impl DirigentApp {
+    pub(in crate::app) fn render_cue_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+        status: CueStatus,
+    ) {
+        let fs = self.settings.font_size;
+        let avail_w = ui.available_width();
+        let frame_resp = self.semantic.card_frame().show(ui, |ui| {
+            ui.set_min_width(avail_w - 22.0);
+            // Cue text - inline editable for Inbox
+            let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
+            if is_editing {
+                let editing = self.editing_cue.as_mut().unwrap();
+                let response = ui.text_edit_multiline(&mut editing.text);
+                ui.horizontal(|ui| {
+                    if ui.small_button(icon("\u{2713} Save", fs)).clicked() {
+                        actions.push((
+                            cue.id,
+                            CueAction::SaveEdit(self.editing_cue.as_ref().unwrap().text.clone()),
+                        ));
+                    }
+                    if ui.small_button(icon("\u{2715} Cancel", fs)).clicked() {
+                        actions.push((cue.id, CueAction::CancelEdit));
+                    }
+                });
+                // Request focus only once when editing starts
+                let editing = self.editing_cue.as_mut().unwrap();
+                if !editing.focus_requested {
+                    response.request_focus();
+                    editing.focus_requested = true;
+                }
+            } else {
+                let label_response = ui.add(egui::Label::new(&cue.text).wrap());
+                // Double-click label to edit (Inbox/Backlog)
+                if matches!(status, CueStatus::Inbox | CueStatus::Backlog)
+                    && !is_editing
+                    && label_response.double_clicked()
+                {
+                    actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
+                }
+                // Single-click to show diff (Review/Done/Archived)
+                if matches!(
+                    status,
+                    CueStatus::Review | CueStatus::Done | CueStatus::Archived
+                ) && label_response.clicked()
+                {
+                    actions.push((cue.id, CueAction::ShowDiff(cue.id)));
+                }
+            }
+
+            // Source label badge and image count
+            let has_badge = cue.source_label.is_some() || !cue.attached_images.is_empty();
+            if has_badge {
+                ui.horizontal(|ui| {
+                    if let Some(ref label) = cue.source_label {
+                        let badge_color = source_label_color(label);
+                        let badge = egui::RichText::new(label)
+                            .small()
+                            .background_color(badge_color)
+                            .color(self.semantic.badge_text);
+                        ui.label(badge);
+                    }
+                    if !cue.attached_images.is_empty() {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} image{}",
+                                cue.attached_images.len(),
+                                if cue.attached_images.len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ))
+                            .small()
+                            .color(self.semantic.accent),
+                        );
+                    }
+                });
+            }
+
+            // File:line link or "Global" label
+            if cue.file_path.is_empty() {
+                ui.label(
+                    egui::RichText::new("Global")
+                        .small()
+                        .color(self.semantic.global_label()),
+                );
+            } else {
+                let location = if let Some(end) = cue.line_number_end {
+                    format!("{}:{}-{}", cue.file_path, cue.line_number, end)
+                } else {
+                    format!("{}:{}", cue.file_path, cue.line_number)
+                };
+                if ui
+                    .small_button(&location)
+                    .on_hover_text("Navigate to this location")
+                    .clicked()
+                {
+                    actions.push((
+                        cue.id,
+                        CueAction::Navigate(
+                            cue.file_path.clone(),
+                            cue.line_number,
+                            cue.line_number_end,
+                        ),
+                    ));
+                }
+            }
+
+            // Action buttons — separated from content zone
+            ui.add_space(SPACE_XS);
+            ui.horizontal_wrapped(|ui| {
+                match cue.status {
+                    CueStatus::Inbox => {
+                        if !is_editing {
+                            if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
+                                actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{25B6} Run", fs))
+                            .on_hover_text("Send to Claude")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
+                        }
+                        if ui
+                            .small_button(icon("\u{2713} Done", fs))
+                            .on_hover_text("Mark done (no Claude)")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
+                        }
+                        if ui
+                            .small_button(icon("\u{2193} Backlog", fs))
+                            .on_hover_text("Move to Backlog")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Backlog)));
+                        }
+                    }
+                    CueStatus::Ready => {
+                        let elapsed = self.format_elapsed(cue.id);
+                        let label = if elapsed.is_empty() {
+                            "\u{25CF} Running...".to_string()
+                        } else {
+                            format!("\u{25CF} Running... {}", elapsed)
+                        };
+                        if ui
+                            .small_button(icon(&label, fs).color(self.semantic.accent))
+                            .on_hover_text("View Claude's progress")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
+                        }
+                        ui.ctx()
+                            .request_repaint_after(super::super::ELAPSED_REPAINT);
+                        if ui
+                            .small_button(icon("\u{2715} Cancel", fs))
+                            .on_hover_text("Cancel and move back to Inbox")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Inbox)));
+                        }
+                    }
+                    CueStatus::Review => {
+                        if ui
+                            .small_button(icon("\u{25B6} Diff", fs))
+                            .on_hover_text("View the diff")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::ShowDiff(cue.id)));
+                        }
+                        if ui
+                            .small_button(icon("Log", fs))
+                            .on_hover_text("View Claude's output log")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
+                        }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{21A9} Reply", fs))
+                            .on_hover_text("Send feedback to Claude for another iteration")
+                            .clicked()
+                        {
+                            // Toggle reply input visibility
+                            if self.reply_inputs.contains_key(&cue.id) {
+                                self.reply_inputs.remove(&cue.id);
+                            } else {
+                                self.reply_inputs.insert(cue.id, String::new());
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{2713} Commit", fs))
+                            .on_hover_text("Commit the applied changes")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::CommitReview(cue.id)));
+                        }
+                        if ui
+                            .small_button(icon("\u{21BA} Revert", fs))
+                            .on_hover_text("Revert changes and move back to Inbox")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::RevertReview(cue.id)));
+                        }
+                    }
+                    CueStatus::Done => {
+                        ui.label(icon("\u{2713}", fs).color(self.semantic.success));
+                        if ui
+                            .small_button(icon("Log", fs))
+                            .on_hover_text("View Claude's output log")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
+                        }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{21A9} Reply", fs))
+                            .on_hover_text("Send follow-up feedback to Claude")
+                            .clicked()
+                        {
+                            // Toggle reply input visibility
+                            if self.reply_inputs.contains_key(&cue.id) {
+                                self.reply_inputs.remove(&cue.id);
+                            } else {
+                                self.reply_inputs.insert(cue.id, String::new());
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{2193} Archive", fs))
+                            .on_hover_text("Move to Archived")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Archived)));
+                        }
+                        if ui
+                            .small_button(icon("\u{21BA} Reopen", fs))
+                            .on_hover_text("Move back to Inbox")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Inbox)));
+                        }
+                    }
+                    CueStatus::Archived => {
+                        if ui
+                            .small_button(icon("Log", fs))
+                            .on_hover_text("View Claude's output log")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
+                        }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{21BA} Unarchive", fs))
+                            .on_hover_text("Move back to Done")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
+                        }
+                    }
+                    CueStatus::Backlog => {
+                        if !is_editing {
+                            if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
+                                actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
+                            }
+                        }
+                        if ui
+                            .small_button(icon("\u{2191} Inbox", fs))
+                            .on_hover_text("Move to Inbox")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Inbox)));
+                        }
+                        if ui
+                            .small_button(icon("\u{25B6} Run", fs))
+                            .on_hover_text("Send to Claude")
+                            .clicked()
+                        {
+                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
+                        }
+                    }
+                }
+
+                // Overflow menu
+                let more_btn = ui.small_button("\u{2026}").on_hover_text("More actions");
+                let popup_id = ui.make_persistent_id(("cue_more", cue.id));
+                if more_btn.clicked() {
+                    ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                }
+                egui::popup_below_widget(
+                    ui,
+                    popup_id,
+                    &more_btn,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(140.0);
+                        let is_expanded = self.logbook_expanded.contains(&cue.id);
+                        let activity_label = if is_expanded {
+                            "\u{25BE} Activity"
+                        } else {
+                            "\u{25B8} Activity"
+                        };
+                        if ui.button(activity_label).clicked() {
+                            if is_expanded {
+                                self.logbook_expanded.remove(&cue.id);
+                            } else {
+                                self.logbook_expanded.insert(cue.id);
+                            }
+                        }
+                        if ui.button(icon("\u{2715} Delete", fs)).clicked() {
+                            actions.push((cue.id, CueAction::Delete));
+                        }
+                    },
+                );
+            });
+
+            // Reply input field (visible when toggled for Review/Done cues)
+            if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {
+                ui.add_space(SPACE_XS);
+                let response = ui.add(
+                    egui::TextEdit::multiline(reply_text)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Describe what needs to change..."),
+                );
+                // Submit on Cmd+Enter
+                let submit = ui
+                    .small_button(icon("\u{25B6} Send", fs))
+                    .on_hover_text("Send feedback to Claude (also Cmd+Enter)")
+                    .clicked()
+                    || (response.has_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
+                if submit && !reply_text.trim().is_empty() {
+                    actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
+                }
+            }
+
+            // Activity logbook (shown when expanded via overflow menu)
+            if self.logbook_expanded.contains(&cue.id) {
+                if let Ok(entries) = self.db.get_activities(cue.id) {
+                    if entries.is_empty() {
+                        ui.label(
+                            egui::RichText::new("No activity yet")
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        );
+                    } else {
+                        // Fetch agent runs for this cue (for expandable output)
+                        let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
+
+                        for entry in &entries {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&entry.timestamp)
+                                        .small()
+                                        .color(self.semantic.muted_text()),
+                                );
+                                // Check if this is an agent event with output
+                                let is_agent_event = entry.event.contains("passed")
+                                    || entry.event.contains("failed")
+                                    || entry.event.contains("error");
+                                let agent_kind_for_event = if is_agent_event {
+                                    ["Format", "Lint", "Build", "Test"]
+                                        .iter()
+                                        .find(|k| entry.event.starts_with(*k))
+                                        .map(|k| k.to_string())
+                                } else {
+                                    None
+                                };
+
+                                if agent_kind_for_event.is_some() {
+                                    let key = (cue.id, entry.timestamp.clone());
+                                    let is_expanded = self.agent_output_expanded.contains(&key);
+                                    let arrow = if is_expanded { "\u{25BE}" } else { "\u{25B8}" };
+                                    if ui
+                                        .add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!(
+                                                    "{} {}",
+                                                    arrow, &entry.event
+                                                ))
+                                                .small(),
+                                            )
+                                            .sense(egui::Sense::click()),
+                                        )
+                                        .clicked()
+                                    {
+                                        if is_expanded {
+                                            self.agent_output_expanded.remove(&key);
+                                        } else {
+                                            self.agent_output_expanded.insert(key);
+                                        }
+                                    }
+                                } else {
+                                    ui.label(egui::RichText::new(&entry.event).small());
+                                }
+                            });
+
+                            // Render agent output block outside the horizontal layout
+                            if let Some(ref kind_label) = {
+                                let is_agent_event = entry.event.contains("passed")
+                                    || entry.event.contains("failed")
+                                    || entry.event.contains("error");
+                                if is_agent_event {
+                                    ["Format", "Lint", "Build", "Test"]
+                                        .iter()
+                                        .find(|k| entry.event.starts_with(*k))
+                                        .map(|k| k.to_string())
+                                } else {
+                                    None
+                                }
+                            } {
+                                let key = (cue.id, entry.timestamp.clone());
+                                if self.agent_output_expanded.contains(&key) {
+                                    let kind_str = kind_label.to_lowercase();
+                                    if let Some(run) = agent_runs
+                                        .iter()
+                                        .find(|r| {
+                                            r.agent_kind == kind_str
+                                                && r.started_at == entry.timestamp
+                                        })
+                                        .or_else(|| {
+                                            agent_runs.iter().find(|r| r.agent_kind == kind_str)
+                                        })
+                                    {
+                                        let output = if run.output.len() > 2000 {
+                                            format!(
+                                                "{}...\n(truncated, {} bytes total)",
+                                                &run.output[..2000],
+                                                run.output.len()
+                                            )
+                                        } else if run.output.trim().is_empty() {
+                                            "(no output)".to_string()
+                                        } else {
+                                            run.output.clone()
+                                        };
+                                        egui::Frame::none()
+                                            .inner_margin(egui::Margin::same(4.0))
+                                            .rounding(4.0)
+                                            .fill(self.semantic.selection_bg())
+                                            .show(ui, |ui| {
+                                                egui::ScrollArea::vertical()
+                                                    .max_height(200.0)
+                                                    .show(ui, |ui| {
+                                                        ui.label(
+                                                            egui::RichText::new(&output)
+                                                                .monospace()
+                                                                .small()
+                                                                .color(self.semantic.muted_text()),
+                                                        );
+                                                    });
+                                            });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Transition flash overlay when cue moves between columns
+        if let Some(&when) = self.cue_move_flash.get(&cue.id) {
+            let elapsed = when.elapsed().as_secs_f32();
+            if elapsed < 0.6 {
+                let alpha = ((0.6 - elapsed) / 0.6 * 50.0) as u8;
+                let [r, g, b, _] = self.semantic.accent.to_array();
+                ui.painter().rect_filled(
+                    frame_resp.response.rect,
+                    8.0,
+                    egui::Color32::from_rgba_premultiplied(r, g, b, alpha),
+                );
+                ui.ctx().request_repaint();
+            }
+        }
+
+        ui.add_space(SPACE_XS);
+    }
+}
+
+/// Pick a deterministic badge color based on the source label string.
+fn source_label_color(label: &str) -> egui::Color32 {
+    let hash = label
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let colors = [
+        egui::Color32::from_rgb(60, 120, 216), // royal blue
+        egui::Color32::from_rgb(163, 68, 168), // vivid purple
+        egui::Color32::from_rgb(206, 120, 36), // tangerine
+        egui::Color32::from_rgb(38, 154, 108), // emerald
+        egui::Color32::from_rgb(210, 60, 78),  // coral
+        egui::Color32::from_rgb(44, 138, 186), // cerulean
+        egui::Color32::from_rgb(188, 82, 148), // magenta
+        egui::Color32::from_rgb(108, 72, 190), // violet
+    ];
+    colors[(hash as usize) % colors.len()]
+}
