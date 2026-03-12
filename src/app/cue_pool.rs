@@ -503,6 +503,10 @@ impl DirigentApp {
                                 self.dismiss_central_overlays();
                                 self.claude.show_log = Some(cue_id);
                             }
+                            CueAction::ShowAgentRuns(cue_id) => {
+                                self.dismiss_central_overlays();
+                                self.show_agent_runs_for_cue = Some(cue_id);
+                            }
                             CueAction::CommitAll => {
                                 // Gather summaries from all Review cues
                                 let review_cues: Vec<&Cue> = self
@@ -749,6 +753,15 @@ impl DirigentApp {
                         {
                             actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
                         }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
+                        }
                         if ui
                             .small_button(icon("\u{21A9} Reply", fs))
                             .on_hover_text("Send feedback to Claude for another iteration")
@@ -785,6 +798,15 @@ impl DirigentApp {
                         {
                             actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
                         }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
+                        }
                         if ui
                             .small_button(icon("\u{21A9} Reply", fs))
                             .on_hover_text("Send follow-up feedback to Claude")
@@ -819,6 +841,15 @@ impl DirigentApp {
                             .clicked()
                         {
                             actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
+                        }
+                        if !self.settings.agents.is_empty() {
+                            if ui
+                                .small_button(icon("Agents", fs))
+                                .on_hover_text("View agent run logs (format, lint, build, test)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
+                            }
                         }
                         if ui
                             .small_button(icon("\u{21BA} Unarchive", fs))

@@ -86,6 +86,7 @@ enum CueAction {
     RevertReview(i64),
     ReplyReview(i64, String),
     ShowRunningLog(i64),
+    ShowAgentRuns(i64),
     CommitAll,
 }
 
@@ -230,6 +231,9 @@ pub struct DirigentApp {
 
     // Expanded agent output entries in activity logbook (agent_run IDs)
     agent_output_expanded: HashSet<(i64, String)>,
+
+    // Per-cue agent runs viewer (cue ID whose agent runs to show in central panel)
+    show_agent_runs_for_cue: Option<i64>,
 
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
@@ -406,6 +410,7 @@ impl DirigentApp {
             cue_move_flash: HashMap::new(),
             logbook_expanded: HashSet::new(),
             agent_output_expanded: HashSet::new(),
+            show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
         }
     }
@@ -493,6 +498,7 @@ impl DirigentApp {
         self.diff_review = None;
         self.claude.show_log = None;
         self.agent_state.show_output = None;
+        self.show_agent_runs_for_cue = None;
     }
 
     fn load_file(&mut self, path: PathBuf) {

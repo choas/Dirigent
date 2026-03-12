@@ -33,6 +33,12 @@ impl DirigentApp {
             return;
         }
 
+        // Per-cue agent runs in central panel
+        if self.show_agent_runs_for_cue.is_some() {
+            self.render_cue_agent_runs_central(ctx);
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.viewer.current_file.is_none() {
                 self.ensure_logo_texture(ctx);
