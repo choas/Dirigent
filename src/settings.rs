@@ -949,6 +949,10 @@ pub(crate) struct Settings {
     pub sources: Vec<SourceConfig>,
     #[serde(default = "default_playbook")]
     pub playbook: Vec<Play>,
+    /// Shell init snippet prepended to every agent command (e.g. `source ~/.zprofile`).
+    /// Solves the macOS GUI-app problem where PATH / JAVA_HOME etc. are not set.
+    #[serde(default)]
+    pub agent_shell_init: String,
     #[serde(default = "default_agents")]
     pub agents: Vec<AgentConfig>,
 }
@@ -989,6 +993,7 @@ impl Default for Settings {
             font_size: default_font_size(),
             sources: Vec::new(),
             playbook: default_playbook(),
+            agent_shell_init: String::new(),
             agents: default_agents(),
         }
     }

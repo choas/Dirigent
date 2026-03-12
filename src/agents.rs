@@ -154,6 +154,9 @@ pub(crate) struct AgentConfig {
     pub command: String,
     pub trigger: AgentTrigger,
     pub timeout_secs: u64,
+    /// Working directory relative to project root (empty = project root).
+    #[serde(default)]
+    pub working_dir: String,
 }
 
 pub(crate) fn default_agents() -> Vec<AgentConfig> {
@@ -225,6 +228,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cargo fmt".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -232,6 +236,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cargo clippy --message-format=json 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -239,6 +244,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cargo build --message-format=json 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -246,6 +252,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cargo test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::TypeScript => vec![
@@ -255,6 +262,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "npx prettier --write .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -262,6 +270,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "npx eslint . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -269,6 +278,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "npx tsc --noEmit 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -276,6 +286,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "npx jest 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Python => vec![
@@ -285,6 +296,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "black .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -292,6 +304,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "ruff check . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -299,6 +312,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "python -m py_compile *.py 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -306,6 +320,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "pytest 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Go => vec![
@@ -315,6 +330,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "gofmt -w .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -322,6 +338,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "golangci-lint run 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -329,6 +346,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "go build ./... 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -336,6 +354,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "go test ./... 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Java => vec![
@@ -345,6 +364,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mvn spotless:apply 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -352,6 +372,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mvn checkstyle:check 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -359,6 +380,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mvn compile 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -366,6 +388,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mvn test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::CSharp => vec![
@@ -375,6 +398,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "dotnet format 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -382,6 +406,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "dotnet format --verify-no-changes 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -389,6 +414,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "dotnet build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -396,6 +422,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "dotnet test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Ruby => vec![
@@ -405,6 +432,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "bundle exec rubocop -a 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -412,6 +440,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "bundle exec rubocop 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -419,6 +448,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "ruby -c **/*.rb 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -426,6 +456,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "bundle exec rspec 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Swift => vec![
@@ -435,6 +466,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "swift-format format -i -r . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -442,6 +474,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "swiftlint 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -449,6 +482,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "swift build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -456,6 +490,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "swift test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Kotlin => vec![
@@ -465,6 +500,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "ktlint --format 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -472,6 +508,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "ktlint 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -479,6 +516,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "./gradlew compileKotlin 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -486,6 +524,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "./gradlew test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Cpp => vec![
@@ -495,6 +534,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "find . -name '*.cpp' -o -name '*.h' | xargs clang-format -i".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -502,6 +542,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cppcheck --enable=all . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -509,6 +550,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "cmake --build build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -516,6 +558,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "ctest --test-dir build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Elixir => vec![
@@ -525,6 +568,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mix format".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -532,6 +576,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mix credo 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -539,6 +584,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mix compile 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -546,6 +592,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mix test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
         AgentLanguage::Zig => vec![
@@ -555,6 +602,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "zig fmt .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
@@ -562,6 +610,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "zig build 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
@@ -569,6 +618,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "zig build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
+                working_dir: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
@@ -576,6 +626,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "zig build test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
+                working_dir: String::new(),
             },
         ],
     }
@@ -651,19 +702,37 @@ impl AgentRunState {
 
 /// Execute a single agent command. This is meant to be called from a spawned
 /// thread — it blocks until the command finishes or times out.
+///
+/// `shell_init` is an optional shell snippet (from settings) prepended to the
+/// command so that macOS GUI apps can source profiles, set PATH, JAVA_HOME, etc.
 pub(crate) fn run_agent(
     config: &AgentConfig,
     project_root: &Path,
+    shell_init: &str,
     cue_id: Option<i64>,
     tx: &mpsc::Sender<AgentResult>,
 ) {
     let start = Instant::now();
     let kind = config.kind;
 
+    // Build effective command: optional shell init + the agent command
+    let effective_cmd = if shell_init.trim().is_empty() {
+        config.command.clone()
+    } else {
+        format!("{}\n{}", shell_init.trim(), config.command)
+    };
+
+    // Working directory: project root + optional subdirectory
+    let cwd = if config.working_dir.trim().is_empty() {
+        project_root.to_path_buf()
+    } else {
+        project_root.join(config.working_dir.trim())
+    };
+
     let result = Command::new("sh")
         .arg("-c")
-        .arg(&config.command)
-        .current_dir(project_root)
+        .arg(&effective_cmd)
+        .current_dir(&cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output();
@@ -725,6 +794,7 @@ pub(crate) fn trigger_agents(
     agents: &[AgentConfig],
     trigger: &AgentTrigger,
     project_root: &Path,
+    shell_init: &str,
     cue_id: Option<i64>,
     tx: &mpsc::Sender<AgentResult>,
     statuses: &mut HashMap<AgentKind, AgentStatus>,
@@ -749,10 +819,11 @@ pub(crate) fn trigger_agents(
 
         let config = config.clone();
         let root = project_root.to_path_buf();
+        let init = shell_init.to_string();
         let tx = tx.clone();
 
         std::thread::spawn(move || {
-            run_agent(&config, &root, cue_id, &tx);
+            run_agent(&config, &root, &init, cue_id, &tx);
         });
 
         count += 1;

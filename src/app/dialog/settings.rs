@@ -456,6 +456,22 @@ impl DirigentApp {
             if self.agents_expanded {
                 ui.add_space(SPACE_SM);
 
+                // Shell init (global, prepended to every agent command)
+                ui.label("Shell Init:");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.settings.agent_shell_init)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(2)
+                        .hint_text("e.g. source ~/.zprofile  (sets PATH, JAVA_HOME, …)")
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.label(
+                    egui::RichText::new("Prepended to every agent command. Use this when the macOS app doesn't inherit your shell environment.")
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+                ui.add_space(SPACE_SM);
+
                 // Initialize from language preset
                 ui.horizontal(|ui| {
                     ui.label("Language:");
@@ -508,6 +524,17 @@ impl DirigentApp {
                                         )
                                         .desired_width(300.0)
                                         .hint_text("shell command")
+                                        .font(egui::TextStyle::Monospace),
+                                    );
+                                    ui.end_row();
+
+                                    ui.label("Directory:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.settings.agents[i].working_dir,
+                                        )
+                                        .desired_width(200.0)
+                                        .hint_text("relative to repo root (empty = root)")
                                         .font(egui::TextStyle::Monospace),
                                     );
                                     ui.end_row();

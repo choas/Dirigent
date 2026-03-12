@@ -107,6 +107,7 @@ impl DirigentApp {
             &self.settings.agents,
             trigger,
             &self.project_root,
+            &self.settings.agent_shell_init,
             cue_id,
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
@@ -123,10 +124,11 @@ impl DirigentApp {
 
             let config = config.clone();
             let root = self.project_root.clone();
+            let init = self.settings.agent_shell_init.clone();
             let tx = self.agent_state.tx.clone();
 
             std::thread::spawn(move || {
-                agents::run_agent(&config, &root, None, &tx);
+                agents::run_agent(&config, &root, &init, None, &tx);
             });
         }
     }
