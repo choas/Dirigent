@@ -542,6 +542,7 @@ impl DirigentApp {
                                                 0 => AgentTrigger::AfterRun,
                                                 1 => AgentTrigger::AfterCommit,
                                                 2 => AgentTrigger::AfterAgent(AgentKind::Format),
+                                                3 => AgentTrigger::OnFileChange,
                                                 _ => AgentTrigger::Manual,
                                             };
                                         }

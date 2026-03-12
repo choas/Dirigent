@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use eframe::egui;
 
 use super::{
     icon, DiffReview, DirigentApp, FONT_SCALE_HEADING, FONT_SCALE_LINE_NUM, SPACE_MD, SPACE_SM,
 };
+use crate::agents::Severity;
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 
@@ -85,6 +86,28 @@ impl DirigentApp {
                     {
                         close_file = true;
                     }
+                    // Show diagnostic count if any
+                    {
+                        let mut err_count = 0usize;
+                        let mut warn_count = 0usize;
+                        for diags in self.agent_state.latest_diagnostics.values() {
+                            for d in diags {
+                                if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                                    match d.severity {
+                                        crate::agents::Severity::Error => err_count += 1,
+                                        crate::agents::Severity::Warning => warn_count += 1,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        if err_count > 0 {
+                            ui.label(egui::RichText::new(format!("{} errors", err_count)).small().color(self.semantic.danger));
+                        }
+                        if warn_count > 0 {
+                            ui.label(egui::RichText::new(format!("{} warnings", warn_count)).small().color(self.semantic.warning));
+                        }
+                    }
                     ui.label(format!("{} lines", self.viewer.content.len()));
                     if is_dirty {
                         if ui
@@ -139,6 +162,37 @@ impl DirigentApp {
             let num_lines = self.viewer.content.len();
             let line_height = 16.0;
 
+            // Build diagnostic lookup: line_num -> worst severity for this file
+            let diag_lines: HashMap<usize, Severity> = {
+                let mut map: HashMap<usize, Severity> = HashMap::new();
+                for diags in self.agent_state.latest_diagnostics.values() {
+                    for d in diags {
+                        if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                            let entry = map.entry(d.line).or_insert(Severity::Info);
+                            // Escalate: Error > Warning > Info
+                            match (&entry, &d.severity) {
+                                (Severity::Info, Severity::Warning | Severity::Error) => *entry = d.severity,
+                                (Severity::Warning, Severity::Error) => *entry = d.severity,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                map
+            };
+            // Collect diagnostic messages for tooltip per line
+            let diag_messages: HashMap<usize, Vec<String>> = {
+                let mut map: HashMap<usize, Vec<String>> = HashMap::new();
+                for diags in self.agent_state.latest_diagnostics.values() {
+                    for d in diags {
+                        if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                            map.entry(d.line).or_default().push(d.message.clone());
+                        }
+                    }
+                }
+                map
+            };
+
             let ext = file_path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -150,6 +204,7 @@ impl DirigentApp {
             let mut new_sel_end = sel_end;
             let mut submit_cue = false;
             let mut clear_selection = false;
+            let mut fix_diagnostic_line: Option<usize> = None;
 
             // Handle scroll-to-line requests (from search, cue navigation, etc.)
             let scroll_offset = self.viewer.scroll_to_line.take().map(|target_line| {
@@ -189,7 +244,27 @@ impl DirigentApp {
                                     ui.label(icon("\u{25CF}", self.settings.font_size).color(self.semantic.warning));
                                 }
                                 None => {
-                                    ui.label(" ");
+                                    // Diagnostic gutter marker (error/warning/info)
+                                    if let Some(sev) = diag_lines.get(&line_num) {
+                                        let (sym, color) = match sev {
+                                            Severity::Error => ("\u{25CF}", self.semantic.danger),
+                                            Severity::Warning => ("\u{25CF}", self.semantic.warning),
+                                            Severity::Info => ("\u{25CB}", self.semantic.accent),
+                                        };
+                                        let resp = ui.add(
+                                            egui::Label::new(icon(sym, self.settings.font_size).color(color))
+                                                .sense(egui::Sense::click()),
+                                        );
+                                        if let Some(msgs) = diag_messages.get(&line_num) {
+                                            let tooltip = format!("{}\n\nClick to create a Fix cue", msgs.join("\n"));
+                                            resp.clone().on_hover_text(tooltip);
+                                        }
+                                        if resp.clicked() {
+                                            fix_diagnostic_line = Some(line_num);
+                                        }
+                                    } else {
+                                        ui.label(" ");
+                                    }
                                 }
                             }
 
@@ -367,6 +442,19 @@ impl DirigentApp {
             if clear_selection {
                 new_sel_start = None;
                 new_sel_end = None;
+            }
+
+            // Handle diagnostic "Fix" click: select the line and pre-fill cue input
+            if let Some(line) = fix_diagnostic_line {
+                if let Some(msgs) = diag_messages.get(&line) {
+                    let fix_text = format!("Fix: {}", msgs.join("; "));
+                    new_sel_start = Some(line);
+                    new_sel_end = Some(line);
+                    self.viewer.selection_start = Some(line);
+                    self.viewer.selection_end = Some(line);
+                    self.viewer.cue_input = fix_text;
+                    self.viewer.cue_images.clear();
+                }
             }
 
             if new_sel_start != self.viewer.selection_start || new_sel_end != self.viewer.selection_end {

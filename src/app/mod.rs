@@ -239,6 +239,9 @@ pub struct DirigentApp {
 
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
+
+    // Agent run history cleanup tracking
+    last_agent_cleanup: Instant,
 }
 
 fn start_fs_watcher(
@@ -420,6 +423,7 @@ impl DirigentApp {
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
+            last_agent_cleanup: Instant::now(),
         }
     }
 
@@ -676,6 +680,8 @@ impl eframe::App for DirigentApp {
                     self.viewer.content = content.lines().map(String::from).collect();
                 }
             }
+            // Trigger agents configured with OnFileChange
+            self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None);
         }
 
         // Reap finished/panicked worker threads
@@ -698,6 +704,12 @@ impl eframe::App for DirigentApp {
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
+
+        // Periodic agent run history cleanup (every hour, keep 200 runs per kind, 64KB output max)
+        if self.last_agent_cleanup.elapsed() >= Duration::from_secs(3600) {
+            self.last_agent_cleanup = Instant::now();
+            let _ = self.db.cleanup_agent_runs(200, 65536);
+        }
 
         // Poll external sources for new cues
         self.poll_sources();

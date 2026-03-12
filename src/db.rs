@@ -651,6 +651,35 @@ impl Database {
         }
         Ok(entries)
     }
+
+    /// Prune old agent runs, keeping only the most recent `keep_per_kind` runs per agent kind.
+    /// Also truncates large output fields to `max_output_bytes`.
+    pub fn cleanup_agent_runs(
+        &self,
+        keep_per_kind: usize,
+        max_output_bytes: usize,
+    ) -> Result<usize> {
+        let mut total_deleted = 0usize;
+        let kinds = ["format", "lint", "build", "test"];
+        for kind in &kinds {
+            // Delete old runs beyond the retention limit
+            let deleted = self.conn.execute(
+                "DELETE FROM agent_runs WHERE agent_kind = ?1 AND id NOT IN (
+                    SELECT id FROM agent_runs WHERE agent_kind = ?1 ORDER BY id DESC LIMIT ?2
+                )",
+                params![kind, keep_per_kind as i64],
+            )?;
+            total_deleted += deleted;
+        }
+
+        // Truncate large output fields
+        self.conn.execute(
+            "UPDATE agent_runs SET output = SUBSTR(output, 1, ?1) WHERE LENGTH(output) > ?1",
+            params![max_output_bytes as i64],
+        )?;
+
+        Ok(total_deleted)
+    }
 }
 
 /// An agent run entry returned by [`Database::get_agent_runs_for_cue`].

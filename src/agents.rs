@@ -1,9 +1,10 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // Agent kinds
@@ -70,6 +71,8 @@ pub(crate) enum AgentTrigger {
     AfterCommit,
     /// Run automatically after the specified agent completes.
     AfterAgent(AgentKind),
+    /// Run automatically when files change on disk (debounced with the file watcher).
+    OnFileChange,
     /// Only run when manually triggered.
     Manual,
 }
@@ -80,6 +83,7 @@ impl AgentTrigger {
             AgentTrigger::AfterRun => "After Run",
             AgentTrigger::AfterCommit => "After Commit",
             AgentTrigger::AfterAgent(_) => "After Agent",
+            AgentTrigger::OnFileChange => "On File Change",
             AgentTrigger::Manual => "Manual",
         }
     }
@@ -90,6 +94,7 @@ impl AgentTrigger {
             AgentTrigger::AfterRun,
             AgentTrigger::AfterCommit,
             AgentTrigger::AfterAgent(AgentKind::Format), // placeholder
+            AgentTrigger::OnFileChange,
             AgentTrigger::Manual,
         ]
     }
@@ -100,7 +105,8 @@ impl AgentTrigger {
             AgentTrigger::AfterRun => 0,
             AgentTrigger::AfterCommit => 1,
             AgentTrigger::AfterAgent(_) => 2,
-            AgentTrigger::Manual => 3,
+            AgentTrigger::OnFileChange => 3,
+            AgentTrigger::Manual => 4,
         }
     }
 }
@@ -728,6 +734,7 @@ pub(crate) fn run_agent(
 ) {
     let start = Instant::now();
     let kind = config.kind;
+    let timeout = Duration::from_secs(config.timeout_secs);
 
     // Build effective command: optional shell init + the agent command
     let effective_cmd = if shell_init.trim().is_empty() {
@@ -743,50 +750,89 @@ pub(crate) fn run_agent(
         project_root.join(config.working_dir.trim())
     };
 
-    let result = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(&effective_cmd)
         .current_dir(&cwd)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
+        .stderr(Stdio::piped());
 
-    let duration_ms = start.elapsed().as_millis() as u64;
+    // On Unix, create a new process group so we can kill the entire tree on timeout
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let combined = if stderr.is_empty() {
-                stdout.clone()
-            } else if stdout.is_empty() {
-                stderr.clone()
-            } else {
-                format!("{}\n{}", stdout, stderr)
-            };
+    let child = cmd.spawn();
 
-            let status = if output.status.success() {
-                AgentStatus::Passed
-            } else {
-                AgentStatus::Failed
-            };
+    match child {
+        Ok(mut child) => {
+            // Wait with timeout enforcement
+            let result = wait_with_timeout(&mut child, timeout);
+            let duration_ms = start.elapsed().as_millis() as u64;
 
-            // Parse diagnostics from cargo JSON output (for lint/build)
-            let diagnostics = match kind {
-                AgentKind::Lint | AgentKind::Build => parse_cargo_diagnostics(&stdout),
-                _ => Vec::new(),
-            };
+            match result {
+                WaitResult::Completed(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let combined = if stderr.is_empty() {
+                        stdout.clone()
+                    } else if stdout.is_empty() {
+                        stderr.clone()
+                    } else {
+                        format!("{}\n{}", stdout, stderr)
+                    };
 
-            let _ = tx.send(AgentResult {
-                kind,
-                cue_id,
-                status,
-                output: combined,
-                diagnostics,
-                duration_ms,
-            });
+                    let status = if output.status.success() {
+                        AgentStatus::Passed
+                    } else {
+                        AgentStatus::Failed
+                    };
+
+                    // Parse diagnostics from output (cargo JSON for Rust, generic patterns for others)
+                    let diagnostics = match kind {
+                        AgentKind::Lint | AgentKind::Build | AgentKind::Test => {
+                            let cargo_diags = parse_cargo_diagnostics(&stdout);
+                            if cargo_diags.is_empty() {
+                                parse_generic_diagnostics(&combined)
+                            } else {
+                                cargo_diags
+                            }
+                        }
+                        _ => Vec::new(),
+                    };
+
+                    let _ = tx.send(AgentResult {
+                        kind,
+                        cue_id,
+                        status,
+                        output: combined,
+                        diagnostics,
+                        duration_ms,
+                    });
+                }
+                WaitResult::TimedOut => {
+                    // Kill the process group on timeout
+                    kill_process_tree(&child);
+                    let _ = child.wait(); // reap zombie
+                    let _ = tx.send(AgentResult {
+                        kind,
+                        cue_id,
+                        status: AgentStatus::Error,
+                        output: format!(
+                            "Agent timed out after {}s (limit: {}s)",
+                            duration_ms / 1000,
+                            config.timeout_secs
+                        ),
+                        diagnostics: Vec::new(),
+                        duration_ms,
+                    });
+                }
+            }
         }
         Err(e) => {
+            let duration_ms = start.elapsed().as_millis() as u64;
             let _ = tx.send(AgentResult {
                 kind,
                 cue_id,
@@ -796,6 +842,71 @@ pub(crate) fn run_agent(
                 duration_ms,
             });
         }
+    }
+}
+
+enum WaitResult {
+    Completed(std::process::Output),
+    TimedOut,
+}
+
+/// Wait for a child process with a timeout, polling every 100ms.
+fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> WaitResult {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Process exited — collect output
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = out.read_to_end(&mut stdout);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = err.read_to_end(&mut stderr);
+                }
+                return WaitResult::Completed(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                // Still running
+                if start.elapsed() >= timeout {
+                    return WaitResult::TimedOut;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => {
+                return WaitResult::TimedOut;
+            }
+        }
+    }
+}
+
+/// Kill the entire process tree (process group) on Unix, or just the child on other platforms.
+fn kill_process_tree(child: &std::process::Child) {
+    let pid = child.id();
+    #[cfg(unix)]
+    {
+        // Kill the entire process group (negative PID)
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGTERM);
+        }
+        // Give processes a moment to clean up, then force kill
+        std::thread::sleep(Duration::from_millis(500));
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid; // suppress unused warning
+                     // On non-Unix, just kill the direct child (best effort)
+                     // child.kill() requires &mut, so we can't call it here
     }
 }
 
@@ -909,6 +1020,81 @@ fn parse_cargo_diagnostics(output: &str) -> Vec<Diagnostic> {
     diagnostics
 }
 
+// ---------------------------------------------------------------------------
+// Generic diagnostic parser (file:line:col: severity: message)
+// ---------------------------------------------------------------------------
+
+/// Parse diagnostics from generic compiler/linter output using common patterns:
+/// - `file:line:col: error: message` (gcc, clang, rustc, tsc, swiftc)
+/// - `file:line:col: warning: message`
+/// - `file:line: error: message` (without column)
+/// - `file(line,col): error message` (MSVC-style)
+/// - `file:line: message` (generic, treated as error if process failed)
+fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // Pattern: file:line:col: severity: message
+    // Matches: src/main.rs:10:5: error: something went wrong
+    //          src/app.ts(15,3): error TS2345: something
+    let re = Regex::new(
+        r"(?m)^(.+?):(\d+)(?::(\d+))?:\s*(?:(error|warning|warn|info|note|hint))(?:\[.*?\])?:\s*(.+)$"
+    ).unwrap();
+
+    // MSVC / TypeScript pattern: file(line,col): error CODE: message
+    let re_paren =
+        Regex::new(r"(?m)^(.+?)\((\d+),(\d+)\):\s*(?:(error|warning))(?:\s+\w+)?:\s*(.+)$")
+            .unwrap();
+
+    for cap in re.captures_iter(output) {
+        let file = cap[1].to_string();
+        // Skip lines that look like URLs or stack traces
+        if file.starts_with("http") || file.starts_with("    ") || file.starts_with("\t") {
+            continue;
+        }
+        let line: usize = cap[2].parse().unwrap_or(0);
+        if line == 0 {
+            continue;
+        }
+        let col = cap.get(3).and_then(|m| m.as_str().parse().ok());
+        let severity = match &cap[4] {
+            "error" => Severity::Error,
+            "warning" | "warn" => Severity::Warning,
+            _ => Severity::Info,
+        };
+        let message = cap[5].trim().to_string();
+        diagnostics.push(Diagnostic {
+            file,
+            line,
+            col,
+            message,
+            severity,
+        });
+    }
+
+    for cap in re_paren.captures_iter(output) {
+        let file = cap[1].to_string();
+        let line: usize = cap[2].parse().unwrap_or(0);
+        if line == 0 {
+            continue;
+        }
+        let col: Option<usize> = cap[3].parse().ok();
+        let severity = match &cap[4] {
+            "error" => Severity::Error,
+            _ => Severity::Warning,
+        };
+        let message = cap[5].trim().to_string();
+        diagnostics.push(Diagnostic {
+            file,
+            line,
+            col,
+            message,
+            severity,
+        });
+    }
+
+    diagnostics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,5 +1141,51 @@ mod tests {
     fn default_agents_is_empty() {
         let agents = default_agents();
         assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn parse_generic_gcc_style() {
+        let output = "src/main.c:42:10: error: expected ';' after expression\n";
+        let diags = parse_generic_diagnostics(output);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].file, "src/main.c");
+        assert_eq!(diags[0].line, 42);
+        assert_eq!(diags[0].col, Some(10));
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].message, "expected ';' after expression");
+    }
+
+    #[test]
+    fn parse_generic_warning() {
+        let output = "lib/utils.py:15:1: warning: unused import 'os'\n";
+        let diags = parse_generic_diagnostics(output);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn parse_generic_no_column() {
+        let output = "src/app.rs:100: error: something broke\n";
+        let diags = parse_generic_diagnostics(output);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].col, None);
+    }
+
+    #[test]
+    fn parse_generic_msvc_style() {
+        let output =
+            "src/app.ts(15,3): error TS2345: Argument of type 'string' is not assignable\n";
+        let diags = parse_generic_diagnostics(output);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].file, "src/app.ts");
+        assert_eq!(diags[0].line, 15);
+        assert_eq!(diags[0].col, Some(3));
+        assert_eq!(diags[0].severity, Severity::Error);
+    }
+
+    #[test]
+    fn parse_generic_empty() {
+        assert!(parse_generic_diagnostics("").is_empty());
+        assert!(parse_generic_diagnostics("all good!").is_empty());
     }
 }
