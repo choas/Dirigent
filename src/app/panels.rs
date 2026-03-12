@@ -145,7 +145,11 @@ impl DirigentApp {
                 ui.separator();
 
                 // Git Log collapsible section
-                let header_text = format!("Git Log ({})", self.git.commit_history.len());
+                let header_text = format!(
+                    "Git Log ({}/{})",
+                    self.git.commit_history.len(),
+                    self.git.commit_history_total
+                );
                 let header_resp = egui::CollapsingHeader::new(header_text)
                     .default_open(self.git.show_log)
                     .show(ui, |ui| {

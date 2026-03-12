@@ -201,6 +201,21 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
     commits
 }
 
+pub(crate) fn count_commits(path: &Path) -> usize {
+    let repo = match Repository::discover(path) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    let mut revwalk = match repo.revwalk() {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    if revwalk.push_head().is_err() {
+        return 0;
+    }
+    revwalk.count()
+}
+
 pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
     use std::process::Command;
     let output = Command::new("git")

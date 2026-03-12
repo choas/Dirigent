@@ -139,6 +139,7 @@ pub(super) struct GitState {
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
     pub(super) commit_history: Vec<git::CommitInfo>,
+    pub(super) commit_history_total: usize,
     pub(super) commit_history_limit: usize,
     pub(super) show_log: bool,
     pub(super) worktrees: Vec<git::WorktreeInfo>,
@@ -286,6 +287,7 @@ impl DirigentApp {
             git_info,
             dirty_files,
             commit_history,
+            commit_history_total,
             worktrees,
             mut _fs_watcher,
         ) = if skip_scan {
@@ -297,6 +299,7 @@ impl DirigentApp {
                 None,
                 HashMap::new(),
                 Vec::new(),
+                0_usize,
                 Vec::new(),
                 None,
             )
@@ -307,6 +310,7 @@ impl DirigentApp {
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
             let commit_history = git::read_commit_history(&project_root, 10);
+            let commit_history_total = git::count_commits(&project_root);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
             (
                 file_tree,
@@ -315,6 +319,7 @@ impl DirigentApp {
                 git_info,
                 dirty_files,
                 commit_history,
+                commit_history_total,
                 worktrees,
                 None,
             )
@@ -366,6 +371,7 @@ impl DirigentApp {
                 info: git_info,
                 dirty_files,
                 commit_history,
+                commit_history_total,
                 commit_history_limit: 10,
                 show_log: false,
                 worktrees,
@@ -492,6 +498,7 @@ impl DirigentApp {
     fn reload_commit_history(&mut self) {
         self.git.commit_history =
             git::read_commit_history(&self.project_root, self.git.commit_history_limit);
+        self.git.commit_history_total = git::count_commits(&self.project_root);
     }
 
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
@@ -598,6 +605,7 @@ impl DirigentApp {
         self.viewer.current_file = None;
         self.git.commit_history_limit = 10;
         self.git.commit_history = git::read_commit_history(&self.project_root, 10);
+        self.git.commit_history_total = git::count_commits(&self.project_root);
         self.viewer.content.clear();
         self.viewer.selection_start = None;
         self.viewer.selection_end = None;
