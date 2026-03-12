@@ -472,26 +472,6 @@ impl DirigentApp {
                 );
                 ui.add_space(SPACE_SM);
 
-                // Initialize from language preset
-                ui.horizontal(|ui| {
-                    ui.label("Language:");
-                    egui::ComboBox::from_id_salt("agent_init_language")
-                        .selected_text(self.agents_init_language.label())
-                        .show_ui(ui, |ui| {
-                            for lang in AgentLanguage::all() {
-                                ui.selectable_value(
-                                    &mut self.agents_init_language,
-                                    *lang,
-                                    lang.label(),
-                                );
-                            }
-                        });
-                    if ui.button("Initialize").clicked() {
-                        self.settings.agents = agents_for_language(self.agents_init_language);
-                    }
-                });
-                ui.add_space(SPACE_SM);
-
                 let card_width = ui.available_width();
                 let mut delete_idx: Option<usize> = None;
                 let mut view_log_kind: Option<crate::agents::AgentKind> = None;
@@ -667,6 +647,26 @@ impl DirigentApp {
                     self.agent_state.return_to_settings = true;
                     close = true;
                 }
+
+                // Initialize from language preset
+                ui.add_space(SPACE_SM);
+                ui.horizontal(|ui| {
+                    ui.label("Language:");
+                    egui::ComboBox::from_id_salt("agent_init_language")
+                        .selected_text(self.agents_init_language.label())
+                        .show_ui(ui, |ui| {
+                            for lang in AgentLanguage::all() {
+                                ui.selectable_value(
+                                    &mut self.agents_init_language,
+                                    *lang,
+                                    lang.label(),
+                                );
+                            }
+                        });
+                    if ui.button("Initialize").clicked() {
+                        self.settings.agents = agents_for_language(self.agents_init_language);
+                    }
+                });
             }
 
             // Playbook section
