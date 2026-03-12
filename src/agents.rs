@@ -142,7 +142,7 @@ pub(crate) struct AgentConfig {
 }
 
 pub(crate) fn default_agents() -> Vec<AgentConfig> {
-    agents_for_language(AgentLanguage::Rust)
+    Vec::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -845,13 +845,8 @@ mod tests {
     }
 
     #[test]
-    fn default_agents_has_format_and_lint() {
+    fn default_agents_is_empty() {
         let agents = default_agents();
-        assert!(agents.iter().any(|a| a.kind == AgentKind::Format));
-        assert!(agents.iter().any(|a| a.kind == AgentKind::Lint));
-        // Format is enabled by default
-        let fmt = agents.iter().find(|a| a.kind == AgentKind::Format).unwrap();
-        assert!(fmt.enabled);
-        assert_eq!(fmt.trigger, AgentTrigger::AfterRun);
+        assert!(agents.is_empty());
     }
 }

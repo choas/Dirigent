@@ -381,8 +381,9 @@ impl DirigentApp {
                 }
                 ui.label(
                     egui::RichText::new(format!(
-                        "({} agents)",
-                        self.settings.agents.iter().filter(|a| a.enabled).count()
+                        "{}/{}",
+                        self.settings.agents.iter().filter(|a| a.enabled).count(),
+                        self.settings.agents.len()
                     ))
                     .small()
                     .color(self.semantic.secondary_text),
