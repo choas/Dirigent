@@ -784,10 +784,18 @@ pub(crate) fn run_agent(
                         format!("{}\n{}", stdout, stderr)
                     };
 
-                    let status = if output.status.success() {
-                        AgentStatus::Passed
-                    } else {
-                        AgentStatus::Failed
+                    let status = match kind {
+                        // Lint & Format: a completed run is always "passed" —
+                        // findings are reported via diagnostics, not as agent failure.
+                        AgentKind::Lint | AgentKind::Format => AgentStatus::Passed,
+                        // Build & Test: exit code determines pass/fail.
+                        _ => {
+                            if output.status.success() {
+                                AgentStatus::Passed
+                            } else {
+                                AgentStatus::Failed
+                            }
+                        }
                     };
 
                     // Parse diagnostics from output (cargo JSON for Rust, generic patterns for others)
