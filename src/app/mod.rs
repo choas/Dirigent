@@ -139,6 +139,7 @@ pub(super) struct GitState {
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
     pub(super) commit_history: Vec<git::CommitInfo>,
+    pub(super) commit_history_limit: usize,
     pub(super) show_log: bool,
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
@@ -305,7 +306,7 @@ impl DirigentApp {
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
-            let commit_history = git::read_commit_history(&project_root, 50);
+            let commit_history = git::read_commit_history(&project_root, 10);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
             (
                 file_tree,
@@ -365,6 +366,7 @@ impl DirigentApp {
                 info: git_info,
                 dirty_files,
                 commit_history,
+                commit_history_limit: 10,
                 show_log: false,
                 worktrees,
                 new_worktree_name: String::new(),
@@ -488,7 +490,8 @@ impl DirigentApp {
     }
 
     fn reload_commit_history(&mut self) {
-        self.git.commit_history = git::read_commit_history(&self.project_root, 50);
+        self.git.commit_history =
+            git::read_commit_history(&self.project_root, self.git.commit_history_limit);
     }
 
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
@@ -593,7 +596,8 @@ impl DirigentApp {
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.viewer.current_file = None;
-        self.git.commit_history = git::read_commit_history(&self.project_root, 50);
+        self.git.commit_history_limit = 10;
+        self.git.commit_history = git::read_commit_history(&self.project_root, 10);
         self.viewer.content.clear();
         self.viewer.selection_start = None;
         self.viewer.selection_end = None;

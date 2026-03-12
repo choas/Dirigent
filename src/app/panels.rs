@@ -150,6 +150,7 @@ impl DirigentApp {
                     .default_open(self.git.show_log)
                     .show(ui, |ui| {
                         let mut clicked_commit: Option<(String, String, String)> = None;
+                        let mut load_more = false;
                         egui::ScrollArea::vertical()
                             .id_salt("git_log_scroll")
                             .show(ui, |ui| {
@@ -182,7 +183,25 @@ impl DirigentApp {
                                         ));
                                     }
                                 }
+                                // Show "Load More" if we might have more commits
+                                if self.git.commit_history.len() == self.git.commit_history_limit {
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .button(
+                                            egui::RichText::new("Load More…")
+                                                .small()
+                                                .color(ui.visuals().hyperlink_color),
+                                        )
+                                        .clicked()
+                                    {
+                                        load_more = true;
+                                    }
+                                }
                             });
+                        if load_more {
+                            self.git.commit_history_limit += 10;
+                            self.reload_commit_history();
+                        }
                         clicked_commit
                     });
                 self.git.show_log = header_resp.fully_open();
