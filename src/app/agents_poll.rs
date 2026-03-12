@@ -1,4 +1,4 @@
-use crate::agents::{self, AgentKind, AgentStatus, AgentTrigger};
+use crate::agents::{self, AgentKind, AgentStatus, AgentTrigger, LastRunInfo};
 
 use super::DirigentApp;
 
@@ -32,6 +32,14 @@ impl DirigentApp {
 
             // Update runtime state
             self.agent_state.statuses.insert(result.kind, result.status);
+            self.agent_state.last_run.insert(
+                result.kind,
+                LastRunInfo {
+                    status: result.status,
+                    duration_ms: result.duration_ms,
+                    finished_at: std::time::Instant::now(),
+                },
+            );
             self.agent_state
                 .latest_output
                 .insert(result.kind, result.output);

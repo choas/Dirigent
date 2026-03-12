@@ -607,9 +607,8 @@ impl DirigentApp {
                                 if ui.small_button("View Logs").clicked() {
                                     view_log_kind = Some(self.settings.agents[i].kind);
                                 }
-                                if let Some(status) =
-                                    self.agent_state.statuses.get(&self.settings.agents[i].kind)
-                                {
+                                let agent_kind = self.settings.agents[i].kind;
+                                if let Some(status) = self.agent_state.statuses.get(&agent_kind) {
                                     let (icon_str, color) = match status {
                                         crate::agents::AgentStatus::Running => {
                                             ("\u{21BB} running", self.semantic.accent)
@@ -632,6 +631,29 @@ impl DirigentApp {
                                                 .color(color),
                                         );
                                     }
+                                }
+                                // Show last run info (duration + time ago)
+                                if let Some(info) = self.agent_state.last_run.get(&agent_kind) {
+                                    let dur = if info.duration_ms < 1000 {
+                                        format!("{}ms", info.duration_ms)
+                                    } else {
+                                        format!("{:.1}s", info.duration_ms as f64 / 1000.0)
+                                    };
+                                    let ago_secs = info.finished_at.elapsed().as_secs();
+                                    let ago = if ago_secs < 5 {
+                                        "just now".to_string()
+                                    } else if ago_secs < 60 {
+                                        format!("{}s ago", ago_secs)
+                                    } else if ago_secs < 3600 {
+                                        format!("{}m ago", ago_secs / 60)
+                                    } else {
+                                        format!("{}h ago", ago_secs / 3600)
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("{} \u{2022} {}", dur, ago))
+                                            .small()
+                                            .color(self.semantic.tertiary_text),
+                                    );
                                 }
                             });
                         });

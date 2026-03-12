@@ -669,6 +669,14 @@ pub(crate) struct AgentResult {
 // Agent run state (lives inside DirigentApp)
 // ---------------------------------------------------------------------------
 
+/// Info about the most recent completed run for an agent.
+#[allow(dead_code)]
+pub(crate) struct LastRunInfo {
+    pub status: AgentStatus,
+    pub duration_ms: u64,
+    pub finished_at: Instant,
+}
+
 pub(crate) struct AgentRunState {
     pub tx: mpsc::Sender<AgentResult>,
     pub rx: mpsc::Receiver<AgentResult>,
@@ -678,6 +686,8 @@ pub(crate) struct AgentRunState {
     pub latest_output: HashMap<AgentKind, String>,
     /// Latest diagnostics per agent kind.
     pub latest_diagnostics: HashMap<AgentKind, Vec<Diagnostic>>,
+    /// Info about the last completed run per agent kind.
+    pub last_run: HashMap<AgentKind, LastRunInfo>,
     /// Which agent's output panel is currently shown (None = hidden).
     pub show_output: Option<AgentKind>,
     /// When true, the Back button in agent log returns to settings.
@@ -693,6 +703,7 @@ impl AgentRunState {
             statuses: HashMap::new(),
             latest_output: HashMap::new(),
             latest_diagnostics: HashMap::new(),
+            last_run: HashMap::new(),
             show_output: None,
             return_to_settings: false,
         }
