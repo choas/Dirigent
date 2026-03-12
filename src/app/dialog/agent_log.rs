@@ -137,6 +137,10 @@ impl DirigentApp {
 
         if close {
             self.agent_state.show_output = None;
+            if self.agent_state.return_to_settings {
+                self.agent_state.return_to_settings = false;
+                self.show_settings = true;
+            }
         }
     }
 }

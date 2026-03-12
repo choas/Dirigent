@@ -680,6 +680,8 @@ pub(crate) struct AgentRunState {
     pub latest_diagnostics: HashMap<AgentKind, Vec<Diagnostic>>,
     /// Which agent's output panel is currently shown (None = hidden).
     pub show_output: Option<AgentKind>,
+    /// When true, the Back button in agent log returns to settings.
+    pub return_to_settings: bool,
 }
 
 impl AgentRunState {
@@ -692,6 +694,7 @@ impl AgentRunState {
             latest_output: HashMap::new(),
             latest_diagnostics: HashMap::new(),
             show_output: None,
+            return_to_settings: false,
         }
     }
 }

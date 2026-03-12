@@ -642,6 +642,7 @@ impl DirigentApp {
                 }
                 if let Some(kind) = view_log_kind {
                     self.agent_state.show_output = Some(kind);
+                    self.agent_state.return_to_settings = true;
                     close = true;
                 }
             }
