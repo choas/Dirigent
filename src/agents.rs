@@ -878,26 +878,41 @@ enum WaitResult {
 }
 
 /// Wait for a child process with a timeout, polling every 100ms.
+/// Drains stdout/stderr in background threads to avoid pipe buffer deadlocks.
 fn wait_with_timeout(
     child: &mut std::process::Child,
     timeout: Duration,
     cancel: &Arc<AtomicBool>,
 ) -> WaitResult {
+    use std::io::Read;
+
+    // Spawn threads to drain stdout/stderr so the pipe buffers don't fill up
+    // and block the child process (classic pipe deadlock).
+    let stdout_handle = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|mut err| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = err.read_to_end(&mut buf);
+            buf
+        })
+    });
+
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Process exited — collect output
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    use std::io::Read;
-                    let _ = out.read_to_end(&mut stdout);
-                }
-                if let Some(mut err) = child.stderr.take() {
-                    use std::io::Read;
-                    let _ = err.read_to_end(&mut stderr);
-                }
+                let stdout = stdout_handle
+                    .and_then(|h| h.join().ok())
+                    .unwrap_or_default();
+                let stderr = stderr_handle
+                    .and_then(|h| h.join().ok())
+                    .unwrap_or_default();
                 return WaitResult::Completed(std::process::Output {
                     status,
                     stdout,
@@ -905,7 +920,6 @@ fn wait_with_timeout(
                 });
             }
             Ok(None) => {
-                // Still running
                 if cancel.load(Ordering::Relaxed) {
                     return WaitResult::Cancelled;
                 }
