@@ -136,6 +136,9 @@ pub(crate) fn invoke_claude_streaming(
     model: &str,
     cli_path: &str,
     extra_args: &str,
+    env_vars: &str,
+    pre_run_script: &str,
+    post_run_script: &str,
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
@@ -169,6 +172,53 @@ pub(crate) fn invoke_claude_streaming(
     for arg in extra_args.split_whitespace() {
         if !arg.is_empty() {
             cmd.arg(arg);
+        }
+    }
+
+    // Apply user-supplied environment variables (KEY=VALUE per line)
+    for line in env_vars.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            if !key.is_empty() {
+                cmd.env(key, value);
+            }
+        }
+    }
+
+    // Run pre-run script
+    if !pre_run_script.trim().is_empty() {
+        on_log(&format!("\u{25B6} pre-run: {}\n", pre_run_script.trim()));
+        let pre_result = Command::new("sh")
+            .arg("-c")
+            .arg(pre_run_script.trim())
+            .current_dir(project_root)
+            .output();
+        match pre_result {
+            Ok(output) => {
+                if !output.stdout.is_empty() {
+                    on_log(&String::from_utf8_lossy(&output.stdout));
+                }
+                if !output.stderr.is_empty() {
+                    on_log(&String::from_utf8_lossy(&output.stderr));
+                }
+                if !output.status.success() {
+                    let msg = format!("pre-run script failed (exit {})", output.status);
+                    on_log(&format!("\u{2717} {}\n", msg));
+                    return Err(ClaudeError::SpawnFailed(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        msg,
+                    )));
+                }
+            }
+            Err(e) => {
+                on_log(&format!("\u{2717} pre-run script error: {}\n", e));
+                return Err(ClaudeError::SpawnFailed(e));
+            }
         }
     }
 
@@ -348,6 +398,35 @@ pub(crate) fn invoke_claude_streaming(
     // If we didn't get a result from stream events, stderr might have the error
     if final_result.is_empty() && !stderr.is_empty() {
         on_log(&format!("\nError: {}\n", stderr));
+    }
+
+    // Run post-run script
+    if !post_run_script.trim().is_empty() {
+        on_log(&format!("\u{25B6} post-run: {}\n", post_run_script.trim()));
+        let post_result = Command::new("sh")
+            .arg("-c")
+            .arg(post_run_script.trim())
+            .current_dir(project_root)
+            .output();
+        match post_result {
+            Ok(output) => {
+                if !output.stdout.is_empty() {
+                    on_log(&String::from_utf8_lossy(&output.stdout));
+                }
+                if !output.stderr.is_empty() {
+                    on_log(&String::from_utf8_lossy(&output.stderr));
+                }
+                if !output.status.success() {
+                    on_log(&format!(
+                        "\u{2717} post-run script failed (exit {})\n",
+                        output.status
+                    ));
+                }
+            }
+            Err(e) => {
+                on_log(&format!("\u{2717} post-run script error: {}\n", e));
+            }
+        }
     }
 
     Ok(ClaudeResponse {

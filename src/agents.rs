@@ -68,25 +68,40 @@ pub(crate) enum AgentTrigger {
     AfterRun,
     /// Run automatically after a diff is committed.
     AfterCommit,
+    /// Run automatically after the specified agent completes.
+    AfterAgent(AgentKind),
     /// Only run when manually triggered.
     Manual,
 }
 
 impl AgentTrigger {
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &str {
         match self {
             AgentTrigger::AfterRun => "After Run",
             AgentTrigger::AfterCommit => "After Commit",
+            AgentTrigger::AfterAgent(_) => "After Agent",
             AgentTrigger::Manual => "Manual",
         }
     }
 
-    pub fn all() -> &'static [AgentTrigger] {
+    /// The base variants used for the trigger type selector (without inner data).
+    pub fn base_variants() -> &'static [AgentTrigger] {
         &[
             AgentTrigger::AfterRun,
             AgentTrigger::AfterCommit,
+            AgentTrigger::AfterAgent(AgentKind::Format), // placeholder
             AgentTrigger::Manual,
         ]
+    }
+
+    /// Returns the discriminant index for comparison in the UI selector.
+    pub fn variant_index(&self) -> usize {
+        match self {
+            AgentTrigger::AfterRun => 0,
+            AgentTrigger::AfterCommit => 1,
+            AgentTrigger::AfterAgent(_) => 2,
+            AgentTrigger::Manual => 3,
+        }
     }
 }
 
@@ -716,7 +731,14 @@ pub(crate) fn trigger_agents(
 ) -> usize {
     let mut count = 0;
     for config in agents {
-        if !config.enabled || &config.trigger != trigger {
+        if !config.enabled {
+            continue;
+        }
+        let matches = match (&config.trigger, trigger) {
+            (AgentTrigger::AfterAgent(k1), AgentTrigger::AfterAgent(k2)) => k1 == k2,
+            (a, b) => a == b,
+        };
+        if !matches {
             continue;
         }
         // Don't start an agent that's already running

@@ -919,11 +919,23 @@ pub(crate) struct Settings {
     pub claude_cli_path: String,
     #[serde(default)]
     pub claude_extra_args: String,
+    #[serde(default)]
+    pub claude_env_vars: String,
+    #[serde(default)]
+    pub claude_pre_run_script: String,
+    #[serde(default)]
+    pub claude_post_run_script: String,
     pub opencode_model: String,
     #[serde(default)]
     pub opencode_cli_path: String,
     #[serde(default)]
     pub opencode_extra_args: String,
+    #[serde(default)]
+    pub opencode_env_vars: String,
+    #[serde(default)]
+    pub opencode_pre_run_script: String,
+    #[serde(default)]
+    pub opencode_post_run_script: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -961,9 +973,15 @@ impl Default for Settings {
             claude_model: "claude-opus-4-6".to_string(),
             claude_cli_path: String::new(),
             claude_extra_args: String::new(),
+            claude_env_vars: String::new(),
+            claude_pre_run_script: String::new(),
+            claude_post_run_script: String::new(),
             opencode_model: "openai/o1".to_string(),
             opencode_cli_path: String::new(),
             opencode_extra_args: String::new(),
+            opencode_env_vars: String::new(),
+            opencode_pre_run_script: String::new(),
+            opencode_post_run_script: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,

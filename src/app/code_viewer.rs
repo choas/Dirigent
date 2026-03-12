@@ -27,6 +27,12 @@ impl DirigentApp {
             return;
         }
 
+        // Agent run log in central panel
+        if self.agent_state.show_output.is_some() {
+            self.render_agent_log_central(ctx);
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.viewer.current_file.is_none() {
                 self.ensure_logo_texture(ctx);

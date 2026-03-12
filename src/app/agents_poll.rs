@@ -95,6 +95,9 @@ impl DirigentApp {
                 };
                 let _ = self.db.log_activity(cue_id, &event);
             }
+
+            // Chain: trigger any agents configured with AfterAgent(<this agent>)
+            self.trigger_agents_for(&AgentTrigger::AfterAgent(result.kind), result.cue_id);
         }
     }
 

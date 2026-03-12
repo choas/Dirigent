@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::agents::{agents_for_language, default_agents, AgentLanguage, AgentTrigger};
+use crate::agents::{agents_for_language, default_agents, AgentKind, AgentLanguage, AgentTrigger};
 use crate::opencode;
 use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 
@@ -162,6 +162,34 @@ impl DirigentApp {
                                 .weak(),
                             );
                             ui.end_row();
+
+                            ui.label("Env Variables:");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.settings.claude_env_vars)
+                                    .desired_width(250.0)
+                                    .desired_rows(2)
+                                    .hint_text("KEY=VALUE per line")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Pre-run Script:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.claude_pre_run_script)
+                                    .desired_width(250.0)
+                                    .hint_text("shell command before run")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Post-run Script:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.claude_post_run_script)
+                                    .desired_width(250.0)
+                                    .hint_text("shell command after run")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
                         }
                         CliProvider::OpenCode => {
                             ui.label("CLI Path:");
@@ -187,6 +215,34 @@ impl DirigentApp {
                                 egui::RichText::new("run <prompt> --format json")
                                     .monospace()
                                     .weak(),
+                            );
+                            ui.end_row();
+
+                            ui.label("Env Variables:");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.settings.opencode_env_vars)
+                                    .desired_width(250.0)
+                                    .desired_rows(2)
+                                    .hint_text("KEY=VALUE per line")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Pre-run Script:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.opencode_pre_run_script)
+                                    .desired_width(250.0)
+                                    .hint_text("shell command before run")
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            ui.end_row();
+
+                            ui.label("Post-run Script:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.settings.opencode_post_run_script)
+                                    .desired_width(250.0)
+                                    .hint_text("shell command after run")
+                                    .font(egui::TextStyle::Monospace),
                             );
                             ui.end_row();
                         }
@@ -422,6 +478,7 @@ impl DirigentApp {
 
                 let card_width = ui.available_width();
                 let mut delete_idx: Option<usize> = None;
+                let mut view_log_kind: Option<crate::agents::AgentKind> = None;
                 let num_agents = self.settings.agents.len();
                 for i in 0..num_agents {
                     self.semantic.card_frame()
@@ -456,19 +513,49 @@ impl DirigentApp {
                                     ui.end_row();
 
                                     ui.label("Trigger:");
-                                    egui::ComboBox::from_id_salt(format!("agent_trigger_{}", i))
-                                        .selected_text(
-                                            self.settings.agents[i].trigger.display_name(),
-                                        )
-                                        .show_ui(ui, |ui| {
-                                            for trigger in AgentTrigger::all() {
-                                                ui.selectable_value(
-                                                    &mut self.settings.agents[i].trigger,
-                                                    trigger.clone(),
-                                                    trigger.display_name(),
-                                                );
+                                    ui.horizontal(|ui| {
+                                        let current_idx = self.settings.agents[i].trigger.variant_index();
+                                        let mut selected_idx = current_idx;
+                                        egui::ComboBox::from_id_salt(format!("agent_trigger_{}", i))
+                                            .selected_text(
+                                                self.settings.agents[i].trigger.display_name(),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                for base in AgentTrigger::base_variants() {
+                                                    if ui.selectable_label(
+                                                        base.variant_index() == current_idx,
+                                                        base.display_name(),
+                                                    ).clicked() {
+                                                        selected_idx = base.variant_index();
+                                                    }
+                                                }
+                                            });
+                                        if selected_idx != current_idx {
+                                            self.settings.agents[i].trigger = match selected_idx {
+                                                0 => AgentTrigger::AfterRun,
+                                                1 => AgentTrigger::AfterCommit,
+                                                2 => AgentTrigger::AfterAgent(AgentKind::Format),
+                                                _ => AgentTrigger::Manual,
+                                            };
+                                        }
+                                        if let AgentTrigger::AfterAgent(current_kind) = self.settings.agents[i].trigger {
+                                            let own_kind = self.settings.agents[i].kind;
+                                            let mut selected = current_kind;
+                                            egui::ComboBox::from_id_salt(format!("agent_trigger_kind_{}", i))
+                                                .selected_text(selected.label())
+                                                .show_ui(ui, |ui| {
+                                                    for &k in AgentKind::all() {
+                                                        if k == own_kind {
+                                                            continue;
+                                                        }
+                                                        ui.selectable_value(&mut selected, k, k.label());
+                                                    }
+                                                });
+                                            if selected != current_kind {
+                                                self.settings.agents[i].trigger = AgentTrigger::AfterAgent(selected);
                                             }
-                                        });
+                                        }
+                                    });
                                     ui.end_row();
 
                                     ui.label("Timeout:");
@@ -489,6 +576,9 @@ impl DirigentApp {
                             ui.horizontal(|ui| {
                                 if ui.small_button("Run Now").clicked() {
                                     self.trigger_agent_manual(self.settings.agents[i].kind);
+                                }
+                                if ui.small_button("View Logs").clicked() {
+                                    view_log_kind = Some(self.settings.agents[i].kind);
                                 }
                                 if let Some(status) =
                                     self.agent_state.statuses.get(&self.settings.agents[i].kind)
@@ -522,6 +612,10 @@ impl DirigentApp {
                 }
                 if let Some(idx) = delete_idx {
                     self.settings.agents.remove(idx);
+                }
+                if let Some(kind) = view_log_kind {
+                    self.agent_state.show_output = Some(kind);
+                    close = true;
                 }
             }
 

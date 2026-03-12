@@ -578,7 +578,7 @@ impl Database {
     /// Get agent run output for a specific cue, most recent first.
     pub fn get_agent_runs_for_cue(&self, cue_id: i64) -> Result<Vec<AgentRunEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT agent_kind, status, output, duration_ms, started_at
+            "SELECT agent_kind, status, output, duration_ms, started_at, command, cue_id
              FROM agent_runs WHERE cue_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| {
@@ -588,6 +588,61 @@ impl Database {
                 output: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 duration_ms: row.get::<_, i64>(3)? as u64,
                 started_at: row.get(4)?,
+                command: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                cue_id: row.get(6)?,
+            })
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+
+    /// Get recent agent runs across all cues, most recent first.
+    #[allow(dead_code)]
+    pub fn get_recent_agent_runs(&self, limit: usize) -> Result<Vec<AgentRunEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT agent_kind, status, output, duration_ms, started_at, command, cue_id
+             FROM agent_runs ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(AgentRunEntry {
+                agent_kind: row.get(0)?,
+                status: row.get(1)?,
+                output: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                duration_ms: row.get::<_, i64>(3)? as u64,
+                started_at: row.get(4)?,
+                command: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                cue_id: row.get(6)?,
+            })
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+
+    /// Get recent agent runs for a specific agent kind, most recent first.
+    pub fn get_recent_agent_runs_by_kind(
+        &self,
+        kind: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentRunEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT agent_kind, status, output, duration_ms, started_at, command, cue_id
+             FROM agent_runs WHERE agent_kind = ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![kind, limit as i64], |row| {
+            Ok(AgentRunEntry {
+                agent_kind: row.get(0)?,
+                status: row.get(1)?,
+                output: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                duration_ms: row.get::<_, i64>(3)? as u64,
+                started_at: row.get(4)?,
+                command: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                cue_id: row.get(6)?,
             })
         })?;
         let mut entries = Vec::new();
@@ -607,6 +662,8 @@ pub(crate) struct AgentRunEntry {
     pub output: String,
     pub duration_ms: u64,
     pub started_at: String,
+    pub command: String,
+    pub cue_id: Option<i64>,
 }
 
 fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {

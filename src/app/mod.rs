@@ -492,6 +492,7 @@ impl DirigentApp {
         self.show_settings = false;
         self.diff_review = None;
         self.claude.show_log = None;
+        self.agent_state.show_output = None;
     }
 
     fn load_file(&mut self, path: PathBuf) {

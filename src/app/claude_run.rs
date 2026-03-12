@@ -125,6 +125,18 @@ impl DirigentApp {
             CliProvider::Claude => self.settings.claude_extra_args.clone(),
             CliProvider::OpenCode => self.settings.opencode_extra_args.clone(),
         };
+        let env_vars = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_env_vars.clone(),
+            CliProvider::OpenCode => self.settings.opencode_env_vars.clone(),
+        };
+        let pre_run_script = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
+            CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+        };
+        let post_run_script = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_post_run_script.clone(),
+            CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
         let provider_for_log = provider.clone();
@@ -145,6 +157,9 @@ impl DirigentApp {
                         &model,
                         &cli_path,
                         &extra_args,
+                        &env_vars,
+                        &pre_run_script,
+                        &post_run_script,
                         on_log,
                         cancel_thread,
                     ) {
@@ -178,6 +193,9 @@ impl DirigentApp {
                         &model,
                         &cli_path,
                         &extra_args,
+                        &env_vars,
+                        &pre_run_script,
+                        &post_run_script,
                         on_log,
                         cancel_thread,
                     ) {
@@ -296,6 +314,18 @@ impl DirigentApp {
             CliProvider::Claude => self.settings.claude_extra_args.clone(),
             CliProvider::OpenCode => self.settings.opencode_extra_args.clone(),
         };
+        let env_vars = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_env_vars.clone(),
+            CliProvider::OpenCode => self.settings.opencode_env_vars.clone(),
+        };
+        let pre_run_script = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
+            CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+        };
+        let post_run_script = match provider.clone() {
+            CliProvider::Claude => self.settings.claude_post_run_script.clone(),
+            CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
         let provider_for_log = provider.clone();
@@ -316,6 +346,9 @@ impl DirigentApp {
                         &model,
                         &cli_path,
                         &extra_args,
+                        &env_vars,
+                        &pre_run_script,
+                        &post_run_script,
                         on_log,
                         cancel_thread,
                     ) {
@@ -349,6 +382,9 @@ impl DirigentApp {
                         &model,
                         &cli_path,
                         &extra_args,
+                        &env_vars,
+                        &pre_run_script,
+                        &post_run_script,
                         on_log,
                         cancel_thread,
                     ) {
