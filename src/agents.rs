@@ -361,7 +361,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
             AgentConfig {
                 kind: AgentKind::Format,
                 enabled: true,
-                command: "mvn spotless:apply 2>&1".into(),
+                command: "./mvnw com.diffplug.spotless:spotless-maven-plugin:apply 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
                 working_dir: String::new(),
