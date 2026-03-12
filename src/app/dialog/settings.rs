@@ -582,13 +582,21 @@ impl DirigentApp {
                                 });
 
                             ui.horizontal(|ui| {
-                                if ui.small_button("Run Now").clicked() {
-                                    self.trigger_agent_manual(self.settings.agents[i].kind);
+                                let agent_kind = self.settings.agents[i].kind;
+                                let is_running = self.agent_state.statuses.get(&agent_kind)
+                                    == Some(&crate::agents::AgentStatus::Running);
+                                if is_running {
+                                    if ui.small_button("\u{2715} Cancel").clicked() {
+                                        self.cancel_agent(agent_kind);
+                                    }
+                                } else {
+                                    if ui.small_button("Run Now").clicked() {
+                                        self.trigger_agent_manual(self.settings.agents[i].kind);
+                                    }
                                 }
                                 if ui.small_button("View Logs").clicked() {
                                     view_log_kind = Some(self.settings.agents[i].kind);
                                 }
-                                let agent_kind = self.settings.agents[i].kind;
                                 if let Some(status) = self.agent_state.statuses.get(&agent_kind) {
                                     let (icon_str, color) = match status {
                                         crate::agents::AgentStatus::Running => {

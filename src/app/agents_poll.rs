@@ -119,6 +119,7 @@ impl DirigentApp {
             cue_id,
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
+            &mut self.agent_state.cancel_flags,
         );
     }
 
@@ -129,6 +130,10 @@ impl DirigentApp {
                 return; // Already running
             }
             self.agent_state.statuses.insert(kind, AgentStatus::Running);
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            self.agent_state
+                .cancel_flags
+                .insert(kind, std::sync::Arc::clone(&cancel));
 
             let config = config.clone();
             let root = self.project_root.clone();
@@ -136,8 +141,15 @@ impl DirigentApp {
             let tx = self.agent_state.tx.clone();
 
             std::thread::spawn(move || {
-                agents::run_agent(&config, &root, &init, None, &tx);
+                agents::run_agent(&config, &root, &init, None, &tx, &cancel);
             });
+        }
+    }
+
+    /// Cancel a running agent.
+    pub(super) fn cancel_agent(&mut self, kind: AgentKind) {
+        if let Some(flag) = self.agent_state.cancel_flags.get(&kind) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

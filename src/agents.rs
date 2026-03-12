@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -694,6 +696,8 @@ pub(crate) struct AgentRunState {
     pub latest_diagnostics: HashMap<AgentKind, Vec<Diagnostic>>,
     /// Info about the last completed run per agent kind.
     pub last_run: HashMap<AgentKind, LastRunInfo>,
+    /// Cancel flags for running agents.
+    pub cancel_flags: HashMap<AgentKind, Arc<AtomicBool>>,
     /// Which agent's output panel is currently shown (None = hidden).
     pub show_output: Option<AgentKind>,
     /// When true, the Back button in agent log returns to settings.
@@ -710,6 +714,7 @@ impl AgentRunState {
             latest_output: HashMap::new(),
             latest_diagnostics: HashMap::new(),
             last_run: HashMap::new(),
+            cancel_flags: HashMap::new(),
             show_output: None,
             return_to_settings: false,
         }
@@ -731,6 +736,7 @@ pub(crate) fn run_agent(
     shell_init: &str,
     cue_id: Option<i64>,
     tx: &mpsc::Sender<AgentResult>,
+    cancel: &Arc<AtomicBool>,
 ) {
     let start = Instant::now();
     let kind = config.kind;
@@ -769,7 +775,7 @@ pub(crate) fn run_agent(
     match child {
         Ok(mut child) => {
             // Wait with timeout enforcement
-            let result = wait_with_timeout(&mut child, timeout);
+            let result = wait_with_timeout(&mut child, timeout, cancel);
             let duration_ms = start.elapsed().as_millis() as u64;
 
             match result {
@@ -837,6 +843,18 @@ pub(crate) fn run_agent(
                         duration_ms,
                     });
                 }
+                WaitResult::Cancelled => {
+                    kill_process_tree(&child);
+                    let _ = child.wait();
+                    let _ = tx.send(AgentResult {
+                        kind,
+                        cue_id,
+                        status: AgentStatus::Error,
+                        output: "Cancelled by user".to_string(),
+                        diagnostics: Vec::new(),
+                        duration_ms,
+                    });
+                }
             }
         }
         Err(e) => {
@@ -856,10 +874,15 @@ pub(crate) fn run_agent(
 enum WaitResult {
     Completed(std::process::Output),
     TimedOut,
+    Cancelled,
 }
 
 /// Wait for a child process with a timeout, polling every 100ms.
-fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> WaitResult {
+fn wait_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+    cancel: &Arc<AtomicBool>,
+) -> WaitResult {
     let start = Instant::now();
     loop {
         match child.try_wait() {
@@ -883,6 +906,9 @@ fn wait_with_timeout(child: &mut std::process::Child, timeout: Duration) -> Wait
             }
             Ok(None) => {
                 // Still running
+                if cancel.load(Ordering::Relaxed) {
+                    return WaitResult::Cancelled;
+                }
                 if start.elapsed() >= timeout {
                     return WaitResult::TimedOut;
                 }
@@ -931,6 +957,7 @@ pub(crate) fn trigger_agents(
     cue_id: Option<i64>,
     tx: &mpsc::Sender<AgentResult>,
     statuses: &mut HashMap<AgentKind, AgentStatus>,
+    cancel_flags: &mut HashMap<AgentKind, Arc<AtomicBool>>,
 ) -> usize {
     let mut count = 0;
     for config in agents {
@@ -949,6 +976,8 @@ pub(crate) fn trigger_agents(
             continue;
         }
         statuses.insert(config.kind, AgentStatus::Running);
+        let cancel = Arc::new(AtomicBool::new(false));
+        cancel_flags.insert(config.kind, Arc::clone(&cancel));
 
         let config = config.clone();
         let root = project_root.to_path_buf();
@@ -956,7 +985,7 @@ pub(crate) fn trigger_agents(
         let tx = tx.clone();
 
         std::thread::spawn(move || {
-            run_agent(&config, &root, &init, cue_id, &tx);
+            run_agent(&config, &root, &init, cue_id, &tx, &cancel);
         });
 
         count += 1;
