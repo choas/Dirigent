@@ -139,7 +139,7 @@ impl DirigentApp {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.settings.claude_cli_path)
                                     .desired_width(250.0)
-                                    .hint_text("claude (default: from PATH)")
+                                    .hint_text("not found — enter path to claude")
                                     .font(egui::TextStyle::Monospace),
                             );
                             ui.end_row();
@@ -168,7 +168,7 @@ impl DirigentApp {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.settings.opencode_cli_path)
                                     .desired_width(250.0)
-                                    .hint_text("opencode (default: from PATH)")
+                                    .hint_text("not found — enter path to opencode")
                                     .font(egui::TextStyle::Monospace),
                             );
                             ui.end_row();

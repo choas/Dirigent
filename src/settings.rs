@@ -976,12 +976,34 @@ impl Default for Settings {
     }
 }
 
+/// Run `which <name>` and return the trimmed path if found.
+fn which(name: &str) -> Option<String> {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub(crate) fn load_settings(project_root: &Path) -> Settings {
     let path = project_root.join(".Dirigent").join("settings.json");
     let mut settings = match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Settings::default(),
     };
+    // Auto-detect CLI paths on first launch (when paths are empty)
+    if settings.claude_cli_path.is_empty() {
+        if let Some(path) = which("claude") {
+            settings.claude_cli_path = path;
+        }
+    }
+    if settings.opencode_cli_path.is_empty() {
+        if let Some(path) = which("opencode") {
+            settings.opencode_cli_path = path;
+        }
+    }
     // Append any new default plays that aren't already in the user's playbook
     for default_play in default_playbook() {
         if !settings
