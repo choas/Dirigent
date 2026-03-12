@@ -283,6 +283,7 @@ impl DirigentApp {
                     for &status in CueStatus::all() {
                         let section_cues: Vec<&Cue> = cues_snapshot
                             .iter()
+                            .rev()
                             .filter(|c| c.status == status)
                             .filter(|c| {
                                 if let Some(ref filter) = source_filter {
