@@ -83,9 +83,10 @@ const BLOBS: [Blob; 4] = [
     },
 ];
 
-/// Total pixel dimensions of the lamp widget.
-pub fn size() -> (f32, f32) {
-    (W as f32 * PX, H as f32 * PX)
+/// Total pixel dimensions of the lamp widget at the given scale.
+pub fn size(scale: f32) -> (f32, f32) {
+    let px = PX * scale;
+    (W as f32 * px, H as f32 * px)
 }
 
 /// Paint the lava lamp at a specific position using the given painter.
@@ -98,7 +99,9 @@ pub fn paint_at(
     origin: egui::Pos2,
     accent: egui::Color32,
     is_dark: bool,
+    scale: f32,
 ) {
+    let px = PX * scale;
     let t = ctx.input(|i| i.time) as f32;
 
     let [ar, ag, ab, _] = accent.to_array();
@@ -139,8 +142,8 @@ pub fn paint_at(
     for row in 0..H {
         for col in 0..W {
             let px_rect = egui::Rect::from_min_size(
-                origin + egui::vec2(col as f32 * PX, row as f32 * PX),
-                egui::vec2(PX, PX),
+                origin + egui::vec2(col as f32 * px, row as f32 * px),
+                egui::vec2(px, px),
             );
 
             if FRAME[row][col] == 1 {

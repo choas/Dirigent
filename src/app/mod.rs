@@ -258,6 +258,9 @@ pub struct DirigentApp {
 
     // Schedule input text per cue (visible when toggled)
     schedule_inputs: HashMap<i64, String>,
+
+    // Lava lamp enlarged toggle
+    lava_lamp_big: bool,
 }
 
 fn start_fs_watcher(
@@ -443,6 +446,7 @@ impl DirigentApp {
             run_queue: Vec::new(),
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
+            lava_lamp_big: false,
         }
     }
 

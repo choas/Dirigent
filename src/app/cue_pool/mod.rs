@@ -517,17 +517,27 @@ impl DirigentApp {
                 // Pixelated lava lamp — visible while a cue is running
                 if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
                     let margin = 8.0;
-                    let (lamp_w, lamp_h) = super::lava_lamp::size();
+                    let scale = if self.lava_lamp_big { 3.0 } else { 1.0 };
+                    let (lamp_w, lamp_h) = super::lava_lamp::size(scale);
                     let origin = egui::pos2(
                         panel_rect.right() - lamp_w - margin,
                         panel_rect.bottom() - lamp_h - margin,
                     );
+                    let lamp_rect = egui::Rect::from_min_size(
+                        origin,
+                        egui::vec2(lamp_w, lamp_h),
+                    );
+                    let resp = ui.allocate_rect(lamp_rect, egui::Sense::click());
+                    if resp.clicked() {
+                        self.lava_lamp_big = !self.lava_lamp_big;
+                    }
                     super::lava_lamp::paint_at(
                         ui.painter(),
                         ui.ctx(),
                         origin,
                         self.semantic.accent,
                         self.settings.theme.is_dark(),
+                        scale,
                     );
                 }
             });
