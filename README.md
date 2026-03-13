@@ -162,7 +162,7 @@ src/
 
 ## Status
 
-Dirigent is in early development (v0.1.2, 146 commits). Core features work — file browsing, cue management, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, post-run agents, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in early development (v0.2.0, 155 commits). Core features work — file browsing, cue management, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, post-run agents, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
