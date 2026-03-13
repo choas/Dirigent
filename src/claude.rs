@@ -362,13 +362,10 @@ pub(crate) fn invoke_claude_streaming(
                     cost
                 ));
             }
-            "system" => {
-                if let Some(subtype) = event.get("subtype").and_then(|s| s.as_str()) {
-                    on_log(&format!("[{}]\n", subtype));
-                }
-            }
+            // Silently ignore known but uninteresting event types
+            "system" | "user" | "tool" => {}
             _ => {
-                // Log unknown event types briefly
+                // Log truly unknown event types for debugging
                 if !event_type.is_empty() {
                     on_log(&format!("[{}]\n", event_type));
                 }
