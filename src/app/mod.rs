@@ -88,6 +88,12 @@ enum CueAction {
     ShowRunningLog(i64),
     ShowAgentRuns(i64),
     CommitAll,
+    /// Queue this cue to run after all currently running cues finish.
+    QueueNext,
+    /// Schedule this cue to run after a delay (e.g. "5m", "2h").
+    ScheduleRun(String),
+    /// Cancel a queued or scheduled run.
+    CancelQueue,
 }
 
 /// State for the code viewer panel.
@@ -242,6 +248,15 @@ pub struct DirigentApp {
 
     // Agent run history cleanup tracking
     last_agent_cleanup: Instant,
+
+    // Run queue: cues waiting to run after all running cues finish (FIFO order)
+    run_queue: Vec<i64>,
+
+    // Scheduled runs: cue_id -> when to trigger
+    scheduled_runs: HashMap<i64, Instant>,
+
+    // Schedule input text per cue (visible when toggled)
+    schedule_inputs: HashMap<i64, String>,
 }
 
 fn start_fs_watcher(
@@ -424,6 +439,9 @@ impl DirigentApp {
             show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
             last_agent_cleanup: Instant::now(),
+            run_queue: Vec::new(),
+            scheduled_runs: HashMap::new(),
+            schedule_inputs: HashMap::new(),
         }
     }
 
@@ -505,6 +523,58 @@ impl DirigentApp {
         self.git.commit_history_total = git::count_commits(&self.project_root);
     }
 
+    /// Process scheduled runs: trigger any cue whose scheduled time has arrived.
+    fn process_scheduled_runs(&mut self) {
+        let now = Instant::now();
+        let ready: Vec<i64> = self
+            .scheduled_runs
+            .iter()
+            .filter(|(_, &when)| now >= when)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in ready {
+            self.scheduled_runs.remove(&id);
+            // Verify cue is still in Inbox before triggering
+            if self
+                .cues
+                .iter()
+                .any(|c| c.id == id && c.status == CueStatus::Inbox)
+            {
+                let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                let _ = self.db.log_activity(id, "Scheduled run started");
+                self.cue_move_flash.insert(id, Instant::now());
+                self.claude.expand_running = true;
+                self.reload_cues();
+                self.trigger_claude(id);
+            }
+        }
+    }
+
+    /// Process the run queue: start the next queued cue when no cues are currently running.
+    fn process_run_queue(&mut self) {
+        if self.run_queue.is_empty() {
+            return;
+        }
+        // Check if any cues are currently running
+        let any_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
+        if !any_running {
+            let id = self.run_queue.remove(0);
+            // Verify cue is still in Inbox before triggering
+            if self
+                .cues
+                .iter()
+                .any(|c| c.id == id && c.status == CueStatus::Inbox)
+            {
+                let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                let _ = self.db.log_activity(id, "Queued run started");
+                self.cue_move_flash.insert(id, Instant::now());
+                self.claude.expand_running = true;
+                self.reload_cues();
+                self.trigger_claude(id);
+            }
+        }
+    }
+
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
     /// so the code viewer becomes visible.
     fn dismiss_central_overlays(&mut self) {
@@ -573,6 +643,9 @@ impl DirigentApp {
     fn switch_repo(&mut self, new_root: PathBuf) {
         // Cancel all running tasks — they belong to the old repo.
         self.cancel_all_tasks();
+        self.run_queue.clear();
+        self.scheduled_runs.clear();
+        self.schedule_inputs.clear();
 
         // Validate that the path is an existing directory
         if !new_root.is_dir() {
@@ -702,6 +775,12 @@ impl eframe::App for DirigentApp {
         // Poll for Claude results
         self.process_claude_results();
 
+        // Process scheduled runs (trigger when their time arrives)
+        self.process_scheduled_runs();
+
+        // Process run queue (start next queued cue when no cues are running)
+        self.process_run_queue();
+
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
 
@@ -731,9 +810,16 @@ impl eframe::App for DirigentApp {
                 REPAINT_SLOW
             };
             ctx.request_repaint_after(interval);
+        } else if !self.run_queue.is_empty() {
+            // Repaint to check if queued cues can start (no more running)
+            ctx.request_repaint_after(REPAINT_SLOW);
         } else if self.fs_changed.load(Ordering::Relaxed) {
             // Ensure we repaint to pick up filesystem changes after debounce
             ctx.request_repaint_after(FS_RESCAN_DEBOUNCE);
+        }
+        // Repaint for scheduled runs (countdown display + trigger check)
+        if !self.scheduled_runs.is_empty() {
+            ctx.request_repaint_after(ELAPSED_REPAINT);
         }
         // Ensure periodic repaint for source polling
         if self

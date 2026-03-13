@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use eframe::egui;
 
 use super::super::{icon, CueAction, DirigentApp, SPACE_XS};
@@ -120,31 +122,105 @@ impl DirigentApp {
             ui.horizontal_wrapped(|ui| {
                 match cue.status {
                     CueStatus::Inbox => {
-                        if !is_editing {
-                            if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
-                                actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
+                        let is_queued = self.run_queue.contains(&cue.id);
+                        let is_scheduled = self.scheduled_runs.contains_key(&cue.id);
+
+                        if is_queued || is_scheduled {
+                            // Show queued/scheduled state with cancel button
+                            let label = if is_queued {
+                                "\u{23F3} Queued".to_string()
+                            } else if let Some(&when) = self.scheduled_runs.get(&cue.id) {
+                                let remaining = when.saturating_duration_since(Instant::now());
+                                let secs = remaining.as_secs();
+                                if secs < 60 {
+                                    format!("\u{23F2} {}s", secs)
+                                } else if secs < 3600 {
+                                    format!("\u{23F2} {}:{:02}", secs / 60, secs % 60)
+                                } else {
+                                    format!("\u{23F2} {}h{}m", secs / 3600, (secs % 3600) / 60)
+                                }
+                            } else {
+                                "\u{23F3} Pending".to_string()
+                            };
+                            ui.label(
+                                egui::RichText::new(&label)
+                                    .small()
+                                    .color(self.semantic.accent),
+                            );
+                            if is_scheduled {
+                                ui.ctx()
+                                    .request_repaint_after(std::time::Duration::from_secs(1));
                             }
-                        }
-                        if ui
-                            .small_button(icon("\u{25B6} Run", fs))
-                            .on_hover_text("Send to Claude")
-                            .clicked()
-                        {
-                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
-                        }
-                        if ui
-                            .small_button(icon("\u{2713} Done", fs))
-                            .on_hover_text("Mark done (no Claude)")
-                            .clicked()
-                        {
-                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
-                        }
-                        if ui
-                            .small_button(icon("\u{2193} Backlog", fs))
-                            .on_hover_text("Move to Backlog")
-                            .clicked()
-                        {
-                            actions.push((cue.id, CueAction::MoveTo(CueStatus::Backlog)));
+                            if ui
+                                .small_button(icon("\u{2715} Cancel", fs))
+                                .on_hover_text("Cancel queued/scheduled run")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::CancelQueue));
+                            }
+                        } else {
+                            // Normal Inbox buttons
+                            if !is_editing {
+                                if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
+                                    actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
+                                }
+                            }
+                            // Split "Run" button: main button runs now, dropdown arrow for options
+                            if ui
+                                .small_button(icon("\u{25B6} Run", fs))
+                                .on_hover_text("Send to Claude now")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
+                            }
+                            let dropdown_btn =
+                                ui.small_button("\u{25BE}").on_hover_text("Run options");
+                            let run_popup_id = ui.make_persistent_id(("run_options", cue.id));
+                            if dropdown_btn.clicked() {
+                                ui.memory_mut(|mem| mem.toggle_popup(run_popup_id));
+                            }
+                            egui::popup_below_widget(
+                                ui,
+                                run_popup_id,
+                                &dropdown_btn,
+                                egui::PopupCloseBehavior::CloseOnClick,
+                                |ui| {
+                                    ui.set_min_width(160.0);
+                                    if ui.button(icon("\u{25B6} Run now", fs)).clicked() {
+                                        actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
+                                    }
+                                    if ui
+                                        .button(icon("\u{23ED} Run next", fs))
+                                        .on_hover_text("Run after all current runs finish")
+                                        .clicked()
+                                    {
+                                        actions.push((cue.id, CueAction::QueueNext));
+                                    }
+                                    if ui
+                                        .button(icon("\u{23F2} Schedule...", fs))
+                                        .on_hover_text("Schedule run after a delay (e.g. 5m, 2h)")
+                                        .clicked()
+                                    {
+                                        self.schedule_inputs
+                                            .entry(cue.id)
+                                            .or_insert_with(|| "5m".to_string());
+                                    }
+                                },
+                            );
+                            if ui
+                                .small_button(icon("\u{2713} Done", fs))
+                                .on_hover_text("Mark done (no Claude)")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
+                            }
+                            if ui
+                                .small_button(icon("\u{2193} Backlog", fs))
+                                .on_hover_text("Move to Backlog")
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::MoveTo(CueStatus::Backlog)));
+                            }
                         }
                     }
                     CueStatus::Ready => {
@@ -347,6 +423,38 @@ impl DirigentApp {
                     },
                 );
             });
+
+            // Schedule input field (visible when toggled via Run dropdown)
+            let mut cancel_schedule = false;
+            if let Some(schedule_text) = self.schedule_inputs.get_mut(&cue.id) {
+                ui.add_space(SPACE_XS);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("\u{23F2}").color(self.semantic.accent));
+                    let response = ui.add(
+                        egui::TextEdit::singleline(schedule_text)
+                            .desired_width(60.0)
+                            .hint_text("5m, 2h"),
+                    );
+                    let submit = ui
+                        .small_button(icon("\u{2713} Go", fs))
+                        .on_hover_text("Schedule this run")
+                        .clicked()
+                        || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    if submit && !schedule_text.trim().is_empty() {
+                        actions.push((cue.id, CueAction::ScheduleRun(schedule_text.clone())));
+                    }
+                    if ui
+                        .small_button("\u{2715}")
+                        .on_hover_text("Cancel")
+                        .clicked()
+                    {
+                        cancel_schedule = true;
+                    }
+                });
+            }
+            if cancel_schedule {
+                self.schedule_inputs.remove(&cue.id);
+            }
 
             // Reply input field (visible when toggled for Review/Done cues)
             if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {

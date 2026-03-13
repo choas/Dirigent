@@ -260,6 +260,10 @@ impl DirigentApp {
                                 if new_status != CueStatus::Ready {
                                     self.cancel_cue_task(id);
                                 }
+                                // Remove from queue/schedule if being moved manually
+                                self.run_queue.retain(|&cid| cid != id);
+                                self.scheduled_runs.remove(&id);
+                                self.schedule_inputs.remove(&id);
                                 let _ = self.db.update_cue_status(id, new_status);
                                 let _ = self.db.log_activity(id, &format!("Moved to {}", new_status.label()));
                                 self.cue_move_flash.insert(id, Instant::now());
@@ -271,6 +275,9 @@ impl DirigentApp {
                             }
                             CueAction::Delete => {
                                 self.cancel_cue_task(id);
+                                self.run_queue.retain(|&cid| cid != id);
+                                self.scheduled_runs.remove(&id);
+                                self.schedule_inputs.remove(&id);
                                 let _ = self.db.delete_cue(id);
                             }
                             CueAction::Navigate(file_path, line, line_end) => {
@@ -465,10 +472,74 @@ impl DirigentApp {
                                     self.reload_commit_history();
                                 }
                             }
+                            CueAction::QueueNext => {
+                                // Add to run queue (will start when all running cues finish)
+                                if !self.run_queue.contains(&id) {
+                                    self.run_queue.push(id);
+                                    let _ = self.db.log_activity(id, "Queued (run next)");
+                                    let preview = self.cue_preview(id);
+                                    self.set_status_message(format!(
+                                        "\"{}\" queued — will run after current runs finish",
+                                        preview
+                                    ));
+                                }
+                            }
+                            CueAction::ScheduleRun(input) => {
+                                if let Some(duration) = parse_schedule_duration(&input) {
+                                    let when = Instant::now() + duration;
+                                    self.scheduled_runs.insert(id, when);
+                                    self.schedule_inputs.remove(&id);
+                                    let _ = self.db.log_activity(id, &format!("Scheduled ({})", input));
+                                    let preview = self.cue_preview(id);
+                                    self.set_status_message(format!(
+                                        "\"{}\" scheduled to run in {}",
+                                        preview, input
+                                    ));
+                                } else {
+                                    self.set_status_message(format!(
+                                        "Invalid schedule format: \"{}\" — use e.g. 5m, 2h, 30s",
+                                        input
+                                    ));
+                                }
+                            }
+                            CueAction::CancelQueue => {
+                                self.run_queue.retain(|&cid| cid != id);
+                                self.scheduled_runs.remove(&id);
+                                self.schedule_inputs.remove(&id);
+                                let _ = self.db.log_activity(id, "Queue/schedule cancelled");
+                            }
                         }
                         self.reload_cues();
                     }
                 });
             });
+    }
+}
+
+/// Parse a schedule duration string like "5m", "2h", "30s" into a `Duration`.
+fn parse_schedule_duration(input: &str) -> Option<std::time::Duration> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+    let (num_str, suffix) = if input.ends_with('m') {
+        (&input[..input.len() - 1], 'm')
+    } else if input.ends_with('h') {
+        (&input[..input.len() - 1], 'h')
+    } else if input.ends_with('s') {
+        (&input[..input.len() - 1], 's')
+    } else {
+        // Default to minutes if no suffix
+        (input, 'm')
+    };
+    let num: u64 = num_str.trim().parse().ok()?;
+    if num == 0 {
+        return None;
+    }
+    match suffix {
+        's' => Some(std::time::Duration::from_secs(num)),
+        'm' => Some(std::time::Duration::from_secs(num * 60)),
+        'h' => Some(std::time::Duration::from_secs(num * 3600)),
+        _ => None,
     }
 }
