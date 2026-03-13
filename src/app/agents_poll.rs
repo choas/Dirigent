@@ -32,6 +32,7 @@ impl DirigentApp {
 
             // Update runtime state
             self.agent_state.statuses.insert(result.kind, result.status);
+            self.agent_state.cancel_flags.remove(&result.kind);
             self.agent_state.last_run.insert(
                 result.kind,
                 LastRunInfo {
