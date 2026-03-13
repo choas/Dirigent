@@ -28,6 +28,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items
 - **Claude Code integration** — Sends prompts to Claude Code CLI and streams progress in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments
+- **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
 - **Image attachments** — Attach images to cues for Claude to reference during execution
@@ -40,8 +41,9 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Themes** — 20 themes: 10 dark (Nord, Dracula, Solarized, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Dark) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night, Light)
 - **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
 - **Notifications** — macOS notifications with three-tier fallback (UNUserNotificationCenter → NSUserNotificationCenter → osascript) and configurable sound/popup
+- **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history and dedicated log viewer
 - **Task management** — Background task lifecycle with cancellation support; running Claude tasks can be stopped mid-execution
-- **Settings** — Configure theme, Claude model/CLI path/extra args, font family and size, notification preferences, sources, and playbook
+- **Settings** — Configure theme, CLI backend and model, font family and size, notification preferences, sources, playbook, and agent commands/triggers
 - **Repository picker** — Switch between projects and track recent repositories
 - **macOS native** — Custom About panel, dock icon, notification integration, .app bundle with code signing and notarization
 
@@ -111,17 +113,24 @@ Dirigent stores its database (`Dirigent.db`) and settings (`settings.json`) in a
 ```
 src/
 ├── main.rs              — Entry point, window setup, macOS integration
+├── agents.rs            — Post-run agents (Format, Lint, Build, Test)
 ├── app/
 │   ├── mod.rs           — App state, update loop, panel orchestration
-│   ├── claude_run.rs    — Claude execution, streaming, conversation history
+│   ├── agents_poll.rs   — Agent result processing and state management
+│   ├── claude_run.rs    — Claude/OpenCode execution, streaming, conversation history
 │   ├── code_viewer.rs   — Syntax-highlighted code display with cue markers
-│   ├── cue_pool.rs      — Kanban columns and cue card rendering
+│   ├── cue_pool/
+│   │   ├── mod.rs       — Kanban columns and cue card rendering
+│   │   ├── cue_card.rs  — Cue card rendering logic
+│   │   └── markdown_import.rs — Markdown import for batch cue creation
 │   ├── dialog/
 │   │   ├── mod.rs       — Dialog submodule imports
+│   │   ├── agent_log.rs — Agent execution log viewer
+│   │   ├── cue_agent_runs.rs — Per-cue agent run history
 │   │   ├── diff_review.rs — Diff review with reply, search, accept/reject
 │   │   ├── repo.rs      — Repository picker and recent repos
-│   │   ├── running_log.rs — Live conversation viewer for Claude output
-│   │   └── settings.rs  — Settings panel (theme, model, fonts, sources)
+│   │   ├── running_log.rs — Live conversation viewer for Claude/OpenCode output
+│   │   └── settings.rs  — Settings panel (theme, model, fonts, sources, agents)
 │   ├── notifications.rs — macOS notifications (three-tier fallback)
 │   ├── panels.rs        — Menu bar, repo bar, file tree, status bar, prompt field
 │   ├── search.rs        — In-file and project-wide search
@@ -129,12 +138,13 @@ src/
 │   ├── tasks.rs         — Background task lifecycle and cancellation
 │   └── theme.rs         — Theme system, semantic colors, font loading
 ├── claude.rs            — Claude Code CLI invocation and stream parsing
-├── db.rs                — SQLite persistence (cues, executions, migrations)
+├── opencode.rs          — OpenCode CLI support (multi-provider backend)
+├── db.rs                — SQLite persistence (cues, executions, agent runs, migrations)
 ├── diff_view.rs         — Unified diff parsing, inline and side-by-side rendering
 ├── error.rs             — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs         — Recursive directory scanning with ignore patterns
 ├── git.rs               — Git status, history, commit, worktree operations
-├── settings.rs          — Themes, fonts, model, sources, playbook
+├── settings.rs          — Themes, fonts, model, sources, agents, playbook
 └── sources.rs           — External cue sources (GitHub Issues, custom commands)
 ```
 
@@ -152,7 +162,7 @@ src/
 
 ## Status
 
-Dirigent is in early development (v0.1.2, 100+ commits). Core features work — file browsing, cue management, Claude Code integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in early development (v0.1.2, 146 commits). Core features work — file browsing, cue management, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, git operations, search, source integration, image attachments, post-run agents, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
