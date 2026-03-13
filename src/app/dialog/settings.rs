@@ -577,6 +577,15 @@ impl DirigentApp {
                                                 .suffix("s"),
                                         );
                                         self.settings.agents[i].timeout_secs = secs as u64;
+
+                                        let agent_kind = self.settings.agents[i].kind;
+                                        if self.agent_state.statuses.get(&agent_kind)
+                                            == Some(&crate::agents::AgentStatus::Running)
+                                        {
+                                            if ui.small_button("\u{2715} Cancel").clicked() {
+                                                self.cancel_agent(agent_kind);
+                                            }
+                                        }
                                     });
                                     ui.end_row();
                                 });
