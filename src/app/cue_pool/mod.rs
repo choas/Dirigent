@@ -174,6 +174,7 @@ impl DirigentApp {
 
                 ui.separator();
 
+                let panel_rect = ui.max_rect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();
 
@@ -512,6 +513,23 @@ impl DirigentApp {
                         self.reload_cues();
                     }
                 });
+
+                // Pixelated lava lamp — visible while a cue is running
+                if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
+                    let margin = 8.0;
+                    let (lamp_w, lamp_h) = super::lava_lamp::size();
+                    let origin = egui::pos2(
+                        panel_rect.right() - lamp_w - margin,
+                        panel_rect.bottom() - lamp_h - margin,
+                    );
+                    super::lava_lamp::paint_at(
+                        ui.painter(),
+                        ui.ctx(),
+                        origin,
+                        self.semantic.accent,
+                        self.settings.theme.is_dark(),
+                    );
+                }
             });
     }
 }

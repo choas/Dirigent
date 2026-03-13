@@ -88,21 +88,19 @@ pub fn size() -> (f32, f32) {
     (W as f32 * PX, H as f32 * PX)
 }
 
-/// Paint a retro pixelated lava lamp into `ui`.
+/// Paint the lava lamp at a specific position using the given painter.
 ///
-/// Blob positions are derived from `ui.input(|i| i.time)` so no
-/// external state is needed.
-pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
-    let total_w = W as f32 * PX;
-    let total_h = H as f32 * PX;
+/// Unlike `paint`, this does not allocate UI space — it just draws pixels
+/// directly, making it suitable for overlaying on top of existing content.
+pub fn paint_at(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    origin: egui::Pos2,
+    accent: egui::Color32,
+    is_dark: bool,
+) {
+    let t = ctx.input(|i| i.time) as f32;
 
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), egui::Sense::hover());
-
-    let painter = ui.painter();
-    let origin = rect.min;
-    let t = ui.input(|i| i.time) as f32;
-
-    // --- Derive palette from theme accent ---
     let [ar, ag, ab, _] = accent.to_array();
 
     let frame_color = if is_dark {
@@ -110,15 +108,12 @@ pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
     } else {
         egui::Color32::from_rgb(90, 90, 105)
     };
-
     let cap_color = if is_dark {
         egui::Color32::from_rgb(150, 148, 155)
     } else {
         egui::Color32::from_rgb(110, 108, 115)
     };
-
     let liquid_bg = egui::Color32::from_rgb(ar / 8, ag / 8, ab / 8);
-
     let blob_core = egui::Color32::from_rgb(
         ar.saturating_add(60),
         ag.saturating_add(40),
@@ -131,18 +126,16 @@ pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
         (ab as u16 * 2 / 3) as u8,
     );
 
-    // --- Compute blob centres ---
     let blob_positions: Vec<(f32, f32, f32)> = BLOBS
         .iter()
         .map(|b| {
             let y_norm = ((t / b.period * std::f32::consts::TAU + b.phase).sin() + 1.0) / 2.0;
-            let y = 2.5 + y_norm * 7.5; // rows 2.5 .. 10
+            let y = 2.5 + y_norm * 7.5;
             let x = b.x_center + 0.4 * (t * 0.5 + b.phase * 2.0).sin();
             (x, y, b.radius)
         })
         .collect();
 
-    // --- Render pixel grid ---
     for row in 0..H {
         for col in 0..W {
             let px_rect = egui::Rect::from_min_size(
@@ -161,7 +154,6 @@ pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
                 let cy = row as f32 + 0.5;
                 let cx = col as f32 + 0.5;
 
-                // Max blob intensity at this pixel (blobs merge via max).
                 let mut intensity: f32 = 0.0;
                 for &(bx, by, br) in &blob_positions {
                     let dx = cx - bx;
@@ -170,7 +162,6 @@ pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
                     intensity = intensity.max((1.0 - dist / br).clamp(0.0, 1.0));
                 }
 
-                // Quantise to discrete colour levels for the retro look.
                 let color = if intensity > 0.6 {
                     blob_core
                 } else if intensity > 0.3 {
@@ -186,7 +177,5 @@ pub fn paint(ui: &mut egui::Ui, accent: egui::Color32, is_dark: bool) {
         }
     }
 
-    // ~7 FPS — appropriately retro cadence.
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(150));
+    ctx.request_repaint_after(std::time::Duration::from_millis(150));
 }
