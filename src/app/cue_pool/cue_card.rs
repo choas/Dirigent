@@ -568,7 +568,7 @@ impl DirigentApp {
                                         let output = if run.output.len() > 2000 {
                                             format!(
                                                 "{}...\n(truncated, {} bytes total)",
-                                                &run.output[..2000],
+                                                crate::app::truncate_str(&run.output, 2000),
                                                 run.output.len()
                                             )
                                         } else if run.output.trim().is_empty() {

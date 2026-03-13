@@ -354,7 +354,7 @@ impl DirigentApp {
 
                     let line_label = format!("{:>4}:", result.line_number);
                     let content_preview = if result.line_content.len() > 80 {
-                        format!("{}...", &result.line_content[..77])
+                        format!("{}...", super::truncate_str(&result.line_content, 77))
                     } else {
                         result.line_content.clone()
                     };

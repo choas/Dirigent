@@ -44,6 +44,19 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use eframe::egui;
 
+/// Truncate a string to at most `max_bytes` without panicking on UTF-8 boundaries.
+/// Returns a slice that ends at or before `max_bytes` on a valid char boundary.
+pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{DiffViewMode, ParsedDiff};

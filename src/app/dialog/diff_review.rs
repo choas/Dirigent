@@ -66,7 +66,7 @@ impl DirigentApp {
                 }
                 if !prompt_expanded {
                     let truncated = if cue_text.len() > 80 {
-                        format!("{}...", &cue_text[..77])
+                        format!("{}...", crate::app::truncate_str(&cue_text, 77))
                     } else {
                         cue_text.clone()
                     };

@@ -431,7 +431,7 @@ impl DirigentApp {
                                         .map(|c| {
                                             let text: String = c.text.lines().next().unwrap_or(&c.text).to_string();
                                             if text.len() > 80 {
-                                                format!("- {}...", &text[..77])
+                                                format!("- {}...", crate::app::truncate_str(&text, 77))
                                             } else {
                                                 format!("- {}", text)
                                             }

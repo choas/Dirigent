@@ -533,7 +533,7 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
 
 pub(crate) fn generate_commit_message(cue_text: &str) -> String {
     let summary = if cue_text.len() > 68 {
-        format!("{}...", &cue_text[..65])
+        format!("{}...", crate::app::truncate_str(cue_text, 65))
     } else {
         cue_text.to_string()
     };

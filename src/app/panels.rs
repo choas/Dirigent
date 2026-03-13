@@ -161,7 +161,7 @@ impl DirigentApp {
                                 for commit in &self.git.commit_history {
                                     let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3
                                     {
-                                        format!("{}...", &commit.message[..COMMIT_MSG_TRUNCATE_LEN])
+                                        format!("{}...", super::truncate_str(&commit.message, COMMIT_MSG_TRUNCATE_LEN))
                                     } else {
                                         commit.message.clone()
                                     };
@@ -489,7 +489,7 @@ impl DirigentApp {
                             if let Some(output) = self.agent_state.latest_output.get(&config.kind)
                             {
                                 let preview = if output.len() > 300 {
-                                    format!("{}...", &output[..300])
+                                    format!("{}...", super::truncate_str(output, 300))
                                 } else {
                                     output.clone()
                                 };

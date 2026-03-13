@@ -24,7 +24,7 @@ impl DirigentApp {
             .find(|c| c.id == cue_id)
             .map(|c| {
                 if c.text.len() > 80 {
-                    format!("{}...", &c.text[..77])
+                    format!("{}...", crate::app::truncate_str(&c.text, 77))
                 } else {
                     c.text.clone()
                 }
