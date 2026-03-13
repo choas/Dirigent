@@ -58,25 +58,25 @@ struct Blob {
 /// Four blobs with staggered periods and phases for organic motion.
 const BLOBS: [Blob; 4] = [
     Blob {
-        period: 10.0,
+        period: 22.0,
         phase: 0.0,
         x_center: 3.5,
         radius: 2.2,
     },
     Blob {
-        period: 7.5,
+        period: 17.0,
         phase: 2.8,
         x_center: 2.8,
         radius: 1.6,
     },
     Blob {
-        period: 5.5,
+        period: 13.0,
         phase: 5.5,
         x_center: 4.2,
         radius: 1.3,
     },
     Blob {
-        period: 13.0,
+        period: 28.0,
         phase: 8.5,
         x_center: 3.0,
         radius: 1.0,
@@ -134,7 +134,7 @@ pub fn paint_at(
         .map(|b| {
             let y_norm = ((t / b.period * std::f32::consts::TAU + b.phase).sin() + 1.0) / 2.0;
             let y = 2.5 + y_norm * 7.5;
-            let x = b.x_center + 0.4 * (t * 0.5 + b.phase * 2.0).sin();
+            let x = b.x_center + 0.4 * (t * 0.2 + b.phase * 2.0).sin();
             (x, y, b.radius)
         })
         .collect();
@@ -180,5 +180,5 @@ pub fn paint_at(
         }
     }
 
-    ctx.request_repaint_after(std::time::Duration::from_millis(150));
+    ctx.request_repaint_after(std::time::Duration::from_millis(500));
 }
