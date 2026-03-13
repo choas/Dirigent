@@ -3,6 +3,7 @@ mod claude_run;
 mod code_viewer;
 mod cue_pool;
 mod dialog;
+mod lava_lamp;
 mod notifications;
 mod panels;
 mod search;
@@ -880,6 +881,23 @@ impl eframe::App for DirigentApp {
         }
         self.render_cue_pool(ctx); // right side
         self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
+
+        // Pixelated lava lamp overlay — only visible while a cue is running
+        if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
+            let screen = ctx.screen_rect();
+            let margin = 8.0;
+            let (lamp_w, lamp_h) = lava_lamp::size();
+            egui::Area::new(egui::Id::new("lava_lamp_overlay"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(
+                    screen.right() - lamp_w - margin,
+                    screen.bottom() - lamp_h - margin,
+                ))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    lava_lamp::paint(ui, self.semantic.accent, self.settings.theme.is_dark());
+                });
+        }
 
         // Modal overlay dimming behind floating windows — blocks interaction
         if self.show_repo_picker || self.git.show_worktree_panel || self.show_about {

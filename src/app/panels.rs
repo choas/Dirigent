@@ -542,6 +542,7 @@ impl DirigentApp {
                         ctx.request_repaint();
                     }
                 }
+
             });
         });
     }
