@@ -304,12 +304,12 @@ pub(crate) fn invoke_opencode_streaming(
                     {
                         final_result = text.to_string();
                     }
+                    on_log(&format!(
+                        "\n\u{2713} Done ({:.1}s, ${:.4})\n",
+                        duration as f64 / 1_000_000.0,
+                        cost
+                    ));
                 }
-                on_log(&format!(
-                    "\n\u{2713} Done ({:.1}s, ${:.4})\n",
-                    duration as f64 / 1_000_000.0,
-                    cost
-                ));
             }
             "error" => {
                 if let Some(error_msg) = event.get("error").and_then(|e| e.get("message")) {
