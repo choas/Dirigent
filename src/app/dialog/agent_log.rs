@@ -8,9 +8,10 @@ impl DirigentApp {
         let kind = self.agent_state.show_output.unwrap();
         let fs = self.settings.font_size;
 
+        let kind_key = kind.db_key();
         let runs = self
             .db
-            .get_recent_agent_runs_by_kind(kind.as_str(), 50)
+            .get_recent_agent_runs_by_kind(&kind_key, 50)
             .unwrap_or_default();
 
         let mut close = false;
@@ -22,7 +23,14 @@ impl DirigentApp {
                     close = true;
                 }
                 ui.separator();
-                ui.strong(format!("{} Runs", kind.label()));
+                let agent_label = self
+                    .settings
+                    .agents
+                    .iter()
+                    .find(|a| a.kind == kind)
+                    .map(|a| a.display_name().to_string())
+                    .unwrap_or_else(|| kind.label().to_string());
+                ui.strong(format!("{} Runs", agent_label));
                 ui.separator();
                 // Show current status
                 if let Some(status) = self.agent_state.statuses.get(&kind) {
@@ -139,6 +147,7 @@ impl DirigentApp {
             self.agent_state.show_output = None;
             if self.agent_state.return_to_settings {
                 self.agent_state.return_to_settings = false;
+                self.reload_settings_from_disk();
                 self.show_settings = true;
             }
         }

@@ -1031,7 +1031,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         },
         Play {
             name: "Fix all warnings".into(),
-            prompt: "Run `cargo check`, collect all warnings, and fix every one of them.".into(),
+            prompt: "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them.".into(),
         },
         Play {
             name: "Commit changes".into(),

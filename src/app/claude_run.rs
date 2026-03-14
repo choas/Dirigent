@@ -507,7 +507,13 @@ impl DirigentApp {
                     .log_activity(result.cue_id, "Run completed — review ready");
                 self.notify_review_ready(result.cue_id);
                 // Trigger post-run agents (format, lint, etc.)
-                self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id));
+                let cue_prompt = self
+                    .cues
+                    .iter()
+                    .find(|c| c.id == result.cue_id)
+                    .map(|c| c.text.clone())
+                    .unwrap_or_default();
+                self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
                 // Reload current file so user sees changes
                 if let Some(ref path) = self.viewer.current_file {
                     let p = path.clone();

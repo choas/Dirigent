@@ -544,6 +544,42 @@ pub(crate) fn generate_commit_message(cue_text: &str) -> String {
     }
 }
 
+/// Push the current branch to its remote (typically `origin`).
+/// Returns the remote name and branch that was pushed (e.g. "origin/main").
+pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
+    use std::process::Command;
+
+    // Determine current branch
+    let repo = Repository::discover(repo_path)?;
+    let head = repo
+        .head()
+        .map_err(|e| DirigentError::GitCommand(format!("cannot determine HEAD: {}", e)))?;
+    let branch_name = head
+        .shorthand()
+        .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
+        .to_string();
+
+    let output = Command::new("git")
+        .args(["push", "--porcelain"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "git push failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(format!(
+        "Pushed {} ({})",
+        branch_name,
+        stdout.lines().next().unwrap_or("ok").trim()
+    ))
+}
+
 // -- Worktree support --
 
 #[derive(Debug, Clone)]

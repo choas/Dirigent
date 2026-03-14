@@ -326,7 +326,13 @@ impl DirigentApp {
                     self.set_status_message(format!("Committed: {}", short));
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
                     // Trigger post-commit agents (format, lint, etc.)
-                    self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id));
+                    let cue_prompt = self
+                        .cues
+                        .iter()
+                        .find(|c| c.id == cue_id)
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default();
+                    self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id), &cue_prompt);
                 }
                 Err(e) => {
                     self.set_status_message(format!("Commit failed: {}", e));

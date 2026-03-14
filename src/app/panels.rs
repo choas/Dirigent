@@ -7,7 +7,7 @@ use super::{
     icon, icon_small, DiffReview, DirigentApp, COMMIT_MSG_TRUNCATE_LEN, FONT_SCALE_SUBHEADING,
     SPACE_MD, SPACE_SM, SPACE_XS,
 };
-use crate::agents::AgentStatus;
+use crate::agents::{AgentKind, AgentStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -15,6 +15,11 @@ use crate::settings::SemanticColors;
 
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
+        let mut push_clicked = false;
+        let mut run_all_agents = false;
+        let mut agent_to_trigger: Option<AgentKind> = None;
+        let mut agent_to_cancel: Option<AgentKind> = None;
+
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Dirigent", |ui| {
@@ -30,12 +35,168 @@ impl DirigentApp {
                     ui.separator();
                     if ui.button("Settings...").clicked() {
                         self.dismiss_central_overlays();
+                        self.reload_settings_from_disk();
                         self.show_settings = true;
+                        ui.close();
+                    }
+                });
+
+                // Git menu
+                ui.menu_button("Git", |ui| {
+                    let has_repo = self.git.info.is_some();
+                    if !has_repo {
+                        ui.label(
+                            egui::RichText::new("No git repository")
+                                .italics()
+                                .color(self.semantic.tertiary_text),
+                        );
+                        return;
+                    }
+
+                    // Show branch info
+                    if let Some(ref info) = self.git.info {
+                        ui.label(egui::RichText::new(format!("\u{25CF} {}", info.branch)).strong());
+                        ui.separator();
+                    }
+
+                    let push_label = if self.git.pushing {
+                        "Pushing..."
+                    } else {
+                        "Push"
+                    };
+                    if ui
+                        .add_enabled(!self.git.pushing, egui::Button::new(push_label))
+                        .clicked()
+                    {
+                        push_clicked = true;
+                        ui.close();
+                    }
+                });
+
+                // Agents menu
+                ui.menu_button("Agents", |ui| {
+                    let enabled_agents: Vec<_> = self
+                        .settings
+                        .agents
+                        .iter()
+                        .filter(|a| a.enabled && !a.command.is_empty())
+                        .map(|a| {
+                            let status = self
+                                .agent_state
+                                .statuses
+                                .get(&a.kind)
+                                .copied()
+                                .unwrap_or(AgentStatus::Idle);
+                            (
+                                a.kind,
+                                a.display_name().to_string(),
+                                a.command.clone(),
+                                status,
+                            )
+                        })
+                        .collect();
+
+                    if enabled_agents.is_empty() {
+                        ui.label(
+                            egui::RichText::new("No agents configured")
+                                .italics()
+                                .color(self.semantic.tertiary_text),
+                        );
+                        ui.separator();
+                        if ui.button("Open Settings...").clicked() {
+                            self.dismiss_central_overlays();
+                            self.reload_settings_from_disk();
+                            self.show_settings = true;
+                            self.agents_expanded = true;
+                            ui.close();
+                        }
+                        return;
+                    }
+
+                    // Run All button
+                    let any_idle = enabled_agents
+                        .iter()
+                        .any(|(_, _, _, s)| *s != AgentStatus::Running);
+                    if ui
+                        .add_enabled(any_idle, egui::Button::new("Run All"))
+                        .clicked()
+                    {
+                        run_all_agents = true;
+                        ui.close();
+                    }
+                    ui.separator();
+
+                    for (kind, name, command, status) in &enabled_agents {
+                        let (status_icon, status_color) = match status {
+                            AgentStatus::Idle => ("", self.semantic.secondary_text),
+                            AgentStatus::Running => ("\u{21BB} ", self.semantic.accent),
+                            AgentStatus::Passed => ("\u{2713} ", self.semantic.success),
+                            AgentStatus::Failed => ("\u{2717} ", self.semantic.danger),
+                            AgentStatus::Error => ("! ", self.semantic.danger),
+                        };
+
+                        let is_running = *status == AgentStatus::Running;
+                        let label = format!("{}{}", status_icon, name);
+
+                        if is_running {
+                            if ui
+                                .button(egui::RichText::new(&label).color(status_color))
+                                .on_hover_text(format!("Cancel {}", name))
+                                .clicked()
+                            {
+                                agent_to_cancel = Some(*kind);
+                                ui.close();
+                            }
+                        } else {
+                            if ui.button(&label).on_hover_text(command).clicked() {
+                                agent_to_trigger = Some(*kind);
+                                ui.close();
+                            }
+                        }
+                    }
+
+                    ui.separator();
+                    if ui.button("Settings...").clicked() {
+                        self.dismiss_central_overlays();
+                        self.reload_settings_from_disk();
+                        self.show_settings = true;
+                        self.agents_expanded = true;
                         ui.close();
                     }
                 });
             });
         });
+
+        // Handle deferred actions outside the UI closure
+        if push_clicked {
+            self.start_git_push();
+        }
+        if let Some(kind) = agent_to_cancel {
+            self.cancel_agent(kind);
+        }
+        if run_all_agents {
+            self.run_all_agents();
+        } else if let Some(kind) = agent_to_trigger {
+            self.trigger_agent_manual(kind);
+        }
+    }
+
+    /// Trigger all enabled agents that are not currently running.
+    fn run_all_agents(&mut self) {
+        let kinds: Vec<AgentKind> = self
+            .settings
+            .agents
+            .iter()
+            .filter(|a| {
+                a.enabled
+                    && !a.command.is_empty()
+                    && self.agent_state.statuses.get(&a.kind).copied() != Some(AgentStatus::Running)
+            })
+            .map(|a| a.kind)
+            .collect();
+        for kind in kinds {
+            self.trigger_agent_manual(kind);
+        }
     }
 
     pub(super) fn render_about_dialog(&mut self, ctx: &egui::Context) {
@@ -486,7 +647,7 @@ impl DirigentApp {
                                 AgentStatus::Failed => ("\u{2717}", self.semantic.danger),
                                 AgentStatus::Error => ("!", self.semantic.danger),
                             };
-                            let label_text = format!("{} {}", config.kind.label(), icon_str);
+                            let label_text = format!("{} {}", config.display_name(), icon_str);
                             let mut resp = ui.label(
                                 egui::RichText::new(&label_text)
                                     .monospace()

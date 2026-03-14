@@ -179,6 +179,9 @@ pub(super) struct GitState {
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,
+    /// Whether a git push is currently in progress.
+    pub(super) pushing: bool,
+    pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 pub struct DirigentApp {
@@ -433,6 +436,8 @@ impl DirigentApp {
                 worktrees,
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
+                pushing: false,
+                push_rx: None,
             },
             settings,
             semantic,
@@ -552,6 +557,42 @@ impl DirigentApp {
     fn reload_cues(&mut self) {
         self.cues = self.db.all_cues_limited_archived(200).unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+    }
+
+    /// Start an async git push operation.
+    fn start_git_push(&mut self) {
+        if self.git.pushing {
+            return;
+        }
+        self.git.pushing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.push_rx = Some(rx);
+        let root = self.project_root.clone();
+        std::thread::spawn(move || {
+            let result = git::git_push(&root).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Pushing...".to_string());
+    }
+
+    /// Check for completed git push.
+    fn process_push_result(&mut self) {
+        if let Some(ref rx) = self.git.push_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.git.pushing = false;
+                self.git.push_rx = None;
+                match result {
+                    Ok(msg) => {
+                        self.set_status_message(msg);
+                        self.reload_git_info();
+                        self.reload_commit_history();
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("Push failed: {}", e));
+                    }
+                }
+            }
+        }
     }
 
     fn reload_git_info(&mut self) {
@@ -759,6 +800,14 @@ impl DirigentApp {
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
     }
 
+    /// Re-read settings from disk (the file may have been changed externally by Claude Code).
+    fn reload_settings_from_disk(&mut self) {
+        let recent_repos = self.settings.recent_repos.clone();
+        self.settings = settings::load_settings(&self.project_root);
+        self.settings.recent_repos = recent_repos;
+        self.needs_theme_apply = true;
+    }
+
     /// Render project-wide search panel as a left side panel (replaces file tree).
     fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("search_files_panel")
@@ -793,7 +842,7 @@ impl eframe::App for DirigentApp {
                 }
             }
             // Trigger agents configured with OnFileChange
-            self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None);
+            self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
         }
 
         // Reap finished/panicked worker threads
@@ -819,6 +868,9 @@ impl eframe::App for DirigentApp {
 
         // Process run queue (start next queued cue when no cues are running)
         self.process_run_queue();
+
+        // Poll for git push results
+        self.process_push_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();

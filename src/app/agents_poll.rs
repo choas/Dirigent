@@ -14,8 +14,9 @@ impl DirigentApp {
             } else {
                 serde_json::to_string(&result.diagnostics).ok()
             };
+            let kind_key = result.kind.db_key();
             let _ = self.db.insert_agent_run(
-                result.kind.as_str(),
+                &kind_key,
                 result.cue_id,
                 &self
                     .settings
@@ -48,7 +49,13 @@ impl DirigentApp {
                 .insert(result.kind, result.diagnostics);
 
             // Status bar message + Activity log for associated cue
-            let label = result.kind.label();
+            let label = self
+                .settings
+                .agents
+                .iter()
+                .find(|a| a.kind == result.kind)
+                .map(|a| a.display_name().to_string())
+                .unwrap_or_else(|| result.kind.label().to_string());
             let dur = if result.duration_ms < 1000 {
                 format!("{}ms", result.duration_ms)
             } else {
@@ -105,18 +112,24 @@ impl DirigentApp {
             }
 
             // Chain: trigger any agents configured with AfterAgent(<this agent>)
-            self.trigger_agents_for(&AgentTrigger::AfterAgent(result.kind), result.cue_id);
+            self.trigger_agents_for(&AgentTrigger::AfterAgent(result.kind), result.cue_id, "");
         }
     }
 
     /// Trigger all agents matching the given trigger type.
-    pub(super) fn trigger_agents_for(&mut self, trigger: &AgentTrigger, cue_id: Option<i64>) {
+    pub(super) fn trigger_agents_for(
+        &mut self,
+        trigger: &AgentTrigger,
+        cue_id: Option<i64>,
+        prompt: &str,
+    ) {
         agents::trigger_agents(
             &self.settings.agents,
             trigger,
             &self.project_root,
             &self.settings.agent_shell_init,
             cue_id,
+            prompt,
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
             &mut self.agent_state.cancel_flags,
@@ -141,7 +154,7 @@ impl DirigentApp {
             let tx = self.agent_state.tx.clone();
 
             std::thread::spawn(move || {
-                agents::run_agent(&config, &root, &init, None, &tx, &cancel);
+                agents::run_agent(&config, &root, &init, None, "", &tx, &cancel);
             });
         }
     }

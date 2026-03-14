@@ -18,28 +18,41 @@ pub(crate) enum AgentKind {
     Lint,
     Build,
     Test,
+    Custom(u32),
 }
 
 impl AgentKind {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             AgentKind::Format => "format",
             AgentKind::Lint => "lint",
             AgentKind::Build => "build",
             AgentKind::Test => "test",
+            AgentKind::Custom(_) => "custom",
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    /// Returns a unique key suitable for database storage.
+    pub fn db_key(&self) -> String {
+        match self {
+            AgentKind::Custom(id) => format!("custom_{}", id),
+            other => other.as_str().to_string(),
+        }
+    }
+
+    pub fn label(&self) -> &str {
         match self {
             AgentKind::Format => "Format",
             AgentKind::Lint => "Lint",
             AgentKind::Build => "Build",
             AgentKind::Test => "Test",
+            AgentKind::Custom(_) => "Custom",
         }
     }
 
-    pub fn all() -> &'static [AgentKind] {
+    /// Built-in agent kinds (used for language presets and tests).
+    #[allow(dead_code)]
+    pub fn builtins() -> &'static [AgentKind] {
         &[
             AgentKind::Format,
             AgentKind::Lint,
@@ -133,6 +146,9 @@ impl AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AgentConfig {
     pub kind: AgentKind,
+    /// User-visible display name. Empty string falls back to kind label.
+    #[serde(default)]
+    pub name: String,
     pub enabled: bool,
     pub command: String,
     pub trigger: AgentTrigger,
@@ -140,10 +156,40 @@ pub(crate) struct AgentConfig {
     /// Working directory relative to project root (empty = project root).
     #[serde(default)]
     pub working_dir: String,
+    /// Shell command to run before the main agent command.
+    /// The prompt text is available as `$PROMPT` env var.
+    /// Use `$PROMPT` in the command itself to inline it.
+    /// If this command exits non-zero, the agent run is skipped.
+    #[serde(default)]
+    pub before_run: String,
+}
+
+impl AgentConfig {
+    /// Display name: custom name if set, otherwise the kind's default label.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            self.kind.label()
+        } else {
+            &self.name
+        }
+    }
 }
 
 pub(crate) fn default_agents() -> Vec<AgentConfig> {
     Vec::new()
+}
+
+/// Generate the next unique ID for a custom agent.
+pub(crate) fn next_custom_id(agents: &[AgentConfig]) -> u32 {
+    agents
+        .iter()
+        .filter_map(|a| match a.kind {
+            AgentKind::Custom(id) => Some(id),
+            _ => None,
+        })
+        .max()
+        .map(|max| max + 1)
+        .unwrap_or(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -207,409 +253,505 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
         AgentLanguage::Rust => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "cargo fmt".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "cargo clippy --message-format=json 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "cargo build --message-format=json 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "cargo test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::TypeScript => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "npx prettier --write .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "npx eslint . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "npx tsc --noEmit 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "npx jest 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Python => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "black .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "ruff check . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "python -m py_compile *.py 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "pytest 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Go => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "gofmt -w .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "golangci-lint run 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "go build ./... 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "go test ./... 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Java => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "./mvnw com.diffplug.spotless:spotless-maven-plugin:apply 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "mvn checkstyle:check 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "mvn compile 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "mvn test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::CSharp => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "dotnet format 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "dotnet format --verify-no-changes 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "dotnet build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "dotnet test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Ruby => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "bundle exec rubocop -a 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "bundle exec rubocop 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "ruby -c **/*.rb 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "bundle exec rspec 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Swift => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "swift-format format -i -r . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "swiftlint 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "swift build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "swift test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Kotlin => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "ktlint --format 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 60,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "ktlint 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "./gradlew compileKotlin 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "./gradlew test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Cpp => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "find . -name '*.cpp' -o -name '*.h' | xargs clang-format -i".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "cppcheck --enable=all . 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "cmake --build build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 180,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "ctest --test-dir build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Elixir => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "mix format".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "mix credo 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "mix compile 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "mix test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
         AgentLanguage::Zig => vec![
             AgentConfig {
                 kind: AgentKind::Format,
+                name: String::new(),
                 enabled: true,
                 command: "zig fmt .".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 30,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Lint,
+                name: String::new(),
                 enabled: false,
                 command: "zig build 2>&1".into(),
                 trigger: AgentTrigger::AfterRun,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Build,
+                name: String::new(),
                 enabled: false,
                 command: "zig build 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 120,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
             AgentConfig {
                 kind: AgentKind::Test,
+                name: String::new(),
                 enabled: false,
                 command: "zig build test 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
+                before_run: String::new(),
             },
         ],
     }
@@ -708,6 +850,7 @@ pub(crate) fn run_agent(
     project_root: &Path,
     shell_init: &str,
     cue_id: Option<i64>,
+    prompt: &str,
     tx: &mpsc::Sender<AgentResult>,
     cancel: &Arc<AtomicBool>,
 ) {
@@ -746,10 +889,59 @@ pub(crate) fn run_agent(
         candidate
     };
 
+    // Execute before_run hook if configured.
+    // The prompt is available as $PROMPT env var and expanded in the command.
+    if !config.before_run.trim().is_empty() {
+        let before_cmd = config.before_run.replace("$PROMPT", prompt);
+        let before_effective = if shell_init.trim().is_empty() {
+            before_cmd
+        } else {
+            format!("{}\n{}", shell_init.trim(), before_cmd)
+        };
+        let before_result = Command::new("sh")
+            .arg("-c")
+            .arg(&before_effective)
+            .current_dir(&cwd)
+            .env("PROMPT", prompt)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+
+        match before_result {
+            Ok(output) if !output.status.success() => {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let combined = if stderr.is_empty() { stdout } else { stderr };
+                let _ = tx.send(AgentResult {
+                    kind,
+                    cue_id,
+                    status: AgentStatus::Error,
+                    output: format!("before_run failed (exit {}):\n{}", output.status, combined),
+                    diagnostics: Vec::new(),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                });
+                return;
+            }
+            Err(e) => {
+                let _ = tx.send(AgentResult {
+                    kind,
+                    cue_id,
+                    status: AgentStatus::Error,
+                    output: format!("before_run failed to execute: {}", e),
+                    diagnostics: Vec::new(),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                });
+                return;
+            }
+            _ => {} // success — continue to main command
+        }
+    }
+
     let mut cmd = Command::new("sh");
     cmd.arg("-c")
         .arg(&effective_cmd)
         .current_dir(&cwd)
+        .env("PROMPT", prompt)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -784,7 +976,7 @@ pub(crate) fn run_agent(
                         // Lint & Format: a completed run is always "passed" —
                         // findings are reported via diagnostics, not as agent failure.
                         AgentKind::Lint | AgentKind::Format => AgentStatus::Passed,
-                        // Build & Test: exit code determines pass/fail.
+                        // Build, Test, and Custom: exit code determines pass/fail.
                         _ => {
                             if output.status.success() {
                                 AgentStatus::Passed
@@ -796,7 +988,10 @@ pub(crate) fn run_agent(
 
                     // Parse diagnostics from output (cargo JSON for Rust, generic patterns for others)
                     let diagnostics = match kind {
-                        AgentKind::Lint | AgentKind::Build | AgentKind::Test => {
+                        AgentKind::Lint
+                        | AgentKind::Build
+                        | AgentKind::Test
+                        | AgentKind::Custom(_) => {
                             let cargo_diags = parse_cargo_diagnostics(&stdout);
                             if cargo_diags.is_empty() {
                                 parse_generic_diagnostics(&combined)
@@ -959,6 +1154,7 @@ pub(crate) fn trigger_agents(
     project_root: &Path,
     shell_init: &str,
     cue_id: Option<i64>,
+    prompt: &str,
     tx: &mpsc::Sender<AgentResult>,
     statuses: &mut HashMap<AgentKind, AgentStatus>,
     cancel_flags: &mut HashMap<AgentKind, Arc<AtomicBool>>,
@@ -986,10 +1182,11 @@ pub(crate) fn trigger_agents(
         let config = config.clone();
         let root = project_root.to_path_buf();
         let init = shell_init.to_string();
+        let prompt = prompt.to_string();
         let tx = tx.clone();
 
         std::thread::spawn(move || {
-            run_agent(&config, &root, &init, cue_id, &tx, &cancel);
+            run_agent(&config, &root, &init, cue_id, &prompt, &tx, &cancel);
         });
 
         count += 1;
@@ -1144,6 +1341,8 @@ impl AgentKind {
             "lint" => Some(AgentKind::Lint),
             "build" => Some(AgentKind::Build),
             "test" => Some(AgentKind::Test),
+            s if s.starts_with("custom_") => s[7..].parse().ok().map(AgentKind::Custom),
+            "custom" => Some(AgentKind::Custom(0)),
             _ => None,
         }
     }
@@ -1169,10 +1368,13 @@ mod tests {
 
     #[test]
     fn agent_kind_roundtrip() {
-        for kind in AgentKind::all() {
+        for kind in AgentKind::builtins() {
             let s = kind.as_str();
             assert_eq!(AgentKind::from_str(s), Some(*kind));
         }
+        // Custom kind uses db_key for round-trip
+        let custom = AgentKind::Custom(42);
+        assert_eq!(AgentKind::from_str(&custom.db_key()), Some(custom));
     }
 
     #[test]

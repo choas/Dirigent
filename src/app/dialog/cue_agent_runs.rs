@@ -60,7 +60,12 @@ impl DirigentApp {
                 .map(|a| {
                     let is_running = self.agent_state.statuses.get(&a.kind).copied()
                         == Some(crate::agents::AgentStatus::Running);
-                    (a.kind, a.command.clone(), is_running)
+                    (
+                        a.kind,
+                        a.display_name().to_string(),
+                        a.command.clone(),
+                        is_running,
+                    )
                 })
                 .collect();
             if !agent_buttons.is_empty() {
@@ -71,11 +76,11 @@ impl DirigentApp {
                             .small()
                             .color(self.semantic.secondary_text),
                     );
-                    for (kind, command, is_running) in &agent_buttons {
+                    for (kind, name, command, is_running) in &agent_buttons {
                         let label = if *is_running {
-                            format!("{} \u{21BB}", kind.label())
+                            format!("{} \u{21BB}", name)
                         } else {
-                            kind.label().to_string()
+                            name.clone()
                         };
                         if ui
                             .add_enabled(

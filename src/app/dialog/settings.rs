@@ -1,7 +1,10 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::agents::{agents_for_language, default_agents, AgentKind, AgentLanguage, AgentTrigger};
+use crate::agents::{
+    agents_for_language, default_agents, next_custom_id, AgentConfig, AgentKind, AgentLanguage,
+    AgentTrigger,
+};
 use crate::opencode;
 use crate::settings::{self, default_playbook, CliProvider, SourceConfig, SourceKind, ThemeChoice};
 
@@ -453,6 +456,19 @@ impl DirigentApp {
                         if ui.small_button("Reset Defaults").clicked() {
                             self.settings.agents = default_agents();
                         }
+                        if ui.small_button("+ Add Agent").clicked() {
+                            let id = next_custom_id(&self.settings.agents);
+                            self.settings.agents.push(AgentConfig {
+                                kind: AgentKind::Custom(id),
+                                name: format!("Agent {}", id),
+                                enabled: true,
+                                command: String::new(),
+                                trigger: AgentTrigger::Manual,
+                                timeout_secs: 120,
+                                working_dir: String::new(),
+                                before_run: String::new(),
+                            });
+                        }
                     });
                 }
             });
@@ -484,10 +500,18 @@ impl DirigentApp {
                     self.semantic.card_frame()
                         .show(ui, |ui| {
                             ui.set_width(card_width);
+                            let kind_label = self.settings.agents[i].kind.label().to_string();
                             ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.settings.agents[i].name)
+                                        .desired_width(120.0)
+                                        .hint_text(&kind_label)
+                                        .font(egui::TextStyle::Body),
+                                );
                                 ui.label(
-                                    egui::RichText::new(self.settings.agents[i].kind.label())
-                                        .strong(),
+                                    egui::RichText::new(format!("({})", kind_label))
+                                        .small()
+                                        .color(self.semantic.tertiary_text),
                                 );
                                 ui.checkbox(&mut self.settings.agents[i].enabled, "Enabled");
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -523,6 +547,24 @@ impl DirigentApp {
                                     );
                                     ui.end_row();
 
+                                    ui.label("Before Run:");
+                                    ui.vertical(|ui| {
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.agents[i].before_run,
+                                            )
+                                            .desired_width(300.0)
+                                            .hint_text("e.g. echo $PROMPT > /tmp/last_prompt")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new("Runs before agent. $PROMPT env var has the cue text. Non-zero exit skips the agent.")
+                                                .small()
+                                                .color(self.semantic.tertiary_text),
+                                        );
+                                    });
+                                    ui.end_row();
+
                                     ui.label("Trigger:");
                                     ui.horizontal(|ui| {
                                         let current_idx = self.settings.agents[i].trigger.variant_index();
@@ -553,14 +595,24 @@ impl DirigentApp {
                                         if let AgentTrigger::AfterAgent(current_kind) = self.settings.agents[i].trigger {
                                             let own_kind = self.settings.agents[i].kind;
                                             let mut selected = current_kind;
+                                            // Build list of other agents for the selector
+                                            let other_agents: Vec<(AgentKind, String)> = self
+                                                .settings
+                                                .agents
+                                                .iter()
+                                                .filter(|a| a.kind != own_kind)
+                                                .map(|a| (a.kind, a.display_name().to_string()))
+                                                .collect();
+                                            let selected_label = other_agents
+                                                .iter()
+                                                .find(|(k, _)| *k == selected)
+                                                .map(|(_, n)| n.as_str())
+                                                .unwrap_or(selected.label());
                                             egui::ComboBox::from_id_salt(format!("agent_trigger_kind_{}", i))
-                                                .selected_text(selected.label())
+                                                .selected_text(selected_label)
                                                 .show_ui(ui, |ui| {
-                                                    for &k in AgentKind::all() {
-                                                        if k == own_kind {
-                                                            continue;
-                                                        }
-                                                        ui.selectable_value(&mut selected, k, k.label());
+                                                    for (k, name) in &other_agents {
+                                                        ui.selectable_value(&mut selected, *k, name.as_str());
                                                     }
                                                 });
                                             if selected != current_kind {
