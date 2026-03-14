@@ -74,6 +74,81 @@ pub(crate) fn fetch_github_issues(
         .collect())
 }
 
+/// Fetch messages from a Slack channel using the Slack Web API.
+/// Requires a bot token (`xoxb-...`) and a channel ID.
+pub(crate) fn fetch_slack_messages(
+    token: &str,
+    channel: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if token.is_empty() {
+        return Err(DirigentError::Source(
+            "Slack bot token is empty".to_string(),
+        ));
+    }
+    if channel.is_empty() {
+        return Err(DirigentError::Source("Slack channel is empty".to_string()));
+    }
+
+    let child = Command::new("curl")
+        .arg("-s")
+        .arg("-H")
+        .arg(format!("Authorization: Bearer {}", token))
+        .arg(format!(
+            "https://slack.com/api/conversations.history?channel={}&limit=50",
+            channel,
+        ))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+    let output = output_with_timeout(child, timeout)?;
+
+    if !output.status.success() {
+        return Err(DirigentError::Source(format!(
+            "curl failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let resp: serde_json::Value = serde_json::from_str(&json_str)?;
+
+    if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        return Err(DirigentError::Source(format!("Slack API error: {}", err)));
+    }
+
+    let messages = resp
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(messages
+        .iter()
+        .filter_map(|msg| {
+            let text = msg.get("text")?.as_str()?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            let ts = msg.get("ts")?.as_str()?;
+            let user = msg
+                .get("user")
+                .and_then(|u| u.as_str())
+                .unwrap_or("unknown");
+            Some(SourceItem {
+                external_id: format!("{}/{}", channel, ts),
+                text: format!("[{}] {}", user, text),
+                source_label: source_label.to_string(),
+            })
+        })
+        .collect())
+}
+
 /// Maximum length for a custom source command string.
 const MAX_COMMAND_LENGTH: usize = 4096;
 

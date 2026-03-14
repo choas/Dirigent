@@ -83,6 +83,13 @@ impl DirigentApp {
                             Vec::new()
                         })
                 }
+                SourceKind::Slack => {
+                    sources::fetch_slack_messages(&source.token, &source.channel, &source.label)
+                        .unwrap_or_else(|e| {
+                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
+                            Vec::new()
+                        })
+                }
                 SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
                     if source.command.is_empty() {
                         Vec::new()

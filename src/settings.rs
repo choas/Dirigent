@@ -811,6 +811,7 @@ impl Default for CliProvider {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum SourceKind {
     GitHubIssues,
+    Slack,
     Notion,
     Mcp,
     Custom,
@@ -820,6 +821,7 @@ impl SourceKind {
     pub fn display_name(&self) -> &'static str {
         match self {
             SourceKind::GitHubIssues => "GitHub Issues",
+            SourceKind::Slack => "Slack",
             SourceKind::Notion => "Notion",
             SourceKind::Mcp => "MCP",
             SourceKind::Custom => "Custom",
@@ -829,6 +831,7 @@ impl SourceKind {
     pub fn all() -> &'static [SourceKind] {
         &[
             SourceKind::GitHubIssues,
+            SourceKind::Slack,
             SourceKind::Notion,
             SourceKind::Mcp,
             SourceKind::Custom,
@@ -847,6 +850,10 @@ pub(crate) struct SourceConfig {
     pub filter: String,
     #[serde(default)]
     pub command: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub channel: String,
 }
 
 impl Default for SourceConfig {
@@ -859,6 +866,8 @@ impl Default for SourceConfig {
             enabled: true,
             filter: String::new(),
             command: String::new(),
+            token: String::new(),
+            channel: String::new(),
         }
     }
 }

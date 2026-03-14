@@ -386,6 +386,30 @@ impl DirigentApp {
                                         );
                                         ui.end_row();
                                     }
+                                    SourceKind::Slack => {
+                                        ui.label("Bot Token:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].token,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("xoxb-...")
+                                            .password(true)
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Channel:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].channel,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("C01ABCDEF or #channel-name")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+                                    }
                                     _ => {
                                         ui.label("Command:");
                                         ui.add(
