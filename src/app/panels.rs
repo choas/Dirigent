@@ -16,22 +16,22 @@ use crate::settings::SemanticColors;
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Dirigent", |ui| {
                     if ui.button("About Dirigent").clicked() {
                         self.show_about = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("New Window  \u{2318}N").clicked() {
                         crate::spawn_new_instance();
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("Settings...").clicked() {
                         self.dismiss_central_overlays();
                         self.show_settings = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
@@ -280,7 +280,7 @@ impl DirigentApp {
                 } else {
                     egui::Color32::from_black_alpha(12)
                 };
-                ui.painter().rect_filled(row_rect, 0.0, hover);
+                ui.painter().rect_filled(row_rect, 0, hover);
             }
 
             // Disclosure triangle
@@ -356,7 +356,7 @@ impl DirigentApp {
             // Selected highlight
             if is_selected {
                 ui.painter()
-                    .rect_filled(row_rect, 0.0, semantic.selection_bg());
+                    .rect_filled(row_rect, 0, semantic.selection_bg());
             }
 
             // Hover highlight
@@ -366,7 +366,7 @@ impl DirigentApp {
                 } else {
                     egui::Color32::from_black_alpha(12)
                 };
-                ui.painter().rect_filled(row_rect, 0.0, hover);
+                ui.painter().rect_filled(row_rect, 0, hover);
             }
 
             // File name (indented with extra space to align past disclosure triangles)
@@ -557,9 +557,9 @@ impl DirigentApp {
 
     // Feature 2: Global prompt input
     pub(super) fn render_prompt_field(&mut self, ctx: &egui::Context) {
-        let prompt_frame = egui::Frame::none()
+        let prompt_frame = egui::Frame::NONE
             .fill(self.semantic.prompt_surface())
-            .inner_margin(egui::Margin::symmetric(SPACE_SM, SPACE_SM));
+            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
 
         egui::TopBottomPanel::bottom("prompt_field")
             .frame(prompt_frame)
@@ -631,7 +631,7 @@ impl DirigentApp {
                                 .color(self.semantic.accent_text()),
                         )
                         .fill(self.semantic.accent)
-                        .rounding(btn_size / 2.0)
+                        .corner_radius(btn_size as u8 / 2)
                         .min_size(egui::vec2(btn_size, btn_size));
                         let btn_clicked = ui.add(send_btn).on_hover_text("Create cue").clicked();
                         let enter_submitted = input_response.has_focus()

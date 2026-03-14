@@ -409,27 +409,27 @@ struct ThemePalette {
 /// Apply generous, Apple-style corner rounding and subtle depth to all visual elements.
 /// 4px for small widgets, 8px for menus, 12px for dialog windows.
 fn apply_rounding_and_depth(v: &mut egui::Visuals, dark: bool) {
-    let r = egui::Rounding::same;
-    v.window_rounding = r(12.0);
-    v.menu_rounding = r(8.0);
-    v.widgets.noninteractive.rounding = r(6.0);
-    v.widgets.inactive.rounding = r(6.0);
-    v.widgets.hovered.rounding = r(8.0);
-    v.widgets.active.rounding = r(6.0);
-    v.widgets.open.rounding = r(6.0);
+    let r = egui::CornerRadius::same;
+    v.window_corner_radius = r(12);
+    v.menu_corner_radius = r(8);
+    v.widgets.noninteractive.corner_radius = r(6);
+    v.widgets.inactive.corner_radius = r(6);
+    v.widgets.hovered.corner_radius = r(8);
+    v.widgets.active.corner_radius = r(6);
+    v.widgets.open.corner_radius = r(6);
 
     // Subtle drop shadows for floating windows and popups
     let shadow_alpha = if dark { 100 } else { 40 };
     v.window_shadow = egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 4.0),
-        blur: 16.0,
-        spread: 2.0,
+        offset: [0, 4],
+        blur: 16,
+        spread: 2,
         color: egui::Color32::from_black_alpha(shadow_alpha),
     };
     v.popup_shadow = egui::epaint::Shadow {
-        offset: egui::vec2(0.0, 2.0),
-        blur: 8.0,
-        spread: 1.0,
+        offset: [0, 2],
+        blur: 8,
+        spread: 1,
         color: egui::Color32::from_black_alpha(shadow_alpha),
     };
 }
@@ -650,14 +650,14 @@ impl SemanticColors {
     pub fn dialog_frame(&self) -> egui::Frame {
         egui::Frame::window(&egui::Style::default())
             .fill(self.dialog_surface())
-            .rounding(egui::Rounding::same(8.0))
+            .corner_radius(egui::CornerRadius::same(8))
             .shadow(egui::epaint::Shadow {
-                offset: egui::vec2(0.0, 4.0),
-                blur: 16.0,
-                spread: 4.0,
+                offset: [0, 4],
+                blur: 16,
+                spread: 4,
                 color: self.dialog_shadow(),
             })
-            .inner_margin(egui::Margin::same(16.0))
+            .inner_margin(egui::Margin::same(16))
             .stroke(egui::Stroke::new(
                 1.0,
                 if self.is_dark {
@@ -671,14 +671,14 @@ impl SemanticColors {
     /// Special frame for the About dialog — larger padding and more prominent shadow.
     pub fn about_dialog_frame(&self) -> egui::Frame {
         self.dialog_frame()
-            .inner_margin(egui::Margin::same(24.0))
+            .inner_margin(egui::Margin::same(24))
             .shadow(egui::epaint::Shadow {
-                offset: egui::vec2(0.0, 8.0),
-                blur: 24.0,
-                spread: 8.0,
+                offset: [0, 8],
+                blur: 24,
+                spread: 8,
                 color: self.dialog_shadow(),
             })
-            .rounding(egui::Rounding::same(12.0))
+            .corner_radius(egui::CornerRadius::same(12))
     }
 
     /// Slightly elevated card surface color.
@@ -694,14 +694,14 @@ impl SemanticColors {
     /// subtle shadow and elevated fill instead of a flat border.
     pub fn card_frame(&self) -> egui::Frame {
         let shadow_alpha = if self.is_dark { 70 } else { 25 };
-        egui::Frame::none()
+        egui::Frame::NONE
             .inner_margin(10.0)
             .fill(self.card_surface())
-            .rounding(8.0)
+            .corner_radius(8)
             .shadow(egui::epaint::Shadow {
-                offset: egui::vec2(0.0, 2.0),
-                blur: 6.0,
-                spread: 0.0,
+                offset: [0, 2],
+                blur: 6,
+                spread: 0,
                 color: egui::Color32::from_black_alpha(shadow_alpha),
             })
             .stroke(egui::Stroke::new(

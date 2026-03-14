@@ -175,16 +175,9 @@ impl DirigentApp {
                             }
                             let dropdown_btn =
                                 ui.small_button("\u{25BE}").on_hover_text("Run options");
-                            let run_popup_id = ui.make_persistent_id(("run_options", cue.id));
-                            if dropdown_btn.clicked() {
-                                ui.memory_mut(|mem| mem.toggle_popup(run_popup_id));
-                            }
-                            egui::popup_below_widget(
-                                ui,
-                                run_popup_id,
-                                &dropdown_btn,
-                                egui::PopupCloseBehavior::CloseOnClick,
-                                |ui| {
+                            egui::Popup::menu(&dropdown_btn)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                                .show(|ui| {
                                     ui.set_min_width(160.0);
                                     if ui.button(icon("\u{25B6} Run now", fs)).clicked() {
                                         actions.push((cue.id, CueAction::MoveTo(CueStatus::Ready)));
@@ -205,8 +198,7 @@ impl DirigentApp {
                                             .entry(cue.id)
                                             .or_insert_with(|| "5m".to_string());
                                     }
-                                },
-                            );
+                                });
                             if ui
                                 .small_button(icon("\u{2713} Done", fs))
                                 .on_hover_text("Mark done (no Claude)")
@@ -393,16 +385,9 @@ impl DirigentApp {
 
                 // Overflow menu
                 let more_btn = ui.small_button("\u{2026}").on_hover_text("More actions");
-                let popup_id = ui.make_persistent_id(("cue_more", cue.id));
-                if more_btn.clicked() {
-                    ui.memory_mut(|mem| mem.toggle_popup(popup_id));
-                }
-                egui::popup_below_widget(
-                    ui,
-                    popup_id,
-                    &more_btn,
-                    egui::PopupCloseBehavior::CloseOnClickOutside,
-                    |ui| {
+                egui::Popup::menu(&more_btn)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
                         ui.set_min_width(140.0);
                         let is_expanded = self.logbook_expanded.contains(&cue.id);
                         let activity_label = if is_expanded {
@@ -420,8 +405,7 @@ impl DirigentApp {
                         if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                             actions.push((cue.id, CueAction::Delete));
                         }
-                    },
-                );
+                    });
             });
 
             // Schedule input field (visible when toggled via Run dropdown)
@@ -576,9 +560,9 @@ impl DirigentApp {
                                         } else {
                                             run.output.clone()
                                         };
-                                        egui::Frame::none()
-                                            .inner_margin(egui::Margin::same(4.0))
-                                            .rounding(4.0)
+                                        egui::Frame::NONE
+                                            .inner_margin(egui::Margin::same(4))
+                                            .corner_radius(4)
                                             .fill(self.semantic.selection_bg())
                                             .show(ui, |ui| {
                                                 egui::ScrollArea::vertical()
@@ -609,7 +593,7 @@ impl DirigentApp {
                 let [r, g, b, _] = self.semantic.accent.to_array();
                 ui.painter().rect_filled(
                     frame_resp.response.rect,
-                    8.0,
+                    8,
                     egui::Color32::from_rgba_premultiplied(r, g, b, alpha),
                 );
                 ui.ctx().request_repaint();

@@ -107,14 +107,14 @@ impl DirigentApp {
                         });
 
                         // Output block
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .inner_margin(egui::Margin {
-                                left: SPACE_SM,
-                                top: SPACE_XS,
-                                right: SPACE_XS,
-                                bottom: SPACE_SM,
+                                left: SPACE_SM as i8,
+                                top: SPACE_XS as i8,
+                                right: SPACE_XS as i8,
+                                bottom: SPACE_SM as i8,
                             })
-                            .rounding(4.0)
+                            .corner_radius(4)
                             .fill(self.semantic.selection_bg())
                             .show(ui, |ui| {
                                 if run.output.trim().is_empty() {

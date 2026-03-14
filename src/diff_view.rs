@@ -274,7 +274,7 @@ pub(crate) fn render_inline_diff(
                         bg_color
                     };
                     if let Some(bg) = effective_bg {
-                        ui.painter().rect_filled(response.response.rect, 0.0, bg);
+                        ui.painter().rect_filled(response.response.rect, 0, bg);
                     }
                 }
                 ui.add_space(SPACE_SM);
@@ -319,7 +319,7 @@ fn render_highlighted_text(
                     .background_color(highlight_bg),
             );
             // Paint highlight background behind the label
-            ui.painter().rect_filled(resp.rect, 2.0, highlight_bg);
+            ui.painter().rect_filled(resp.rect, 2, highlight_bg);
             // Re-paint text on top so it's visible above the rect
             let galley = ui.painter().layout_no_wrap(
                 text[abs_start..abs_end].to_string(),
@@ -452,7 +452,7 @@ pub(crate) fn render_side_by_side_diff(
                             bg
                         };
                         if let Some(bg) = effective_bg {
-                            ui.painter().rect_filled(resp.rect, 0.0, bg);
+                            ui.painter().rect_filled(resp.rect, 0, bg);
                         }
                     } else {
                         ui.label(egui::RichText::new(" ").monospace());
@@ -494,7 +494,7 @@ pub(crate) fn render_side_by_side_diff(
                             bg
                         };
                         if let Some(bg) = effective_bg {
-                            ui.painter().rect_filled(resp.rect, 0.0, bg);
+                            ui.painter().rect_filled(resp.rect, 0, bg);
                         }
                     } else {
                         ui.label(egui::RichText::new(" ").monospace());

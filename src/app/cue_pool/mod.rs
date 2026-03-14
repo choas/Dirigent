@@ -59,26 +59,24 @@ impl DirigentApp {
                         if ui.button("\u{2193}").on_hover_text("Import from document").clicked() {
                             import_requested = true;
                         }
-                        let popup_id = ui.make_persistent_id("playbook_popup");
-                        if plus_btn.clicked() {
-                            ui.memory_mut(|mem| mem.toggle_popup(popup_id));
-                        }
-                        egui::popup_below_widget(ui, popup_id, &plus_btn, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                            ui.set_min_width(200.0);
-                            ui.label(egui::RichText::new("Playbook").strong());
-                            ui.separator();
-                            for play in &self.settings.playbook {
-                                if ui.selectable_label(false, &play.name).clicked() {
-                                    selected_play_prompt = Some(play.prompt.clone());
-                                }
-                            }
-                            if !self.settings.playbook.is_empty() {
+                        egui::Popup::menu(&plus_btn)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                            .show(|ui| {
+                                ui.set_min_width(200.0);
+                                ui.label(egui::RichText::new("Playbook").strong());
                                 ui.separator();
-                            }
-                            if ui.selectable_label(false, "+ Custom cue...").clicked() {
-                                custom_cue_requested = true;
-                            }
-                        });
+                                for play in &self.settings.playbook {
+                                    if ui.selectable_label(false, &play.name).clicked() {
+                                        selected_play_prompt = Some(play.prompt.clone());
+                                    }
+                                }
+                                if !self.settings.playbook.is_empty() {
+                                    ui.separator();
+                                }
+                                if ui.selectable_label(false, "+ Custom cue...").clicked() {
+                                    custom_cue_requested = true;
+                                }
+                            });
                     });
                 });
 

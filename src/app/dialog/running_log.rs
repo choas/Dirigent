@@ -142,12 +142,12 @@ impl DirigentApp {
                                 );
                             }
                         });
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .inner_margin(egui::Margin {
-                                left: SPACE_SM,
-                                top: SPACE_XS,
-                                right: SPACE_XS,
-                                bottom: SPACE_SM,
+                                left: SPACE_SM as i8,
+                                top: SPACE_XS as i8,
+                                right: SPACE_XS as i8,
+                                bottom: SPACE_SM as i8,
                             })
                             .show(ui, |ui| {
                                 ui.label(&user_text);
@@ -161,12 +161,12 @@ impl DirigentApp {
                                     .color(exec_provider_color),
                             );
                         });
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .inner_margin(egui::Margin {
-                                left: SPACE_SM,
-                                top: SPACE_XS,
-                                right: SPACE_XS,
-                                bottom: SPACE_SM,
+                                left: SPACE_SM as i8,
+                                top: SPACE_XS as i8,
+                                right: SPACE_XS as i8,
+                                bottom: SPACE_SM as i8,
                             })
                             .show(ui, |ui| {
                                 if is_current_running {
@@ -226,12 +226,12 @@ impl DirigentApp {
                                 .strong()
                                 .color(current_provider_color),
                         );
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .inner_margin(egui::Margin {
-                                left: SPACE_SM,
-                                top: SPACE_XS,
-                                right: SPACE_XS,
-                                bottom: SPACE_SM,
+                                left: SPACE_SM as i8,
+                                top: SPACE_XS as i8,
+                                right: SPACE_XS as i8,
+                                bottom: SPACE_SM as i8,
                             })
                             .show(ui, |ui| {
                                 if current_running_log.is_empty() {

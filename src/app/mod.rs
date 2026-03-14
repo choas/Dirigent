@@ -884,12 +884,12 @@ impl eframe::App for DirigentApp {
 
         // Show overlay when files are being dragged over the window
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
                 egui::Id::new("drop_overlay"),
             ));
-            painter.rect_filled(screen, 0.0, egui::Color32::from_black_alpha(160));
+            painter.rect_filled(screen, 0, egui::Color32::from_black_alpha(160));
             painter.text(
                 screen.center(),
                 egui::Align2::CENTER_CENTER,
@@ -926,7 +926,7 @@ impl eframe::App for DirigentApp {
             || self.show_about
             || self.pending_play.is_some()
         {
-            let screen = ctx.screen_rect();
+            let screen = ctx.content_rect();
             egui::Area::new(egui::Id::new("modal_dim"))
                 .order(egui::Order::Middle)
                 .fixed_pos(screen.min)
