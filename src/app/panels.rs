@@ -830,6 +830,9 @@ impl DirigentApp {
                                 if let Ok(id) = self.db.insert_cue(&text, "", 0, None, &images) {
                                     if cmd_enter {
                                         let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                                        self.claude.expand_running = true;
+                                        self.reload_cues();
+                                        self.trigger_claude(id);
                                     }
                                 }
                             }
