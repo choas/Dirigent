@@ -334,19 +334,6 @@ impl Database {
         Ok(id)
     }
 
-    #[allow(dead_code)] // Used in tests
-    pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE id = ?1")?;
-        let mut rows = stmt.query(params![id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_cue(row)?))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn update_cue_status(&self, id: i64, status: CueStatus) -> Result<()> {
         self.conn.execute(
             "UPDATE cues SET status = ?1 WHERE id = ?2",
@@ -543,16 +530,6 @@ impl Database {
         Ok(entries)
     }
 
-    /// Delete all activity log entries for a cue (used when deleting the cue).
-    #[allow(dead_code)]
-    pub fn delete_activities(&self, cue_id: i64) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM cue_activity_log WHERE cue_id = ?1",
-            params![cue_id],
-        )?;
-        Ok(())
-    }
-
     // -- Agent runs --
 
     /// Record a completed agent run.
@@ -582,31 +559,6 @@ impl Database {
              FROM agent_runs WHERE cue_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| {
-            Ok(AgentRunEntry {
-                agent_kind: row.get(0)?,
-                status: row.get(1)?,
-                output: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                duration_ms: row.get::<_, i64>(3)? as u64,
-                started_at: row.get(4)?,
-                command: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                cue_id: row.get(6)?,
-            })
-        })?;
-        let mut entries = Vec::new();
-        for row in rows {
-            entries.push(row?);
-        }
-        Ok(entries)
-    }
-
-    /// Get recent agent runs across all cues, most recent first.
-    #[allow(dead_code)]
-    pub fn get_recent_agent_runs(&self, limit: usize) -> Result<Vec<AgentRunEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT agent_kind, status, output, duration_ms, started_at, command, cue_id
-             FROM agent_runs ORDER BY id DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(AgentRunEntry {
                 agent_kind: row.get(0)?,
                 status: row.get(1)?,
@@ -684,7 +636,6 @@ impl Database {
 
 /// An agent run entry returned by [`Database::get_agent_runs_for_cue`].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct AgentRunEntry {
     pub agent_kind: String,
     pub status: String,
@@ -722,6 +673,18 @@ impl Database {
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)
+    }
+
+    pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row_to_cue(row)?))
+        } else {
+            Ok(None)
+        }
     }
 }
 

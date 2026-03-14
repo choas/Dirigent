@@ -18,21 +18,13 @@ pub(crate) struct ParsedDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileDiff {
-    #[allow(dead_code)]
-    pub old_path: String,
     pub new_path: String,
     pub hunks: Vec<DiffHunk>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiffHunk {
-    #[allow(dead_code)]
-    pub old_start: usize,
-    #[allow(dead_code)]
-    pub old_count: usize,
     pub new_start: usize,
-    #[allow(dead_code)]
-    pub new_count: usize,
     pub lines: Vec<DiffLine>,
 }
 
@@ -58,11 +50,7 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
 
     while i < lines.len() {
         if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
-            let old_path = lines[i]
-                .strip_prefix("--- a/")
-                .or_else(|| lines[i].strip_prefix("--- "))
-                .unwrap_or("")
-                .to_string();
+            // Skip the "--- a/..." line (old path not needed).
             let new_path = lines[i + 1]
                 .strip_prefix("+++ b/")
                 .or_else(|| lines[i + 1].strip_prefix("+++ "))
@@ -117,20 +105,8 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
                         i += 1;
                     }
 
-                    let old_count = hunk_lines
-                        .iter()
-                        .filter(|l| l.kind != DiffLineKind::Addition)
-                        .count();
-                    let new_count = hunk_lines
-                        .iter()
-                        .filter(|l| l.kind != DiffLineKind::Deletion)
-                        .count();
-
                     hunks.push(DiffHunk {
-                        old_start,
-                        old_count,
                         new_start,
-                        new_count,
                         lines: hunk_lines,
                     });
                 } else {
@@ -138,11 +114,7 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
                 }
             }
 
-            files.push(FileDiff {
-                old_path,
-                new_path,
-                hunks,
-            });
+            files.push(FileDiff { new_path, hunks });
         } else {
             i += 1;
         }

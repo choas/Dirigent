@@ -39,18 +39,6 @@ impl AgentKind {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "format" => Some(AgentKind::Format),
-            "lint" => Some(AgentKind::Lint),
-            "build" => Some(AgentKind::Build),
-            "test" => Some(AgentKind::Test),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
     pub fn all() -> &'static [AgentKind] {
         &[
             AgentKind::Format,
@@ -127,7 +115,6 @@ pub(crate) enum AgentStatus {
 }
 
 impl AgentStatus {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentStatus::Idle => "idle",
@@ -135,18 +122,6 @@ impl AgentStatus {
             AgentStatus::Passed => "passed",
             AgentStatus::Failed => "failed",
             AgentStatus::Error => "error",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "idle" => Some(AgentStatus::Idle),
-            "running" => Some(AgentStatus::Running),
-            "passed" => Some(AgentStatus::Passed),
-            "failed" => Some(AgentStatus::Failed),
-            "error" => Some(AgentStatus::Error),
-            _ => None,
         }
     }
 }
@@ -678,9 +653,7 @@ pub(crate) struct AgentResult {
 // ---------------------------------------------------------------------------
 
 /// Info about the most recent completed run for an agent.
-#[allow(dead_code)]
 pub(crate) struct LastRunInfo {
-    pub status: AgentStatus,
     pub duration_ms: u64,
     pub finished_at: Instant,
 }
@@ -1144,6 +1117,33 @@ fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+#[cfg(test)]
+impl AgentKind {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "format" => Some(AgentKind::Format),
+            "lint" => Some(AgentKind::Lint),
+            "build" => Some(AgentKind::Build),
+            "test" => Some(AgentKind::Test),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl AgentStatus {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "idle" => Some(AgentStatus::Idle),
+            "running" => Some(AgentStatus::Running),
+            "passed" => Some(AgentStatus::Passed),
+            "failed" => Some(AgentStatus::Failed),
+            "error" => Some(AgentStatus::Error),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

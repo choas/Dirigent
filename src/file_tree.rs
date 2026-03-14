@@ -16,8 +16,6 @@ pub(crate) struct FileEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileTree {
-    #[allow(dead_code)]
-    pub root: PathBuf,
     pub entries: Vec<FileEntry>,
 }
 
@@ -25,10 +23,7 @@ impl FileTree {
     pub fn scan(root: &Path) -> std::io::Result<Self> {
         let repo = Repository::discover(root).ok();
         let entries = scan_directory(root, root, repo.as_ref())?;
-        Ok(FileTree {
-            root: root.to_path_buf(),
-            entries,
-        })
+        Ok(FileTree { entries })
     }
 }
 

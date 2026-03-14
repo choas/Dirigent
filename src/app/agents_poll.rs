@@ -36,7 +36,6 @@ impl DirigentApp {
             self.agent_state.last_run.insert(
                 result.kind,
                 LastRunInfo {
-                    status: result.status,
                     duration_ms: result.duration_ms,
                     finished_at: std::time::Instant::now(),
                 },
