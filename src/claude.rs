@@ -382,6 +382,17 @@ pub(crate) fn invoke_claude_streaming(
             }
             // Silently ignore known but uninteresting event types
             "system" | "user" | "tool" => {}
+            "rate_limit_event" => {
+                // Show rate-limit info so the user knows why there's a pause
+                let seconds = event
+                    .get("retry_after_seconds")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                on_log(&format!(
+                    "\u{23f3} Rate limited, retrying in {:.0}s\n",
+                    seconds
+                ));
+            }
             _ => {
                 // Log truly unknown event types for debugging
                 if !event_type.is_empty() {
