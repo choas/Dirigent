@@ -452,12 +452,14 @@ impl DirigentApp {
                         );
                     }
                 } else {
-                    ui.label(
-                        egui::RichText::new("not a git repository")
+                    if ui.add(egui::Label::new(
+                        egui::RichText::new("not a git repository — click to init")
                             .monospace()
                             .small()
                             .color(self.semantic.tertiary_text),
-                    );
+                    ).sense(egui::Sense::click())).clicked() {
+                        self.git_init_confirm = Some(self.project_root.clone());
+                    }
                 }
 
                 // Agent status indicators (format, lint, build, test)

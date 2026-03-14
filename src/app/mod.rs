@@ -62,13 +62,27 @@ use crate::db::{Cue, CueStatus, Database};
 use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::file_tree::FileTree;
 use crate::git;
-use crate::settings::{self, SemanticColors, Settings};
+use crate::settings::{self, PlayVariable, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
 use sources_poll::SourceState;
 use tasks::TaskHandle;
 use theme::{icon, icon_small};
+
+/// State for a play that has template variables requiring user input.
+pub(super) struct PendingPlay {
+    /// Original prompt template.
+    pub prompt: String,
+    /// Parsed template variables.
+    pub variables: Vec<PlayVariable>,
+    /// Current selected index per variable (into `options`, or options.len() for custom).
+    pub selected: Vec<usize>,
+    /// Custom text input per variable (used when "Other" is selected or no options).
+    pub custom_text: Vec<String>,
+    /// Variables that were auto-resolved (index -> resolved value).
+    pub auto_resolved: HashMap<usize, String>,
+}
 
 /// State for reviewing a diff before accepting/rejecting.
 struct DiffReview {
@@ -275,6 +289,12 @@ pub struct DirigentApp {
 
     // Lava lamp enlarged toggle
     lava_lamp_big: bool,
+
+    // Pending play with template variables awaiting user input
+    pending_play: Option<PendingPlay>,
+
+    // "git init" confirmation: path that is a directory but not a git repo
+    git_init_confirm: Option<PathBuf>,
 }
 
 fn start_fs_watcher(
@@ -462,6 +482,8 @@ impl DirigentApp {
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
             lava_lamp_big: false,
+            pending_play: None,
+            git_init_confirm: None,
         }
     }
 
@@ -675,12 +697,9 @@ impl DirigentApp {
             ));
             return;
         }
-        // Validate that it's inside a git repository
+        // Offer to initialize git if not a repository
         if git2::Repository::discover(&new_root).is_err() {
-            self.set_status_message(format!(
-                "Cannot switch repo: not a git repository: {}",
-                new_root.display()
-            ));
+            self.git_init_confirm = Some(new_root);
             return;
         }
 
@@ -902,7 +921,11 @@ impl eframe::App for DirigentApp {
         self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
 
         // Modal overlay dimming behind floating windows — blocks interaction
-        if self.show_repo_picker || self.git.show_worktree_panel || self.show_about {
+        if self.show_repo_picker
+            || self.git.show_worktree_panel
+            || self.show_about
+            || self.pending_play.is_some()
+        {
             let screen = ctx.screen_rect();
             egui::Area::new(egui::Id::new("modal_dim"))
                 .order(egui::Order::Middle)
@@ -913,7 +936,9 @@ impl eframe::App for DirigentApp {
                         .rect_filled(rect, 0.0, self.semantic.modal_overlay());
                     // Click on overlay dismisses the topmost modal
                     if resp.clicked() {
-                        if self.show_about {
+                        if self.pending_play.is_some() {
+                            self.pending_play = None;
+                        } else if self.show_about {
                             self.show_about = false;
                         } else if self.git.show_worktree_panel {
                             self.git.show_worktree_panel = false;
@@ -927,6 +952,8 @@ impl eframe::App for DirigentApp {
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
         self.render_about_dialog(ctx); // floating
+        self.render_play_variables_dialog(ctx); // floating
+        self.render_git_init_dialog(ctx); // floating
     }
 }
 

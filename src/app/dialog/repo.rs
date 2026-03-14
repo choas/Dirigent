@@ -34,12 +34,7 @@ impl DirigentApp {
                     if ui.button("Open").clicked() {
                         let path = PathBuf::from(&self.repo_path_input);
                         if let Ok(canonical) = std::fs::canonicalize(&path) {
-                            if git2::Repository::discover(&canonical).is_ok() {
-                                switch_to = Some(canonical);
-                            } else {
-                                error_msg =
-                                    Some(format!("Not a git repository: {}", path.display()));
-                            }
+                            switch_to = Some(canonical);
                         } else {
                             error_msg = Some(format!("Path not found: {}", path.display()));
                         }
