@@ -393,8 +393,6 @@ pub(crate) fn invoke_claude_streaming(
                         "\u{23f3} Rate limited, retrying in {:.0}s\n",
                         seconds
                     ));
-                } else {
-                    on_log("\u{23f3} Rate limited\u{2026}\n");
                 }
             }
             _ => {
