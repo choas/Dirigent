@@ -731,28 +731,28 @@ impl ThemeChoice {
         use ThemeChoice::*;
         let dark = self.is_dark();
 
-        // Accent color follows each theme's identity (hyperlink) color
+        // Each theme gets a distinctive accent color true to its palette
         let accent = match self {
-            Dark => egui::Color32::from_rgb(100, 180, 255),
-            Nord => egui::Color32::from_rgb(136, 192, 208),
-            Dracula => egui::Color32::from_rgb(139, 233, 253),
-            SolarizedDark => egui::Color32::from_rgb(38, 139, 210),
-            Monokai => egui::Color32::from_rgb(102, 217, 239),
-            GruvboxDark => egui::Color32::from_rgb(131, 165, 152),
-            TokyoNight => egui::Color32::from_rgb(125, 207, 255),
-            OneDark => egui::Color32::from_rgb(86, 182, 194),
-            CatppuccinMocha => egui::Color32::from_rgb(116, 199, 236),
-            EverforestDark => egui::Color32::from_rgb(127, 187, 179),
-            Light => egui::Color32::from_rgb(0, 100, 220),
-            SolarizedLight => egui::Color32::from_rgb(38, 139, 210),
-            GruvboxLight => egui::Color32::from_rgb(7, 102, 120),
-            GitHubLight => egui::Color32::from_rgb(3, 47, 98),
-            CatppuccinLatte => egui::Color32::from_rgb(32, 159, 181),
-            EverforestLight => egui::Color32::from_rgb(53, 162, 147),
-            RosePineDawn => egui::Color32::from_rgb(40, 105, 131),
-            OneLight => egui::Color32::from_rgb(1, 132, 188),
-            NordLight => egui::Color32::from_rgb(94, 129, 172),
-            TokyoNightLight => egui::Color32::from_rgb(118, 105, 199),
+            Dark => egui::Color32::from_rgb(100, 180, 255), // soft blue
+            Nord => egui::Color32::from_rgb(163, 190, 140), // nord green (nord14)
+            Dracula => egui::Color32::from_rgb(189, 147, 249), // dracula purple
+            SolarizedDark => egui::Color32::from_rgb(181, 137, 0), // solarized yellow
+            Monokai => egui::Color32::from_rgb(249, 38, 114), // monokai pink
+            GruvboxDark => egui::Color32::from_rgb(215, 153, 33), // gruvbox yellow
+            TokyoNight => egui::Color32::from_rgb(187, 154, 247), // tokyo night purple
+            OneDark => egui::Color32::from_rgb(224, 108, 117), // one dark red
+            CatppuccinMocha => egui::Color32::from_rgb(203, 166, 247), // catppuccin mauve
+            EverforestDark => egui::Color32::from_rgb(167, 192, 128), // everforest green
+            Light => egui::Color32::from_rgb(0, 100, 220),  // classic blue
+            SolarizedLight => egui::Color32::from_rgb(133, 153, 0), // solarized green
+            GruvboxLight => egui::Color32::from_rgb(175, 58, 3), // gruvbox orange
+            GitHubLight => egui::Color32::from_rgb(9, 105, 218), // github blue
+            CatppuccinLatte => egui::Color32::from_rgb(136, 57, 239), // catppuccin mauve
+            EverforestLight => egui::Color32::from_rgb(93, 137, 98), // everforest green
+            RosePineDawn => egui::Color32::from_rgb(215, 130, 126), // rose pine rose
+            OneLight => egui::Color32::from_rgb(166, 38, 164), // one light purple
+            NordLight => egui::Color32::from_rgb(94, 129, 172), // nord blue (nord10)
+            TokyoNightLight => egui::Color32::from_rgb(118, 105, 199), // tokyo purple
         };
 
         if dark {
