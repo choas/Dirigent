@@ -869,6 +869,66 @@ pub(crate) struct Play {
     pub prompt: String,
 }
 
+/// A parsed template variable from a play prompt, e.g. `{LICENSE:MIT,Apache 2.0,ISC}`.
+#[derive(Debug, Clone)]
+pub(crate) struct PlayVariable {
+    /// Variable name (e.g. "LICENSE").
+    pub name: String,
+    /// Predefined options (may be empty for free-text variables).
+    pub options: Vec<String>,
+    /// The full matched token including braces, for substitution.
+    pub token: String,
+}
+
+/// Parse template variables from a play prompt.
+/// Syntax: `{VAR_NAME:option1,option2,...}` or `{VAR_NAME}` for free-text.
+pub(crate) fn parse_play_variables(prompt: &str) -> Vec<PlayVariable> {
+    let mut vars = Vec::new();
+    let mut rest = prompt;
+    while let Some(start) = rest.find('{') {
+        if let Some(end) = rest[start..].find('}') {
+            let token = &rest[start..start + end + 1];
+            let inner = &rest[start + 1..start + end];
+            if (!inner.is_empty() && !inner.contains(' ')) || inner.contains(':') {
+                let (name, options) = if let Some(colon) = inner.find(':') {
+                    let name = inner[..colon].to_string();
+                    let opts: Vec<String> = inner[colon + 1..]
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    (name, opts)
+                } else {
+                    (inner.to_string(), Vec::new())
+                };
+                if !name.is_empty() {
+                    vars.push(PlayVariable {
+                        name,
+                        options,
+                        token: token.to_string(),
+                    });
+                }
+            }
+            rest = &rest[start + end + 1..];
+        } else {
+            break;
+        }
+    }
+    vars
+}
+
+/// Substitute resolved variables back into the prompt template.
+pub(crate) fn substitute_play_variables(
+    prompt: &str,
+    resolved: &[(String, String)], // (token, value)
+) -> String {
+    let mut result = prompt.to_string();
+    for (token, value) in resolved {
+        result = result.replace(token, value);
+    }
+    result
+}
+
 /// A command mode that can be triggered by prefixing a cue with `[command_name]`.
 /// Commands wrap the cue text with additional prompt instructions and can
 /// override the pre/post run scripts for that particular execution.
@@ -955,7 +1015,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         },
         Play {
             name: "Create release".into(),
-            prompt: "Prepare a release: update version numbers, ensure CHANGELOG is current, verify tests pass, create a release commit.".into(),
+            prompt: "Prepare a release: update version numbers, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit.".into(),
         },
         Play {
             name: "Security audit".into(),

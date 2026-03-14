@@ -6,11 +6,13 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use super::{icon, CueAction, DirigentApp, FONT_SCALE_SUBHEADING, SPACE_XS};
+use std::collections::HashMap;
+
+use super::{icon, CueAction, DirigentApp, PendingPlay, FONT_SCALE_SUBHEADING, SPACE_XS};
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::CliProvider;
+use crate::settings::{self, CliProvider};
 
 use markdown_import::{parse_markdown_sections, pick_markdown_file};
 
@@ -82,8 +84,49 @@ impl DirigentApp {
 
                 // Handle playbook selection
                 if let Some(prompt) = selected_play_prompt {
-                    let _ = self.db.insert_cue(&prompt, "", 0, None, &[]);
-                    self.reload_cues();
+                    let vars = settings::parse_play_variables(&prompt);
+                    if vars.is_empty() {
+                        // No template variables — create cue directly.
+                        let _ = self.db.insert_cue(&prompt, "", 0, None, &[]);
+                        self.reload_cues();
+                    } else {
+                        // Check which variables can be auto-resolved.
+                        let mut auto_resolved = HashMap::new();
+                        let mut selected = Vec::new();
+                        let mut custom_text = Vec::new();
+                        for (i, var) in vars.iter().enumerate() {
+                            if var.name.eq_ignore_ascii_case("LICENSE") {
+                                // Auto-resolve if a LICENSE file already exists.
+                                let has_license = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md"]
+                                    .iter()
+                                    .any(|f| self.project_root.join(f).exists());
+                                if has_license {
+                                    auto_resolved.insert(i, "already present".to_string());
+                                }
+                            }
+                            selected.push(0);
+                            custom_text.push(String::new());
+                        }
+                        // If all variables are auto-resolved, create cue directly.
+                        if auto_resolved.len() == vars.len() {
+                            let resolved: Vec<(String, String)> = vars
+                                .iter()
+                                .enumerate()
+                                .map(|(i, v)| (v.token.clone(), auto_resolved[&i].clone()))
+                                .collect();
+                            let final_prompt = settings::substitute_play_variables(&prompt, &resolved);
+                            let _ = self.db.insert_cue(&final_prompt, "", 0, None, &[]);
+                            self.reload_cues();
+                        } else {
+                            self.pending_play = Some(PendingPlay {
+                                prompt,
+                                variables: vars,
+                                selected,
+                                custom_text,
+                                auto_resolved,
+                            });
+                        }
+                    }
                 }
                 if custom_cue_requested {
                     // Focus the global prompt field by clearing and letting egui pick it up
