@@ -1136,15 +1136,55 @@ impl Default for Settings {
     }
 }
 
-/// Run `which <name>` and return the trimmed path if found.
+/// Resolve the full path for a CLI tool.
+///
+/// macOS `.app` bundles inherit a minimal PATH (`/usr/bin:/bin:…`), so a plain
+/// `which` won't find tools installed via Homebrew, npm, etc.  We therefore:
+///   1. Try a login-shell `which` (`zsh -l -c 'which <name>'`) to pick up the
+///      user's full PATH from their shell profile.
+///   2. Fall back to a plain `which` (works when launched from a terminal).
+///   3. Probe well-known installation directories as a last resort.
 fn which(name: &str) -> Option<String> {
-    std::process::Command::new("which")
+    // 1. Login shell — picks up ~/.zprofile, ~/.zshrc, etc.
+    let login = std::process::Command::new("/bin/zsh")
+        .args(["-l", "-c", &format!("which {name}")])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    if login.is_some() {
+        return login;
+    }
+
+    // 2. Plain which (limited PATH, but works from terminal launches).
+    let plain = std::process::Command::new("which")
         .arg(name)
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty());
+    if plain.is_some() {
+        return plain;
+    }
+
+    // 3. Well-known paths (Homebrew, npm global, user-local).
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("/opt/homebrew/bin/{name}"),
+        format!("/usr/local/bin/{name}"),
+        format!("{home}/.local/bin/{name}"),
+        format!("{home}/.npm-global/bin/{name}"),
+        format!("{home}/.nvm/current/bin/{name}"),
+    ];
+    for p in &candidates {
+        if std::path::Path::new(p).is_file() {
+            return Some(p.clone());
+        }
+    }
+
+    None
 }
 
 pub(crate) fn load_settings(project_root: &Path) -> Settings {
