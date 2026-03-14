@@ -384,14 +384,18 @@ pub(crate) fn invoke_claude_streaming(
             "system" | "user" | "tool" => {}
             "rate_limit_event" => {
                 // Show rate-limit info so the user knows why there's a pause
-                let seconds = event
+                if let Some(seconds) = event
                     .get("retry_after_seconds")
                     .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                on_log(&format!(
-                    "\u{23f3} Rate limited, retrying in {:.0}s\n",
-                    seconds
-                ));
+                    .filter(|&s| s > 0.0)
+                {
+                    on_log(&format!(
+                        "\u{23f3} Rate limited, retrying in {:.0}s\n",
+                        seconds
+                    ));
+                } else {
+                    on_log("\u{23f3} Rate limited\u{2026}\n");
+                }
             }
             _ => {
                 // Log truly unknown event types for debugging
