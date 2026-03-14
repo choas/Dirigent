@@ -172,6 +172,8 @@ pub(super) struct GitState {
     pub(super) info: Option<git::GitInfo>,
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
+    /// Commits ahead of the remote tracking branch.
+    pub(super) ahead_of_remote: usize,
     pub(super) commit_history: Vec<git::CommitInfo>,
     pub(super) commit_history_total: usize,
     pub(super) commit_history_limit: usize,
@@ -345,6 +347,7 @@ impl DirigentApp {
             archived_cue_count,
             git_info,
             dirty_files,
+            ahead_of_remote,
             commit_history,
             commit_history_total,
             worktrees,
@@ -357,6 +360,7 @@ impl DirigentApp {
                 0_usize,
                 None,
                 HashMap::new(),
+                0_usize,
                 Vec::new(),
                 0_usize,
                 Vec::new(),
@@ -368,6 +372,7 @@ impl DirigentApp {
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
+            let ahead_of_remote = git::get_ahead_of_remote(&project_root);
             let commit_history = git::read_commit_history(&project_root, 10);
             let commit_history_total = git::count_commits(&project_root);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
@@ -377,6 +382,7 @@ impl DirigentApp {
                 archived_cue_count,
                 git_info,
                 dirty_files,
+                ahead_of_remote,
                 commit_history,
                 commit_history_total,
                 worktrees,
@@ -429,6 +435,7 @@ impl DirigentApp {
             git: GitState {
                 info: git_info,
                 dirty_files,
+                ahead_of_remote,
                 commit_history,
                 commit_history_total,
                 commit_history_limit: 10,
@@ -598,6 +605,7 @@ impl DirigentApp {
     fn reload_git_info(&mut self) {
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
     }
 
     fn reload_commit_history(&mut self) {
@@ -759,6 +767,7 @@ impl DirigentApp {
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
         self.viewer.current_file = None;
         self.git.commit_history_limit = 10;
         self.git.commit_history = git::read_commit_history(&self.project_root, 10);
@@ -835,6 +844,7 @@ impl eframe::App for DirigentApp {
             self.last_fs_rescan = Instant::now();
             self.reload_file_tree();
             self.git.dirty_files = git::get_dirty_files(&self.project_root);
+            self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
             // Reload the currently open file so the code viewer shows fresh content
             if let Some(ref path) = self.viewer.current_file {
                 if let Ok(content) = std::fs::read_to_string(path) {

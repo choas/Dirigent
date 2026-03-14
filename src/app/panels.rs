@@ -306,10 +306,16 @@ impl DirigentApp {
                 ui.separator();
 
                 // Git Log collapsible section
+                let ahead_label = if self.git.ahead_of_remote > 0 {
+                    format!(" [+{}]", self.git.ahead_of_remote)
+                } else {
+                    String::new()
+                };
                 let header_text = format!(
-                    "Git Log ({}/{})",
+                    "Git Log ({}/{}){}",
                     self.git.commit_history.len(),
-                    self.git.commit_history_total
+                    self.git.commit_history_total,
+                    ahead_label
                 );
                 let header_resp = egui::CollapsingHeader::new(header_text)
                     .default_open(self.git.show_log)

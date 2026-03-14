@@ -123,6 +123,35 @@ pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
     result
 }
 
+/// Returns the number of commits the local branch is ahead of its remote tracking branch.
+pub(crate) fn get_ahead_of_remote(path: &Path) -> usize {
+    let repo = match Repository::discover(path) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return 0,
+    };
+    let local_oid = match head.target() {
+        Some(oid) => oid,
+        None => return 0,
+    };
+    let branch_name = match head.shorthand() {
+        Some(name) => name.to_string(),
+        None => return 0,
+    };
+    let upstream_ref = format!("refs/remotes/origin/{}", branch_name);
+    let remote_oid = match repo.refname_to_id(&upstream_ref) {
+        Ok(oid) => oid,
+        Err(_) => return 0,
+    };
+    match repo.graph_ahead_behind(local_oid, remote_oid) {
+        Ok((ahead, _behind)) => ahead,
+        Err(_) => 0,
+    }
+}
+
 pub(crate) fn format_status_summary(info: &GitInfo) -> String {
     format!(
         "~{} +{} -{}",
