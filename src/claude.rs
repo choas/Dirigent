@@ -247,8 +247,8 @@ pub(crate) fn invoke_claude_streaming(
         .spawn()
         .map_err(ClaudeError::SpawnFailed)?;
 
-    let stderr_handle = child.stderr.take().unwrap();
-    let stdout_handle = child.stdout.take().unwrap();
+    let stderr_handle = child.stderr.take().expect("stderr must be piped");
+    let stdout_handle = child.stdout.take().expect("stdout must be piped");
 
     // Wrap the child handle so the cancellation watchdog can kill the process.
     let child = Arc::new(Mutex::new(child));

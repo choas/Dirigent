@@ -722,11 +722,28 @@ pub(crate) fn run_agent(
         format!("{}\n{}", shell_init.trim(), config.command)
     };
 
-    // Working directory: project root + optional subdirectory
+    // Working directory: project root + optional subdirectory.
+    // Reject paths that escape the project root (e.g. via "..").
     let cwd = if config.working_dir.trim().is_empty() {
         project_root.to_path_buf()
     } else {
-        project_root.join(config.working_dir.trim())
+        let candidate = project_root.join(config.working_dir.trim());
+        let resolved = candidate.canonicalize().unwrap_or(candidate.clone());
+        let root_resolved = project_root
+            .canonicalize()
+            .unwrap_or(project_root.to_path_buf());
+        if !resolved.starts_with(&root_resolved) {
+            let _ = tx.send(AgentResult {
+                kind,
+                cue_id,
+                status: AgentStatus::Error,
+                output: format!("working_dir '{}' escapes project root", config.working_dir),
+                diagnostics: Vec::new(),
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+            return;
+        }
+        candidate
     };
 
     let mut cmd = Command::new("sh");

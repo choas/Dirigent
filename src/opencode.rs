@@ -148,8 +148,8 @@ pub(crate) fn invoke_opencode_streaming(
         .spawn()
         .map_err(OpenCodeError::SpawnFailed)?;
 
-    let stderr_handle = child.stderr.take().unwrap();
-    let stdout_handle = child.stdout.take().unwrap();
+    let stderr_handle = child.stderr.take().expect("stderr must be piped");
+    let stdout_handle = child.stdout.take().expect("stdout must be piped");
 
     let child = Arc::new(Mutex::new(child));
 
