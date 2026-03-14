@@ -8,6 +8,7 @@ use super::{
     SPACE_MD, SPACE_SM, SPACE_XS,
 };
 use crate::agents::{AgentKind, AgentStatus};
+use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -800,10 +801,23 @@ impl DirigentApp {
                         .fill(self.semantic.accent)
                         .corner_radius(btn_size as u8 / 2)
                         .min_size(egui::vec2(btn_size, btn_size));
-                        let btn_clicked = ui.add(send_btn).on_hover_text("Create cue").clicked();
-                        let enter_submitted = input_response.has_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-                        if (btn_clicked || enter_submitted) && !self.global_prompt_input.is_empty()
+                        let btn_clicked = ui
+                            .add(send_btn)
+                            .on_hover_text("Create cue  (⌘Enter to run)")
+                            .clicked();
+                        let (enter_submitted, cmd_enter) = if input_response.has_focus() {
+                            ui.input(|i| {
+                                let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
+                                (
+                                    pressed && !i.modifiers.command,
+                                    pressed && i.modifiers.command,
+                                )
+                            })
+                        } else {
+                            (false, false)
+                        };
+                        if (btn_clicked || enter_submitted || cmd_enter)
+                            && !self.global_prompt_input.is_empty()
                         {
                             // Strip the trailing newline that Enter inserts before we consume
                             let text = self.global_prompt_input.trim().to_string();
@@ -813,7 +827,11 @@ impl DirigentApp {
                                 .map(|p| p.to_string_lossy().to_string())
                                 .collect();
                             if !text.is_empty() {
-                                let _ = self.db.insert_cue(&text, "", 0, None, &images);
+                                if let Ok(id) = self.db.insert_cue(&text, "", 0, None, &images) {
+                                    if cmd_enter {
+                                        let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                                    }
+                                }
                             }
                             self.global_prompt_input.clear();
                             self.reload_cues();
