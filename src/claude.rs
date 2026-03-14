@@ -32,6 +32,24 @@ pub(crate) struct ClaudeResponse {
     pub edited_files: Vec<String>,
 }
 
+/// Parse a `[command]` prefix from cue text.
+///
+/// Returns `Some((command_name, remaining_text))` if the text starts with
+/// `[word]`, otherwise `None`. The remaining text is trimmed.
+pub(crate) fn parse_command_prefix(text: &str) -> Option<(&str, &str)> {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+    let end = trimmed.find(']')?;
+    let name = trimmed[1..end].trim();
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let rest = trimmed[end + 1..].trim_start();
+    Some((name, rest))
+}
+
 /// Build a structured prompt for Claude given a cue's context.
 pub(crate) fn build_prompt(
     cue_text: &str,
@@ -833,5 +851,43 @@ Done!";
             extract_user_text_from_prompt("just plain text"),
             "just plain text"
         );
+    }
+
+    // -- parse_command_prefix --
+
+    #[test]
+    fn parse_command_prefix_basic() {
+        let (name, rest) = parse_command_prefix("[plan] Add auth").unwrap();
+        assert_eq!(name, "plan");
+        assert_eq!(rest, "Add auth");
+    }
+
+    #[test]
+    fn parse_command_prefix_no_bracket() {
+        assert!(parse_command_prefix("just text").is_none());
+    }
+
+    #[test]
+    fn parse_command_prefix_empty_name() {
+        assert!(parse_command_prefix("[] some text").is_none());
+    }
+
+    #[test]
+    fn parse_command_prefix_with_spaces_in_name() {
+        assert!(parse_command_prefix("[two words] text").is_none());
+    }
+
+    #[test]
+    fn parse_command_prefix_leading_whitespace() {
+        let (name, rest) = parse_command_prefix("  [test] stuff").unwrap();
+        assert_eq!(name, "test");
+        assert_eq!(rest, "stuff");
+    }
+
+    #[test]
+    fn parse_command_prefix_no_rest() {
+        let (name, rest) = parse_command_prefix("[review]").unwrap();
+        assert_eq!(name, "review");
+        assert_eq!(rest, "");
     }
 }

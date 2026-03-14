@@ -74,16 +74,30 @@ impl DirigentApp {
             None => return,
         };
 
+        // Detect [command] prefix and resolve matching command config
+        let (effective_text, matched_command) =
+            if let Some((cmd_name, rest)) = claude::parse_command_prefix(&cue.text) {
+                if let Some(cmd) = self.settings.commands.iter().find(|c| c.name == cmd_name) {
+                    let expanded = cmd.prompt.replace("{task}", rest);
+                    (expanded, Some(cmd.clone()))
+                } else {
+                    // Unknown command name — pass through as-is
+                    (cue.text.clone(), None)
+                }
+            } else {
+                (cue.text.clone(), None)
+            };
+
         let prompt = match self.settings.cli_provider {
             CliProvider::Claude => claude::build_prompt(
-                &cue.text,
+                &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
                 &cue.attached_images,
             ),
             CliProvider::OpenCode => opencode::build_prompt(
-                &cue.text,
+                &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
@@ -129,13 +143,20 @@ impl DirigentApp {
             CliProvider::Claude => self.settings.claude_env_vars.clone(),
             CliProvider::OpenCode => self.settings.opencode_env_vars.clone(),
         };
-        let pre_run_script = match provider.clone() {
-            CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
-            CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+        // Command pre/post agents override the provider defaults when non-empty
+        let pre_run_script = match &matched_command {
+            Some(cmd) if !cmd.pre_agent.is_empty() => cmd.pre_agent.clone(),
+            _ => match provider.clone() {
+                CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
+                CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+            },
         };
-        let post_run_script = match provider.clone() {
-            CliProvider::Claude => self.settings.claude_post_run_script.clone(),
-            CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+        let post_run_script = match &matched_command {
+            Some(cmd) if !cmd.post_agent.is_empty() => cmd.post_agent.clone(),
+            _ => match provider.clone() {
+                CliProvider::Claude => self.settings.claude_post_run_script.clone(),
+                CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+            },
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
@@ -246,6 +267,19 @@ impl DirigentApp {
             None => return,
         };
 
+        // Detect [command] prefix on original cue for pre/post agent overrides
+        let (original_text, matched_command) =
+            if let Some((cmd_name, rest)) = claude::parse_command_prefix(&cue.text) {
+                if let Some(cmd) = self.settings.commands.iter().find(|c| c.name == cmd_name) {
+                    let expanded = cmd.prompt.replace("{task}", rest);
+                    (expanded, Some(cmd.clone()))
+                } else {
+                    (cue.text.clone(), None)
+                }
+            } else {
+                (cue.text.clone(), None)
+            };
+
         let previous_diff = self
             .db
             .get_latest_execution(cue_id)
@@ -256,7 +290,7 @@ impl DirigentApp {
 
         let prompt = match self.settings.cli_provider {
             CliProvider::Claude => claude::build_reply_prompt(
-                &cue.text,
+                &original_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
@@ -265,7 +299,7 @@ impl DirigentApp {
                 &cue.attached_images,
             ),
             CliProvider::OpenCode => opencode::build_reply_prompt(
-                &cue.text,
+                &original_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
@@ -318,13 +352,20 @@ impl DirigentApp {
             CliProvider::Claude => self.settings.claude_env_vars.clone(),
             CliProvider::OpenCode => self.settings.opencode_env_vars.clone(),
         };
-        let pre_run_script = match provider.clone() {
-            CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
-            CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+        // Command pre/post agents override the provider defaults when non-empty
+        let pre_run_script = match &matched_command {
+            Some(cmd) if !cmd.pre_agent.is_empty() => cmd.pre_agent.clone(),
+            _ => match provider.clone() {
+                CliProvider::Claude => self.settings.claude_pre_run_script.clone(),
+                CliProvider::OpenCode => self.settings.opencode_pre_run_script.clone(),
+            },
         };
-        let post_run_script = match provider.clone() {
-            CliProvider::Claude => self.settings.claude_post_run_script.clone(),
-            CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+        let post_run_script = match &matched_command {
+            Some(cmd) if !cmd.post_agent.is_empty() => cmd.post_agent.clone(),
+            _ => match provider.clone() {
+                CliProvider::Claude => self.settings.claude_post_run_script.clone(),
+                CliProvider::OpenCode => self.settings.opencode_post_run_script.clone(),
+            },
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);

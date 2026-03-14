@@ -201,6 +201,7 @@ pub struct DirigentApp {
     needs_theme_apply: bool,
     playbook_expanded: bool,
     agents_expanded: bool,
+    commands_expanded: bool,
     agents_init_language: crate::agents::AgentLanguage,
 
     // Global prompt
@@ -419,6 +420,7 @@ impl DirigentApp {
             needs_theme_apply: true,
             playbook_expanded: false,
             agents_expanded: false,
+            commands_expanded: false,
             agents_init_language: crate::agents::AgentLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
