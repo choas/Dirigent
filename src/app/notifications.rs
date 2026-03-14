@@ -115,6 +115,26 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
                                 }
                             }
 
+                            // Handle notification click: bring Dirigent to front.
+                            extern "C" fn did_receive_response(
+                                _this: &Object,
+                                _sel: Sel,
+                                _center: *mut Object,
+                                _response: *mut Object,
+                                handler: *const std::ffi::c_void,
+                            ) {
+                                unsafe {
+                                    // Activate Dirigent (bring to front).
+                                    let ns_app_cls = Class::get("NSApplication").unwrap();
+                                    let app: *mut Object = msg_send![ns_app_cls, sharedApplication];
+                                    let _: () = msg_send![app, activateIgnoringOtherApps: true];
+
+                                    // Call the completion handler.
+                                    let bh = handler as *const ReceivedBlock;
+                                    ((*bh).invoke)(handler, 0);
+                                }
+                            }
+
                             let superclass = Class::get("NSObject").unwrap();
                             if let Some(mut decl) =
                                 ClassDecl::new("DirigentNotifDelegate", superclass)
@@ -122,6 +142,17 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
                                 decl.add_method(
                                     sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
                                     will_present
+                                        as extern "C" fn(
+                                            &Object,
+                                            Sel,
+                                            *mut Object,
+                                            *mut Object,
+                                            *const std::ffi::c_void,
+                                        ),
+                                );
+                                decl.add_method(
+                                    sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:),
+                                    did_receive_response
                                         as extern "C" fn(
                                             &Object,
                                             Sel,
