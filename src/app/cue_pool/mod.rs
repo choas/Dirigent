@@ -353,7 +353,18 @@ impl DirigentApp {
                                                 let _ = self.db.log_activity(cue_id, &format!("Committed ({})", short));
                                             }
                                             Err(e) => {
-                                                self.set_status_message(format!("Commit failed: {}", e));
+                                                let msg = format!("{}", e);
+                                                if msg.contains("nothing to commit") {
+                                                    // Already committed — move to Done
+                                                    self.set_status_message("Nothing to commit — moved to Done".into());
+                                                    let _ = self.db.update_cue_status(
+                                                        cue_id,
+                                                        CueStatus::Done,
+                                                    );
+                                                    let _ = self.db.log_activity(cue_id, "Moved to Done (already committed)");
+                                                } else {
+                                                    self.set_status_message(format!("Commit failed: {}", e));
+                                                }
                                             }
                                         }
                                     }
@@ -515,7 +526,7 @@ impl DirigentApp {
                 });
 
                 // Pixelated lava lamp — visible while a cue is running
-                if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
+                if self.settings.lava_lamp_enabled && self.cues.iter().any(|c| c.status == CueStatus::Ready) {
                     let margin = 8.0;
                     let scale = if self.lava_lamp_big { 3.0 } else { 1.0 };
                     let (lamp_w, lamp_h) = super::lava_lamp::size(scale);

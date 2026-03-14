@@ -1011,6 +1011,8 @@ pub(crate) struct Settings {
     pub notify_sound: bool,
     #[serde(default = "default_true")]
     pub notify_popup: bool,
+    #[serde(default = "default_true")]
+    pub lava_lamp_enabled: bool,
     #[serde(default = "default_font_family")]
     pub font_family: String,
     #[serde(default = "default_font_size")]
@@ -1062,6 +1064,7 @@ impl Default for Settings {
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,
+            lava_lamp_enabled: true,
             font_family: default_font_family(),
             font_size: default_font_size(),
             sources: Vec::new(),

@@ -285,6 +285,10 @@ impl DirigentApp {
                     ui.label("  Popup:");
                     ui.checkbox(&mut self.settings.notify_popup, "Show macOS notification");
                     ui.end_row();
+
+                    ui.label("Lava Lamp:");
+                    ui.checkbox(&mut self.settings.lava_lamp_enabled, "Show lava lamp while running");
+                    ui.end_row();
                 });
 
             // Sources section
