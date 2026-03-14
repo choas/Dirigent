@@ -1,19 +1,24 @@
 /// Send a macOS notification via `UNUserNotificationCenter` (modern API).
-/// Clicking the notification activates the Dirigent process that sent it.
-/// Falls back to the deprecated `NSUserNotificationCenter`.
+/// Registers a delegate on first call so notifications are shown even when the
+/// app is in the foreground (macOS suppresses them by default).
+/// Falls back to `osascript display notification` when running without a bundle.
 #[cfg(target_os = "macos")]
 pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
-    use objc::runtime::{Class, Object};
+    use objc::declare::ClassDecl;
+    use objc::runtime::{Class, Object, Sel};
     use objc::{msg_send, sel, sel_impl};
     use std::ffi::CString;
+    use std::sync::Once;
 
-    // Objective-C block layout (no captures) for completion handlers.
+    // ── Objective-C block helpers ──
+
+    /// Layout for a `void (^)(BOOL, NSError *)` authorization completion block.
     #[repr(C)]
-    struct ObjcBlock {
+    struct AuthBlock {
         isa: *const std::ffi::c_void,
         flags: i32,
         reserved: i32,
-        invoke: unsafe extern "C" fn(*mut ObjcBlock, u8, *mut Object),
+        invoke: unsafe extern "C" fn(*mut AuthBlock, u8, *mut Object),
         descriptor: *const BlockDesc,
     }
 
@@ -27,12 +32,26 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
         static _NSConcreteStackBlock: std::ffi::c_void;
     }
 
-    unsafe extern "C" fn noop_auth(_block: *mut ObjcBlock, _granted: u8, _error: *mut Object) {}
+    unsafe extern "C" fn noop_auth(_b: *mut AuthBlock, _granted: u8, _err: *mut Object) {}
 
-    static BLOCK_DESC: BlockDesc = BlockDesc {
+    static AUTH_DESC: BlockDesc = BlockDesc {
         reserved: 0,
-        size: std::mem::size_of::<ObjcBlock>(),
+        size: std::mem::size_of::<AuthBlock>(),
     };
+
+    /// Minimal layout of an ObjC block received as a callback parameter —
+    /// just enough to read and call the `invoke` function pointer.
+    #[repr(C)]
+    struct ReceivedBlock {
+        _isa: usize,
+        _flags: i32,
+        _reserved: i32,
+        invoke: unsafe extern "C" fn(*const std::ffi::c_void, usize),
+    }
+
+    // ── One-time delegate + authorization setup ──
+
+    static SETUP_ONCE: Once = Once::new();
 
     unsafe {
         let pool_cls = Class::get("NSAutoreleasePool").unwrap();
@@ -40,14 +59,14 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
 
         let nsstring = Class::get("NSString").unwrap();
 
-        // Strip null bytes to prevent CString::new panics
+        // Strip null bytes to prevent CString::new panics.
         let title_safe = title.replace('\0', "");
         let subtitle_safe = subtitle.replace('\0', "");
         let body_safe = body.replace('\0', "");
 
-        let title_c = CString::new(title_safe).unwrap();
-        let sub_c = CString::new(subtitle_safe).unwrap();
-        let body_c = CString::new(body_safe).unwrap();
+        let title_c = CString::new(title_safe.as_str()).unwrap();
+        let sub_c = CString::new(subtitle_safe.as_str()).unwrap();
+        let body_c = CString::new(body_safe.as_str()).unwrap();
 
         let title_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
         let sub_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
@@ -56,15 +75,13 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
         let mut delivered = false;
 
         // ── Modern API: UNUserNotificationCenter (macOS 10.14+) ──
-        // Load the UserNotifications framework at runtime.
+
         let bundle_cls = Class::get("NSBundle").unwrap();
         let fw_path_c =
             CString::new("/System/Library/Frameworks/UserNotifications.framework").unwrap();
         let fw_path_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: fw_path_c.as_ptr()];
         let fw_bundle: *mut Object = msg_send![bundle_cls, bundleWithPath: fw_path_ns];
 
-        // UNUserNotificationCenter requires a bundle identifier; without one
-        // (e.g. running from terminal) it throws an unrecoverable NSException.
         let main_bundle: *mut Object = msg_send![bundle_cls, mainBundle];
         let bundle_id: *mut Object = msg_send![main_bundle, bundleIdentifier];
 
@@ -74,19 +91,80 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
                 if let Some(center_cls) = Class::get("UNUserNotificationCenter") {
                     let center: *mut Object = msg_send![center_cls, currentNotificationCenter];
                     if !center.is_null() {
-                        // Request authorization (idempotent once granted).
-                        let auth_block = ObjcBlock {
-                            isa: &_NSConcreteStackBlock as *const _ as *const std::ffi::c_void,
-                            flags: 0,
-                            reserved: 0,
-                            invoke: noop_auth,
-                            descriptor: &BLOCK_DESC,
-                        };
-                        // UNAuthorizationOptionAlert (1<<2) | UNAuthorizationOptionSound (1<<1)
-                        let options: usize = 4 | 2;
-                        let _: () = msg_send![center,
-                            requestAuthorizationWithOptions:options
-                            completionHandler:&auth_block as *const _ as *const std::ffi::c_void];
+                        // First call: register a delegate that tells macOS to show
+                        // notifications even when Dirigent is the active app, and
+                        // request notification authorization.
+                        SETUP_ONCE.call_once(|| {
+                            // ── Delegate ──
+                            // Implements willPresentNotification:withCompletionHandler:
+                            // to enable foreground banner + sound delivery.
+                            extern "C" fn will_present(
+                                _this: &Object,
+                                _sel: Sel,
+                                _center: *mut Object,
+                                _notification: *mut Object,
+                                handler: *const std::ffi::c_void,
+                            ) {
+                                unsafe {
+                                    let bh = handler as *const ReceivedBlock;
+                                    // UNNotificationPresentationOptionBanner  (1 << 4)
+                                    // UNNotificationPresentationOptionList    (1 << 3)
+                                    // UNNotificationPresentationOptionSound   (1 << 1)
+                                    let opts: usize = (1 << 4) | (1 << 3) | (1 << 1);
+                                    ((*bh).invoke)(handler, opts);
+                                }
+                            }
+
+                            let superclass = Class::get("NSObject").unwrap();
+                            if let Some(mut decl) =
+                                ClassDecl::new("DirigentNotifDelegate", superclass)
+                            {
+                                decl.add_method(
+                                    sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
+                                    will_present
+                                        as extern "C" fn(
+                                            &Object,
+                                            Sel,
+                                            *mut Object,
+                                            *mut Object,
+                                            *const std::ffi::c_void,
+                                        ),
+                                );
+                                let delegate_cls = decl.register();
+                                let delegate: *mut Object = msg_send![delegate_cls, new];
+
+                                if let Some(un_cls) = Class::get("UNUserNotificationCenter") {
+                                    let c: *mut Object =
+                                        msg_send![un_cls, currentNotificationCenter];
+                                    if !c.is_null() {
+                                        let _: () = msg_send![c, setDelegate: delegate];
+                                    }
+                                }
+                                // Intentionally leaked — the delegate must outlive the app.
+                            }
+
+                            // ── Authorization ──
+                            if let Some(un_cls) = Class::get("UNUserNotificationCenter") {
+                                let c: *mut Object =
+                                    msg_send![un_cls, currentNotificationCenter];
+                                if !c.is_null() {
+                                    let auth_block = AuthBlock {
+                                        isa: &_NSConcreteStackBlock as *const _
+                                            as *const std::ffi::c_void,
+                                        flags: 0,
+                                        reserved: 0,
+                                        invoke: noop_auth,
+                                        descriptor: &AUTH_DESC,
+                                    };
+                                    // UNAuthorizationOptionAlert (1<<2) | Sound (1<<1)
+                                    let opts: usize = 4 | 2;
+                                    let _: () = msg_send![c,
+                                        requestAuthorizationWithOptions:opts
+                                        completionHandler:&auth_block
+                                            as *const _ as *const std::ffi::c_void];
+                                }
+                            }
+                        });
 
                         // Build notification content.
                         if let Some(content_cls) = Class::get("UNMutableNotificationContent") {
@@ -119,30 +197,24 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
             }
         }
 
-        // ── Legacy fallback: NSUserNotificationCenter (pre-removal) ──
+        // ── Fallback: osascript `display notification` ──
+        // Used when running without a bundle identifier (e.g. `cargo run`).
         if !delivered {
-            if let (Some(notif_cls), Some(center_cls)) = (
-                Class::get("NSUserNotification"),
-                Class::get("NSUserNotificationCenter"),
-            ) {
-                let center: *mut Object = msg_send![center_cls, defaultUserNotificationCenter];
-                if !center.is_null() {
-                    let notif: *mut Object = msg_send![notif_cls, alloc];
-                    let notif: *mut Object = msg_send![notif, init];
-
-                    let _: () = msg_send![notif, setTitle: title_ns];
-                    let _: () = msg_send![notif, setSubtitle: sub_ns];
-                    let _: () = msg_send![notif, setInformativeText: body_ns];
-
-                    let _: () = msg_send![center, deliverNotification: notif];
-                }
-            }
+            let title_esc = title_safe.replace('\\', "\\\\").replace('"', "\\\"");
+            let sub_esc = subtitle_safe.replace('\\', "\\\\").replace('"', "\\\"");
+            let body_esc = body_safe.replace('\\', "\\\\").replace('"', "\\\"");
+            let script = format!(
+                "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
+                body_esc, title_esc, sub_esc
+            );
+            let _ = std::process::Command::new("/usr/bin/osascript")
+                .arg("-e")
+                .arg(&script)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            // Not setting `delivered` — best-effort fallback.
         }
-
-        // osascript fallback removed — it triggers macOS TCC permission
-        // dialogs (including "would like to access Apple Music").
-        // UNUserNotificationCenter + NSUserNotificationCenter cover all
-        // supported macOS versions.
 
         let _: () = msg_send![pool, drain];
     }
