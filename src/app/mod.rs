@@ -335,6 +335,10 @@ impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
         let mut settings = settings::load_settings(&project_root);
+        // Apply one-time settings migrations (e.g. updated default plays).
+        if db.migrate_settings(&mut settings) {
+            settings::save_settings(&project_root, &settings);
+        }
         // Seed the in-session recent_repos from the global list so the repo
         // picker always shows previously opened projects, even on first launch.
         settings.recent_repos = settings::load_global_recent_projects();

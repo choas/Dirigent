@@ -283,7 +283,61 @@ impl Database {
         let _ = self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
         );
+        // Settings migrations tracker – records which playbook/settings
+        // migrations have already been applied so they run at most once.
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings_migrations (
+                name       TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );",
+        )?;
         Ok(())
+    }
+
+    // -- Settings migrations --
+
+    fn has_settings_migration(&self, name: &str) -> bool {
+        self.conn
+            .prepare("SELECT 1 FROM settings_migrations WHERE name = ?1")
+            .and_then(|mut s| s.exists(params![name]))
+            .unwrap_or(false)
+    }
+
+    fn record_settings_migration(&self, name: &str) {
+        let now = Local::now().to_rfc3339();
+        let _ = self.conn.execute(
+            "INSERT OR IGNORE INTO settings_migrations (name, applied_at) VALUES (?1, ?2)",
+            params![name, now],
+        );
+    }
+
+    /// Apply one-time migrations to the in-memory settings (e.g. updating
+    /// default playbook prompts that changed between versions).  The caller
+    /// is responsible for saving the settings back to disk afterwards.
+    /// Returns `true` if any migration was applied (i.e. settings changed).
+    pub(crate) fn migrate_settings(&self, settings: &mut crate::settings::Settings) -> bool {
+        let mut changed = false;
+
+        // v0.2.3 – "Create release" play now uses {VERSION} variable
+        if !self.has_settings_migration("create_release_version_var") {
+            let old_prefix = "Prepare a release:";
+            if let Some(play) = settings
+                .playbook
+                .iter_mut()
+                .find(|p| p.name == "Create release" && p.prompt.starts_with(old_prefix))
+            {
+                if let Some(new_play) = crate::settings::default_playbook()
+                    .into_iter()
+                    .find(|p| p.name == "Create release")
+                {
+                    play.prompt = new_play.prompt;
+                    changed = true;
+                }
+            }
+            self.record_settings_migration("create_release_version_var");
+        }
+
+        changed
     }
 
     // -- Cue CRUD --
