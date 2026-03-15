@@ -61,7 +61,7 @@ impl DirigentApp {
                     }
 
                     if self.git.ahead_of_remote == 0 && !self.git.pushing {
-                        ui.add_enabled(false, egui::Button::new("Nothing to push"));
+                        ui.add_enabled(false, egui::Button::new("  Nothing to push  "));
                     } else {
                         let push_label = if self.git.pushing {
                             "Pushing..."
