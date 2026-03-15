@@ -60,17 +60,21 @@ impl DirigentApp {
                         ui.separator();
                     }
 
-                    let push_label = if self.git.pushing {
-                        "Pushing..."
+                    if self.git.ahead_of_remote == 0 && !self.git.pushing {
+                        ui.add_enabled(false, egui::Button::new("Nothing to push"));
                     } else {
-                        "Push"
-                    };
-                    if ui
-                        .add_enabled(!self.git.pushing, egui::Button::new(push_label))
-                        .clicked()
-                    {
-                        push_clicked = true;
-                        ui.close();
+                        let push_label = if self.git.pushing {
+                            "Pushing..."
+                        } else {
+                            "Push"
+                        };
+                        if ui
+                            .add_enabled(!self.git.pushing, egui::Button::new(push_label))
+                            .clicked()
+                        {
+                            push_clicked = true;
+                            ui.close();
+                        }
                     }
                 });
 
