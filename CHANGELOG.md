@@ -2,6 +2,12 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.2.3] - 2026-03-16
+
+### Added
+- Combined folders in File tree when a folder contains only a single subfolder (e.g. Java-style nested packages)
+- "Create release" playbook play now accepts a version number input and creates a git tag
+
 ## [0.2.1] - 2026-03-15
 
 ### Added
