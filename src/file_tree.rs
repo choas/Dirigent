@@ -23,8 +23,33 @@ impl FileTree {
     pub fn scan(root: &Path) -> std::io::Result<Self> {
         let repo = Repository::discover(root).ok();
         let entries = scan_directory(root, root, repo.as_ref())?;
+        let entries = collapse_single_child_dirs(entries);
         Ok(FileTree { entries })
     }
+}
+
+/// Collapse chains of directories that contain only a single subdirectory
+/// (and no files) into one entry with a combined name like `src/main/java`.
+fn collapse_single_child_dirs(entries: Vec<FileEntry>) -> Vec<FileEntry> {
+    entries.into_iter().map(collapse_entry).collect()
+}
+
+fn collapse_entry(mut entry: FileEntry) -> FileEntry {
+    if !entry.is_dir {
+        return entry;
+    }
+    // While this directory has exactly one child and that child is a directory,
+    // absorb it into the current entry's display name.
+    while entry.children.len() == 1 && entry.children[0].is_dir {
+        let child = entry.children.into_iter().next().unwrap();
+        entry.name = format!("{}/{}", entry.name, child.name);
+        entry.path = child.path;
+        entry.is_ignored = entry.is_ignored || child.is_ignored;
+        entry.children = child.children;
+    }
+    // Recursively collapse remaining children
+    entry.children = collapse_single_child_dirs(entry.children);
+    entry
 }
 
 fn scan_directory(
