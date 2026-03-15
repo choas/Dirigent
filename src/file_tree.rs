@@ -47,6 +47,18 @@ fn collapse_entry(mut entry: FileEntry) -> FileEntry {
         entry.is_ignored = entry.is_ignored || child.is_ignored;
         entry.children = child.children;
     }
+    // If the collapsed directory contains exactly one file (no subdirs),
+    // flatten it into a single file entry with the combined path as name.
+    if entry.children.len() == 1 && !entry.children[0].is_dir {
+        let child = entry.children.into_iter().next().unwrap();
+        return FileEntry {
+            name: format!("{}/{}", entry.name, child.name),
+            path: child.path,
+            is_dir: false,
+            is_ignored: entry.is_ignored || child.is_ignored,
+            children: Vec::new(),
+        };
+    }
     // Recursively collapse remaining children
     entry.children = collapse_single_child_dirs(entry.children);
     entry
