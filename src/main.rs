@@ -150,7 +150,20 @@ fn main() -> eframe::Result {
         .filter(|a| !a.starts_with("-psn"))
         .collect();
 
-    let explicit_path = args.first().map(PathBuf::from);
+    let explicit_path = args.first().map(|arg| {
+        if arg == "~" || arg.starts_with("~/") {
+            let home = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/"));
+            if arg == "~" {
+                home
+            } else {
+                home.join(&arg[2..])
+            }
+        } else {
+            PathBuf::from(arg)
+        }
+    });
 
     // Detect Finder launch: no explicit path and running from inside an .app bundle
     let launched_from_app_bundle = explicit_path.is_none()

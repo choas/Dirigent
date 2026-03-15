@@ -32,7 +32,19 @@ impl DirigentApp {
                             .font(egui::TextStyle::Monospace),
                     );
                     if ui.button("Open").clicked() {
-                        let path = PathBuf::from(&self.repo_path_input);
+                        let raw = &self.repo_path_input;
+                        let path = if raw == "~" || raw.starts_with("~/") {
+                            let home = std::env::var("HOME")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|_| PathBuf::from("/"));
+                            if raw == "~" {
+                                home
+                            } else {
+                                home.join(&raw[2..])
+                            }
+                        } else {
+                            PathBuf::from(raw)
+                        };
                         if let Ok(canonical) = std::fs::canonicalize(&path) {
                             switch_to = Some(canonical);
                         } else {
