@@ -58,13 +58,22 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     fi
 
     echo "Signing with identity: ${CODESIGN_IDENTITY}"
-    codesign --force --options runtime \
+
+    # Sign the main binary first (inside-out signing)
+    codesign --force --options runtime --timestamp \
+        --entitlements assets/Dirigent.entitlements \
+        --sign "$CODESIGN_IDENTITY" \
+        "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+
+    # Then sign the overall app bundle
+    codesign --force --options runtime --timestamp \
         --entitlements assets/Dirigent.entitlements \
         --sign "$CODESIGN_IDENTITY" \
         "${APP_DIR}"
 
     echo "Verifying signature..."
-    codesign --verify --verbose=2 "${APP_DIR}"
+    codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
+    spctl --assess --type execute --verbose=2 "${APP_DIR}" || true
 fi
 
 # Notarization (if Apple ID credentials are available)
@@ -73,11 +82,31 @@ if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_ID_PASSWORD:-}" ] && [ -n "${APPLE_TE
     ZIP_PATH="${BUNDLE_DIR}/${APP_NAME}-notarize.zip"
     ditto -c -k --keepParent "${APP_DIR}" "$ZIP_PATH"
 
-    xcrun notarytool submit "$ZIP_PATH" \
+    SUBMIT_OUTPUT=$(xcrun notarytool submit "$ZIP_PATH" \
         --apple-id "$APPLE_ID" \
         --password "$APPLE_ID_PASSWORD" \
         --team-id "$APPLE_TEAM_ID" \
-        --wait
+        --wait 2>&1) || true
+
+    echo "$SUBMIT_OUTPUT"
+
+    # Extract submission ID
+    SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep '  id:' | head -1 | awk '{print $2}')
+
+    if echo "$SUBMIT_OUTPUT" | grep -q "status: Invalid"; then
+        echo "Notarization failed! Fetching log for details..."
+        xcrun notarytool log "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            developer_log.json 2>&1 || true
+        echo "--- Notarization Log ---"
+        cat developer_log.json 2>/dev/null || echo "(no log available)"
+        echo "--- End Notarization Log ---"
+        rm -f developer_log.json
+        rm "$ZIP_PATH"
+        exit 1
+    fi
 
     rm "$ZIP_PATH"
 
@@ -95,7 +124,7 @@ hdiutil create -volname "$APP_NAME" \
 
 # Sign the DMG too if we have a signing identity
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-    codesign --force --sign "$CODESIGN_IDENTITY" "$DMG_PATH"
+    codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$DMG_PATH"
 fi
 
 echo "Created ${APP_DIR}"
