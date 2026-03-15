@@ -46,15 +46,21 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
         echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
 
         security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security default-keychain -s "$KEYCHAIN_PATH"
         security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
         security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security import "$RUNNER_TEMP/certificate.p12" -P "${P12_PASSWORD:-}" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-        security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-        security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+        security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        # Preserve existing keychains in search list
+        security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
 
         rm "$RUNNER_TEMP/certificate.p12"
+
+        echo "Available signing identities:"
+        security find-identity -v -p codesigning "$KEYCHAIN_PATH"
     fi
 
     echo "Signing with identity: ${CODESIGN_IDENTITY}"
@@ -73,6 +79,10 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
 
     echo "Verifying signature..."
     codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
+    echo "Signature details for binary:"
+    codesign --display --verbose=4 "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+    echo "Signature details for bundle:"
+    codesign --display --verbose=4 "${APP_DIR}"
     spctl --assess --type execute --verbose=2 "${APP_DIR}" || true
 fi
 
