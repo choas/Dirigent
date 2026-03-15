@@ -893,6 +893,7 @@ pub(crate) struct PlayVariable {
 /// Syntax: `{VAR_NAME:option1,option2,...}` or `{VAR_NAME}` for free-text.
 pub(crate) fn parse_play_variables(prompt: &str) -> Vec<PlayVariable> {
     let mut vars = Vec::new();
+    let mut seen_tokens = std::collections::HashSet::new();
     let mut rest = prompt;
     while let Some(start) = rest.find('{') {
         if let Some(end) = rest[start..].find('}') {
@@ -910,7 +911,7 @@ pub(crate) fn parse_play_variables(prompt: &str) -> Vec<PlayVariable> {
                 } else {
                     (inner.to_string(), Vec::new())
                 };
-                if !name.is_empty() {
+                if !name.is_empty() && seen_tokens.insert(token.to_string()) {
                     vars.push(PlayVariable {
                         name,
                         options,
@@ -1024,7 +1025,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         },
         Play {
             name: "Create release".into(),
-            prompt: "Prepare a release: update version numbers, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit.".into(),
+            prompt: "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, and create a git tag v{VERSION}.".into(),
         },
         Play {
             name: "Security audit".into(),
