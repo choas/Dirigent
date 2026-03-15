@@ -61,6 +61,17 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
 
         echo "Available signing identities:"
         security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+        # Verify the certificate type (must be "Developer ID Application" for notarization)
+        CERT_CN=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -1 | sed 's/.*"\(.*\)"/\1/')
+        echo "Certificate CN: $CERT_CN"
+        if echo "$CERT_CN" | grep -q "Developer ID Application"; then
+            echo "OK: Certificate is a Developer ID Application certificate"
+        else
+            echo "WARNING: Certificate does NOT appear to be a 'Developer ID Application' certificate."
+            echo "Notarization requires a 'Developer ID Application' certificate."
+            echo "Found: $CERT_CN"
+        fi
     fi
 
     echo "Signing with identity: ${CODESIGN_IDENTITY}"
@@ -88,6 +99,36 @@ fi
 
 # Notarization (if Apple ID credentials are available)
 if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_ID_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+    # Pre-notarization validation: check that the binary has required flags
+    echo "Pre-notarization validation..."
+    CODESIGN_INFO=$(codesign --display --verbose=4 "${APP_DIR}/Contents/MacOS/${APP_NAME}" 2>&1)
+    echo "$CODESIGN_INFO"
+
+    if echo "$CODESIGN_INFO" | grep -q "flags=0x10000(runtime)"; then
+        echo "OK: Hardened runtime is enabled"
+    else
+        echo "ERROR: Hardened runtime is NOT enabled on the binary!"
+        echo "Notarization will fail. Check codesign flags."
+        exit 1
+    fi
+
+    if echo "$CODESIGN_INFO" | grep -q "Timestamp="; then
+        echo "OK: Secure timestamp is present"
+    else
+        echo "WARNING: Secure timestamp may not be present"
+    fi
+
+    AUTHORITY=$(echo "$CODESIGN_INFO" | grep "Authority=" | head -1)
+    echo "Signing authority: $AUTHORITY"
+    if echo "$AUTHORITY" | grep -q "Developer ID Application"; then
+        echo "OK: Signed with Developer ID Application certificate"
+    else
+        echo "ERROR: Binary is NOT signed with a 'Developer ID Application' certificate!"
+        echo "Notarization requires a Developer ID Application certificate from Apple."
+        echo "Got: $AUTHORITY"
+        exit 1
+    fi
+
     echo "Submitting for notarization..."
     ZIP_PATH="${BUNDLE_DIR}/${APP_NAME}-notarize.zip"
     ditto -c -k --keepParent "${APP_DIR}" "$ZIP_PATH"
