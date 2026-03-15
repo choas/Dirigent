@@ -2,6 +2,11 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.2.1] - 2026-03-15
+
+### Added
+- Manual workflow dispatch for GitHub Actions build
+
 ## [0.2.0] - 2026-03-14
 
 ### Added
