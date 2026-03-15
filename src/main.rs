@@ -187,6 +187,8 @@ fn main() -> eframe::Result {
             .unwrap_or(project_root);
         (home, true)
     } else {
+        // Launched with an explicit project — remember it globally.
+        settings::add_global_recent_project(&project_root.to_string_lossy());
         (project_root, false)
     };
 

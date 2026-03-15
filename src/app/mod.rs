@@ -334,7 +334,10 @@ fn start_fs_watcher(
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
-        let settings = settings::load_settings(&project_root);
+        let mut settings = settings::load_settings(&project_root);
+        // Seed the in-session recent_repos from the global list so the repo
+        // picker always shows previously opened projects, even on first launch.
+        settings.recent_repos = settings::load_global_recent_projects();
 
         // When launched from Finder without a project (skip_scan=true), the
         // project_root is $HOME.  Scanning $HOME recursively touches ~/Music,
@@ -787,6 +790,8 @@ impl DirigentApp {
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
         settings::save_settings(&self.project_root, &self.settings);
+        // Persist to global list so every app launch remembers this project.
+        settings::add_global_recent_project(&path_str);
         self.needs_theme_apply = true;
 
         // Update window title to show the new folder name
