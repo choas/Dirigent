@@ -268,6 +268,9 @@ pub struct DirigentApp {
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
 
+    // Cue cards with fully expanded text (for long cues)
+    cue_text_expanded: HashSet<i64>,
+
     // Expanded activity logbooks (cue IDs with open logbook)
     logbook_expanded: HashSet<i64>,
 
@@ -492,6 +495,7 @@ impl DirigentApp {
             task_handles: Vec::new(),
             agent_state: AgentRunState::new(),
             cue_move_flash: HashMap::new(),
+            cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,

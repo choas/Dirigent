@@ -40,7 +40,27 @@ impl DirigentApp {
                     editing.focus_requested = true;
                 }
             } else {
-                let label_response = ui.add(egui::Label::new(&cue.text).wrap());
+                // Collapse long cue text (>50 words or >10 lines) unless expanded
+                let line_count = cue.text.lines().count();
+                let word_count = cue.text.split_whitespace().count();
+                let is_long = line_count > 10 || word_count > 50;
+                let is_expanded = self.cue_text_expanded.contains(&cue.id);
+
+                let display_text = if is_long && !is_expanded {
+                    // Truncate to first 5 lines or ~50 words
+                    let truncated: String = cue.text.lines().take(5).collect::<Vec<_>>().join("\n");
+                    // Further trim by word count if needed
+                    let words: Vec<&str> = truncated.split_whitespace().collect();
+                    if words.len() > 50 {
+                        format!("{}…", words[..50].join(" "))
+                    } else {
+                        format!("{}…", truncated)
+                    }
+                } else {
+                    cue.text.clone()
+                };
+
+                let label_response = ui.add(egui::Label::new(&display_text).wrap());
                 // Double-click label to edit (Inbox/Backlog)
                 if matches!(status, CueStatus::Inbox | CueStatus::Backlog)
                     && !is_editing
@@ -55,6 +75,32 @@ impl DirigentApp {
                 ) && label_response.clicked()
                 {
                     actions.push((cue.id, CueAction::ShowDiff(cue.id)));
+                }
+
+                // Show expand/collapse toggle for long cues
+                if is_long {
+                    let toggle_label = if is_expanded {
+                        "\u{25B4} Show less"
+                    } else {
+                        "\u{25BE} Show more"
+                    };
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new(toggle_label)
+                                    .small()
+                                    .color(self.semantic.accent),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .clicked()
+                    {
+                        if is_expanded {
+                            self.cue_text_expanded.remove(&cue.id);
+                        } else {
+                            self.cue_text_expanded.insert(cue.id);
+                        }
+                    }
                 }
             }
 
