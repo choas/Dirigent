@@ -7,6 +7,13 @@ All notable changes to Dirigent are documented in this file.
 ### Added
 - Combined folders in File tree when a folder contains only a single subfolder (e.g. Java-style nested packages)
 - "Create release" playbook play now accepts a version number input and creates a git tag
+- Tag support for cues via three-dot menu, with bulk tagging for Review column
+- Collapsible toggle for long cue text (more than 50 words or 10 lines)
+- Context hints about Dirigent and SQLite cue editing when prompting outside the project
+
+### Fixed
+- Claude Code log view not updating during and after runs
+- Resolved all compiler warnings from `cargo check`
 
 ## [0.2.1] - 2026-03-15
 
