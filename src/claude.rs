@@ -50,6 +50,75 @@ pub(crate) fn parse_command_prefix(text: &str) -> Option<(&str, &str)> {
     Some((name, rest))
 }
 
+/// Check whether the given project root is the Dirigent source code repository.
+///
+/// Returns `true` when `Cargo.toml` at the root contains `name = "Dirigent"`.
+pub(crate) fn is_dirigent_project(project_root: &std::path::Path) -> bool {
+    let cargo = project_root.join("Cargo.toml");
+    if let Ok(contents) = std::fs::read_to_string(cargo) {
+        contents
+            .lines()
+            .any(|l| l.trim().eq_ignore_ascii_case("name = \"dirigent\""))
+    } else {
+        false
+    }
+}
+
+/// If the cue text mentions "Dirigent" and the project is *not* the Dirigent
+/// project itself, return an extra note to append to the prompt so the AI knows
+/// how Dirigent stores its data and how cues can be manipulated via SQLite.
+pub(crate) fn dirigent_context_note(
+    cue_text: &str,
+    project_root: &std::path::Path,
+) -> Option<String> {
+    let mentions_dirigent = cue_text.to_ascii_lowercase().contains("dirigent");
+    if !mentions_dirigent || is_dirigent_project(project_root) {
+        return None;
+    }
+
+    Some(
+        "\n\n## Note — Dirigent context\n\n\
+         This project is managed by **Dirigent**, a read-only code viewer where humans \
+         direct and AI performs. Dirigent stores all its state in a SQLite database at \
+         `.Dirigent/Dirigent.db` inside the project root.\n\n\
+         ### Cues table schema\n\n\
+         ```sql\n\
+         CREATE TABLE cues (\n\
+         \x20   id              INTEGER PRIMARY KEY AUTOINCREMENT,\n\
+         \x20   text            TEXT NOT NULL,\n\
+         \x20   file_path       TEXT NOT NULL,     -- relative to the project root\n\
+         \x20   line_number     INTEGER NOT NULL,\n\
+         \x20   line_number_end INTEGER,           -- NULL for single-line cues\n\
+         \x20   status          TEXT NOT NULL DEFAULT 'inbox',\n\
+         \x20   source_label    TEXT,\n\
+         \x20   source_ref      TEXT,\n\
+         \x20   attached_images TEXT,              -- JSON array of paths\n\
+         \x20   tag             TEXT\n\
+         );\n\
+         ```\n\n\
+         Status values: `inbox`, `ready`, `review`, `done`, `archived`, `backlog`.\n\n\
+         ### Useful queries\n\n\
+         ```sh\n\
+         # Open the database\n\
+         sqlite3 .Dirigent/Dirigent.db\n\n\
+         # List active cues\n\
+         SELECT id, status, file_path, line_number, substr(text,1,80) FROM cues WHERE status != 'archived';\n\n\
+         # Create a new cue\n\
+         INSERT INTO cues (text, file_path, line_number, status) VALUES ('fix the bug', 'src/main.rs', 42, 'inbox');\n\n\
+         # Move a cue to a different status\n\
+         UPDATE cues SET status = 'done' WHERE id = 1;\n\n\
+         # Bulk-archive all done cues\n\
+         UPDATE cues SET status = 'archived' WHERE status = 'done';\n\
+         ```\n\n\
+         ### Related tables\n\n\
+         - `executions` — prompt/response/diff history per cue\n\
+         - `cue_activity_log` — timestamped events per cue\n\
+         - `agent_runs` — format/lint/build/test agent results\n\n\
+         You can read and write to this database to interact with Dirigent programmatically."
+            .to_string(),
+    )
+}
+
 /// Build a structured prompt for Claude given a cue's context.
 pub(crate) fn build_prompt(
     cue_text: &str,
