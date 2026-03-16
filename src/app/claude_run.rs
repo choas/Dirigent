@@ -535,6 +535,14 @@ impl DirigentApp {
                     .db
                     .log_activity(result.cue_id, "Run completed — no changes");
             }
+            // Refresh conversation history if viewing this cue's log,
+            // so the completed execution (with log text) replaces the stale entry.
+            if self.claude.show_log == Some(result.cue_id) {
+                if let Ok(execs) = self.db.get_all_executions(result.cue_id) {
+                    self.claude.conversation_history = execs;
+                }
+            }
+
             self.reload_cues();
         }
     }
