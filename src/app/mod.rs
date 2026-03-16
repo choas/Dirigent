@@ -122,6 +122,10 @@ enum CueAction {
     ScheduleRun(String),
     /// Cancel a queued or scheduled run.
     CancelQueue,
+    /// Set (or clear) a tag on a single cue.
+    SetTag(Option<String>),
+    /// Set a tag on all Review cues at once.
+    TagAllReview(String),
 }
 
 /// State for the code viewer panel.
@@ -294,6 +298,12 @@ pub struct DirigentApp {
 
     // Schedule input text per cue (visible when toggled)
     schedule_inputs: HashMap<i64, String>,
+
+    // Tag input per cue (visible when toggled via overflow menu)
+    tag_inputs: HashMap<i64, String>,
+
+    // Tag input for "Tag All Review" (visible when toggled)
+    tag_all_review_input: Option<String>,
 
     // Lava lamp enlarged toggle
     lava_lamp_big: bool,
@@ -504,6 +514,8 @@ impl DirigentApp {
             run_queue: Vec::new(),
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
+            tag_inputs: HashMap::new(),
+            tag_all_review_input: None,
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,

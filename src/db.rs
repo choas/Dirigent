@@ -105,6 +105,8 @@ pub(crate) struct Cue {
     pub source_ref: Option<String>,
     /// Attached image file paths (stored as JSON array in DB).
     pub attached_images: Vec<String>,
+    /// Optional user-assigned tag for grouping/labeling cues.
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +240,13 @@ impl Database {
             let _ = self
                 .conn
                 .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;");
+        }
+        // Migration: add tag column to cues
+        let has_tag: bool = self.conn.prepare("SELECT tag FROM cues LIMIT 0").is_ok();
+        if !has_tag {
+            let _ = self
+                .conn
+                .execute_batch("ALTER TABLE cues ADD COLUMN tag TEXT;");
         }
         // Migration: add provider column to executions
         let has_provider_col: bool = self
@@ -403,6 +412,12 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_cue_tag(&self, id: i64, tag: Option<&str>) -> Result<()> {
+        self.conn
+            .execute("UPDATE cues SET tag = ?1 WHERE id = ?2", params![tag, id])?;
+        Ok(())
+    }
+
     pub fn delete_cue(&self, id: i64) -> Result<()> {
         self.conn.execute(
             "DELETE FROM cue_activity_log WHERE cue_id = ?1",
@@ -419,14 +434,14 @@ impl Database {
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
         let mut cues = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE status != 'archived' ORDER BY id",
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status != 'archived' ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| row_to_cue(row))?;
         for row in rows {
             cues.push(row?);
         }
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
+            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![archived_limit as i64], |row| row_to_cue(row))?;
         for row in rows {
@@ -717,6 +732,7 @@ fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         source_label: row.get(6)?,
         source_ref: row.get(7)?,
         attached_images,
+        tag: row.get(9)?,
     })
 }
 
@@ -732,7 +748,7 @@ impl Database {
     pub fn get_cue(&self, id: i64) -> Result<Option<Cue>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images FROM cues WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_cue(row)?))

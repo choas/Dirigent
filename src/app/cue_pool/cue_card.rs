@@ -104,13 +104,22 @@ impl DirigentApp {
                 }
             }
 
-            // Source label badge and image count
-            let has_badge = cue.source_label.is_some() || !cue.attached_images.is_empty();
+            // Source label badge, tag badge, and image count
+            let has_badge =
+                cue.source_label.is_some() || cue.tag.is_some() || !cue.attached_images.is_empty();
             if has_badge {
                 ui.horizontal(|ui| {
                     if let Some(ref label) = cue.source_label {
                         let badge_color = source_label_color(label);
                         let badge = egui::RichText::new(label)
+                            .small()
+                            .background_color(badge_color)
+                            .color(self.semantic.badge_text);
+                        ui.label(badge);
+                    }
+                    if let Some(ref tag) = cue.tag {
+                        let badge_color = tag_badge_color(tag);
+                        let badge = egui::RichText::new(format!("\u{1F3F7} {}", tag))
                             .small()
                             .background_color(badge_color)
                             .color(self.semantic.badge_text);
@@ -448,6 +457,22 @@ impl DirigentApp {
                                 self.logbook_expanded.insert(cue.id);
                             }
                         }
+                        // Tag submenu
+                        let tag_label = if cue.tag.is_some() {
+                            "\u{1F3F7} Edit Tag"
+                        } else {
+                            "\u{1F3F7} Add Tag"
+                        };
+                        if ui.button(tag_label).clicked() {
+                            let current = cue.tag.clone().unwrap_or_default();
+                            self.tag_inputs.insert(cue.id, current);
+                        }
+                        if cue.tag.is_some() {
+                            if ui.button("\u{2715} Remove Tag").clicked() {
+                                actions.push((cue.id, CueAction::SetTag(None)));
+                            }
+                        }
+                        ui.separator();
                         if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                             actions.push((cue.id, CueAction::Delete));
                         }
@@ -505,6 +530,43 @@ impl DirigentApp {
                 if submit && !reply_text.trim().is_empty() {
                     actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
                 }
+            }
+
+            // Tag input field (visible when toggled via overflow menu)
+            let mut cancel_tag = false;
+            if let Some(tag_text) = self.tag_inputs.get_mut(&cue.id) {
+                ui.add_space(SPACE_XS);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("\u{1F3F7}").color(self.semantic.accent));
+                    let response = ui.add(
+                        egui::TextEdit::singleline(tag_text)
+                            .desired_width(100.0)
+                            .hint_text("Tag name"),
+                    );
+                    let submit = ui
+                        .small_button(icon("\u{2713} Set", fs))
+                        .on_hover_text("Set tag")
+                        .clicked()
+                        || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    if submit {
+                        let tag_val = if tag_text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(tag_text.trim().to_string())
+                        };
+                        actions.push((cue.id, CueAction::SetTag(tag_val)));
+                    }
+                    if ui
+                        .small_button("\u{2715}")
+                        .on_hover_text("Cancel")
+                        .clicked()
+                    {
+                        cancel_tag = true;
+                    }
+                });
+            }
+            if cancel_tag {
+                self.tag_inputs.remove(&cue.id);
             }
 
             // Activity logbook (shown when expanded via overflow menu)
@@ -648,6 +710,24 @@ impl DirigentApp {
 
         ui.add_space(SPACE_XS);
     }
+}
+
+/// Pick a deterministic badge color for a tag.
+fn tag_badge_color(tag: &str) -> egui::Color32 {
+    let hash = tag.bytes().fold(5381u32, |acc, b| {
+        acc.wrapping_mul(33).wrapping_add(b as u32)
+    });
+    let colors = [
+        egui::Color32::from_rgb(38, 154, 108), // emerald
+        egui::Color32::from_rgb(163, 68, 168), // vivid purple
+        egui::Color32::from_rgb(206, 120, 36), // tangerine
+        egui::Color32::from_rgb(44, 138, 186), // cerulean
+        egui::Color32::from_rgb(210, 60, 78),  // coral
+        egui::Color32::from_rgb(108, 72, 190), // violet
+        egui::Color32::from_rgb(60, 120, 216), // royal blue
+        egui::Color32::from_rgb(188, 82, 148), // magenta
+    ];
+    colors[(hash as usize) % colors.len()]
 }
 
 /// Pick a deterministic badge color based on the source label string.

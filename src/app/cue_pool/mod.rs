@@ -259,14 +259,53 @@ impl DirigentApp {
                                             .color(self.semantic.tertiary_text),
                                     );
                                 }
-                                // "Commit All" button for the Review column
+                                // "Commit All" and "Tag All" buttons for the Review column
                                 if status == CueStatus::Review && section_cues.len() > 1 {
-                                    if ui
-                                        .small_button(icon("\u{2713} Commit All", self.settings.font_size))
-                                        .on_hover_text("Commit all uncommitted changes and move all Review cues to Done")
-                                        .clicked()
-                                    {
-                                        actions.push((0, CueAction::CommitAll));
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .small_button(icon("\u{2713} Commit All", self.settings.font_size))
+                                            .on_hover_text("Commit all uncommitted changes and move all Review cues to Done")
+                                            .clicked()
+                                        {
+                                            actions.push((0, CueAction::CommitAll));
+                                        }
+                                        if ui
+                                            .small_button(icon("\u{1F3F7} Tag All", self.settings.font_size))
+                                            .on_hover_text("Add a tag to all Review cues")
+                                            .clicked()
+                                        {
+                                            self.tag_all_review_input = Some(String::new());
+                                        }
+                                    });
+                                    // Tag All input field
+                                    let mut cancel_tag_all = false;
+                                    if let Some(ref mut tag_text) = self.tag_all_review_input {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("\u{1F3F7}").color(self.semantic.accent));
+                                            let response = ui.add(
+                                                egui::TextEdit::singleline(tag_text)
+                                                    .desired_width(100.0)
+                                                    .hint_text("Tag for all"),
+                                            );
+                                            let submit = ui
+                                                .small_button(icon("\u{2713} Set", self.settings.font_size))
+                                                .on_hover_text("Apply tag to all Review cues")
+                                                .clicked()
+                                                || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                                            if submit && !tag_text.trim().is_empty() {
+                                                actions.push((0, CueAction::TagAllReview(tag_text.trim().to_string())));
+                                            }
+                                            if ui
+                                                .small_button("\u{2715}")
+                                                .on_hover_text("Cancel")
+                                                .clicked()
+                                            {
+                                                cancel_tag_all = true;
+                                            }
+                                        });
+                                    }
+                                    if cancel_tag_all {
+                                        self.tag_all_review_input = None;
                                     }
                                     ui.add_space(SPACE_XS);
                                 }
@@ -560,6 +599,34 @@ impl DirigentApp {
                                 self.scheduled_runs.remove(&id);
                                 self.schedule_inputs.remove(&id);
                                 let _ = self.db.log_activity(id, "Queue/schedule cancelled");
+                            }
+                            CueAction::SetTag(tag) => {
+                                let _ = self.db.update_cue_tag(id, tag.as_deref());
+                                self.tag_inputs.remove(&id);
+                                if let Some(ref t) = tag {
+                                    let _ = self.db.log_activity(id, &format!("Tagged: {}", t));
+                                } else {
+                                    let _ = self.db.log_activity(id, "Tag removed");
+                                }
+                            }
+                            CueAction::TagAllReview(tag) => {
+                                let review_ids: Vec<i64> = self
+                                    .cues
+                                    .iter()
+                                    .filter(|c| c.status == CueStatus::Review)
+                                    .map(|c| c.id)
+                                    .collect();
+                                for cue_id in &review_ids {
+                                    let _ = self.db.update_cue_tag(*cue_id, Some(&tag));
+                                    let _ = self.db.log_activity(*cue_id, &format!("Tagged: {}", tag));
+                                }
+                                self.tag_all_review_input = None;
+                                self.set_status_message(format!(
+                                    "Tagged {} Review cue{} with \"{}\"",
+                                    review_ids.len(),
+                                    if review_ids.len() == 1 { "" } else { "s" },
+                                    tag
+                                ));
                             }
                         }
                         self.reload_cues();
