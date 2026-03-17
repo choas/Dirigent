@@ -17,6 +17,7 @@ use crate::settings::SemanticColors;
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
         let mut push_clicked = false;
+        let mut pull_clicked = false;
         let mut run_all_agents = false;
         let mut agent_to_trigger: Option<AgentKind> = None;
         let mut agent_to_cancel: Option<AgentKind> = None;
@@ -60,6 +61,21 @@ impl DirigentApp {
                         ui.separator();
                     }
 
+                    // Pull
+                    let pull_label = if self.git.pulling {
+                        "Pulling..."
+                    } else {
+                        "Pull"
+                    };
+                    if ui
+                        .add_enabled(!self.git.pulling, egui::Button::new(pull_label))
+                        .clicked()
+                    {
+                        pull_clicked = true;
+                        ui.close();
+                    }
+
+                    // Push
                     if self.git.ahead_of_remote == 0 && !self.git.pushing {
                         ui.add_enabled(false, egui::Button::new("  Nothing to push  "));
                     } else {
@@ -173,6 +189,9 @@ impl DirigentApp {
         });
 
         // Handle deferred actions outside the UI closure
+        if pull_clicked {
+            self.start_git_pull();
+        }
         if push_clicked {
             self.start_git_push();
         }

@@ -188,6 +188,9 @@ pub(super) struct GitState {
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether a git pull is currently in progress.
+    pub(super) pulling: bool,
+    pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 pub struct DirigentApp {
@@ -465,6 +468,8 @@ impl DirigentApp {
                 show_worktree_panel: false,
                 pushing: false,
                 push_rx: None,
+                pulling: false,
+                pull_rx: None,
             },
             settings,
             semantic,
@@ -619,6 +624,42 @@ impl DirigentApp {
                     }
                     Err(e) => {
                         self.set_status_message(format!("Push failed: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start an async git pull operation.
+    fn start_git_pull(&mut self) {
+        if self.git.pulling {
+            return;
+        }
+        self.git.pulling = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.pull_rx = Some(rx);
+        let root = self.project_root.clone();
+        std::thread::spawn(move || {
+            let result = git::git_pull(&root).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Pulling...".to_string());
+    }
+
+    /// Check for completed git pull.
+    fn process_pull_result(&mut self) {
+        if let Some(ref rx) = self.git.pull_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.git.pulling = false;
+                self.git.pull_rx = None;
+                match result {
+                    Ok(msg) => {
+                        self.set_status_message(msg);
+                        self.reload_git_info();
+                        self.reload_commit_history();
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("Pull failed: {}", e));
                     }
                 }
             }
@@ -904,8 +945,9 @@ impl eframe::App for DirigentApp {
         // Process run queue (start next queued cue when no cues are running)
         self.process_run_queue();
 
-        // Poll for git push results
+        // Poll for git push/pull results
         self.process_push_result();
+        self.process_pull_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();

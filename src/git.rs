@@ -589,7 +589,7 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
         .to_string();
 
     let output = Command::new("git")
-        .args(["push", "--porcelain"])
+        .args(["push", "--porcelain", "--follow-tags"])
         .current_dir(repo_path)
         .output()?;
 
@@ -607,6 +607,39 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
         branch_name,
         stdout.lines().next().unwrap_or("ok").trim()
     ))
+}
+
+/// Pull the current branch from its remote (typically `origin`).
+/// Returns a summary string describing the result.
+pub(crate) fn git_pull(repo_path: &Path) -> crate::error::Result<String> {
+    use std::process::Command;
+
+    // Determine current branch
+    let repo = Repository::discover(repo_path)?;
+    let head = repo
+        .head()
+        .map_err(|e| DirigentError::GitCommand(format!("cannot determine HEAD: {}", e)))?;
+    let branch_name = head
+        .shorthand()
+        .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
+        .to_string();
+
+    let output = Command::new("git")
+        .args(["pull", "--ff-only"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "git pull failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary = stdout.lines().next().unwrap_or("ok").trim();
+    Ok(format!("Pulled {} ({})", branch_name, summary))
 }
 
 // -- Worktree support --
