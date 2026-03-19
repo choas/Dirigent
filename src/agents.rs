@@ -210,6 +210,7 @@ pub(crate) enum AgentLanguage {
     Cpp,
     Elixir,
     Zig,
+    Lua,
 }
 
 impl AgentLanguage {
@@ -227,6 +228,7 @@ impl AgentLanguage {
             AgentLanguage::Cpp => "C/C++",
             AgentLanguage::Elixir => "Elixir",
             AgentLanguage::Zig => "Zig",
+            AgentLanguage::Lua => "Lua",
         }
     }
 
@@ -244,6 +246,7 @@ impl AgentLanguage {
             AgentLanguage::Cpp,
             AgentLanguage::Elixir,
             AgentLanguage::Zig,
+            AgentLanguage::Lua,
         ]
     }
 }
@@ -748,6 +751,48 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: false,
                 command: "zig build test 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 300,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+        ],
+        AgentLanguage::Lua => vec![
+            AgentConfig {
+                kind: AgentKind::Format,
+                name: String::new(),
+                enabled: true,
+                command: "stylua .".into(),
+                trigger: AgentTrigger::AfterRun,
+                timeout_secs: 30,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Lint,
+                name: String::new(),
+                enabled: false,
+                command: "luacheck . 2>&1".into(),
+                trigger: AgentTrigger::AfterRun,
+                timeout_secs: 120,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Build,
+                name: String::new(),
+                enabled: false,
+                command: "luac -p *.lua 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Test,
+                name: String::new(),
+                enabled: false,
+                command: "busted 2>&1".into(),
                 trigger: AgentTrigger::Manual,
                 timeout_secs: 300,
                 working_dir: String::new(),
