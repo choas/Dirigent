@@ -127,6 +127,8 @@ enum CueAction {
     SetTag(Option<String>),
     /// Set a tag on all Review cues at once.
     TagAllReview(String),
+    /// Push current branch to remote.
+    Push,
 }
 
 /// State for the code viewer panel.

@@ -609,6 +609,9 @@ impl DirigentApp {
                                     let _ = self.db.log_activity(id, "Tag removed");
                                 }
                             }
+                            CueAction::Push => {
+                                self.start_git_push();
+                            }
                             CueAction::TagAllReview(tag) => {
                                 let review_ids: Vec<i64> = self
                                     .cues
