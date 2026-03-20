@@ -487,6 +487,10 @@ pub(crate) struct SemanticColors {
 }
 
 impl SemanticColors {
+    pub fn is_dark(&self) -> bool {
+        self.is_dark
+    }
+
     pub fn selection_bg(&self) -> egui::Color32 {
         if self.is_dark {
             egui::Color32::from_rgba_premultiplied(60, 60, 120, 80)

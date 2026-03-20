@@ -69,7 +69,9 @@ impl DirigentApp {
 
             let mut close_file = false;
             let mut show_file_diff = false;
+            let mut toggle_markdown = false;
             let is_dirty = self.git.dirty_files.contains_key(&rel_path);
+            let is_markdown = self.viewer.markdown_blocks.is_some();
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&rel_path).size(self.settings.font_size * FONT_SCALE_HEADING).strong());
                 if is_dirty {
@@ -109,6 +111,21 @@ impl DirigentApp {
                         }
                     }
                     ui.label(format!("{} lines", self.viewer.content.len()));
+                    // Markdown Raw/Rendered toggle
+                    if is_markdown {
+                        let label = if self.viewer.markdown_rendered {
+                            "Raw"
+                        } else {
+                            "Rendered"
+                        };
+                        if ui
+                            .small_button(label)
+                            .on_hover_text("Toggle between raw Markdown and rendered view")
+                            .clicked()
+                        {
+                            toggle_markdown = true;
+                        }
+                    }
                     if is_dirty {
                         if ui
                             .small_button("Show Diff")
@@ -120,12 +137,16 @@ impl DirigentApp {
                     }
                 });
             });
+            if toggle_markdown {
+                self.viewer.markdown_rendered = !self.viewer.markdown_rendered;
+            }
             if close_file {
                 self.viewer.current_file = None;
                 self.viewer.content.clear();
                 self.viewer.selection_start = None;
                 self.viewer.selection_end = None;
                 self.viewer.cue_input.clear();
+                self.viewer.markdown_blocks = None;
                 return;
             }
             if show_file_diff {
@@ -152,6 +173,18 @@ impl DirigentApp {
                 return;
             }
             ui.separator();
+
+            // Render Markdown view if applicable
+            if is_markdown && self.viewer.markdown_rendered {
+                egui::ScrollArea::both()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.add_space(SPACE_SM);
+                        self.render_markdown_content(ui);
+                        ui.add_space(SPACE_MD);
+                    });
+                return;
+            }
 
             // Render in-file search bar (Cmd+F)
             if self.search.in_file_active {
