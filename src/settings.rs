@@ -1091,6 +1091,11 @@ pub(crate) struct Settings {
     pub sources: Vec<SourceConfig>,
     #[serde(default = "default_playbook")]
     pub playbook: Vec<Play>,
+    /// Allow running Claude/OpenCode when the project root is the user's home folder.
+    /// Disabled by default to prevent the AI from reading personal folders like
+    /// Documents, Desktop, Photos, etc.
+    #[serde(default)]
+    pub allow_home_folder_access: bool,
     /// Shell init snippet prepended to every agent command (e.g. `source ~/.zprofile`).
     /// Solves the macOS GUI-app problem where PATH / JAVA_HOME etc. are not set.
     #[serde(default)]
@@ -1139,6 +1144,7 @@ impl Default for Settings {
             font_size: default_font_size(),
             sources: Vec::new(),
             playbook: default_playbook(),
+            allow_home_folder_access: false,
             agent_shell_init: String::new(),
             agents: default_agents(),
             commands: default_commands(),
@@ -1239,6 +1245,141 @@ pub(crate) fn save_settings(project_root: &Path, settings: &Settings) {
     let path = dir.join("settings.json");
     if let Ok(json) = serde_json::to_string_pretty(settings) {
         let _ = std::fs::write(path, json);
+    }
+}
+
+/// Install or remove the Claude Code home-directory guard hook.
+///
+/// When `allow_home_folder_access` is **false**, writes a `PreToolUse` hook
+/// script to `.Dirigent/home_guard.sh` and registers it in
+/// `.claude/settings.local.json` so Claude Code blocks tool calls that try to
+/// read personal directories like ~/Documents, ~/Desktop, ~/Photos, etc.
+///
+/// When `allow_home_folder_access` is **true**, removes the hook script and
+/// its registration from the settings file.
+pub(crate) fn sync_home_guard_hook(project_root: &Path, allow: bool) {
+    let dirigent_dir = project_root.join(".Dirigent");
+    let claude_dir = project_root.join(".claude");
+    let hook_script = dirigent_dir.join("home_guard.sh");
+    let settings_file = claude_dir.join("settings.local.json");
+
+    if allow {
+        // --- Remove the hook ---
+        let _ = std::fs::remove_file(&hook_script);
+        remove_hook_from_settings(&settings_file);
+    } else {
+        // --- Install the hook ---
+        let _ = std::fs::create_dir_all(&dirigent_dir);
+        let _ = std::fs::write(&hook_script, home_guard_script_content());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&hook_script, std::fs::Permissions::from_mode(0o755));
+        }
+        let _ = std::fs::create_dir_all(&claude_dir);
+        upsert_hook_in_settings(&settings_file, &hook_script);
+    }
+}
+
+/// The shell script that Claude Code runs as a `PreToolUse` hook.
+/// It checks every path-like value in the tool input JSON against a set of
+/// restricted home sub-directories and exits with code 2 to block the call.
+fn home_guard_script_content() -> String {
+    r#"#!/bin/bash
+# Dirigent home-directory guard – Claude Code PreToolUse hook.
+# Blocks tool calls that reference personal home directories.
+INPUT=$(cat)
+HOME_DIR="${HOME:-/Users/$(whoami)}"
+
+for DIR in Documents Desktop Downloads Photos Pictures Movies Music Library Applications .ssh .gnupg; do
+    BLOCKED="$HOME_DIR/$DIR"
+    if echo "$INPUT" | grep -qF "$BLOCKED"; then
+        echo "Blocked by Dirigent: access to ~/$DIR is restricted. Disable the home-folder guard in Dirigent Settings to override."
+        exit 2
+    fi
+done
+exit 0
+"#
+    .to_string()
+}
+
+/// Add (or re-add) our guard hook entry to a `.claude/settings.local.json` file.
+fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) {
+    let mut root = read_json_object(settings_path);
+
+    let hooks = root
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+
+    if !hooks.is_object() {
+        *hooks = serde_json::json!({});
+    }
+
+    let pre = hooks
+        .as_object_mut()
+        .unwrap()
+        .entry("PreToolUse")
+        .or_insert_with(|| serde_json::json!([]));
+
+    if let Some(arr) = pre.as_array_mut() {
+        // Remove any previous guard entry
+        arr.retain(|h| !h.to_string().contains("home_guard.sh"));
+        // Add the new entry
+        arr.push(serde_json::json!({
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": hook_script.to_string_lossy().to_string()
+            }]
+        }));
+    }
+
+    if let Ok(json) = serde_json::to_string_pretty(&root) {
+        let _ = std::fs::write(settings_path, json);
+    }
+}
+
+/// Remove our guard hook entry from a `.claude/settings.local.json` file.
+fn remove_hook_from_settings(settings_path: &Path) {
+    if !settings_path.exists() {
+        return;
+    }
+    let mut root = read_json_object(settings_path);
+
+    let changed = if let Some(hooks) = root.get_mut("hooks") {
+        if let Some(pre) = hooks.get_mut("PreToolUse") {
+            if let Some(arr) = pre.as_array_mut() {
+                let before = arr.len();
+                arr.retain(|h| !h.to_string().contains("home_guard.sh"));
+                arr.len() != before
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if changed {
+        if let Ok(json) = serde_json::to_string_pretty(&root) {
+            let _ = std::fs::write(settings_path, json);
+        }
+    }
+}
+
+/// Read a JSON file as a `serde_json::Value` object, defaulting to `{}`.
+fn read_json_object(path: &Path) -> serde_json::Value {
+    if path.exists() {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
     }
 }
 

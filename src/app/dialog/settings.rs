@@ -292,6 +292,11 @@ impl DirigentApp {
                     ui.label("Lava Lamp:");
                     ui.checkbox(&mut self.settings.lava_lamp_enabled, "Show lava lamp while running");
                     ui.end_row();
+
+                    ui.label("Home Folder:");
+                    ui.checkbox(&mut self.settings.allow_home_folder_access, "Allow AI access to home folders")
+                        .on_hover_text("When disabled, installs a Claude Code PreToolUse hook that blocks access to personal directories like ~/Documents, ~/Desktop, ~/Downloads, ~/Photos, ~/Music, ~/Library, ~/.ssh, etc.");
+                    ui.end_row();
                 });
 
             // Sources section
@@ -978,6 +983,10 @@ impl DirigentApp {
         }
         if save {
             settings::save_settings(&self.project_root, &self.settings);
+            settings::sync_home_guard_hook(
+                &self.project_root,
+                self.settings.allow_home_folder_access,
+            );
             self.needs_theme_apply = true;
         }
         if refresh_models {

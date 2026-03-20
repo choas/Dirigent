@@ -8,7 +8,7 @@ use crate::claude;
 use crate::db::{CueStatus, Execution};
 use crate::git;
 use crate::opencode;
-use crate::settings::CliProvider;
+use crate::settings::{self, CliProvider};
 
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
@@ -69,6 +69,9 @@ impl ClaudeRunState {
 
 impl DirigentApp {
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
+        // Ensure the Claude Code home-directory guard hook is in sync.
+        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
             None => return,
@@ -262,6 +265,9 @@ impl DirigentApp {
     }
 
     pub(super) fn trigger_claude_reply(&mut self, cue_id: i64, reply: &str) {
+        // Ensure the Claude Code home-directory guard hook is in sync.
+        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
             None => return,
