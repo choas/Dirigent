@@ -358,7 +358,11 @@ impl DirigentApp {
                                 .on_hover_text(format!(
                                     "Push to remote ({} commit{} ahead)",
                                     self.git.ahead_of_remote,
-                                    if self.git.ahead_of_remote == 1 { "" } else { "s" }
+                                    if self.git.ahead_of_remote == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
                                 ))
                                 .clicked()
                             {

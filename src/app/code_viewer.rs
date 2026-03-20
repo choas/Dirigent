@@ -1,12 +1,15 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use eframe::egui;
 
 use super::{
-    icon, DiffReview, DirigentApp, FONT_SCALE_HEADING, FONT_SCALE_LINE_NUM, SPACE_MD, SPACE_SM,
+    icon, symbols, DiffReview, DirigentApp, FONT_SCALE_LINE_NUM, FONT_SCALE_SMALL,
+    FONT_SCALE_SUBHEADING, SPACE_MD, SPACE_SM,
 };
 use crate::agents::Severity;
 use crate::diff_view::{self, DiffViewMode};
+use crate::file_tree::FileEntry;
 use crate::git;
 
 impl DirigentApp {
@@ -41,39 +44,198 @@ impl DirigentApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.viewer.current_file.is_none() {
-                self.ensure_logo_texture(ctx);
-
-                ui.vertical_centered(|ui| {
-                    let available = ui.available_height();
-                    ui.add_space(available * 0.3);
-                    if let Some(ref tex) = self.logo_texture {
-                        ui.add(
-                            egui::Image::new(tex).max_size(egui::vec2(96.0, 96.0)),
-                        );
-                    }
-                    ui.add_space(SPACE_SM);
-                    ui.heading("Dirigent");
-                    ui.label(format!("Version {}", env!("BUILD_VERSION")));
-                    ui.add_space(SPACE_MD);
-                    ui.label(
-                        egui::RichText::new("Select a file from the tree to view")
-                            .weak(),
-                    );
-                });
+            // Quick-open overlay (Cmd+P)
+            if self.viewer.quick_open_active {
+                self.render_quick_open_overlay(ui);
                 return;
             }
 
-            let file_path = self.viewer.current_file.clone().unwrap();
+            let active_idx = match self.viewer.active_tab {
+                Some(idx) if idx < self.viewer.tabs.len() => idx,
+                _ => {
+                    // No file open — show splash
+                    // But still show tab bar if tabs exist (shouldn't happen, but defensive)
+                    self.ensure_logo_texture(ctx);
+                    ui.vertical_centered(|ui| {
+                        let available = ui.available_height();
+                        ui.add_space(available * 0.3);
+                        if let Some(ref tex) = self.logo_texture {
+                            ui.add(egui::Image::new(tex).max_size(egui::vec2(96.0, 96.0)));
+                        }
+                        ui.add_space(SPACE_SM);
+                        ui.heading("Dirigent");
+                        ui.label(format!("Version {}", env!("BUILD_VERSION")));
+                        ui.add_space(SPACE_MD);
+                        ui.label(
+                            egui::RichText::new("Select a file from the tree to view  \u{2022}  \u{2318}P to quick open")
+                                .weak(),
+                        );
+                    });
+                    return;
+                }
+            };
+
+            // -- Tab bar --
+            if self.viewer.tabs.len() > 1 {
+                let mut tab_to_close: Option<usize> = None;
+                let mut tab_to_activate: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    for (i, tab) in self.viewer.tabs.iter().enumerate() {
+                        let is_active = i == active_idx;
+                        let filename = tab
+                            .file_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "untitled".to_string());
+
+                        let text = if is_active {
+                            egui::RichText::new(&filename)
+                                .small()
+                                .strong()
+                                .color(self.semantic.accent)
+                        } else {
+                            egui::RichText::new(&filename)
+                                .small()
+                                .color(self.semantic.secondary_text)
+                        };
+
+                        let frame = if is_active {
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::symmetric(6, 3))
+                                .fill(self.semantic.selection_bg())
+                                .corner_radius(3)
+                        } else {
+                            egui::Frame::NONE.inner_margin(egui::Margin::symmetric(6, 3))
+                        };
+
+                        frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let rel = tab
+                                    .file_path
+                                    .strip_prefix(&self.project_root)
+                                    .unwrap_or(&tab.file_path)
+                                    .to_string_lossy()
+                                    .to_string();
+                                if ui
+                                    .add(egui::Label::new(text).sense(egui::Sense::click()))
+                                    .on_hover_text(&rel)
+                                    .clicked()
+                                {
+                                    tab_to_activate = Some(i);
+                                }
+                                if ui
+                                    .add(
+                                        egui::Label::new(
+                                            egui::RichText::new("\u{00D7}")
+                                                .small()
+                                                .color(self.semantic.tertiary_text),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_text("Close tab")
+                                    .clicked()
+                                {
+                                    tab_to_close = Some(i);
+                                }
+                            });
+                        });
+                    }
+                });
+
+                if let Some(idx) = tab_to_close {
+                    self.viewer.close_tab(idx);
+                    return;
+                }
+                if let Some(idx) = tab_to_activate {
+                    self.viewer.active_tab = Some(idx);
+                    // Reset search when switching tabs
+                    self.search.in_file_active = false;
+                    self.search.in_file_query.clear();
+                    self.search.in_file_matches.clear();
+                    self.search.in_file_current = None;
+                    return;
+                }
+
+                // Thin separator below tab bar
+                ui.separator();
+            }
+
+            // Re-check active_idx after potential close
+            let active_idx = match self.viewer.active_tab {
+                Some(idx) if idx < self.viewer.tabs.len() => idx,
+                _ => return,
+            };
+
+            let file_path = self.viewer.tabs[active_idx].file_path.clone();
             let rel_path = self.relative_path(&file_path);
 
             let mut close_file = false;
             let mut show_file_diff = false;
             let mut toggle_markdown = false;
             let is_dirty = self.git.dirty_files.contains_key(&rel_path);
-            let is_markdown = self.viewer.markdown_blocks.is_some();
+            let is_markdown = self.viewer.tabs[active_idx].markdown_blocks.is_some();
+
+            // -- Breadcrumb navigation bar --
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&rel_path).size(self.settings.font_size * FONT_SCALE_HEADING).strong());
+                // Split path into segments
+                let segments: Vec<&str> = rel_path.split('/').collect();
+                for (i, segment) in segments.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(
+                            egui::RichText::new("\u{203A}")
+                                .color(self.semantic.tertiary_text),
+                        );
+                    }
+                    let is_last = i == segments.len() - 1;
+                    let text = if is_last {
+                        egui::RichText::new(*segment)
+                            .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                            .strong()
+                    } else {
+                        egui::RichText::new(*segment)
+                            .size(self.settings.font_size * FONT_SCALE_SMALL)
+                            .color(self.semantic.secondary_text)
+                    };
+                    if ui
+                        .add(egui::Label::new(text).sense(egui::Sense::click()))
+                        .on_hover_text(if is_last {
+                            "Scroll to top".to_string()
+                        } else {
+                            format!("Open {}", segments[..=i].join("/"))
+                        })
+                        .clicked()
+                    {
+                        if is_last {
+                            self.viewer.scroll_to_line = Some(1);
+                        } else {
+                            // Expand this directory in the file tree
+                            let dir_path = self.project_root.join(segments[..=i].join("/"));
+                            self.expanded_dirs.insert(dir_path);
+                        }
+                    }
+                }
+
+                // Show current symbol in breadcrumb (from scroll position)
+                // Use selection or an estimated visible line
+                let current_line = self.viewer.tabs[active_idx]
+                    .selection_start
+                    .unwrap_or(1);
+                if let Some(sym) =
+                    symbols::enclosing_symbol(&self.viewer.tabs[active_idx].symbols, current_line)
+                {
+                    ui.label(
+                        egui::RichText::new("\u{203A}")
+                            .color(self.semantic.tertiary_text),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{} {}", sym.kind.label(), sym.name))
+                            .small()
+                            .color(self.semantic.accent),
+                    );
+                }
+
+                // Copy path button
                 if ui
                     .small_button(icon("\u{1F4CB}", self.settings.font_size))
                     .on_hover_text("Copy file path")
@@ -90,7 +252,7 @@ impl DirigentApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(icon("\u{2715}", self.settings.font_size))
-                        .on_hover_text("Close file")
+                        .on_hover_text("Close tab (\u{2318}W)")
                         .clicked()
                     {
                         close_file = true;
@@ -101,26 +263,40 @@ impl DirigentApp {
                         let mut warn_count = 0usize;
                         for diags in self.agent_state.latest_diagnostics.values() {
                             for d in diags {
-                                if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                                if d.file == rel_path
+                                    || rel_path.ends_with(&d.file)
+                                    || d.file.ends_with(&rel_path)
+                                {
                                     match d.severity {
-                                        crate::agents::Severity::Error => err_count += 1,
-                                        crate::agents::Severity::Warning => warn_count += 1,
+                                        Severity::Error => err_count += 1,
+                                        Severity::Warning => warn_count += 1,
                                         _ => {}
                                     }
                                 }
                             }
                         }
                         if err_count > 0 {
-                            ui.label(egui::RichText::new(format!("{} errors", err_count)).small().color(self.semantic.danger));
+                            ui.label(
+                                egui::RichText::new(format!("{} errors", err_count))
+                                    .small()
+                                    .color(self.semantic.danger),
+                            );
                         }
                         if warn_count > 0 {
-                            ui.label(egui::RichText::new(format!("{} warnings", warn_count)).small().color(self.semantic.warning));
+                            ui.label(
+                                egui::RichText::new(format!("{} warnings", warn_count))
+                                    .small()
+                                    .color(self.semantic.warning),
+                            );
                         }
                     }
-                    ui.label(format!("{} lines", self.viewer.content.len()));
+                    ui.label(format!(
+                        "{} lines",
+                        self.viewer.tabs[active_idx].content.len()
+                    ));
                     // Markdown Raw/Rendered toggle
                     if is_markdown {
-                        let label = if self.viewer.markdown_rendered {
+                        let label = if self.viewer.tabs[active_idx].markdown_rendered {
                             "Raw"
                         } else {
                             "Rendered"
@@ -145,15 +321,11 @@ impl DirigentApp {
                 });
             });
             if toggle_markdown {
-                self.viewer.markdown_rendered = !self.viewer.markdown_rendered;
+                self.viewer.tabs[active_idx].markdown_rendered =
+                    !self.viewer.tabs[active_idx].markdown_rendered;
             }
             if close_file {
-                self.viewer.current_file = None;
-                self.viewer.content.clear();
-                self.viewer.selection_start = None;
-                self.viewer.selection_end = None;
-                self.viewer.cue_input.clear();
-                self.viewer.markdown_blocks = None;
+                self.viewer.close_active_tab();
                 return;
             }
             if show_file_diff {
@@ -182,7 +354,7 @@ impl DirigentApp {
             ui.separator();
 
             // Render Markdown view if applicable
-            if is_markdown && self.viewer.markdown_rendered {
+            if is_markdown && self.viewer.tabs[active_idx].markdown_rendered {
                 egui::ScrollArea::both()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
@@ -199,7 +371,7 @@ impl DirigentApp {
             }
 
             let lines_with_cues = self.lines_with_cues();
-            let num_lines = self.viewer.content.len();
+            let num_lines = self.viewer.tabs[active_idx].content.len();
             let line_height = 16.0;
 
             // Build diagnostic lookup: line_num -> worst severity for this file
@@ -207,11 +379,15 @@ impl DirigentApp {
                 let mut map: HashMap<usize, Severity> = HashMap::new();
                 for diags in self.agent_state.latest_diagnostics.values() {
                     for d in diags {
-                        if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                        if d.file == rel_path
+                            || rel_path.ends_with(&d.file)
+                            || d.file.ends_with(&rel_path)
+                        {
                             let entry = map.entry(d.line).or_insert(Severity::Info);
-                            // Escalate: Error > Warning > Info
                             match (&entry, &d.severity) {
-                                (Severity::Info, Severity::Warning | Severity::Error) => *entry = d.severity,
+                                (Severity::Info, Severity::Warning | Severity::Error) => {
+                                    *entry = d.severity
+                                }
                                 (Severity::Warning, Severity::Error) => *entry = d.severity,
                                 _ => {}
                             }
@@ -225,7 +401,10 @@ impl DirigentApp {
                 let mut map: HashMap<usize, Vec<String>> = HashMap::new();
                 for diags in self.agent_state.latest_diagnostics.values() {
                     for d in diags {
-                        if d.file == rel_path || rel_path.ends_with(&d.file) || d.file.ends_with(&rel_path) {
+                        if d.file == rel_path
+                            || rel_path.ends_with(&d.file)
+                            || d.file.ends_with(&rel_path)
+                        {
                             map.entry(d.line).or_default().push(d.message.clone());
                         }
                     }
@@ -238,25 +417,31 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            let sel_start = self.viewer.selection_start;
-            let sel_end = self.viewer.selection_end;
+            let sel_start = self.viewer.tabs[active_idx].selection_start;
+            let sel_end = self.viewer.tabs[active_idx].selection_end;
             let mut new_sel_start = sel_start;
             let mut new_sel_end = sel_end;
             let mut submit_cue = false;
             let mut clear_selection = false;
             let mut fix_diagnostic_line: Option<usize> = None;
+            let mut goto_def_word: Option<String> = None;
 
             // Handle scroll-to-line requests (from search, cue navigation, etc.)
             let scroll_offset = self.viewer.scroll_to_line.take().map(|target_line| {
                 (target_line.saturating_sub(1)) as f32 * line_height
             });
 
+            // Check if Cmd is held (for go-to-definition)
+            let cmd_held = ui.input(|i| i.modifiers.command);
+
             macro_rules! render_lines {
                 ($ui:expr, $range:expr) => {
                     for line_idx in $range {
                         let line_num = line_idx + 1;
                         let line_text = self
-                            .viewer.content
+                            .viewer
+                            .tabs[active_idx]
+                            .content
                             .get(line_idx)
                             .map(|s| s.as_str())
                             .unwrap_or("");
@@ -267,36 +452,52 @@ impl DirigentApp {
                         };
                         let is_selection_end = sel_end == Some(line_num);
                         let cue_state = lines_with_cues.get(&line_num);
-                        let is_search_match = self.search.in_file_matches.contains(&line_num);
+                        let is_search_match =
+                            self.search.in_file_matches.contains(&line_num);
                         let is_current_search_match = self
-                            .search.in_file_current
+                            .search
+                            .in_file_current
                             .map(|i| self.search.in_file_matches.get(i) == Some(&line_num))
                             .unwrap_or(false);
 
                         let response = $ui.horizontal(|ui| {
                             match cue_state {
                                 Some(&true) => {
-                                    // Archived cue: grey dot
-                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(self.semantic.secondary_text));
+                                    ui.label(
+                                        icon("\u{25CF}", self.settings.font_size)
+                                            .color(self.semantic.secondary_text),
+                                    );
                                 }
                                 Some(&false) => {
-                                    // Active cue: yellow dot
-                                    ui.label(icon("\u{25CF}", self.settings.font_size).color(self.semantic.warning));
+                                    ui.label(
+                                        icon("\u{25CF}", self.settings.font_size)
+                                            .color(self.semantic.warning),
+                                    );
                                 }
                                 None => {
-                                    // Diagnostic gutter marker (error/warning/info)
                                     if let Some(sev) = diag_lines.get(&line_num) {
                                         let (sym, color) = match sev {
-                                            Severity::Error => ("\u{25CF}", self.semantic.danger),
-                                            Severity::Warning => ("\u{25CF}", self.semantic.warning),
-                                            Severity::Info => ("\u{25CB}", self.semantic.accent),
+                                            Severity::Error => {
+                                                ("\u{25CF}", self.semantic.danger)
+                                            }
+                                            Severity::Warning => {
+                                                ("\u{25CF}", self.semantic.warning)
+                                            }
+                                            Severity::Info => {
+                                                ("\u{25CB}", self.semantic.accent)
+                                            }
                                         };
                                         let resp = ui.add(
-                                            egui::Label::new(icon(sym, self.settings.font_size).color(color))
-                                                .sense(egui::Sense::click()),
+                                            egui::Label::new(
+                                                icon(sym, self.settings.font_size).color(color),
+                                            )
+                                            .sense(egui::Sense::click()),
                                         );
                                         if let Some(msgs) = diag_messages.get(&line_num) {
-                                            let tooltip = format!("{}\n\nClick to create a Fix cue", msgs.join("\n"));
+                                            let tooltip = format!(
+                                                "{}\n\nClick to create a Fix cue",
+                                                msgs.join("\n")
+                                            );
                                             resp.clone().on_hover_text(tooltip);
                                         }
                                         if resp.clicked() {
@@ -323,14 +524,24 @@ impl DirigentApp {
                                 line_text,
                                 ext,
                             );
-                            let response = ui.label(layout_job);
+                            let code_resp = ui.label(layout_job);
 
-                            let rect = response.rect.union(ui.available_rect_before_wrap());
+                            let rect = code_resp.rect.union(ui.available_rect_before_wrap());
                             let response = ui.interact(
                                 rect,
                                 egui::Id::new(("code_line", line_idx)),
                                 egui::Sense::click(),
                             );
+
+                            // Show underline hint when Cmd is held (go-to-definition)
+                            if cmd_held && response.hovered() {
+                                ui.painter().hline(
+                                    code_resp.rect.x_range(),
+                                    code_resp.rect.bottom(),
+                                    egui::Stroke::new(1.0, self.semantic.accent),
+                                );
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
 
                             if is_in_selection {
                                 ui.painter().rect_filled(
@@ -346,7 +557,6 @@ impl DirigentApp {
                                     0.0,
                                     self.semantic.code_search_current(),
                                 );
-                                // Flash brighter when navigating between matches
                                 if let Some(when) = self.search.in_file_nav_flash {
                                     let elapsed = when.elapsed().as_secs_f32();
                                     if elapsed < 0.4 {
@@ -354,7 +564,9 @@ impl DirigentApp {
                                         ui.painter().rect_filled(
                                             rect,
                                             0.0,
-                                            egui::Color32::from_rgba_premultiplied(255, 200, 50, alpha),
+                                            egui::Color32::from_rgba_premultiplied(
+                                                255, 200, 50, alpha,
+                                            ),
                                         );
                                         ui.ctx().request_repaint();
                                     }
@@ -367,13 +579,30 @@ impl DirigentApp {
                                 );
                             }
 
-                            response
+                            (response, code_resp)
                         });
 
-                        if response.inner.clicked() {
+                        let (line_response, code_resp) = response.inner;
+
+                        if line_response.clicked() {
                             let shift_held = $ui.input(|i| i.modifiers.shift);
-                            if shift_held {
-                                // Shift-click: extend selection from existing start (or set new range)
+                            let cmd = $ui.input(|i| i.modifiers.command);
+
+                            if cmd && !shift_held {
+                                // Cmd+click: Go to definition
+                                // Estimate the word under the pointer
+                                if let Some(pos) = $ui.ctx().pointer_latest_pos() {
+                                    let char_width =
+                                        self.settings.font_size * 0.6; // approximate monospace
+                                    let x_offset = pos.x - code_resp.rect.left();
+                                    let byte_offset = (x_offset / char_width).max(0.0) as usize;
+                                    if let Some(word) =
+                                        symbols::word_at_offset(line_text, byte_offset)
+                                    {
+                                        goto_def_word = Some(word.to_string());
+                                    }
+                                }
+                            } else if shift_held {
                                 if let Some(anchor) = sel_start {
                                     let lo = anchor.min(line_num);
                                     let hi = anchor.max(line_num);
@@ -384,7 +613,6 @@ impl DirigentApp {
                                     new_sel_end = Some(line_num);
                                 }
                             } else {
-                                // Plain click: select single line
                                 new_sel_start = Some(line_num);
                                 new_sel_end = Some(line_num);
                             }
@@ -402,7 +630,7 @@ impl DirigentApp {
                                 )
                             };
                             // Show attached images for cue input
-                            if !self.viewer.cue_images.is_empty() {
+                            if !self.viewer.tabs[active_idx].cue_images.is_empty() {
                                 $ui.horizontal_wrapped(|ui| {
                                     ui.label("     ");
                                     ui.label(
@@ -411,18 +639,26 @@ impl DirigentApp {
                                             .color(self.semantic.accent),
                                     );
                                     let mut remove_idx = None;
-                                    for (i, path) in self.viewer.cue_images.iter().enumerate() {
+                                    for (i, path) in self.viewer.tabs[active_idx]
+                                        .cue_images
+                                        .iter()
+                                        .enumerate()
+                                    {
                                         let name = path
                                             .file_name()
                                             .map(|n| n.to_string_lossy().to_string())
-                                            .unwrap_or_else(|| path.to_string_lossy().to_string());
-                                        ui.label(egui::RichText::new(&name).monospace().small());
+                                            .unwrap_or_else(|| {
+                                                path.to_string_lossy().to_string()
+                                            });
+                                        ui.label(
+                                            egui::RichText::new(&name).monospace().small(),
+                                        );
                                         if ui.small_button("\u{2715}").clicked() {
                                             remove_idx = Some(i);
                                         }
                                     }
                                     if let Some(i) = remove_idx {
-                                        self.viewer.cue_images.remove(i);
+                                        self.viewer.tabs[active_idx].cue_images.remove(i);
                                     }
                                 });
                             }
@@ -439,17 +675,24 @@ impl DirigentApp {
                                     .clicked()
                                 {
                                     if let Some(paths) = rfd::FileDialog::new()
-                                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                                        .add_filter(
+                                            "Images",
+                                            &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+                                        )
                                         .pick_files()
                                     {
-                                        self.viewer.cue_images.extend(paths);
+                                        self.viewer.tabs[active_idx]
+                                            .cue_images
+                                            .extend(paths);
                                     }
                                 }
                                 let input_response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.viewer.cue_input)
-                                        .desired_width(ui.available_width() - 80.0)
-                                        .hint_text("Add a cue...")
-                                        .font(egui::TextStyle::Monospace),
+                                    egui::TextEdit::singleline(
+                                        &mut self.viewer.tabs[active_idx].cue_input,
+                                    )
+                                    .desired_width(ui.available_width() - 80.0)
+                                    .hint_text("Add a cue...")
+                                    .font(egui::TextStyle::Monospace),
                                 );
                                 if ui.button("Add").clicked()
                                     || (input_response.lost_focus()
@@ -457,7 +700,9 @@ impl DirigentApp {
                                 {
                                     submit_cue = true;
                                 }
-                                if ui.button(icon("\u{2715}", self.settings.font_size)).clicked()
+                                if ui
+                                    .button(icon("\u{2715}", self.settings.font_size))
+                                    .clicked()
                                     || ui.input(|i| i.key_pressed(egui::Key::Escape))
                                 {
                                     clear_selection = true;
@@ -484,42 +729,250 @@ impl DirigentApp {
                 new_sel_end = None;
             }
 
-            // Handle diagnostic "Fix" click: select the line and pre-fill cue input
+            // Handle diagnostic "Fix" click
             if let Some(line) = fix_diagnostic_line {
                 if let Some(msgs) = diag_messages.get(&line) {
                     let fix_text = format!("Fix: {}", msgs.join("; "));
                     new_sel_start = Some(line);
                     new_sel_end = Some(line);
-                    self.viewer.selection_start = Some(line);
-                    self.viewer.selection_end = Some(line);
-                    self.viewer.cue_input = fix_text;
-                    self.viewer.cue_images.clear();
+                    self.viewer.tabs[active_idx].selection_start = Some(line);
+                    self.viewer.tabs[active_idx].selection_end = Some(line);
+                    self.viewer.tabs[active_idx].cue_input = fix_text;
+                    self.viewer.tabs[active_idx].cue_images.clear();
                 }
             }
 
-            if new_sel_start != self.viewer.selection_start || new_sel_end != self.viewer.selection_end {
-                self.viewer.selection_start = new_sel_start;
-                self.viewer.selection_end = new_sel_end;
-                self.viewer.cue_input.clear();
-                self.viewer.cue_images.clear();
+            if new_sel_start != self.viewer.tabs[active_idx].selection_start
+                || new_sel_end != self.viewer.tabs[active_idx].selection_end
+            {
+                self.viewer.tabs[active_idx].selection_start = new_sel_start;
+                self.viewer.tabs[active_idx].selection_end = new_sel_end;
+                self.viewer.tabs[active_idx].cue_input.clear();
+                self.viewer.tabs[active_idx].cue_images.clear();
             }
 
-            if submit_cue && !self.viewer.cue_input.is_empty() {
-                if let Some(start) = self.viewer.selection_start {
-                    let end = self.viewer.selection_end.unwrap_or(start);
+            if submit_cue && !self.viewer.tabs[active_idx].cue_input.is_empty() {
+                if let Some(start) = self.viewer.tabs[active_idx].selection_start {
+                    let end = self.viewer.tabs[active_idx]
+                        .selection_end
+                        .unwrap_or(start);
                     let line_end = if end > start { Some(end) } else { None };
-                    let text = self.viewer.cue_input.clone();
-                    let images: Vec<String> = self
-                        .viewer
+                    let text = self.viewer.tabs[active_idx].cue_input.clone();
+                    let images: Vec<String> = self.viewer.tabs[active_idx]
                         .cue_images
                         .drain(..)
                         .map(|p| p.to_string_lossy().to_string())
                         .collect();
-                    let _ = self.db.insert_cue(&text, &rel_path, start, line_end, &images);
-                    self.viewer.cue_input.clear();
+                    let _ =
+                        self.db
+                            .insert_cue(&text, &rel_path, start, line_end, &images);
+                    self.viewer.tabs[active_idx].cue_input.clear();
                     self.reload_cues();
                 }
             }
+
+            // Handle go-to-definition (deferred to avoid borrow issues)
+            if let Some(word) = goto_def_word {
+                self.goto_definition(&word);
+            }
         });
     }
+
+    /// Quick-open file overlay (Cmd+P).
+    fn render_quick_open_overlay(&mut self, ui: &mut egui::Ui) {
+        let fs = self.settings.font_size;
+        ui.vertical(|ui| {
+            ui.add_space(SPACE_MD);
+            ui.horizontal(|ui| {
+                ui.add_space(SPACE_MD);
+                ui.label(egui::RichText::new("Open File").strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(SPACE_MD);
+                    if ui.small_button(icon("\u{2715}", fs)).clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        self.viewer.quick_open_active = false;
+                    }
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.add_space(SPACE_MD);
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.viewer.quick_open_query)
+                        .desired_width(ui.available_width() - SPACE_MD * 2.0)
+                        .hint_text("Type to search files...")
+                        .font(egui::TextStyle::Monospace),
+                );
+                resp.request_focus();
+            });
+            ui.separator();
+
+            // Collect matching files
+            let query = self.viewer.quick_open_query.to_lowercase();
+            let mut matches: Vec<(String, PathBuf)> = Vec::new();
+            if let Some(ref tree) = self.file_tree {
+                let mut all_files = Vec::new();
+                collect_file_paths(&tree.entries, &self.project_root, &mut all_files);
+                for (rel, abs) in all_files {
+                    if query.is_empty() || fuzzy_match(&rel.to_lowercase(), &query) {
+                        matches.push((rel, abs));
+                    }
+                    if matches.len() >= 30 {
+                        break;
+                    }
+                }
+            }
+
+            let mut navigate_to: Option<PathBuf> = None;
+            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+            egui::ScrollArea::vertical()
+                .id_salt("quick_open_scroll")
+                .max_height(ui.available_height() - SPACE_MD)
+                .show(ui, |ui| {
+                    for (i, (rel, abs)) in matches.iter().enumerate() {
+                        let selected = i == 0 && enter_pressed;
+                        if ui
+                            .selectable_label(false, egui::RichText::new(rel).monospace().small())
+                            .clicked()
+                            || selected
+                        {
+                            navigate_to = Some(abs.clone());
+                        }
+                    }
+                    if matches.is_empty() && !query.is_empty() {
+                        ui.label(
+                            egui::RichText::new("No files found")
+                                .italics()
+                                .color(self.semantic.tertiary_text),
+                        );
+                    }
+                });
+
+            if let Some(path) = navigate_to {
+                self.push_nav_history();
+                self.load_file(path);
+                self.viewer.quick_open_active = false;
+            }
+        });
+    }
+
+    /// Go to definition of a symbol: search project files for definition patterns.
+    fn goto_definition(&mut self, word: &str) {
+        if word.is_empty() || word.len() < 2 {
+            return;
+        }
+
+        self.push_nav_history();
+
+        let patterns = symbols::definition_patterns(word);
+        if patterns.is_empty() {
+            self.set_status_message(format!("No definition found for `{}`", word));
+            return;
+        }
+
+        // First, search in the current file
+        if let Some(tab) = self.viewer.active() {
+            for (idx, line) in tab.content.iter().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                    continue;
+                }
+                for re in &patterns {
+                    if re.is_match(line) {
+                        // Found in current file — jump to it
+                        self.viewer.scroll_to_line = Some(idx + 1);
+                        self.set_status_message(format!(
+                            "Definition: `{}` at line {}",
+                            word,
+                            idx + 1
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Search in all project files
+        let mut all_files = Vec::new();
+        if let Some(ref tree) = self.file_tree {
+            crate::app::search::collect_files(&tree.entries, &mut all_files);
+        }
+
+        // Search for definition in project files
+        for file_path in &all_files {
+            if crate::app::search::is_binary_ext(file_path) {
+                continue;
+            }
+            // Skip current file (already searched)
+            if self.viewer.current_file() == Some(file_path) {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(file_path) {
+                for (idx, line) in content.lines().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    for re in &patterns {
+                        if re.is_match(line) {
+                            let target_line = idx + 1;
+                            self.load_file(file_path.clone());
+                            self.viewer.scroll_to_line = Some(target_line);
+                            self.set_status_message(format!(
+                                "Definition: `{}` at {}:{}",
+                                word,
+                                file_path
+                                    .strip_prefix(&self.project_root)
+                                    .unwrap_or(file_path)
+                                    .display(),
+                                target_line
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.set_status_message(format!("No definition found for `{}`", word));
+    }
+}
+
+/// Recursively collect all file paths with their relative paths.
+fn collect_file_paths(
+    entries: &[FileEntry],
+    project_root: &std::path::Path,
+    out: &mut Vec<(String, PathBuf)>,
+) {
+    for entry in entries {
+        if entry.is_dir {
+            collect_file_paths(&entry.children, project_root, out);
+        } else {
+            let rel = entry
+                .path
+                .strip_prefix(project_root)
+                .unwrap_or(&entry.path)
+                .to_string_lossy()
+                .to_string();
+            out.push((rel, entry.path.clone()));
+        }
+    }
+}
+
+/// Simple fuzzy (subsequence) matching.
+fn fuzzy_match(haystack: &str, needle: &str) -> bool {
+    let mut needle_chars = needle.chars();
+    let mut current = needle_chars.next();
+    for ch in haystack.chars() {
+        if let Some(n) = current {
+            if ch == n {
+                current = needle_chars.next();
+            }
+        } else {
+            return true;
+        }
+    }
+    current.is_none()
 }

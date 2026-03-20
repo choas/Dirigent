@@ -348,9 +348,11 @@ impl DirigentApp {
                 self.set_status_message(format!("Revert failed: {}", e));
             }
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            if let Some(ref path) = self.viewer.current_file {
-                let p = path.clone();
-                self.load_file(p);
+            // Reload all open tabs after revert
+            for tab in &mut self.viewer.tabs {
+                if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                    tab.content = content.lines().map(String::from).collect();
+                }
             }
             self.reload_cues();
             self.reload_git_info();
