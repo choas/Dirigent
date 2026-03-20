@@ -2,6 +2,11 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.2.6] - 2026-03-20
+
+### Changed
+- Version bump release
+
 ## [0.2.5] - 2026-03-20
 
 ### Added
