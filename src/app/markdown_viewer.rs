@@ -228,38 +228,77 @@ fn render_blocks(
                 } else {
                     egui::Color32::from_black_alpha(30)
                 };
+                let header_bg = if semantic.is_dark() {
+                    egui::Color32::from_white_alpha(15)
+                } else {
+                    egui::Color32::from_black_alpha(10)
+                };
+                let col_count = headers.len();
+
+                if indent > 0.0 {
+                    ui.add_space(indent);
+                }
+
                 egui::Frame::new()
                     .stroke(egui::Stroke::new(1.0, border))
-                    .corner_radius(2.0)
-                    .outer_margin(egui::Margin {
-                        left: indent as i8,
-                        ..Default::default()
-                    })
+                    .corner_radius(4.0)
                     .show(ui, |ui| {
-                        egui::Grid::new(ui.id().with(("md_table", block_idx)))
-                            .striped(true)
-                            .min_col_width(40.0)
+                        // Header row with background
+                        egui::Frame::new()
+                            .fill(header_bg)
+                            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
                             .show(ui, |ui| {
-                                // Header row
-                                for cell in headers {
-                                    ui.horizontal_wrapped(|ui| {
-                                        for seg in cell {
-                                            render_segment(ui, seg, font_size, true, semantic);
+                                egui::Grid::new(ui.id().with(("md_th", block_idx)))
+                                    .num_columns(col_count)
+                                    .min_col_width(60.0)
+                                    .spacing(egui::vec2(SPACE_MD, SPACE_XS))
+                                    .show(ui, |ui| {
+                                        for cell in headers {
+                                            ui.horizontal_wrapped(|ui| {
+                                                for seg in cell {
+                                                    render_segment(
+                                                        ui, seg, font_size, true, semantic,
+                                                    );
+                                                }
+                                            });
+                                        }
+                                        ui.end_row();
+                                    });
+                            });
+
+                        // Separator line between header and body
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(rect.left(), rect.top()),
+                                egui::pos2(rect.right(), rect.top()),
+                            ],
+                            egui::Stroke::new(1.0, border),
+                        );
+
+                        // Data rows
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
+                            .show(ui, |ui| {
+                                egui::Grid::new(ui.id().with(("md_td", block_idx)))
+                                    .num_columns(col_count)
+                                    .striped(true)
+                                    .min_col_width(60.0)
+                                    .spacing(egui::vec2(SPACE_MD, SPACE_XS))
+                                    .show(ui, |ui| {
+                                        for row in rows {
+                                            for cell in row {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    for seg in cell {
+                                                        render_segment(
+                                                            ui, seg, font_size, false, semantic,
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                            ui.end_row();
                                         }
                                     });
-                                }
-                                ui.end_row();
-                                // Data rows
-                                for row in rows {
-                                    for cell in row {
-                                        ui.horizontal_wrapped(|ui| {
-                                            for seg in cell {
-                                                render_segment(ui, seg, font_size, false, semantic);
-                                            }
-                                        });
-                                    }
-                                    ui.end_row();
-                                }
                             });
                     });
                 ui.add_space(SPACE_SM);
