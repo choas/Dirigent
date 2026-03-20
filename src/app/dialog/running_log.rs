@@ -50,28 +50,107 @@ impl DirigentApp {
 
         // Reply field at the bottom – rendered as a bottom panel so it stays visible
         if can_reply {
-            egui::TopBottomPanel::bottom("conversation_reply_panel").show(ctx, |ui| {
-                ui.add_space(SPACE_XS);
-                ui.horizontal(|ui| {
-                    let reply_text = &mut self.conversation_reply;
-                    let response = ui.add(
-                        egui::TextEdit::singleline(reply_text)
-                            .desired_width(ui.available_width() - 80.0)
-                            .hint_text("Reply with feedback..."),
+            let reply_frame = egui::Frame::NONE
+                .fill(self.semantic.prompt_surface())
+                .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
+            egui::TopBottomPanel::bottom("conversation_reply_panel")
+                .frame(reply_frame)
+                .show(ctx, |ui| {
+                    // Top border line
+                    let rect = ui.available_rect_before_wrap();
+                    ui.painter().hline(
+                        rect.x_range(),
+                        rect.top(),
+                        egui::Stroke::new(1.0, self.semantic.prompt_border()),
                     );
-                    let send = ui
-                        .button(icon("\u{21A9} Send", fs))
-                        .on_hover_text("Send feedback to Claude (Cmd+Enter)")
-                        .clicked()
-                        || (response.has_focus()
-                            && ui
-                                .input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
-                    if send && !reply_text.trim().is_empty() {
-                        reply_send = Some(reply_text.clone());
+
+                    // Show attached files above the input line
+                    if !self.conversation_reply_images.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                egui::RichText::new("Attached:")
+                                    .small()
+                                    .color(self.semantic.accent),
+                            );
+                            let mut remove_idx = None;
+                            for (i, path) in self.conversation_reply_images.iter().enumerate() {
+                                let name = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                                ui.label(egui::RichText::new(&name).monospace().small());
+                                if ui
+                                    .small_button("\u{2715}")
+                                    .on_hover_text("Remove")
+                                    .clicked()
+                                {
+                                    remove_idx = Some(i);
+                                }
+                            }
+                            if let Some(i) = remove_idx {
+                                self.conversation_reply_images.remove(i);
+                            }
+                        });
+                        ui.add_space(SPACE_XS);
                     }
+                    ui.horizontal(|ui| {
+                        ui.label(icon("\u{21A9}", fs).color(self.semantic.accent));
+                        if ui
+                            .button(icon("+", fs))
+                            .on_hover_text("Attach files (or drag & drop)")
+                            .clicked()
+                        {
+                            if let Some(paths) = rfd::FileDialog::new()
+                                .add_filter("All files", &["*"])
+                                .pick_files()
+                            {
+                                self.conversation_reply_images.extend(paths);
+                            }
+                        }
+                        let reply_text = &mut self.conversation_reply;
+                        let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
+                        let desired_rows = line_count.max(1).min(8);
+                        let input_response = ui.add(
+                            egui::TextEdit::multiline(reply_text)
+                                .desired_width(ui.available_width() - 44.0)
+                                .desired_rows(desired_rows)
+                                .hint_text("Reply with feedback...")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        ui.vertical_centered(|ui| {
+                            let input_h = input_response.rect.height();
+                            let btn_size = fs + 12.0;
+                            ui.add_space((input_h - btn_size) / 2.0);
+                            let send_btn = egui::Button::new(
+                                icon("\u{2191}", fs).color(self.semantic.accent_text()),
+                            )
+                            .fill(self.semantic.accent)
+                            .corner_radius(btn_size as u8 / 2)
+                            .min_size(egui::vec2(btn_size, btn_size));
+                            let btn_clicked = ui
+                                .add(send_btn)
+                                .on_hover_text("Send feedback (⌘Enter)")
+                                .clicked();
+                            let (enter_submitted, cmd_enter) = if input_response.has_focus() {
+                                ui.input(|i| {
+                                    let pressed =
+                                        i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
+                                    (
+                                        pressed && !i.modifiers.command,
+                                        pressed && i.modifiers.command,
+                                    )
+                                })
+                            } else {
+                                (false, false)
+                            };
+                            if (btn_clicked || enter_submitted || cmd_enter)
+                                && !reply_text.trim().is_empty()
+                            {
+                                reply_send = Some(reply_text.trim().to_string());
+                            }
+                        });
+                    });
                 });
-                ui.add_space(SPACE_XS);
-            });
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -258,7 +337,12 @@ impl DirigentApp {
 
         if let Some(reply) = reply_send {
             self.conversation_reply.clear();
-            self.trigger_claude_reply(cue_id, &reply);
+            let images: Vec<String> = self
+                .conversation_reply_images
+                .drain(..)
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            self.trigger_claude_reply(cue_id, &reply, &images);
         }
     }
 }

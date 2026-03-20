@@ -356,7 +356,7 @@ impl DirigentApp {
             self.reload_git_info();
             self.diff_review = None;
         } else if let Some(reply) = reply_send {
-            self.trigger_claude_reply(cue_id, &reply);
+            self.trigger_claude_reply(cue_id, &reply, &[]);
         } else if close {
             self.diff_review = None;
         }

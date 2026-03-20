@@ -481,7 +481,7 @@ impl DirigentApp {
                             CueAction::ReplyReview(cue_id, reply_text) => {
                                 self.reply_inputs.remove(&cue_id);
                                 let _ = self.db.log_activity(cue_id, "Reply sent");
-                                self.trigger_claude_reply(cue_id, &reply_text);
+                                self.trigger_claude_reply(cue_id, &reply_text, &[]);
                             }
                             CueAction::ShowRunningLog(cue_id) => {
                                 // Load all executions for conversation history

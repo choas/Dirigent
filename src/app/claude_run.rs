@@ -264,7 +264,12 @@ impl DirigentApp {
         });
     }
 
-    pub(super) fn trigger_claude_reply(&mut self, cue_id: i64, reply: &str) {
+    pub(super) fn trigger_claude_reply(
+        &mut self,
+        cue_id: i64,
+        reply: &str,
+        reply_images: &[String],
+    ) {
         // Ensure the Claude Code home-directory guard hook is in sync.
         settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
 
@@ -294,6 +299,9 @@ impl DirigentApp {
             .and_then(|e| e.diff)
             .unwrap_or_default();
 
+        let mut all_images = cue.attached_images.clone();
+        all_images.extend_from_slice(reply_images);
+
         let prompt = match self.settings.cli_provider {
             CliProvider::Claude => claude::build_reply_prompt(
                 &original_text,
@@ -302,7 +310,7 @@ impl DirigentApp {
                 cue.line_number_end,
                 &previous_diff,
                 reply,
-                &cue.attached_images,
+                &all_images,
             ),
             CliProvider::OpenCode => opencode::build_reply_prompt(
                 &original_text,
@@ -311,7 +319,7 @@ impl DirigentApp {
                 cue.line_number_end,
                 &previous_diff,
                 reply,
-                &cue.attached_images,
+                &all_images,
             ),
         };
 

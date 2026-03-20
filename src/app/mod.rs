@@ -4,6 +4,8 @@ mod code_viewer;
 mod cue_pool;
 mod dialog;
 mod lava_lamp;
+mod markdown_parser;
+mod markdown_viewer;
 mod notifications;
 mod panels;
 mod search;
@@ -140,6 +142,10 @@ pub(super) struct CodeViewerState {
     pub(super) cue_images: Vec<PathBuf>,
     pub(super) scroll_to_line: Option<usize>,
     pub(super) syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
+    /// Cached parsed markdown blocks (set when a .md/.mdx file is loaded).
+    pub(super) markdown_blocks: Option<Vec<markdown_parser::MarkdownBlock>>,
+    /// Whether to show the rendered markdown view (true) or raw source (false).
+    pub(super) markdown_rendered: bool,
 }
 
 /// State for in-file and project-wide search.
@@ -246,6 +252,7 @@ pub struct DirigentApp {
 
     // Reply input for the conversation log view
     pub(super) conversation_reply: String,
+    pub(super) conversation_reply_images: Vec<PathBuf>,
 
     // About dialog
     show_about: bool,
@@ -450,6 +457,8 @@ impl DirigentApp {
                 cue_images: Vec::new(),
                 scroll_to_line: None,
                 syntax_theme,
+                markdown_blocks: None,
+                markdown_rendered: true,
             },
             cues,
             archived_cue_count,
@@ -486,6 +495,7 @@ impl DirigentApp {
             editing_cue: None,
             reply_inputs: HashMap::new(),
             conversation_reply: String::new(),
+            conversation_reply_images: Vec::new(),
             show_about: false,
             logo_texture: None,
             _fs_watcher,
@@ -743,6 +753,18 @@ impl DirigentApp {
     fn load_file(&mut self, path: PathBuf) {
         if let Ok(content) = std::fs::read_to_string(&path) {
             self.dismiss_central_overlays();
+            // Parse markdown if the file is a .md or .mdx
+            let is_markdown = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
+                .unwrap_or(false);
+            if is_markdown {
+                self.viewer.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
+                self.viewer.markdown_rendered = true;
+            } else {
+                self.viewer.markdown_blocks = None;
+            }
             self.viewer.content = content.lines().map(String::from).collect();
             self.viewer.current_file = Some(path);
             self.viewer.selection_start = None;
@@ -914,6 +936,11 @@ impl eframe::App for DirigentApp {
             // Reload the currently open file so the code viewer shows fresh content
             if let Some(ref path) = self.viewer.current_file {
                 if let Ok(content) = std::fs::read_to_string(path) {
+                    // Re-parse markdown if applicable
+                    if self.viewer.markdown_blocks.is_some() {
+                        self.viewer.markdown_blocks =
+                            Some(markdown_parser::parse_markdown(&content));
+                    }
                     self.viewer.content = content.lines().map(String::from).collect();
                 }
             }
@@ -1008,7 +1035,11 @@ impl eframe::App for DirigentApp {
                 .collect()
         });
         if !dropped.is_empty() {
-            self.global_prompt_images.extend(dropped);
+            if self.claude.show_log.is_some() {
+                self.conversation_reply_images.extend(dropped);
+            } else {
+                self.global_prompt_images.extend(dropped);
+            }
         }
 
         // Show overlay when files are being dragged over the window
