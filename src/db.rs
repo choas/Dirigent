@@ -346,6 +346,25 @@ impl Database {
             self.record_settings_migration("create_release_version_var");
         }
 
+        // v0.2.5 – "Create release" play now includes git push && git push --tags
+        if !self.has_settings_migration("create_release_git_push") {
+            let old_suffix = "create a git tag v{VERSION}.";
+            if let Some(play) = settings
+                .playbook
+                .iter_mut()
+                .find(|p| p.name == "Create release" && p.prompt.ends_with(old_suffix))
+            {
+                if let Some(new_play) = crate::settings::default_playbook()
+                    .into_iter()
+                    .find(|p| p.name == "Create release")
+                {
+                    play.prompt = new_play.prompt;
+                    changed = true;
+                }
+            }
+            self.record_settings_migration("create_release_git_push");
+        }
+
         changed
     }
 

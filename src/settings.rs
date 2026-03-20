@@ -1029,7 +1029,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         },
         Play {
             name: "Create release".into(),
-            prompt: "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, and create a git tag v{VERSION}.".into(),
+            prompt: "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`.".into(),
         },
         Play {
             name: "Security audit".into(),
