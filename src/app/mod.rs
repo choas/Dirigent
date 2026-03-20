@@ -40,7 +40,6 @@ const FONT_SCALE_SUBHEADING: f32 = 1.15;
 const FONT_SCALE_HEADING: f32 = 1.4;
 const SEARCH_PANEL_DEFAULT_WIDTH: f32 = 220.0;
 const SEARCH_PANEL_MIN_WIDTH: f32 = 150.0;
-const COMMIT_MSG_TRUNCATE_LEN: usize = 27;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 

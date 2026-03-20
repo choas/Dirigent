@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use super::{
-    icon, icon_small, DiffReview, DirigentApp, COMMIT_MSG_TRUNCATE_LEN, FONT_SCALE_SUBHEADING,
-    SPACE_MD, SPACE_SM, SPACE_XS,
+    icon, icon_small, DiffReview, DirigentApp, FONT_SCALE_SUBHEADING, SPACE_MD, SPACE_SM, SPACE_XS,
 };
 use crate::agents::{AgentKind, AgentStatus};
 use crate::db::CueStatus;
@@ -341,70 +340,78 @@ impl DirigentApp {
                     self.git.commit_history_total,
                     ahead_label
                 );
-                let header_resp = egui::CollapsingHeader::new(header_text)
-                    .default_open(self.git.show_log)
-                    .show(ui, |ui| {
-                        let mut clicked_commit: Option<(String, String, String)> = None;
-                        let mut load_more = false;
-                        egui::ScrollArea::vertical()
-                            .id_salt("git_log_scroll")
-                            .show(ui, |ui| {
-                                for commit in &self.git.commit_history {
-                                    let msg = if commit.message.len() > COMMIT_MSG_TRUNCATE_LEN + 3
-                                    {
-                                        format!(
-                                            "{}...",
-                                            super::truncate_str(
-                                                &commit.message,
-                                                COMMIT_MSG_TRUNCATE_LEN
-                                            )
-                                        )
-                                    } else {
-                                        commit.message.clone()
-                                    };
-                                    let label = format!("{} {}", commit.short_hash, msg);
-                                    if ui
-                                        .selectable_label(
-                                            false,
-                                            egui::RichText::new(&label).monospace().small(),
-                                        )
-                                        .on_hover_text(format!(
-                                            "{} - {}\n{}\n{}",
-                                            commit.short_hash,
-                                            commit.author,
-                                            commit.message,
-                                            commit.time_ago
-                                        ))
-                                        .clicked()
-                                    {
-                                        clicked_commit = Some((
-                                            commit.full_hash.clone(),
-                                            commit.message.clone(),
-                                            commit.body.clone(),
-                                        ));
-                                    }
+                let header_resp = egui::CollapsingHeader::new(
+                    egui::RichText::new(header_text)
+                        .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                        .strong(),
+                )
+                .default_open(self.git.show_log)
+                .show(ui, |ui| {
+                    let mut clicked_commit: Option<(String, String, String)> = None;
+                    let mut load_more = false;
+                    egui::ScrollArea::vertical()
+                        .id_salt("git_log_scroll")
+                        .show(ui, |ui| {
+                            // Estimate how many characters fit based on the
+                            // available panel width and the monospace small font.
+                            let avail_width = ui.available_width();
+                            let char_width = self.settings.font_size * 0.52; // monospace small approx
+                            let hash_prefix_len = 8; // "abcdef0 "
+                            let max_msg_chars = ((avail_width / char_width) as usize)
+                                .saturating_sub(hash_prefix_len)
+                                .max(10);
+                            for commit in &self.git.commit_history {
+                                let msg = if commit.message.len() > max_msg_chars + 3 {
+                                    format!(
+                                        "{}...",
+                                        super::truncate_str(&commit.message, max_msg_chars)
+                                    )
+                                } else {
+                                    commit.message.clone()
+                                };
+                                let label = format!("{} {}", commit.short_hash, msg);
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        egui::RichText::new(&label).monospace().small(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{} - {}\n{}\n{}",
+                                        commit.short_hash,
+                                        commit.author,
+                                        commit.message,
+                                        commit.time_ago
+                                    ))
+                                    .clicked()
+                                {
+                                    clicked_commit = Some((
+                                        commit.full_hash.clone(),
+                                        commit.message.clone(),
+                                        commit.body.clone(),
+                                    ));
                                 }
-                                // Show "Load More" if we might have more commits
-                                if self.git.commit_history.len() == self.git.commit_history_limit {
-                                    ui.add_space(4.0);
-                                    if ui
-                                        .button(
-                                            egui::RichText::new("Load More…")
-                                                .small()
-                                                .color(ui.visuals().hyperlink_color),
-                                        )
-                                        .clicked()
-                                    {
-                                        load_more = true;
-                                    }
+                            }
+                            // Show "Load More" if we might have more commits
+                            if self.git.commit_history.len() == self.git.commit_history_limit {
+                                ui.add_space(4.0);
+                                if ui
+                                    .button(
+                                        egui::RichText::new("Load More…")
+                                            .small()
+                                            .color(ui.visuals().hyperlink_color),
+                                    )
+                                    .clicked()
+                                {
+                                    load_more = true;
                                 }
-                            });
-                        if load_more {
-                            self.git.commit_history_limit += 10;
-                            self.reload_commit_history();
-                        }
-                        clicked_commit
-                    });
+                            }
+                        });
+                    if load_more {
+                        self.git.commit_history_limit += 10;
+                        self.reload_commit_history();
+                    }
+                    clicked_commit
+                });
                 self.git.show_log = header_resp.fully_open();
                 if let Some(inner) = header_resp.body_returned {
                     if let Some((full_hash, message, body)) = inner {
