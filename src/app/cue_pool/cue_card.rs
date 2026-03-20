@@ -348,7 +348,17 @@ impl DirigentApp {
                     CueStatus::Done => {
                         ui.label(icon("\u{2713}", fs).color(self.semantic.success));
                         // Show highlighted Push button when there are unpushed commits
-                        if self.git.ahead_of_remote > 0 && !self.git.pushing {
+                        // and Claude's log for this cue mentions pushing
+                        let log_mentions_push = self
+                            .claude
+                            .running_logs
+                            .get(&cue.id)
+                            .map(|(log, _)| {
+                                let lower = log.to_lowercase();
+                                lower.contains("push")
+                            })
+                            .unwrap_or(false);
+                        if self.git.ahead_of_remote > 0 && !self.git.pushing && log_mentions_push {
                             let push_btn = egui::Button::new(
                                 icon("\u{2191} Push", fs).color(self.semantic.badge_text),
                             )
@@ -358,7 +368,11 @@ impl DirigentApp {
                                 .on_hover_text(format!(
                                     "Push to remote ({} commit{} ahead)",
                                     self.git.ahead_of_remote,
-                                    if self.git.ahead_of_remote == 1 { "" } else { "s" }
+                                    if self.git.ahead_of_remote == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
                                 ))
                                 .clicked()
                             {
