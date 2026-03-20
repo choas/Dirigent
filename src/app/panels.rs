@@ -316,6 +316,7 @@ impl DirigentApp {
                                     &self.git.dirty_files,
                                     &self.semantic,
                                     0,
+                                    self.settings.font_size,
                                 );
                             }
                         }
@@ -455,6 +456,7 @@ impl DirigentApp {
         dirty_files: &HashMap<String, char>,
         semantic: &SemanticColors,
         depth: usize,
+        font_size: f32,
     ) {
         let ignored_color = ui.visuals().weak_text_color();
         let indent = depth as f32 * 16.0;
@@ -505,7 +507,7 @@ impl DirigentApp {
                 egui::pos2(text_pos.x + 20.0, text_pos.y),
                 egui::Align2::LEFT_CENTER,
                 &entry.name,
-                egui::FontId::proportional(ui.text_style_height(&egui::TextStyle::Body)),
+                egui::FontId::proportional(font_size),
                 name_color,
             );
 
@@ -530,6 +532,7 @@ impl DirigentApp {
                         dirty_files,
                         semantic,
                         depth + 1,
+                        font_size,
                     );
                 }
             }
@@ -580,7 +583,7 @@ impl DirigentApp {
                 text_pos,
                 egui::Align2::LEFT_CENTER,
                 &entry.name,
-                egui::FontId::proportional(ui.text_style_height(&egui::TextStyle::Body)),
+                egui::FontId::proportional(font_size),
                 name_color,
             );
 
