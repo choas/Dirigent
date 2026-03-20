@@ -290,27 +290,37 @@ impl DirigentApp {
                         .strong(),
                 );
                 ui.separator();
-                // File tree takes remaining space above git log
+                // File tree takes remaining space above outline and git log
                 let git_log_open = self.git.show_log;
+                let has_outline = self
+                    .viewer
+                    .active()
+                    .map_or(false, |t| !t.symbols.is_empty());
                 let available = ui.available_height();
-                // When git log is open, give file tree ~60% of space; otherwise all of it
-                let file_tree_height = if git_log_open {
-                    available * 0.6
+                // Reserve space for outline (~150px) and git log header (~24px)
+                let reserved = if has_outline && git_log_open {
+                    174.0 + available * 0.3 // outline + git log
+                } else if has_outline {
+                    174.0 // outline + git log header
+                } else if git_log_open {
+                    available * 0.4
                 } else {
-                    available - 24.0 // leave room for the git log header
+                    24.0 // just git log header
                 };
+                let file_tree_height = (available - reserved).max(80.0);
                 let file_to_load = egui::ScrollArea::vertical()
                     .id_salt("file_tree_scroll")
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
                         let mut file_to_load = None;
                         if let Some(ref tree) = self.file_tree {
+                            let current_file = self.viewer.current_file().cloned();
                             for entry in &tree.entries {
                                 Self::render_file_entry(
                                     ui,
                                     entry,
                                     &mut self.expanded_dirs,
-                                    &self.viewer.current_file,
+                                    &current_file,
                                     &mut file_to_load,
                                     &self.project_root,
                                     &self.git.dirty_files,
@@ -324,10 +334,68 @@ impl DirigentApp {
                     })
                     .inner;
                 if let Some(path) = file_to_load {
+                    self.push_nav_history();
                     self.load_file(path);
                 }
 
                 ui.separator();
+
+                // Symbol Outline (collapsible, below file tree, above git log)
+                if self.viewer.active().is_some() {
+                    let symbols: Vec<_> = self
+                        .viewer
+                        .active()
+                        .map(|t| t.symbols.clone())
+                        .unwrap_or_default();
+                    if !symbols.is_empty() {
+                        let outline_header = egui::CollapsingHeader::new(
+                            egui::RichText::new(format!("Outline ({})", symbols.len()))
+                                .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                                .strong(),
+                        )
+                        .default_open(self.viewer.show_outline);
+                        let outline_resp = outline_header.show(ui, |ui| {
+                            let mut scroll_to: Option<usize> = None;
+                            egui::ScrollArea::vertical()
+                                .id_salt("outline_scroll")
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for sym in &symbols {
+                                        let indent = sym.depth as f32 * 12.0;
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(indent);
+                                            ui.label(
+                                                egui::RichText::new(sym.kind.icon())
+                                                    .monospace()
+                                                    .small()
+                                                    .color(self.semantic.accent),
+                                            );
+                                            let label =
+                                                format!("{} {}", sym.kind.label(), sym.name);
+                                            if ui
+                                                .add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(&label).small(),
+                                                    )
+                                                    .sense(egui::Sense::click()),
+                                                )
+                                                .clicked()
+                                            {
+                                                scroll_to = Some(sym.line);
+                                            }
+                                        });
+                                    }
+                                });
+                            scroll_to
+                        });
+                        self.viewer.show_outline = outline_resp.fully_open();
+                        if let Some(line) = outline_resp.body_returned.flatten() {
+                            self.viewer.scroll_to_line = Some(line);
+                        }
+
+                        ui.separator();
+                    }
+                }
 
                 // Git Log collapsible section
                 let ahead_label = if self.git.ahead_of_remote > 0 {
