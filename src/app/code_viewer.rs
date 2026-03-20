@@ -74,6 +74,13 @@ impl DirigentApp {
             let is_markdown = self.viewer.markdown_blocks.is_some();
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&rel_path).size(self.settings.font_size * FONT_SCALE_HEADING).strong());
+                if ui
+                    .small_button(icon("\u{1F4CB}", self.settings.font_size))
+                    .on_hover_text("Copy file path")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(rel_path.clone());
+                }
                 if is_dirty {
                     ui.label(
                         egui::RichText::new("\u{25CF}")
