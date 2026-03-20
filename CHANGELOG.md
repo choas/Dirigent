@@ -2,6 +2,20 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.2.5] - 2026-03-20
+
+### Added
+- Markdown viewer integration using pulldown-cmark
+- Copy filename (with path) button in code viewer
+- Lua language option in Agent Settings
+- Git pull support
+
+### Fixed
+- Font size inconsistency between Files and Git Log panels
+- Git Log entries cut off even when space was available
+- Prompt input styling inconsistency in CLI logs
+- Claude Code attempting to read folders from the user's filesystem
+
 ## [0.2.4] - 2026-03-16
 
 ### Changed
