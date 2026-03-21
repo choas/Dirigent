@@ -353,7 +353,8 @@ pub(crate) fn fetch_pr_findings(
         }
 
         // Skip empty or non-actionable comments
-        if body.trim().is_empty() || is_confirmation_comment(body) {
+        if body.trim().is_empty() || is_confirmation_comment(body) || is_auto_summary_comment(body)
+        {
             continue;
         }
 
@@ -532,7 +533,11 @@ fn extract_all_agent_prompts(body: &str) -> Vec<String> {
         let abs_pos = search_from + rel_pos;
 
         // Skip the combined "Prompt for all review comments with AI agents" block
-        let context_start = abs_pos.saturating_sub(60);
+        let mut context_start = abs_pos.saturating_sub(60);
+        // Ensure we land on a valid UTF-8 char boundary (emojis are multi-byte)
+        while context_start > 0 && !body.is_char_boundary(context_start) {
+            context_start -= 1;
+        }
         if body[context_start..abs_pos].contains("all review comments") {
             search_from = abs_pos + marker.len();
             continue;
@@ -620,22 +625,29 @@ fn extract_finding_text(body: &str) -> String {
 
     // Limit the length to avoid overly large cue texts
     if result.len() > 2000 {
-        result.truncate(2000);
+        let mut end = 2000;
+        while end > 0 && !result.is_char_boundary(end) {
+            end -= 1;
+        }
+        result.truncate(end);
         result.push_str("...");
     }
     result
 }
 
 /// Parse a PR source_ref to extract (pr_number, comment_type, comment_id).
-/// Formats: "pr<N>:comment:<ID>" or "pr<N>:issue_comment:<ID>"
+/// Formats: "pr<N>:comment:<ID>", "pr<N>:issue_comment:<ID>",
+///          "pr<N>:review:<ID>" or "pr<N>:review:<ID>_<sub>"
 pub(crate) fn parse_pr_source_ref(source_ref: &str) -> Option<(u32, &str, u64)> {
     let parts: Vec<&str> = source_ref.splitn(3, ':').collect();
     if parts.len() != 3 {
         return None;
     }
     let pr_num = parts[0].strip_prefix("pr")?.parse().ok()?;
-    let comment_type = parts[1]; // "comment" or "issue_comment"
-    let comment_id = parts[2].parse().ok()?;
+    let comment_type = parts[1]; // "comment", "issue_comment", or "review"
+                                 // Strip the "_<sub>" suffix for review findings (e.g. "123_0" → "123")
+    let id_str = parts[2].split('_').next().unwrap_or(parts[2]);
+    let comment_id = id_str.parse().ok()?;
     Some((pr_num, comment_type, comment_id))
 }
 
@@ -729,8 +741,8 @@ pub(crate) fn notify_pr_finding_fixed(
         "comment" => {
             reply_to_pr_review_comment(project_root, pr_number, comment_id, &body)?;
         }
-        "issue_comment" => {
-            // Can't reply directly to issue comments; post a new comment mentioning it
+        "issue_comment" | "review" => {
+            // Can't reply directly to issue/review comments; post a new comment mentioning it
             comment_on_pr(project_root, pr_number, &body)?;
         }
         _ => return Ok(false),
@@ -859,5 +871,140 @@ mod tests {
         assert!(parse_pr_source_ref("not_a_pr_ref").is_none());
         assert!(parse_pr_source_ref("pr:comment:1").is_none());
         assert!(parse_pr_source_ref("").is_none());
+    }
+
+    #[test]
+    fn parse_pr_source_ref_review() {
+        let (pr, kind, id) = parse_pr_source_ref("pr1:review:3986437510").unwrap();
+        assert_eq!(pr, 1);
+        assert_eq!(kind, "review");
+        assert_eq!(id, 3986437510);
+    }
+
+    #[test]
+    fn parse_pr_source_ref_review_with_sub_index() {
+        let (pr, kind, id) = parse_pr_source_ref("pr1:review:3986437510_2").unwrap();
+        assert_eq!(pr, 1);
+        assert_eq!(kind, "review");
+        assert_eq!(id, 3986437510);
+    }
+
+    // -- is_confirmation_comment --
+
+    #[test]
+    fn confirmation_comment_with_checkmark() {
+        let body = "Some finding text\n\n✅ Confirmed as addressed by @user";
+        assert!(is_confirmation_comment(body));
+    }
+
+    #[test]
+    fn confirmation_comment_in_html_stripped() {
+        // Confirmation marker as visible text (not in HTML comment) should be detected
+        let body = "Finding text\n<!-- comment -->\n✅ Confirmed as addressed\n<!-- end -->";
+        assert!(is_confirmation_comment(body));
+    }
+
+    #[test]
+    fn non_confirmation_comment() {
+        let body = "**Bug found:** This function panics on empty input.";
+        assert!(!is_confirmation_comment(body));
+    }
+
+    // -- is_auto_summary_comment --
+
+    #[test]
+    fn auto_summary_walkthrough() {
+        let body = "<!-- walkthrough_start -->\n## Walkthrough\nSome changes...";
+        assert!(is_auto_summary_comment(body));
+    }
+
+    #[test]
+    fn auto_summary_not_review() {
+        // Review status comment is NOT an auto-summary (it contains actual findings)
+        let body = "<!-- This is an auto-generated comment by CodeRabbit for review status -->";
+        assert!(!is_auto_summary_comment(body));
+    }
+
+    // -- extract_all_agent_prompts --
+
+    #[test]
+    fn extract_single_agent_prompt() {
+        let body = r#"Some finding text
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+```
+Fix the bug in src/main.rs at line 42.
+```
+
+</details>"#;
+        let prompts = extract_all_agent_prompts(body);
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Fix the bug"));
+    }
+
+    #[test]
+    fn extract_multiple_agent_prompts_skips_combined() {
+        let body = r#"<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+```
+First finding.
+```
+
+</details>
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+```
+Second finding.
+```
+
+</details>
+
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+
+```
+Combined prompt (should be skipped).
+```
+
+</details>"#;
+        let prompts = extract_all_agent_prompts(body);
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[0].contains("First finding"));
+        assert!(prompts[1].contains("Second finding"));
+    }
+
+    #[test]
+    fn extract_agent_prompt_with_emoji_context() {
+        // Emojis near the marker shouldn't cause panics
+        let body = "🧹🔧🐛 Some context\n\n<summary>🤖 Prompt for AI Agents</summary>\n\n```\nFix it.\n```";
+        let prompts = extract_all_agent_prompts(body);
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Fix it"));
+    }
+
+    // -- extract_finding_text --
+
+    #[test]
+    fn extract_finding_text_strips_code_blocks() {
+        let body = "**Bug:** Something is wrong.\n\n```rust\nlet x = 1;\n```\n\nPlease fix.";
+        let text = extract_finding_text(body);
+        assert!(text.contains("Bug:"));
+        assert!(text.contains("Please fix"));
+        assert!(!text.contains("let x"));
+    }
+
+    #[test]
+    fn extract_finding_text_strips_details() {
+        let body =
+            "Finding.\n<details>\n<summary>Details</summary>\nHidden content\n</details>\nVisible.";
+        let text = extract_finding_text(body);
+        assert!(text.contains("Finding"));
+        assert!(text.contains("Visible"));
+        assert!(!text.contains("Hidden"));
     }
 }
