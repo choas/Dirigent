@@ -808,6 +808,7 @@ impl DirigentApp {
 
         self.git.importing_pr = true;
         self.git.show_import_pr = false;
+        self.set_status_message(format!("Refreshing PR #{}…", pr_number));
         let project_root = self.project_root.clone();
         let (tx, rx) = mpsc::channel();
         self.git.import_pr_rx = Some(rx);

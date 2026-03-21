@@ -321,8 +321,13 @@ impl DirigentApp {
                                     if has_pr_cues {
                                         ui.horizontal(|ui| {
                                             if !self.git.notifying_pr && !self.git.pushing {
+                                                let btn = egui::Button::new(
+                                                    icon("\u{2191} Push & Notify PR", self.settings.font_size)
+                                                        .color(self.semantic.badge_text),
+                                                )
+                                                .fill(self.semantic.accent);
                                                 if ui
-                                                    .small_button(icon("\u{2191} Push & Notify PR", self.settings.font_size))
+                                                    .add(btn)
                                                     .on_hover_text("Push commits and reply to all PR comments that findings were fixed")
                                                     .clicked()
                                                 {
@@ -335,7 +340,13 @@ impl DirigentApp {
                                                         .color(self.semantic.accent),
                                                 );
                                             }
-                                            if ui
+                                            if self.git.importing_pr {
+                                                ui.label(
+                                                    egui::RichText::new("Refreshing PR…")
+                                                        .small()
+                                                        .color(self.semantic.accent),
+                                                );
+                                            } else if ui
                                                 .small_button(icon("\u{21BB} Refresh PR", self.settings.font_size))
                                                 .on_hover_text("Re-import findings from the PR (check for new review comments)")
                                                 .clicked()
@@ -672,7 +683,20 @@ impl DirigentApp {
                                 self.start_push_and_notify_pr();
                             }
                             CueAction::RefreshPR => {
-                                self.open_import_pr_dialog();
+                                // Auto-detect PR number from existing PR cues and import directly
+                                let pr_num = self.cues.iter().find_map(|c| {
+                                    c.source_ref
+                                        .as_ref()
+                                        .and_then(|s| s.strip_prefix("pr"))
+                                        .and_then(|s| s.split(':').next())
+                                        .and_then(|n| n.parse::<u32>().ok())
+                                });
+                                if let Some(n) = pr_num {
+                                    self.git.import_pr_number = n.to_string();
+                                    self.start_import_pr_findings();
+                                } else {
+                                    self.open_import_pr_dialog();
+                                }
                             }
                             CueAction::TagAllReview(tag) => {
                                 let review_ids: Vec<i64> = self
