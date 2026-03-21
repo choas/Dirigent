@@ -222,6 +222,7 @@ pub(super) struct GitState {
     pub(super) import_pr_number: String,
     /// Whether a PR findings import is in progress.
     pub(super) importing_pr: bool,
+    pub(super) importing_pr_start: Option<Instant>,
     pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
@@ -535,6 +536,7 @@ impl DirigentApp {
                 show_import_pr: false,
                 import_pr_number: String::new(),
                 importing_pr: false,
+                importing_pr_start: None,
                 import_pr_rx: None,
                 notifying_pr: false,
                 pr_notify_rx: None,
@@ -807,6 +809,7 @@ impl DirigentApp {
         };
 
         self.git.importing_pr = true;
+        self.git.importing_pr_start = Some(Instant::now());
         self.git.show_import_pr = false;
         self.set_status_message(format!("Refreshing PR #{}…", pr_number));
         let project_root = self.project_root.clone();
@@ -823,16 +826,26 @@ impl DirigentApp {
     fn process_import_pr_result(&mut self) {
         if let Some(ref rx) = self.git.import_pr_rx {
             match rx.try_recv() {
-                Err(std::sync::mpsc::TryRecvError::Empty) => return, // Still waiting
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Update status with elapsed time so user knows it's still running
+                    if let Some(start) = self.git.importing_pr_start {
+                        let secs = start.elapsed().as_secs();
+                        let pr = self.git.import_pr_number.trim();
+                        self.set_status_message(format!("Refreshing PR #{}… ({}s)", pr, secs));
+                    }
+                    return;
+                }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     // Thread panicked or was dropped
                     self.git.importing_pr = false;
+                    self.git.importing_pr_start = None;
                     self.git.import_pr_rx = None;
                     self.set_status_message("PR import failed unexpectedly".into());
                     return;
                 }
                 Ok(result) => {
                     self.git.importing_pr = false;
+                    self.git.importing_pr_start = None;
                     self.git.import_pr_rx = None;
                     match result {
                         Ok(findings) => {

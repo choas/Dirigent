@@ -764,7 +764,13 @@ impl DirigentApp {
                 }
 
                 // Show transient status message (auto-dismiss after 6s, fade during last 2s)
-                let expired = matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 6);
+                // Don't auto-dismiss while async operations are still in progress
+                let busy = self.git.importing_pr
+                    || self.git.pushing
+                    || self.git.pulling
+                    || self.git.creating_pr
+                    || self.git.notifying_pr;
+                let expired = !busy && matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 6);
                 if expired {
                     self.status_message = None;
                 }

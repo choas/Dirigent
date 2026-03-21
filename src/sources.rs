@@ -216,6 +216,42 @@ fn output_with_timeout(
     }
 }
 
+/// Parse JSON output from `gh api --paginate`.
+/// When paginating, `gh` may concatenate multiple JSON arrays: `[...][...]`.
+/// This function handles both a single valid array and concatenated arrays.
+fn parse_paginated_json(raw: &str) -> Vec<serde_json::Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    // Fast path: valid single JSON array
+    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+        return arr;
+    }
+    // Slow path: concatenated arrays — split on `][` and parse each chunk
+    let mut items = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, ch) in trimmed.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Ok(arr) =
+                        serde_json::from_str::<Vec<serde_json::Value>>(&trimmed[start..=i])
+                    {
+                        items.extend(arr);
+                    }
+                    start = i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    items
+}
+
 /// Fetch items from a custom command source.
 /// The command should output JSON: either an array of objects or one object per line.
 /// Each object should have "id" and "text" fields.
@@ -333,7 +369,7 @@ pub(crate) fn fetch_pr_findings(
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let comments: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
+    let comments = parse_paginated_json(&json_str);
 
     for comment in &comments {
         let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
@@ -396,8 +432,7 @@ pub(crate) fn fetch_pr_findings(
 
     if output2.status.success() {
         let json_str2 = String::from_utf8_lossy(&output2.stdout);
-        let issue_comments: Vec<serde_json::Value> =
-            serde_json::from_str(&json_str2).unwrap_or_default();
+        let issue_comments = parse_paginated_json(&json_str2);
 
         for comment in &issue_comments {
             let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
@@ -443,7 +478,7 @@ pub(crate) fn fetch_pr_findings(
 
     if output3.status.success() {
         let json_str3 = String::from_utf8_lossy(&output3.stdout);
-        let reviews: Vec<serde_json::Value> = serde_json::from_str(&json_str3).unwrap_or_default();
+        let reviews = parse_paginated_json(&json_str3);
 
         for review in &reviews {
             let body = review.get("body").and_then(|b| b.as_str()).unwrap_or("");
