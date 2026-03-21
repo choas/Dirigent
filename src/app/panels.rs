@@ -341,12 +341,7 @@ impl DirigentApp {
                 ui.separator();
 
                 // Symbol Outline (collapsible, below file tree, above git log)
-                if self.viewer.active().is_some() {
-                    let symbols: Vec<_> = self
-                        .viewer
-                        .active()
-                        .map(|t| t.symbols.clone())
-                        .unwrap_or_default();
+                if let Some(symbols) = self.viewer.active().map(|t| &t.symbols) {
                     if !symbols.is_empty() {
                         let outline_header = egui::CollapsingHeader::new(
                             egui::RichText::new(format!("Outline ({})", symbols.len()))
@@ -360,7 +355,7 @@ impl DirigentApp {
                                 .id_salt("outline_scroll")
                                 .max_height(200.0)
                                 .show(ui, |ui| {
-                                    for sym in &symbols {
+                                    for sym in symbols {
                                         let indent = sym.depth as f32 * 12.0;
                                         ui.horizontal(|ui| {
                                             ui.add_space(indent);
