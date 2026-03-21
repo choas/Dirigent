@@ -946,49 +946,63 @@ impl DirigentApp {
             }
         }
 
-        // Search in all project files
+        // Search in all project files (background thread)
         let mut all_files = Vec::new();
         if let Some(ref tree) = self.file_tree {
             crate::app::search::collect_files(&tree.entries, &mut all_files);
         }
 
-        // Search for definition in project files
-        for file_path in &all_files {
-            if crate::app::search::is_binary_ext(file_path) {
-                continue;
-            }
-            // Skip current file (already searched)
-            if self.viewer.current_file() == Some(file_path) {
-                continue;
-            }
-            if let Ok(content) = std::fs::read_to_string(file_path) {
-                for (idx, line) in content.lines().enumerate() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("//") || trimmed.starts_with('#') {
-                        continue;
-                    }
-                    for re in &patterns {
-                        if re.is_match(line) {
-                            let target_line = idx + 1;
-                            self.load_file(file_path.clone());
-                            self.viewer.scroll_to_line = Some(target_line);
-                            self.set_status_message(format!(
-                                "Definition: `{}` at {}:{}",
-                                word,
-                                file_path
-                                    .strip_prefix(&self.project_root)
-                                    .unwrap_or(file_path)
-                                    .display(),
-                                target_line
-                            ));
-                            return;
+        // Bump generation to invalidate any previous in-flight search
+        self.goto_def_gen = self.goto_def_gen.wrapping_add(1);
+        let gen = self.goto_def_gen;
+
+        let current_file = self.viewer.current_file().cloned();
+        let project_root = self.project_root.clone();
+        let word_owned = word.to_string();
+        let tx = self.goto_def_tx.clone();
+
+        self.set_status_message(format!("Searching for `{}`...", word));
+
+        std::thread::spawn(move || {
+            for file_path in &all_files {
+                if crate::app::search::is_binary_ext(file_path) {
+                    continue;
+                }
+                if current_file.as_ref() == Some(file_path) {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(file_path) {
+                    for (idx, line) in content.lines().enumerate() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                            continue;
+                        }
+                        for re in &patterns {
+                            if re.is_match(line) {
+                                let target_line = idx + 1;
+                                let msg = format!(
+                                    "Definition: `{}` at {}:{}",
+                                    word_owned,
+                                    file_path
+                                        .strip_prefix(&project_root)
+                                        .unwrap_or(file_path)
+                                        .display(),
+                                    target_line
+                                );
+                                let _ = tx.send((gen, file_path.clone(), target_line, msg));
+                                return;
+                            }
                         }
                     }
                 }
             }
-        }
-
-        self.set_status_message(format!("No definition found for `{}`", word));
+            let _ = tx.send((
+                gen,
+                PathBuf::new(),
+                0,
+                format!("No definition found for `{}`", word_owned),
+            ));
+        });
     }
 }
 
