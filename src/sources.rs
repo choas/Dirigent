@@ -153,7 +153,7 @@ pub(crate) fn fetch_slack_messages(
 const MAX_COMMAND_LENGTH: usize = 4096;
 
 /// Timeout for subprocess execution (seconds).
-const SUBPROCESS_TIMEOUT_SECS: u64 = 60;
+const SUBPROCESS_TIMEOUT_SECS: u64 = 120;
 
 /// Shell metacharacters that could be used for injection.
 const SHELL_METACHARACTERS: &[char] = &['`', '$', '!', ';', '&', '|', '<', '>', '(', ')'];
