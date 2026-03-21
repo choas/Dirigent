@@ -926,9 +926,10 @@ impl DirigentApp {
 
         // First, search in the current file
         if let Some(tab) = self.viewer.active() {
+            let mut in_block_comment = false;
             for (idx, line) in tab.content.iter().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                if is_comment_line(trimmed, &mut in_block_comment) {
                     continue;
                 }
                 for re in &patterns {
@@ -972,9 +973,10 @@ impl DirigentApp {
                     continue;
                 }
                 if let Ok(content) = std::fs::read_to_string(file_path) {
+                    let mut in_block_comment = false;
                     for (idx, line) in content.lines().enumerate() {
                         let trimmed = line.trim();
-                        if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                        if is_comment_line(trimmed, &mut in_block_comment) {
                             continue;
                         }
                         for re in &patterns {
@@ -1004,6 +1006,39 @@ impl DirigentApp {
             ));
         });
     }
+}
+
+/// Returns true if the trimmed line is inside or is a comment, updating
+/// `in_block_comment` state for `/* ... */` block comments across lines.
+fn is_comment_line(trimmed: &str, in_block_comment: &mut bool) -> bool {
+    // Handle block comment state
+    if *in_block_comment {
+        if let Some(pos) = trimmed.find("*/") {
+            // Block comment ends on this line; still treat this line as comment
+            let rest = trimmed[pos + 2..].trim();
+            *in_block_comment = false;
+            // If there's meaningful code after the closing */, don't skip
+            return rest.is_empty();
+        }
+        return true;
+    }
+
+    // Check for block comment start
+    if trimmed.starts_with("/*") {
+        if trimmed.contains("*/") {
+            // Single-line block comment like /* foo */
+            return true;
+        }
+        *in_block_comment = true;
+        return true;
+    }
+
+    // Single-line comment styles
+    trimmed.starts_with("//")       // C, C++, Rust, Java, JS, Go, Swift, …
+        || trimmed.starts_with('#') // Python, Ruby, Shell, YAML, …
+        || trimmed.starts_with("--") // SQL, Haskell, Lua, …
+        || trimmed.starts_with("\"\"\"") // Python docstrings
+        || trimmed.starts_with("'''") // Python docstrings
 }
 
 /// Recursively collect all file paths with their relative paths.
