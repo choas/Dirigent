@@ -223,13 +223,14 @@ fn parse_java_kotlin_symbols(content: &[String]) -> Vec<FileSymbol> {
         vec![
             // Heuristic: not a full AST parse. Three branches to require meaningful
             // context before the captured name and avoid matching control keywords
-            // (if, for, while, switch, when, catch) which would be spurious symbols:
+            // (if, for, while, switch, when, catch) or class/interface/enum declarations:
             //   1) Kotlin `fun` (with optional modifiers)
-            //   2) Java-style with at least one modifier keyword, optional return type
+            //   2) Java-style with at least one modifier keyword and explicit return type
+            //      (primitive or uppercase name — excludes class/interface/enum/object)
             //   3) Package-private Java: recognized return type (primitive or uppercase) before name
             (
                 Regex::new(
-                    r"^\s*(?:(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)*fun\s+|(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)+(?:[\w<>\[\],]+\s+)*|(?:void|int|long|float|double|boolean|char|byte|short|[A-Z][\w<>\[\],]*)\s+)(\w+)\s*\(",
+                    r"^\s*(?:(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)*fun\s+|(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)+(?:(?:void|int|long|float|double|boolean|char|byte|short|[A-Z][\w<>\[\],]*)\s+)+|(?:void|int|long|float|double|boolean|char|byte|short|[A-Z][\w<>\[\],]*)\s+)(\w+)\s*\(",
                 )
                 .unwrap(),
                 SymbolKind::Function,
