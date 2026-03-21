@@ -352,6 +352,12 @@ impl DirigentApp {
             for tab in &mut self.viewer.tabs {
                 if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
                     tab.content = content.lines().map(String::from).collect();
+                    let ext = tab
+                        .file_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
                 }
             }
             self.reload_cues();
