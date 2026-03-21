@@ -590,12 +590,24 @@ impl DirigentApp {
 
                             if cmd && !shift_held {
                                 // Cmd+click: Go to definition
-                                // Estimate the word under the pointer
+                                // Walk characters to find the byte offset under the pointer
                                 if let Some(pos) = $ui.ctx().pointer_latest_pos() {
-                                    let char_width =
-                                        self.settings.font_size * 0.6; // approximate monospace
-                                    let x_offset = pos.x - code_resp.rect.left();
-                                    let byte_offset = (x_offset / char_width).max(0.0) as usize;
+                                    let x_offset = (pos.x - code_resp.rect.left()).max(0.0);
+                                    let approx_char_width = self.settings.font_size * 0.6;
+                                    let mut accumulated = 0.0_f32;
+                                    let mut byte_offset = line_text.len(); // fallback: past end
+                                    for (idx, ch) in line_text.char_indices() {
+                                        let ch_width = if ch == '\t' {
+                                            approx_char_width * 4.0
+                                        } else {
+                                            approx_char_width * (ch.len_utf8().max(1) as f32 / 1.0_f32).min(2.0)
+                                        };
+                                        if accumulated + ch_width * 0.5 > x_offset {
+                                            byte_offset = idx;
+                                            break;
+                                        }
+                                        accumulated += ch_width;
+                                    }
                                     if let Some(word) =
                                         symbols::word_at_offset(line_text, byte_offset)
                                     {
