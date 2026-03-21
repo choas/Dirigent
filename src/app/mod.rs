@@ -237,6 +237,48 @@ impl CodeViewerState {
         self.tabs.iter().position(|t| &t.file_path == path)
     }
 
+    /// Find an existing tab or load the file into a new tab (without touching nav history).
+    /// Returns the tab index on success.
+    pub(super) fn open_file_without_history(&mut self, path: PathBuf) -> Option<usize> {
+        if let Some(idx) = self.find_tab(&path) {
+            self.active_tab = Some(idx);
+            return Some(idx);
+        }
+        let content = std::fs::read_to_string(&path).ok()?;
+        let is_md = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
+            .unwrap_or(false);
+        let md_blocks = if is_md {
+            Some(markdown_parser::parse_markdown(&content))
+        } else {
+            None
+        };
+        let lines: Vec<String> = content.lines().map(String::from).collect();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let syms = symbols::parse_symbols(&lines, &ext);
+        self.tabs.push(TabState {
+            file_path: path,
+            content: lines,
+            selection_start: None,
+            selection_end: None,
+            cue_input: String::new(),
+            cue_images: Vec::new(),
+            markdown_blocks: md_blocks,
+            markdown_rendered: true,
+            _scroll_offset: 0.0,
+            symbols: syms,
+        });
+        let idx = self.tabs.len() - 1;
+        self.active_tab = Some(idx);
+        Some(idx)
+    }
+
     /// Close the active tab and switch to the nearest remaining tab.
     pub(super) fn close_active_tab(&mut self) {
         if let Some(idx) = self.active_tab {
@@ -450,6 +492,11 @@ pub struct DirigentApp {
 
     // "git init" confirmation: path that is a directory but not a git repo
     git_init_confirm: Option<PathBuf>,
+
+    // Go-to-definition background search
+    goto_def_tx: mpsc::Sender<(u64, PathBuf, usize, String)>,
+    goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
+    goto_def_gen: u64,
 }
 
 fn start_fs_watcher(
@@ -558,6 +605,7 @@ impl DirigentApp {
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
+        let (goto_def_tx, goto_def_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -660,6 +708,9 @@ impl DirigentApp {
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
+            goto_def_tx,
+            goto_def_rx,
+            goto_def_gen: 0,
         }
     }
 
@@ -957,44 +1008,7 @@ impl DirigentApp {
     /// Navigate back in history.
     fn nav_back(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_back() {
-            // Find or open the file without pushing to history
-            if let Some(idx) = self.viewer.find_tab(&path) {
-                self.viewer.active_tab = Some(idx);
-            } else {
-                // Need to load the file
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let is_md = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
-                        .unwrap_or(false);
-                    let md_blocks = if is_md {
-                        Some(markdown_parser::parse_markdown(&content))
-                    } else {
-                        None
-                    };
-                    let lines: Vec<String> = content.lines().map(String::from).collect();
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let syms = symbols::parse_symbols(&lines, &ext);
-                    self.viewer.tabs.push(TabState {
-                        file_path: path,
-                        content: lines,
-                        selection_start: None,
-                        selection_end: None,
-                        cue_input: String::new(),
-                        cue_images: Vec::new(),
-                        markdown_blocks: md_blocks,
-                        markdown_rendered: true,
-                        _scroll_offset: 0.0,
-                        symbols: syms,
-                    });
-                    self.viewer.active_tab = Some(self.viewer.tabs.len() - 1);
-                }
-            }
+            self.viewer.open_file_without_history(path);
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
         }
@@ -1003,42 +1017,7 @@ impl DirigentApp {
     /// Navigate forward in history.
     fn nav_forward(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_forward() {
-            if let Some(idx) = self.viewer.find_tab(&path) {
-                self.viewer.active_tab = Some(idx);
-            } else {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let is_md = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
-                        .unwrap_or(false);
-                    let md_blocks = if is_md {
-                        Some(markdown_parser::parse_markdown(&content))
-                    } else {
-                        None
-                    };
-                    let lines: Vec<String> = content.lines().map(String::from).collect();
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let syms = symbols::parse_symbols(&lines, &ext);
-                    self.viewer.tabs.push(TabState {
-                        file_path: path,
-                        content: lines,
-                        selection_start: None,
-                        selection_end: None,
-                        cue_input: String::new(),
-                        cue_images: Vec::new(),
-                        markdown_blocks: md_blocks,
-                        markdown_rendered: true,
-                        _scroll_offset: 0.0,
-                        symbols: syms,
-                    });
-                    self.viewer.active_tab = Some(self.viewer.tabs.len() - 1);
-                }
-            }
+            self.viewer.open_file_without_history(path);
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
         }
@@ -1232,6 +1211,17 @@ impl eframe::App for DirigentApp {
         if let Ok(results) = self.search.search_result_rx.try_recv() {
             self.search.in_files_results = results;
             self.search.in_files_searching = false;
+        }
+
+        // Check for completed background go-to-definition
+        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
+            if gen == self.goto_def_gen {
+                if target_line > 0 {
+                    self.load_file(file_path);
+                    self.viewer.scroll_to_line = Some(target_line);
+                }
+                self.set_status_message(msg);
+            }
         }
 
         // Poll for Claude results
