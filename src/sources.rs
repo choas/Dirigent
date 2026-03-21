@@ -345,8 +345,15 @@ pub(crate) fn fetch_pr_findings(
             .unwrap_or(0) as usize;
         let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
 
-        // Skip empty comments
-        if body.trim().is_empty() {
+        // Skip reply comments (thread replies are not new findings).
+        // Note: GitHub API always includes `in_reply_to_id` — it's `null` for
+        // top-level comments, so we must check that the value is non-null.
+        if comment.get("in_reply_to_id").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
+
+        // Skip empty or non-actionable comments
+        if body.trim().is_empty() || is_confirmation_comment(body) {
             continue;
         }
 
@@ -395,22 +402,46 @@ pub(crate) fn fetch_pr_findings(
             let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
             let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
 
-            // Only import comments that contain actionable findings
-            // (e.g. pre-merge check failures)
-            if let Some(prompt) = extract_agent_prompt(body) {
-                if !prompt.is_empty() {
-                    findings.push(PrFinding {
-                        file_path: String::new(),
-                        line_number: 0,
-                        text: prompt,
-                        external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
-                    });
-                }
+            if body.trim().is_empty() || is_confirmation_comment(body) {
+                continue;
+            }
+
+            // Try agent prompt first, then fall back to extracting findings
+            let finding_text =
+                extract_agent_prompt(body).unwrap_or_else(|| extract_finding_text(body));
+
+            if !finding_text.is_empty() {
+                findings.push(PrFinding {
+                    file_path: String::new(),
+                    line_number: 0,
+                    text: finding_text,
+                    external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
+                });
             }
         }
     }
 
     Ok(findings)
+}
+
+/// Check if a comment is a confirmation/addressed reply rather than a new finding.
+fn is_confirmation_comment(body: &str) -> bool {
+    let trimmed = body.trim();
+    // Skip HTML-only comments (e.g. CodeRabbit confirmation markers)
+    let without_html = trimmed
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with("<!--") && !t.ends_with("-->") && !t.is_empty()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let check = without_html.trim();
+    check.starts_with("✅")
+        || check.starts_with("Confirmed as addressed")
+        || check.starts_with("Fixed in commit")
+        || check.contains("Automated reply from [Dirigent]")
+        || check.contains("<review_comment_addressed>")
 }
 
 /// Extract the "Prompt for AI Agents" block from a CodeRabbit comment.
