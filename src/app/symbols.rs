@@ -91,7 +91,7 @@ pub(super) fn definition_patterns(name: &str) -> Vec<Regex> {
         format!(r"\bdef\s+{}\b", escaped),
         format!(r"\bfunction\s+{}\b", escaped),
         format!(r"\bfunc\s+{}\b", escaped),
-        format!(r"\btype\s+{}\s", escaped),
+        format!(r"\btype\s+{}[\s<]", escaped),
         format!(r"\bconst\s+{}\b", escaped),
         format!(r"\bmod\s+{}\b", escaped),
         format!(r"\bmodule\s+{}\b", escaped),
