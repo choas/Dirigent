@@ -481,6 +481,11 @@ impl DirigentApp {
                                     {
                                         tab.content =
                                             content.lines().map(String::from).collect();
+                                        let ext = std::path::Path::new(&tab.file_path)
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .unwrap_or("");
+                                        tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
                                     }
                                 }
                                 self.reload_git_info();
