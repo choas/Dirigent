@@ -285,6 +285,224 @@ fn parse_source_object(obj: &serde_json::Value, source_label: &str) -> Option<So
     })
 }
 
+/// A finding extracted from a PR review comment.
+#[derive(Debug, Clone)]
+pub(crate) struct PrFinding {
+    /// The file path the comment refers to (empty for general comments).
+    pub file_path: String,
+    /// The line number referenced (0 if not file-specific).
+    #[allow(dead_code)]
+    pub line_number: usize,
+    /// The finding text (reviewer comment body).
+    pub text: String,
+    /// A unique reference for deduplication (e.g. comment ID).
+    pub external_id: String,
+}
+
+/// Fetch PR review comments using `gh` CLI and parse actionable findings.
+/// Returns findings from inline review comments (e.g. CodeRabbit).
+pub(crate) fn fetch_pr_findings(
+    project_root: &Path,
+    pr_number: u32,
+) -> crate::error::Result<Vec<PrFinding>> {
+    let mut findings = Vec::new();
+
+    // Fetch inline review comments (code-level comments, e.g. from CodeRabbit)
+    let mut cmd = Command::new("gh");
+    cmd.arg("api")
+        .arg(format!(
+            "repos/{{owner}}/{{repo}}/pulls/{}/comments",
+            pr_number
+        ))
+        .arg("--paginate")
+        .current_dir(project_root);
+
+    let child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+    let output = output_with_timeout(child, timeout)?;
+
+    if !output.status.success() {
+        return Err(DirigentError::Source(format!(
+            "gh api pulls/{}/comments failed: {}",
+            pr_number,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let comments: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
+
+    for comment in &comments {
+        let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
+        let path = comment.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let line = comment
+            .get("line")
+            .or_else(|| comment.get("original_line"))
+            .and_then(|l| l.as_u64())
+            .unwrap_or(0) as usize;
+        let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+
+        // Skip empty comments
+        if body.trim().is_empty() {
+            continue;
+        }
+
+        // Extract the agent prompt from the comment if present
+        let finding_text = extract_agent_prompt(body).unwrap_or_else(|| {
+            // Fall back to extracting the core finding (skip HTML/diff blocks)
+            extract_finding_text(body)
+        });
+
+        if !finding_text.is_empty() {
+            findings.push(PrFinding {
+                file_path: path.to_string(),
+                line_number: line,
+                text: if path.is_empty() {
+                    finding_text
+                } else {
+                    format!("In `{}` (line {}): {}", path, line, finding_text)
+                },
+                external_id: format!("pr{}:comment:{}", pr_number, comment_id),
+            });
+        }
+    }
+
+    // Also fetch issue-level comments (general PR comments, e.g. CodeRabbit summary)
+    let mut cmd2 = Command::new("gh");
+    cmd2.arg("api")
+        .arg(format!(
+            "repos/{{owner}}/{{repo}}/issues/{}/comments",
+            pr_number
+        ))
+        .arg("--paginate")
+        .current_dir(project_root);
+
+    let child2 = cmd2
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let output2 = output_with_timeout(child2, timeout)?;
+
+    if output2.status.success() {
+        let json_str2 = String::from_utf8_lossy(&output2.stdout);
+        let issue_comments: Vec<serde_json::Value> =
+            serde_json::from_str(&json_str2).unwrap_or_default();
+
+        for comment in &issue_comments {
+            let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
+            let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+
+            // Only import comments that contain actionable findings
+            // (e.g. pre-merge check failures)
+            if let Some(prompt) = extract_agent_prompt(body) {
+                if !prompt.is_empty() {
+                    findings.push(PrFinding {
+                        file_path: String::new(),
+                        line_number: 0,
+                        text: prompt,
+                        external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(findings)
+}
+
+/// Extract the "Prompt for AI Agents" block from a CodeRabbit comment.
+fn extract_agent_prompt(body: &str) -> Option<String> {
+    // Look for the agent prompt block that CodeRabbit includes
+    let marker = "Prompt for AI Agents";
+    let marker_pos = body.find(marker)?;
+    let after_marker = &body[marker_pos + marker.len()..];
+
+    // Find the code block content after the marker
+    let code_start = after_marker.find("```")?;
+    let code_content = &after_marker[code_start + 3..];
+    // Skip the language identifier line if present
+    let code_content = if let Some(nl) = code_content.find('\n') {
+        &code_content[nl + 1..]
+    } else {
+        code_content
+    };
+    let code_end = code_content.find("```")?;
+    let prompt = code_content[..code_end].trim().to_string();
+
+    if prompt.is_empty() {
+        None
+    } else {
+        Some(prompt)
+    }
+}
+
+/// Extract a clean finding text from a review comment body.
+/// Strips HTML tags, diff blocks, and suggestion blocks to get the core message.
+fn extract_finding_text(body: &str) -> String {
+    let mut result = String::new();
+    let mut in_details = false;
+    let mut in_code_block = false;
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+
+        // Track code blocks
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+
+        // Skip HTML blocks
+        if trimmed.starts_with("<details") || trimmed.starts_with("<summary") {
+            in_details = true;
+            continue;
+        }
+        if trimmed == "</details>" {
+            in_details = false;
+            continue;
+        }
+        if in_details {
+            continue;
+        }
+
+        // Skip HTML comments, image tags, and other markup
+        if trimmed.starts_with("<!--")
+            || trimmed.starts_with("<sub")
+            || trimmed.starts_with("</sub")
+            || trimmed.starts_with("<blockquote")
+            || trimmed.starts_with("</blockquote")
+            || trimmed.starts_with("![")
+        {
+            continue;
+        }
+
+        // Skip severity/category labels
+        if trimmed.starts_with("_\u{26a0}") || trimmed.starts_with("_\u{1f41b}") {
+            continue;
+        }
+
+        if !trimmed.is_empty() {
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(trimmed);
+        }
+    }
+
+    // Limit the length to avoid overly large cue texts
+    if result.len() > 2000 {
+        result.truncate(2000);
+        result.push_str("...");
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

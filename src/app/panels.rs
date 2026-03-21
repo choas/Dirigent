@@ -17,6 +17,8 @@ impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
         let mut push_clicked = false;
         let mut pull_clicked = false;
+        let mut create_pr_clicked = false;
+        let mut import_pr_clicked = false;
         let mut run_all_agents = false;
         let mut agent_to_trigger: Option<AgentKind> = None;
         let mut agent_to_cancel: Option<AgentKind> = None;
@@ -90,6 +92,36 @@ impl DirigentApp {
                             push_clicked = true;
                             ui.close();
                         }
+                    }
+
+                    ui.separator();
+
+                    // Create PR
+                    let pr_label = if self.git.creating_pr {
+                        "Creating PR..."
+                    } else {
+                        "Create Pull Request"
+                    };
+                    if ui
+                        .add_enabled(!self.git.creating_pr, egui::Button::new(pr_label))
+                        .clicked()
+                    {
+                        create_pr_clicked = true;
+                        ui.close();
+                    }
+
+                    // Import PR Findings
+                    let import_label = if self.git.importing_pr {
+                        "Importing PR..."
+                    } else {
+                        "Import PR Findings"
+                    };
+                    if ui
+                        .add_enabled(!self.git.importing_pr, egui::Button::new(import_label))
+                        .clicked()
+                    {
+                        import_pr_clicked = true;
+                        ui.close();
                     }
                 });
 
@@ -193,6 +225,12 @@ impl DirigentApp {
         }
         if push_clicked {
             self.start_git_push();
+        }
+        if create_pr_clicked {
+            self.open_create_pr_dialog();
+        }
+        if import_pr_clicked {
+            self.open_import_pr_dialog();
         }
         if let Some(kind) = agent_to_cancel {
             self.cancel_agent(kind);

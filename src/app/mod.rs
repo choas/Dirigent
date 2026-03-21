@@ -210,6 +210,13 @@ pub(super) struct GitState {
     /// Whether a PR creation is in progress.
     pub(super) creating_pr: bool,
     pub(super) pr_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Import PR Findings dialog is open.
+    pub(super) show_import_pr: bool,
+    /// PR number input for importing findings.
+    pub(super) import_pr_number: String,
+    /// Whether a PR findings import is in progress.
+    pub(super) importing_pr: bool,
+    pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
 }
 
 pub struct DirigentApp {
@@ -337,6 +344,21 @@ pub struct DirigentApp {
 
     // "git init" confirmation: path that is a directory but not a git repo
     git_init_confirm: Option<PathBuf>,
+}
+
+/// Try to detect a PR number for the current branch using `gh pr view`.
+fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -> Option<u32> {
+    let output = std::process::Command::new("gh")
+        .args(["pr", "view", "--json", "number", "-q", ".number"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        s.trim().parse().ok()
+    } else {
+        None
+    }
 }
 
 fn start_fs_watcher(
@@ -501,6 +523,10 @@ impl DirigentApp {
                 pr_draft: false,
                 creating_pr: false,
                 pr_rx: None,
+                show_import_pr: false,
+                import_pr_number: String::new(),
+                importing_pr: false,
+                import_pr_rx: None,
             },
             settings,
             semantic,
@@ -741,6 +767,105 @@ impl DirigentApp {
                     }
                     Err(e) => {
                         self.set_status_message(format!("PR failed: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    fn open_import_pr_dialog(&mut self) {
+        self.git.show_import_pr = true;
+        // Pre-fill with current branch PR number if available
+        if self.git.import_pr_number.is_empty() {
+            // Try to detect PR number from current branch
+            if let Some(ref info) = self.git.info {
+                if let Some(num) = detect_pr_number_from_branch(&self.project_root, &info.branch) {
+                    self.git.import_pr_number = num.to_string();
+                }
+            }
+        }
+    }
+
+    fn start_import_pr_findings(&mut self) {
+        let pr_number: u32 = match self.git.import_pr_number.trim().parse() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                self.set_status_message("Invalid PR number".to_string());
+                return;
+            }
+        };
+
+        self.git.importing_pr = true;
+        self.git.show_import_pr = false;
+        let project_root = self.project_root.clone();
+        let (tx, rx) = mpsc::channel();
+        self.git.import_pr_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = crate::sources::fetch_pr_findings(&project_root, pr_number)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    fn process_import_pr_result(&mut self) {
+        if let Some(ref rx) = self.git.import_pr_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.git.importing_pr = false;
+                self.git.import_pr_rx = None;
+                match result {
+                    Ok(findings) => {
+                        if findings.is_empty() {
+                            self.set_status_message(
+                                "No actionable findings found in PR".to_string(),
+                            );
+                            return;
+                        }
+                        let pr_number = self.git.import_pr_number.trim().to_string();
+                        let tag = format!("PR{}", pr_number);
+                        let mut new_count = 0;
+                        for finding in &findings {
+                            // Deduplicate by external_id
+                            match self.db.cue_exists_by_source_ref(&finding.external_id) {
+                                Ok(true) => continue,
+                                Ok(false) => {}
+                                Err(_) => continue,
+                            }
+                            let cue_id = if finding.file_path.is_empty() {
+                                // Global finding
+                                self.db.insert_cue_from_source(
+                                    &finding.text,
+                                    "PR Review",
+                                    &finding.external_id,
+                                )
+                            } else {
+                                // File-specific finding: create as file cue
+                                self.db.insert_cue_from_source(
+                                    &finding.text,
+                                    "PR Review",
+                                    &finding.external_id,
+                                )
+                            };
+                            if let Ok(id) = cue_id {
+                                let _ = self.db.update_cue_tag(id, Some(&tag));
+                                new_count += 1;
+                            }
+                        }
+                        if new_count > 0 {
+                            self.reload_cues();
+                            self.set_status_message(format!(
+                                "Imported {} finding(s) from PR #{} (tag: {})",
+                                new_count, pr_number, tag
+                            ));
+                        } else {
+                            self.set_status_message(format!(
+                                "All findings from PR #{} already imported",
+                                pr_number
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("PR import failed: {}", e));
                     }
                 }
             }
@@ -1071,6 +1196,7 @@ impl eframe::App for DirigentApp {
         self.process_push_result();
         self.process_pull_result();
         self.process_pr_result();
+        self.process_import_pr_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
@@ -1214,6 +1340,7 @@ impl eframe::App for DirigentApp {
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
         self.render_create_pr_dialog(ctx); // floating
+        self.render_import_pr_dialog(ctx); // floating
     }
 }
 
