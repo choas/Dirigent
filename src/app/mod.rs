@@ -211,6 +211,7 @@ pub(super) struct CodeViewerState {
     /// Whether the quick-open overlay (Cmd+P) is active.
     pub(super) quick_open_active: bool,
     pub(super) quick_open_query: String,
+    pub(super) quick_open_selected: usize,
     /// Whether to show the symbol outline in the left panel.
     pub(super) show_outline: bool,
 }
@@ -582,6 +583,7 @@ impl DirigentApp {
                 nav_history: NavigationHistory::new(),
                 quick_open_active: false,
                 quick_open_query: String::new(),
+                quick_open_selected: 0,
                 show_outline: true,
             },
             cues,
@@ -1122,6 +1124,7 @@ impl DirigentApp {
         self.viewer.nav_history = NavigationHistory::new();
         self.viewer.quick_open_active = false;
         self.viewer.quick_open_query.clear();
+        self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
         self.git.commit_history = git::read_commit_history(&self.project_root, 10);
         self.git.commit_history_total = git::count_commits(&self.project_root);
@@ -1344,6 +1347,7 @@ impl eframe::App for DirigentApp {
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
             self.viewer.quick_open_active = !self.viewer.quick_open_active;
             self.viewer.quick_open_query.clear();
+            self.viewer.quick_open_selected = 0;
         }
 
         // Cmd+[ = navigate back

@@ -805,6 +805,9 @@ impl DirigentApp {
                         .font(egui::TextStyle::Monospace),
                 );
                 resp.request_focus();
+                if resp.changed() {
+                    self.viewer.quick_open_selected = 0;
+                }
             });
             ui.separator();
 
@@ -827,19 +830,53 @@ impl DirigentApp {
                 }
             }
 
+            // Clamp selection index to the current match list
+            if !matches.is_empty() {
+                self.viewer.quick_open_selected =
+                    self.viewer.quick_open_selected.min(matches.len() - 1);
+            } else {
+                self.viewer.quick_open_selected = 0;
+            }
+
+            // Handle arrow key navigation
+            let (arrow_up, arrow_down, enter_pressed) = ui.input(|i| {
+                (
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::Enter),
+                )
+            });
+            if arrow_up && !matches.is_empty() {
+                if self.viewer.quick_open_selected > 0 {
+                    self.viewer.quick_open_selected -= 1;
+                } else {
+                    self.viewer.quick_open_selected = matches.len() - 1;
+                }
+            }
+            if arrow_down && !matches.is_empty() {
+                if self.viewer.quick_open_selected + 1 < matches.len() {
+                    self.viewer.quick_open_selected += 1;
+                } else {
+                    self.viewer.quick_open_selected = 0;
+                }
+            }
+
             let mut navigate_to: Option<PathBuf> = None;
-            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let sel = self.viewer.quick_open_selected;
 
             egui::ScrollArea::vertical()
                 .id_salt("quick_open_scroll")
                 .max_height(ui.available_height() - SPACE_MD)
                 .show(ui, |ui| {
                     for (i, (rel, abs)) in matches.iter().enumerate() {
-                        let selected = i == 0 && enter_pressed;
+                        let is_selected = i == sel;
                         if ui
-                            .selectable_label(false, egui::RichText::new(rel).monospace().small())
+                            .selectable_label(
+                                is_selected,
+                                egui::RichText::new(rel).monospace().small(),
+                            )
                             .clicked()
-                            || selected
+                            || (is_selected && enter_pressed)
                         {
                             navigate_to = Some(abs.clone());
                         }
