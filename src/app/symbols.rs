@@ -221,9 +221,15 @@ fn parse_go_symbols(content: &[String]) -> Vec<FileSymbol> {
 fn parse_java_kotlin_symbols(content: &[String]) -> Vec<FileSymbol> {
     static RE: LazyLock<Vec<(Regex, SymbolKind)>> = LazyLock::new(|| {
         vec![
+            // Heuristic: not a full AST parse. Three branches to require meaningful
+            // context before the captured name and avoid matching control keywords
+            // (if, for, while, switch, when, catch) which would be spurious symbols:
+            //   1) Kotlin `fun` (with optional modifiers)
+            //   2) Java-style with at least one modifier keyword, optional return type
+            //   3) Package-private Java: recognized return type (primitive or uppercase) before name
             (
                 Regex::new(
-                    r"^\s*(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)*(?:fun\s+)?(?:[\w<>\[\],\s]+\s+)?(\w+)\s*\(",
+                    r"^\s*(?:(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)*fun\s+|(?:(?:public|private|protected|static|final|abstract|override|open|suspend)\s+)+(?:[\w<>\[\],]+\s+)*|(?:void|int|long|float|double|boolean|char|byte|short|[A-Z][\w<>\[\],]*)\s+)(\w+)\s*\(",
                 )
                 .unwrap(),
                 SymbolKind::Function,
@@ -535,4 +541,85 @@ pub(super) fn word_at_offset(line: &str, byte_offset: usize) -> Option<&str> {
 
 fn is_word_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- word_at_offset tests --
+
+    #[test]
+    fn word_at_offset_simple_ascii() {
+        let line = "fn hello_world() {";
+        assert_eq!(word_at_offset(line, 0), Some("fn"));
+        assert_eq!(word_at_offset(line, 1), Some("fn"));
+        assert_eq!(word_at_offset(line, 3), Some("hello_world"));
+        assert_eq!(word_at_offset(line, 8), Some("hello_world"));
+        assert_eq!(word_at_offset(line, 13), Some("hello_world"));
+    }
+
+    #[test]
+    fn word_at_offset_on_non_word_char() {
+        let line = "fn foo(bar)";
+        // '(' is not a word char
+        assert_eq!(word_at_offset(line, 6), None);
+        // space
+        assert_eq!(word_at_offset(line, 2), None);
+    }
+
+    #[test]
+    fn word_at_offset_past_end() {
+        let line = "hello";
+        assert_eq!(word_at_offset(line, 5), None);
+        assert_eq!(word_at_offset(line, 100), None);
+    }
+
+    #[test]
+    fn word_at_offset_empty_line() {
+        assert_eq!(word_at_offset("", 0), None);
+    }
+
+    #[test]
+    fn word_at_offset_multibyte_utf8() {
+        // "let über = 1;" — 'ü' is 2 bytes (0xC3 0xBC)
+        let line = "let über = 1;";
+        // byte 4 = start of 'ü' (0xC3) — not ASCII alphanumeric
+        assert_eq!(word_at_offset(line, 4), None);
+        // byte 5 = continuation byte of 'ü', not a char boundary
+        assert_eq!(word_at_offset(line, 5), None);
+        // byte 6 = 'b'
+        assert_eq!(word_at_offset(line, 6), Some("ber"));
+    }
+
+    #[test]
+    fn word_at_offset_cjk_characters() {
+        // CJK chars are 3 bytes each; they are not ASCII word chars
+        let line = "foo 日本語 bar";
+        assert_eq!(word_at_offset(line, 0), Some("foo"));
+        // byte 4 = start of '日' (3-byte char), not a word char
+        assert_eq!(word_at_offset(line, 4), None);
+        // byte 5 = continuation byte, not a char boundary
+        assert_eq!(word_at_offset(line, 5), None);
+        // "bar" starts after "foo " (4) + 3*3 (9) + " " (1) = byte 14
+        let bar_start = line.find("bar").unwrap();
+        assert_eq!(word_at_offset(line, bar_start), Some("bar"));
+    }
+
+    #[test]
+    fn word_at_offset_at_boundaries() {
+        let line = "a";
+        assert_eq!(word_at_offset(line, 0), Some("a"));
+
+        let line = "_";
+        assert_eq!(word_at_offset(line, 0), Some("_"));
+    }
+
+    #[test]
+    fn word_at_offset_underscores() {
+        let line = "__init__";
+        assert_eq!(word_at_offset(line, 0), Some("__init__"));
+        assert_eq!(word_at_offset(line, 4), Some("__init__"));
+        assert_eq!(word_at_offset(line, 7), Some("__init__"));
+    }
 }
