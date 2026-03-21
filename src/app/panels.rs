@@ -96,14 +96,21 @@ impl DirigentApp {
 
                     ui.separator();
 
-                    // Create PR
+                    // Create PR (disabled on default branch)
+                    let is_default_branch = self
+                        .git
+                        .info
+                        .as_ref()
+                        .map(|i| i.branch == "main" || i.branch == "master")
+                        .unwrap_or(true);
                     let pr_label = if self.git.creating_pr {
                         "Creating PR..."
                     } else {
                         "Create Pull Request"
                     };
+                    let pr_enabled = !self.git.creating_pr && !is_default_branch;
                     if ui
-                        .add_enabled(!self.git.creating_pr, egui::Button::new(pr_label))
+                        .add_enabled(pr_enabled, egui::Button::new(pr_label))
                         .clicked()
                     {
                         create_pr_clicked = true;
