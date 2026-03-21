@@ -927,8 +927,8 @@ impl DirigentApp {
                     .viewer
                     .tabs
                     .iter()
-                    .position(|_| true) // first tab
-                    .filter(|&i| Some(i) != self.viewer.active_tab)
+                    .enumerate()
+                    .position(|(i, _)| Some(i) != self.viewer.active_tab)
                     .unwrap_or(0);
                 self.viewer.close_tab(close_idx);
             }
