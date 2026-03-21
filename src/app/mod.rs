@@ -129,6 +129,8 @@ enum CueAction {
     TagAllReview(String),
     /// Push current branch to remote.
     Push,
+    /// Open the Create PR dialog.
+    CreatePR,
 }
 
 /// State for the code viewer panel.
@@ -198,6 +200,16 @@ pub(super) struct GitState {
     /// Whether a git pull is currently in progress.
     pub(super) pulling: bool,
     pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Create PR dialog is open.
+    pub(super) show_create_pr: bool,
+    /// PR dialog fields.
+    pub(super) pr_title: String,
+    pub(super) pr_body: String,
+    pub(super) pr_base: String,
+    pub(super) pr_draft: bool,
+    /// Whether a PR creation is in progress.
+    pub(super) creating_pr: bool,
+    pub(super) pr_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 pub struct DirigentApp {
@@ -480,6 +492,13 @@ impl DirigentApp {
                 push_rx: None,
                 pulling: false,
                 pull_rx: None,
+                show_create_pr: false,
+                pr_title: String::new(),
+                pr_body: String::new(),
+                pr_base: String::new(),
+                pr_draft: false,
+                creating_pr: false,
+                pr_rx: None,
             },
             settings,
             semantic,
@@ -655,6 +674,72 @@ impl DirigentApp {
             let _ = tx.send(result);
         });
         self.set_status_message("Pulling...".to_string());
+    }
+
+    /// Open the Create PR dialog with pre-filled fields.
+    fn open_create_pr_dialog(&mut self) {
+        let branch = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch.clone())
+            .unwrap_or_default();
+        let base = git::get_default_branch(&self.project_root);
+        let body = git::build_pr_body(&self.project_root, &base);
+        // Use branch name as default title (replace hyphens/underscores with spaces)
+        let title = branch.replace('-', " ").replace('_', " ");
+        self.git.pr_title = title;
+        self.git.pr_body = body;
+        self.git.pr_base = base;
+        self.git.pr_draft = false;
+        self.git.show_create_pr = true;
+    }
+
+    /// Start an async PR creation (pushes first, then creates the PR).
+    fn start_create_pr(&mut self) {
+        if self.git.creating_pr {
+            return;
+        }
+        self.git.creating_pr = true;
+        self.git.show_create_pr = false;
+        let (tx, rx) = mpsc::channel();
+        self.git.pr_rx = Some(rx);
+        let root = self.project_root.clone();
+        let title = self.git.pr_title.clone();
+        let body = self.git.pr_body.clone();
+        let base = self.git.pr_base.clone();
+        let draft = self.git.pr_draft;
+        std::thread::spawn(move || {
+            // Push first so the remote branch exists
+            if let Err(e) = git::git_push(&root) {
+                let _ = tx.send(Err(format!("Push failed: {}", e)));
+                return;
+            }
+            let result = git::create_pull_request(&root, &title, &body, &base, draft)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Pushing & creating PR...".to_string());
+    }
+
+    /// Check for completed PR creation.
+    fn process_pr_result(&mut self) {
+        if let Some(ref rx) = self.git.pr_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.git.creating_pr = false;
+                self.git.pr_rx = None;
+                match result {
+                    Ok(url) => {
+                        self.set_status_message(format!("PR created: {}", url));
+                        self.reload_git_info();
+                        self.reload_commit_history();
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("PR failed: {}", e));
+                    }
+                }
+            }
+        }
     }
 
     /// Check for completed git pull.
@@ -973,9 +1058,10 @@ impl eframe::App for DirigentApp {
         // Process run queue (start next queued cue when no cues are running)
         self.process_run_queue();
 
-        // Poll for git push/pull results
+        // Poll for git push/pull/PR results
         self.process_push_result();
         self.process_pull_result();
+        self.process_pr_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
@@ -1086,6 +1172,7 @@ impl eframe::App for DirigentApp {
             || self.git.show_worktree_panel
             || self.show_about
             || self.pending_play.is_some()
+            || self.git.show_create_pr
         {
             let screen = ctx.content_rect();
             egui::Area::new(egui::Id::new("modal_dim"))
@@ -1099,6 +1186,8 @@ impl eframe::App for DirigentApp {
                     if resp.clicked() {
                         if self.pending_play.is_some() {
                             self.pending_play = None;
+                        } else if self.git.show_create_pr {
+                            self.git.show_create_pr = false;
                         } else if self.show_about {
                             self.show_about = false;
                         } else if self.git.show_worktree_panel {
@@ -1115,6 +1204,7 @@ impl eframe::App for DirigentApp {
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
+        self.render_create_pr_dialog(ctx); // floating
     }
 }
 
