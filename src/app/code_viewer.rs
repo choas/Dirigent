@@ -202,7 +202,7 @@ impl DirigentApp {
                         .on_hover_text(if is_last {
                             "Scroll to top".to_string()
                         } else {
-                            format!("Open {}", segments[..=i].join("/"))
+                            format!("Expand directory {}", segments[..=i].join("/"))
                         })
                         .clicked()
                     {
