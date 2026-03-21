@@ -153,7 +153,7 @@ pub(crate) fn fetch_slack_messages(
 const MAX_COMMAND_LENGTH: usize = 4096;
 
 /// Timeout for subprocess execution (seconds).
-const SUBPROCESS_TIMEOUT_SECS: u64 = 120;
+const SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 
 /// Shell metacharacters that could be used for injection.
 const SHELL_METACHARACTERS: &[char] = &['`', '$', '!', ';', '&', '|', '<', '>', '(', ')'];
@@ -195,14 +195,39 @@ fn validate_command(command: &str) -> Result<(), String> {
 }
 
 /// Run a command with a timeout. Returns the output or an IO error on timeout.
+///
+/// Reads stdout and stderr on separate threads to avoid deadlocking when the
+/// child produces more output than the OS pipe buffer can hold (~64 KB on macOS).
 fn output_with_timeout(
     mut child: std::process::Child,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+
+    // Take ownership of the pipe handles so we can read them on background threads.
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    let stdout_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        if let Some(mut out) = stdout_handle {
+            out.read_to_end(&mut buf)?;
+        }
+        Ok(buf)
+    });
+    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        if let Some(mut err) = stderr_handle {
+            err.read_to_end(&mut buf)?;
+        }
+        Ok(buf)
+    });
+
+    // Poll for process exit with a timeout.
     let deadline = std::time::Instant::now() + timeout;
-    loop {
+    let status = loop {
         match child.try_wait()? {
-            Some(_) => return child.wait_with_output(),
+            Some(status) => break status,
             None if std::time::Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -213,7 +238,16 @@ fn output_with_timeout(
             }
             None => std::thread::sleep(std::time::Duration::from_millis(200)),
         }
-    }
+    };
+
+    let stdout = stdout_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
+    let stderr = stderr_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Parse JSON output from `gh api --paginate`.
@@ -325,6 +359,7 @@ fn parse_source_object(obj: &serde_json::Value, source_label: &str) -> Option<So
 #[derive(Debug, Clone)]
 pub(crate) struct PrFinding {
     /// The file path the comment refers to (empty for general comments).
+    #[allow(dead_code)]
     pub file_path: String,
     /// The line number referenced (0 if not file-specific).
     #[allow(dead_code)]

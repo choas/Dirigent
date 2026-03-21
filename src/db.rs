@@ -550,19 +550,6 @@ impl Database {
         Ok(execs)
     }
 
-    /// Get a single cue by ID.
-    pub fn get_cue_by_id(&self, id: i64) -> Result<Option<Cue>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE id = ?1")?;
-        let mut rows = stmt.query(params![id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row_to_cue(row)?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Get the last activity event matching a prefix for a cue.
     pub fn get_last_activity_matching(&self, cue_id: i64, prefix: &str) -> Result<Option<String>> {
         let pattern = format!("{}%", prefix);
