@@ -835,42 +835,59 @@ impl DirigentApp {
                         let pr_number = self.git.import_pr_number.trim().to_string();
                         let tag = format!("PR{}", pr_number);
                         let mut new_count = 0;
+                        let mut updated_count = 0;
                         for finding in &findings {
-                            // Deduplicate by external_id
-                            match self.db.cue_exists_by_source_ref(&finding.external_id) {
-                                Ok(true) => continue,
-                                Ok(false) => {}
+                            // Check if this finding already exists
+                            match self.db.get_cue_by_source_ref(&finding.external_id) {
+                                Ok(Some((existing_id, existing_text))) => {
+                                    // Existing cue: update text and reset to Inbox if content changed
+                                    if existing_text.trim() != finding.text.trim() {
+                                        let _ = self.db.update_cue_text_by_source_ref(
+                                            &finding.external_id,
+                                            &finding.text,
+                                        );
+                                        let _ = self
+                                            .db
+                                            .update_cue_status(existing_id, CueStatus::Inbox);
+                                        let _ = self.db.log_activity(
+                                            existing_id,
+                                            "PR comment updated, reset to Inbox",
+                                        );
+                                        updated_count += 1;
+                                    }
+                                    continue;
+                                }
+                                Ok(None) => {} // New finding
                                 Err(_) => continue,
                             }
-                            let cue_id = if finding.file_path.is_empty() {
-                                // Global finding
-                                self.db.insert_cue_from_source(
-                                    &finding.text,
-                                    "PR Review",
-                                    &finding.external_id,
-                                )
-                            } else {
-                                // File-specific finding: create as file cue
-                                self.db.insert_cue_from_source(
-                                    &finding.text,
-                                    "PR Review",
-                                    &finding.external_id,
-                                )
-                            };
+                            let cue_id = self.db.insert_cue_from_source(
+                                &finding.text,
+                                "PR Review",
+                                &finding.external_id,
+                            );
                             if let Ok(id) = cue_id {
                                 let _ = self.db.update_cue_tag(id, Some(&tag));
                                 new_count += 1;
                             }
                         }
-                        if new_count > 0 {
+                        if new_count > 0 || updated_count > 0 {
                             self.reload_cues();
+                            let mut parts = Vec::new();
+                            if new_count > 0 {
+                                parts.push(format!("{} new", new_count));
+                            }
+                            if updated_count > 0 {
+                                parts.push(format!("{} updated", updated_count));
+                            }
                             self.set_status_message(format!(
-                                "Imported {} finding(s) from PR #{} (tag: {})",
-                                new_count, pr_number, tag
+                                "PR #{}: {} finding(s) (tag: {})",
+                                pr_number,
+                                parts.join(", "),
+                                tag
                             ));
                         } else {
                             self.set_status_message(format!(
-                                "All findings from PR #{} already imported",
+                                "No new or changed findings in PR #{}",
                                 pr_number
                             ));
                         }

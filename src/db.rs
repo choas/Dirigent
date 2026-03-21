@@ -589,6 +589,21 @@ impl Database {
         Ok(count > 0)
     }
 
+    /// Get the cue id and text for a given source_ref (for refresh/update logic).
+    pub fn get_cue_by_source_ref(&self, source_ref: &str) -> Result<Option<(i64, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, text FROM cues WHERE source_ref = ?1 LIMIT 1")?;
+        let result = stmt.query_row(params![source_ref], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        });
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Update the text of an existing cue identified by source_ref.
     pub fn update_cue_text_by_source_ref(&self, source_ref: &str, text: &str) -> Result<()> {
         self.conn.execute(
