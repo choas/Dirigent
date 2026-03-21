@@ -279,6 +279,16 @@ impl CodeViewerState {
             return Some(idx);
         }
         let tab = create_tab_state(&path)?;
+        // Soft cap at 20 tabs — close the oldest (first) non-active tab
+        if self.tabs.len() >= 20 {
+            let close_idx = self
+                .tabs
+                .iter()
+                .enumerate()
+                .position(|(i, _)| Some(i) != self.active_tab)
+                .unwrap_or(0);
+            self.close_tab(close_idx);
+        }
         self.tabs.push(tab);
         let idx = self.tabs.len() - 1;
         self.active_tab = Some(idx);
@@ -935,41 +945,12 @@ impl DirigentApp {
 
     fn load_file(&mut self, path: PathBuf) {
         self.dismiss_central_overlays();
-
-        // If this file is already open in a tab, switch to it
-        if let Some(idx) = self.viewer.find_tab(&path) {
-            self.viewer.active_tab = Some(idx);
-            // Reset in-file search state when switching
-            self.search.in_file_active = false;
-            self.search.in_file_query.clear();
-            self.search.in_file_matches.clear();
-            self.search.in_file_current = None;
-            return;
-        }
-
-        // Read file content and create new tab
-        if let Some(tab) = create_tab_state(&path) {
-            // Soft cap at 20 tabs — close the oldest (first) non-active tab
-            if self.viewer.tabs.len() >= 20 {
-                let close_idx = self
-                    .viewer
-                    .tabs
-                    .iter()
-                    .enumerate()
-                    .position(|(i, _)| Some(i) != self.viewer.active_tab)
-                    .unwrap_or(0);
-                self.viewer.close_tab(close_idx);
-            }
-
-            self.viewer.tabs.push(tab);
-            self.viewer.active_tab = Some(self.viewer.tabs.len() - 1);
-
-            // Reset in-file search state for the new file
-            self.search.in_file_active = false;
-            self.search.in_file_query.clear();
-            self.search.in_file_matches.clear();
-            self.search.in_file_current = None;
-        }
+        self.viewer.open_file_without_history(path);
+        // Reset in-file search state when switching or opening a file
+        self.search.in_file_active = false;
+        self.search.in_file_query.clear();
+        self.search.in_file_matches.clear();
+        self.search.in_file_current = None;
     }
 
     /// Push the current position onto the navigation history.
