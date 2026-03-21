@@ -152,6 +152,40 @@ pub(super) struct TabState {
     pub(super) symbols: Vec<symbols::FileSymbol>,
 }
 
+/// Read a file from disk and build a TabState with markdown parsing and symbol extraction.
+fn create_tab_state(path: &PathBuf) -> Option<TabState> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let is_md = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
+        .unwrap_or(false);
+    let markdown_blocks = if is_md {
+        Some(markdown_parser::parse_markdown(&content))
+    } else {
+        None
+    };
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let file_symbols = symbols::parse_symbols(&lines, &ext);
+    Some(TabState {
+        file_path: path.clone(),
+        content: lines,
+        selection_start: None,
+        selection_end: None,
+        cue_input: String::new(),
+        cue_images: Vec::new(),
+        markdown_blocks,
+        markdown_rendered: true,
+        _scroll_offset: 0.0,
+        symbols: file_symbols,
+    })
+}
+
 /// Navigation history for back/forward.
 pub(super) struct NavigationHistory {
     pub(super) entries: Vec<(PathBuf, usize)>, // (file, line)
@@ -244,36 +278,8 @@ impl CodeViewerState {
             self.active_tab = Some(idx);
             return Some(idx);
         }
-        let content = std::fs::read_to_string(&path).ok()?;
-        let is_md = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
-            .unwrap_or(false);
-        let md_blocks = if is_md {
-            Some(markdown_parser::parse_markdown(&content))
-        } else {
-            None
-        };
-        let lines: Vec<String> = content.lines().map(String::from).collect();
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_string();
-        let syms = symbols::parse_symbols(&lines, &ext);
-        self.tabs.push(TabState {
-            file_path: path,
-            content: lines,
-            selection_start: None,
-            selection_end: None,
-            cue_input: String::new(),
-            cue_images: Vec::new(),
-            markdown_blocks: md_blocks,
-            markdown_rendered: true,
-            _scroll_offset: 0.0,
-            symbols: syms,
-        });
+        let tab = create_tab_state(&path)?;
+        self.tabs.push(tab);
         let idx = self.tabs.len() - 1;
         self.active_tab = Some(idx);
         Some(idx)
@@ -942,38 +948,7 @@ impl DirigentApp {
         }
 
         // Read file content and create new tab
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let is_markdown = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
-                .unwrap_or(false);
-            let markdown_blocks = if is_markdown {
-                Some(markdown_parser::parse_markdown(&content))
-            } else {
-                None
-            };
-            let lines: Vec<String> = content.lines().map(String::from).collect();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_string();
-            let file_symbols = symbols::parse_symbols(&lines, &ext);
-
-            let tab = TabState {
-                file_path: path,
-                content: lines,
-                selection_start: None,
-                selection_end: None,
-                cue_input: String::new(),
-                cue_images: Vec::new(),
-                markdown_blocks,
-                markdown_rendered: true,
-                _scroll_offset: 0.0,
-                symbols: file_symbols,
-            };
-
+        if let Some(tab) = create_tab_state(&path) {
             // Soft cap at 20 tabs — close the oldest (first) non-active tab
             if self.viewer.tabs.len() >= 20 {
                 let close_idx = self
