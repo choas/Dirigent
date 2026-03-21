@@ -836,12 +836,13 @@ impl DirigentApp {
                         let tag = format!("PR{}", pr_number);
                         let mut new_count = 0;
                         let mut updated_count = 0;
+                        let mut refreshed_count = 0;
                         for finding in &findings {
                             // Check if this finding already exists
                             match self.db.get_cue_by_source_ref(&finding.external_id) {
-                                Ok(Some((existing_id, existing_text))) => {
-                                    // Existing cue: update text and reset to Inbox if content changed
+                                Ok(Some((existing_id, existing_text, existing_status))) => {
                                     if existing_text.trim() != finding.text.trim() {
+                                        // Text changed: update and reset to Inbox
                                         let _ = self.db.update_cue_text_by_source_ref(
                                             &finding.external_id,
                                             &finding.text,
@@ -854,7 +855,20 @@ impl DirigentApp {
                                             "PR comment updated, reset to Inbox",
                                         );
                                         updated_count += 1;
+                                    } else if existing_status == "Done"
+                                        || existing_status == "Archived"
+                                    {
+                                        // Same text but Done/Archived: reset to Inbox for re-check
+                                        let _ = self
+                                            .db
+                                            .update_cue_status(existing_id, CueStatus::Inbox);
+                                        let _ = self.db.log_activity(
+                                            existing_id,
+                                            "PR refreshed, reset to Inbox",
+                                        );
+                                        refreshed_count += 1;
                                     }
+                                    // If still in Inbox/Ready/Review, leave as-is
                                     continue;
                                 }
                                 Ok(None) => {} // New finding
@@ -870,7 +884,7 @@ impl DirigentApp {
                                 new_count += 1;
                             }
                         }
-                        if new_count > 0 || updated_count > 0 {
+                        if new_count > 0 || updated_count > 0 || refreshed_count > 0 {
                             self.reload_cues();
                             let mut parts = Vec::new();
                             if new_count > 0 {
@@ -878,6 +892,9 @@ impl DirigentApp {
                             }
                             if updated_count > 0 {
                                 parts.push(format!("{} updated", updated_count));
+                            }
+                            if refreshed_count > 0 {
+                                parts.push(format!("{} reset to Inbox", refreshed_count));
                             }
                             self.set_status_message(format!(
                                 "PR #{}: {} finding(s) (tag: {})",
@@ -887,8 +904,9 @@ impl DirigentApp {
                             ));
                         } else {
                             self.set_status_message(format!(
-                                "No new or changed findings in PR #{}",
-                                pr_number
+                                "PR #{}: all {} findings still in progress",
+                                pr_number,
+                                findings.len()
                             ));
                         }
                     }

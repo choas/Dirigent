@@ -589,13 +589,17 @@ impl Database {
         Ok(count > 0)
     }
 
-    /// Get the cue id and text for a given source_ref (for refresh/update logic).
-    pub fn get_cue_by_source_ref(&self, source_ref: &str) -> Result<Option<(i64, String)>> {
+    /// Get the cue id, text, and status for a given source_ref (for refresh/update logic).
+    pub fn get_cue_by_source_ref(&self, source_ref: &str) -> Result<Option<(i64, String, String)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text FROM cues WHERE source_ref = ?1 LIMIT 1")?;
+            .prepare("SELECT id, text, status FROM cues WHERE source_ref = ?1 LIMIT 1")?;
         let result = stmt.query_row(params![source_ref], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         });
         match result {
             Ok(row) => Ok(Some(row)),
