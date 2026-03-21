@@ -1459,6 +1459,15 @@ impl eframe::App for DirigentApp {
         if !self.scheduled_runs.is_empty() {
             ctx.request_repaint_after(ELAPSED_REPAINT);
         }
+        // Repaint while async git operations are in progress (push, pull, PR import, etc.)
+        if self.git.importing_pr
+            || self.git.pushing
+            || self.git.pulling
+            || self.git.creating_pr
+            || self.git.notifying_pr
+        {
+            ctx.request_repaint_after(REPAINT_SLOW);
+        }
         // Ensure periodic repaint for source polling
         if self
             .settings
