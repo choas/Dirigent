@@ -815,6 +815,9 @@ impl DirigentApp {
                 let mut all_files = Vec::new();
                 collect_file_paths(&tree.entries, &self.project_root, &mut all_files);
                 for (rel, abs) in all_files {
+                    if crate::app::search::is_binary_ext(&abs) {
+                        continue;
+                    }
                     if query.is_empty() || fuzzy_match(&rel.to_lowercase(), &query) {
                         matches.push((rel, abs));
                     }
