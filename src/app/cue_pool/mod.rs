@@ -310,6 +310,42 @@ impl DirigentApp {
                                     }
                                     ui.add_space(SPACE_XS);
                                 }
+                                // "Push & Notify PR" and "Refresh PR" buttons for the Done column
+                                if status == CueStatus::Done {
+                                    let has_pr_cues = section_cues.iter().any(|c| {
+                                        c.source_ref
+                                            .as_ref()
+                                            .map(|s| s.starts_with("pr"))
+                                            .unwrap_or(false)
+                                    });
+                                    if has_pr_cues {
+                                        ui.horizontal(|ui| {
+                                            if !self.git.notifying_pr && !self.git.pushing {
+                                                if ui
+                                                    .small_button(icon("\u{2191} Push & Notify PR", self.settings.font_size))
+                                                    .on_hover_text("Push commits and reply to all PR comments that findings were fixed")
+                                                    .clicked()
+                                                {
+                                                    actions.push((0, CueAction::PushAndNotifyPR));
+                                                }
+                                            } else if self.git.notifying_pr {
+                                                ui.label(
+                                                    egui::RichText::new("Notifying PR...")
+                                                        .small()
+                                                        .color(self.semantic.accent),
+                                                );
+                                            }
+                                            if ui
+                                                .small_button(icon("\u{21BB} Refresh PR", self.settings.font_size))
+                                                .on_hover_text("Re-import findings from the PR (check for new review comments)")
+                                                .clicked()
+                                            {
+                                                actions.push((0, CueAction::RefreshPR));
+                                            }
+                                        });
+                                        ui.add_space(SPACE_XS);
+                                    }
+                                }
                                 for cue in &section_cues {
                                     self.render_cue_card(ui, cue, &mut actions, status);
                                 }
@@ -628,6 +664,15 @@ impl DirigentApp {
                             }
                             CueAction::CreatePR => {
                                 self.open_create_pr_dialog();
+                            }
+                            CueAction::NotifyPR(cue_id) => {
+                                self.start_notify_pr_single(cue_id);
+                            }
+                            CueAction::PushAndNotifyPR => {
+                                self.start_push_and_notify_pr();
+                            }
+                            CueAction::RefreshPR => {
+                                self.open_import_pr_dialog();
                             }
                             CueAction::TagAllReview(tag) => {
                                 let review_ids: Vec<i64> = self

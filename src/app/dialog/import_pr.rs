@@ -13,14 +13,37 @@ impl DirigentApp {
 
         let fs = self.settings.font_size;
 
-        egui::Window::new("Import PR Findings")
+        // Check if this is a refresh (PR number already has imported cues)
+        let is_refresh = self
+            .git
+            .import_pr_number
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .map(|n| {
+                let tag = format!("PR{}", n);
+                self.cues.iter().any(|c| c.tag.as_deref() == Some(&tag))
+            })
+            .unwrap_or(false);
+
+        let title = if is_refresh {
+            "Refresh PR Findings"
+        } else {
+            "Import PR Findings"
+        };
+
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .default_width(360.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
-                ui.label("Import actionable findings from a GitHub Pull Request review (e.g. CodeRabbit) as cues.");
+                if is_refresh {
+                    ui.label("Re-fetch findings from the PR to check for new review comments (e.g. after CodeRabbit re-reviews).");
+                } else {
+                    ui.label("Import actionable findings from a GitHub Pull Request review (e.g. CodeRabbit) as cues.");
+                }
                 ui.add_space(SPACE_SM);
 
                 // PR number input
@@ -38,11 +61,19 @@ impl DirigentApp {
                 });
                 ui.add_space(SPACE_XS);
 
-                ui.label(
-                    egui::RichText::new("Findings will be tagged PR<number> and added to Inbox.")
-                        .small()
-                        .color(self.semantic.tertiary_text),
-                );
+                if is_refresh {
+                    ui.label(
+                        egui::RichText::new("Already-imported findings will be skipped. Only new comments are added.")
+                            .small()
+                            .color(self.semantic.tertiary_text),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("Findings will be tagged PR<number> and added to Inbox.")
+                            .small()
+                            .color(self.semantic.tertiary_text),
+                    );
+                }
 
                 ui.add_space(SPACE_SM);
 
@@ -56,8 +87,13 @@ impl DirigentApp {
                         .map(|n| n > 0)
                         .unwrap_or(false);
                     let can_import = valid_number && !self.git.importing_pr;
+                    let btn_label = if is_refresh {
+                        "\u{21BB} Refresh Findings"
+                    } else {
+                        "\u{2193} Import Findings"
+                    };
                     let import_btn = egui::Button::new(
-                        icon("\u{2193} Import Findings", fs).color(self.semantic.badge_text),
+                        icon(btn_label, fs).color(self.semantic.badge_text),
                     )
                     .fill(self.semantic.accent);
                     if ui

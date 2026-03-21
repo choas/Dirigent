@@ -131,6 +131,12 @@ enum CueAction {
     Push,
     /// Open the Create PR dialog.
     CreatePR,
+    /// Notify the original PR comment that a finding was fixed.
+    NotifyPR(i64),
+    /// Push and notify all Done PR-sourced cues.
+    PushAndNotifyPR,
+    /// Refresh PR findings (re-import from the same PR).
+    RefreshPR,
 }
 
 /// State for the code viewer panel.
@@ -217,6 +223,9 @@ pub(super) struct GitState {
     /// Whether a PR findings import is in progress.
     pub(super) importing_pr: bool,
     pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
+    /// Whether a PR notification (reply to PR comments) is in progress.
+    pub(super) notifying_pr: bool,
+    pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 pub struct DirigentApp {
@@ -527,6 +536,8 @@ impl DirigentApp {
                 import_pr_number: String::new(),
                 importing_pr: false,
                 import_pr_rx: None,
+                notifying_pr: false,
+                pr_notify_rx: None,
             },
             settings,
             semantic,
@@ -872,6 +883,169 @@ impl DirigentApp {
         }
     }
 
+    /// Notify a single PR comment that a finding was fixed.
+    fn start_notify_pr_single(&mut self, cue_id: i64) {
+        // Look up the cue's source_ref and commit hash
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let source_ref = match cue.source_ref {
+            Some(ref s) if s.starts_with("pr") => s.clone(),
+            _ => {
+                self.set_status_message("Cue has no PR source reference".to_string());
+                return;
+            }
+        };
+        // Extract commit hash from activity log
+        let commit_hash = self
+            .db
+            .get_last_activity_matching(cue_id, "Committed")
+            .ok()
+            .flatten()
+            .and_then(|event| {
+                // Activity format: "Committed (abc1234)"
+                event
+                    .strip_prefix("Committed (")
+                    .and_then(|s| s.strip_suffix(')'))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "latest commit".to_string());
+
+        self.git.notifying_pr = true;
+        let project_root = self.project_root.clone();
+        let (tx, rx) = mpsc::channel();
+        self.git.pr_notify_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result =
+                crate::sources::notify_pr_finding_fixed(&project_root, &source_ref, &commit_hash);
+            let _ = tx.send(match result {
+                Ok(true) => Ok(format!("Notified PR comment for cue #{}", cue_id)),
+                Ok(false) => Err("Could not parse PR source reference".to_string()),
+                Err(e) => Err(e.to_string()),
+            });
+        });
+    }
+
+    /// Push and notify all Done PR-sourced cues.
+    fn start_push_and_notify_pr(&mut self) {
+        // Collect all Done cues with PR source_ref
+        let pr_cues: Vec<(i64, String, String)> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Done)
+            .filter_map(|c| {
+                let source_ref = c.source_ref.as_ref()?;
+                if !source_ref.starts_with("pr") {
+                    return None;
+                }
+                // Check if already notified
+                let already_notified = self
+                    .db
+                    .get_last_activity_matching(c.id, "Notified PR")
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if already_notified {
+                    return None;
+                }
+                let commit_hash = self
+                    .db
+                    .get_last_activity_matching(c.id, "Committed")
+                    .ok()
+                    .flatten()
+                    .and_then(|event| {
+                        event
+                            .strip_prefix("Committed (")
+                            .and_then(|s| s.strip_suffix(')'))
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| "latest commit".to_string());
+                Some((c.id, source_ref.clone(), commit_hash))
+            })
+            .collect();
+
+        if pr_cues.is_empty() {
+            self.set_status_message("No un-notified PR findings in Done".to_string());
+            return;
+        }
+
+        self.git.notifying_pr = true;
+        let project_root = self.project_root.clone();
+        let (tx, rx) = mpsc::channel();
+        self.git.pr_notify_rx = Some(rx);
+
+        // Log which cue IDs we're notifying (for activity log after completion)
+        let cue_ids: Vec<i64> = pr_cues.iter().map(|(id, _, _)| *id).collect();
+        let cue_ids_clone = cue_ids.clone();
+
+        std::thread::spawn(move || {
+            // First push
+            let push_result = crate::git::git_push(&project_root);
+            if let Err(e) = push_result {
+                let _ = tx.send(Err(format!("Push failed: {}", e)));
+                return;
+            }
+
+            // Then notify each PR comment
+            let mut notified = 0;
+            let mut errors = Vec::new();
+            for (_cue_id, source_ref, commit_hash) in &pr_cues {
+                match crate::sources::notify_pr_finding_fixed(
+                    &project_root,
+                    source_ref,
+                    commit_hash,
+                ) {
+                    Ok(true) => notified += 1,
+                    Ok(false) => {}
+                    Err(e) => errors.push(e.to_string()),
+                }
+            }
+
+            let mut msg = format!("Pushed and notified {} PR comment(s)", notified);
+            if !errors.is_empty() {
+                msg.push_str(&format!(
+                    "; {} error(s): {}",
+                    errors.len(),
+                    errors.join(", ")
+                ));
+            }
+            // Encode cue IDs in the result for activity logging
+            let ids_str: Vec<String> = cue_ids_clone.iter().map(|id| id.to_string()).collect();
+            let _ = tx.send(Ok(format!("{}|{}", msg, ids_str.join(","))));
+        });
+    }
+
+    fn process_pr_notify_result(&mut self) {
+        if let Some(ref rx) = self.git.pr_notify_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.git.notifying_pr = false;
+                self.git.pr_notify_rx = None;
+                match result {
+                    Ok(msg) => {
+                        // Parse "message|id1,id2,..." format
+                        let parts: Vec<&str> = msg.splitn(2, '|').collect();
+                        let display_msg = parts[0].to_string();
+                        if parts.len() == 2 {
+                            for id_str in parts[1].split(',') {
+                                if let Ok(cue_id) = id_str.parse::<i64>() {
+                                    let _ = self.db.log_activity(cue_id, "Notified PR");
+                                }
+                            }
+                        }
+                        self.set_status_message(display_msg);
+                        self.reload_git_info();
+                        self.reload_commit_history();
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("PR notify failed: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
     /// Check for completed git pull.
     fn process_pull_result(&mut self) {
         if let Some(ref rx) = self.git.pull_rx {
@@ -1197,6 +1371,7 @@ impl eframe::App for DirigentApp {
         self.process_pull_result();
         self.process_pr_result();
         self.process_import_pr_result();
+        self.process_pr_notify_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();

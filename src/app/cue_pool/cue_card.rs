@@ -407,6 +407,36 @@ impl DirigentApp {
                                 self.reply_inputs.insert(cue.id, String::new());
                             }
                         }
+                        // "Notify PR" button for PR-sourced cues
+                        let is_pr_sourced = cue
+                            .source_ref
+                            .as_ref()
+                            .map(|s| s.starts_with("pr"))
+                            .unwrap_or(false);
+                        let already_notified = is_pr_sourced
+                            && self
+                                .db
+                                .get_last_activity_matching(cue.id, "Notified PR")
+                                .ok()
+                                .flatten()
+                                .is_some();
+                        if is_pr_sourced && !already_notified && !self.git.notifying_pr {
+                            if ui
+                                .small_button(icon("\u{1F514} Notify PR", fs))
+                                .on_hover_text(
+                                    "Reply to the PR comment that this finding was fixed",
+                                )
+                                .clicked()
+                            {
+                                actions.push((cue.id, CueAction::NotifyPR(cue.id)));
+                            }
+                        } else if is_pr_sourced && already_notified {
+                            ui.label(
+                                egui::RichText::new("\u{2713} PR notified")
+                                    .small()
+                                    .color(self.semantic.success),
+                            );
+                        }
                         if ui
                             .small_button(icon("\u{2193} Archive", fs))
                             .on_hover_text("Move to Archived")
@@ -502,6 +532,20 @@ impl DirigentApp {
                         if cue.tag.is_some() {
                             if ui.button("\u{2715} Remove Tag").clicked() {
                                 actions.push((cue.id, CueAction::SetTag(None)));
+                            }
+                        }
+                        // Create PR (only on non-default branches)
+                        {
+                            let is_default_branch = self
+                                .git
+                                .info
+                                .as_ref()
+                                .map(|i| i.branch == "main" || i.branch == "master")
+                                .unwrap_or(true);
+                            if !is_default_branch && !self.git.creating_pr {
+                                if ui.button("Create PR").clicked() {
+                                    actions.push((cue.id, CueAction::CreatePR));
+                                }
                             }
                         }
                         ui.separator();
