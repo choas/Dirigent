@@ -504,23 +504,23 @@ fn parse_with_patterns(content: &[String], patterns: &[(Regex, SymbolKind)]) -> 
 
 /// Extract the word at a given byte offset within a line of text.
 pub(super) fn word_at_offset(line: &str, byte_offset: usize) -> Option<&str> {
-    if byte_offset >= line.len() {
+    if byte_offset >= line.len() || !line.is_char_boundary(byte_offset) {
         return None;
     }
 
     let bytes = line.as_bytes();
-    if byte_offset < bytes.len() && !is_word_char(bytes[byte_offset]) {
+    if !is_word_char(bytes[byte_offset]) {
         return None;
     }
 
     let start = (0..byte_offset)
         .rev()
-        .take_while(|&i| is_word_char(bytes[i]))
+        .take_while(|&i| line.is_char_boundary(i) && is_word_char(bytes[i]))
         .last()
         .unwrap_or(byte_offset);
 
     let end = (byte_offset..bytes.len())
-        .take_while(|&i| is_word_char(bytes[i]))
+        .take_while(|&i| line.is_char_boundary(i) && is_word_char(bytes[i]))
         .last()
         .map(|i| i + 1)
         .unwrap_or(byte_offset + 1);
