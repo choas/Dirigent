@@ -218,6 +218,7 @@ impl DirigentApp {
                 let panel_rect = ui.max_rect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();
+                    let mut load_more_archived = false;
 
                     let cues_snapshot = self.cues.clone();
                     let source_filter = self.sources.filter.clone();
@@ -312,7 +313,20 @@ impl DirigentApp {
                                 for cue in &section_cues {
                                     self.render_cue_card(ui, cue, &mut actions, status);
                                 }
+                                // "Load more" button for Archived when there are more cues
+                                if status == CueStatus::Archived && self.archived_cue_count > section_cues.len() {
+                                    let remaining = self.archived_cue_count - section_cues.len();
+                                    let label = format!("Load more ({} remaining)", remaining);
+                                    if ui.small_button(label).clicked() {
+                                        load_more_archived = true;
+                                    }
+                                }
                             });
+                    }
+
+                    if load_more_archived {
+                        self.archived_cue_limit += 50;
+                        self.reload_cues();
                     }
 
                     // Reset the expand flag after rendering
@@ -611,6 +625,9 @@ impl DirigentApp {
                             }
                             CueAction::Push => {
                                 self.start_git_push();
+                            }
+                            CueAction::CreatePR => {
+                                self.open_create_pr_dialog();
                             }
                             CueAction::TagAllReview(tag) => {
                                 let review_ids: Vec<i64> = self

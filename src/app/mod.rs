@@ -229,6 +229,7 @@ pub struct DirigentApp {
     // Cue pool
     cues: Vec<Cue>,
     archived_cue_count: usize,
+    archived_cue_limit: usize,
 
     // Claude execution & running logs
     pub(super) claude: ClaudeRunState,
@@ -411,7 +412,7 @@ impl DirigentApp {
             )
         } else {
             let file_tree = FileTree::scan(&project_root).ok();
-            let cues = db.all_cues_limited_archived(200).unwrap_or_default();
+            let cues = db.all_cues_limited_archived(50).unwrap_or_default();
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
@@ -475,6 +476,7 @@ impl DirigentApp {
             },
             cues,
             archived_cue_count,
+            archived_cue_limit: 50,
             claude: ClaudeRunState::new(),
             diff_review: None,
             git: GitState {
@@ -620,7 +622,10 @@ impl DirigentApp {
     }
 
     fn reload_cues(&mut self) {
-        self.cues = self.db.all_cues_limited_archived(200).unwrap_or_default();
+        self.cues = self
+            .db
+            .all_cues_limited_archived(self.archived_cue_limit)
+            .unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
     }
 
@@ -935,7 +940,11 @@ impl DirigentApp {
         self.file_tree = FileTree::scan(&self.project_root).ok();
         self.fs_changed.store(false, Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
-        self.cues = self.db.all_cues_limited_archived(200).unwrap_or_default();
+        self.archived_cue_limit = 50;
+        self.cues = self
+            .db
+            .all_cues_limited_archived(self.archived_cue_limit)
+            .unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
