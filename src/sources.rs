@@ -402,7 +402,10 @@ pub(crate) fn fetch_pr_findings(
             let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
             let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
 
-            if body.trim().is_empty() || is_confirmation_comment(body) {
+            if body.trim().is_empty()
+                || is_confirmation_comment(body)
+                || is_auto_summary_comment(body)
+            {
                 continue;
             }
 
@@ -421,13 +424,72 @@ pub(crate) fn fetch_pr_findings(
         }
     }
 
+    // Also fetch PR reviews (e.g. CodeRabbit re-reviews with nitpick findings in the body)
+    let mut cmd3 = Command::new("gh");
+    cmd3.arg("api")
+        .arg(format!(
+            "repos/{{owner}}/{{repo}}/pulls/{}/reviews",
+            pr_number
+        ))
+        .arg("--paginate")
+        .current_dir(project_root);
+
+    let child3 = cmd3
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let output3 = output_with_timeout(child3, timeout)?;
+
+    if output3.status.success() {
+        let json_str3 = String::from_utf8_lossy(&output3.stdout);
+        let reviews: Vec<serde_json::Value> = serde_json::from_str(&json_str3).unwrap_or_default();
+
+        for review in &reviews {
+            let body = review.get("body").and_then(|b| b.as_str()).unwrap_or("");
+            let review_id = review.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+
+            if body.trim().is_empty()
+                || is_confirmation_comment(body)
+                || is_auto_summary_comment(body)
+            {
+                continue;
+            }
+
+            // Extract individual agent prompts from review bodies (e.g. nitpick findings)
+            let prompts = extract_all_agent_prompts(body);
+            for (i, prompt) in prompts.iter().enumerate() {
+                findings.push(PrFinding {
+                    file_path: String::new(),
+                    line_number: 0,
+                    text: prompt.clone(),
+                    external_id: format!("pr{}:review:{}_{}", pr_number, review_id, i),
+                });
+            }
+
+            // If no agent prompts found, fall back to generic text extraction
+            if prompts.is_empty() {
+                let finding_text = extract_finding_text(body);
+                if !finding_text.is_empty() {
+                    findings.push(PrFinding {
+                        file_path: String::new(),
+                        line_number: 0,
+                        text: finding_text,
+                        external_id: format!("pr{}:review:{}", pr_number, review_id),
+                    });
+                }
+            }
+        }
+    }
+
     Ok(findings)
 }
 
 /// Check if a comment is a confirmation/addressed reply rather than a new finding.
+/// CodeRabbit appends "✅ Confirmed as addressed" to the *original* comment body,
+/// so we must search the entire text, not just the beginning.
 fn is_confirmation_comment(body: &str) -> bool {
     let trimmed = body.trim();
-    // Skip HTML-only comments (e.g. CodeRabbit confirmation markers)
+    // Strip HTML comments to get visible text
     let without_html = trimmed
         .lines()
         .filter(|l| {
@@ -437,37 +499,67 @@ fn is_confirmation_comment(body: &str) -> bool {
         .collect::<Vec<_>>()
         .join("\n");
     let check = without_html.trim();
-    check.starts_with("✅")
-        || check.starts_with("Confirmed as addressed")
-        || check.starts_with("Fixed in commit")
+    // Check anywhere in the text — CodeRabbit edits the original comment to
+    // append the confirmation marker at the bottom.
+    check.contains("✅ Confirmed as addressed")
         || check.contains("Automated reply from [Dirigent]")
         || check.contains("<review_comment_addressed>")
+        // Pure confirmation comments (standalone)
+        || check.starts_with("Fixed in commit")
 }
 
-/// Extract the "Prompt for AI Agents" block from a CodeRabbit comment.
+/// Check if a comment is an auto-generated summary (e.g. CodeRabbit walkthrough)
+/// rather than an actionable finding.
+fn is_auto_summary_comment(body: &str) -> bool {
+    body.contains("<!-- walkthrough_start -->")
+        || body.contains("auto-generated comment: summarize")
+        || body.contains("auto-generated comment: release notes")
+}
+
+/// Extract the first "Prompt for AI Agents" block from a CodeRabbit comment.
 fn extract_agent_prompt(body: &str) -> Option<String> {
-    // Look for the agent prompt block that CodeRabbit includes
+    extract_all_agent_prompts(body).into_iter().next()
+}
+
+/// Extract ALL individual "Prompt for AI Agents" blocks from a body.
+/// Skips the combined "Prompt for all review comments" block.
+fn extract_all_agent_prompts(body: &str) -> Vec<String> {
+    let mut prompts = Vec::new();
     let marker = "Prompt for AI Agents";
-    let marker_pos = body.find(marker)?;
-    let after_marker = &body[marker_pos + marker.len()..];
 
-    // Find the code block content after the marker
-    let code_start = after_marker.find("```")?;
-    let code_content = &after_marker[code_start + 3..];
-    // Skip the language identifier line if present
-    let code_content = if let Some(nl) = code_content.find('\n') {
-        &code_content[nl + 1..]
-    } else {
-        code_content
-    };
-    let code_end = code_content.find("```")?;
-    let prompt = code_content[..code_end].trim().to_string();
+    let mut search_from = 0;
+    while let Some(rel_pos) = body[search_from..].find(marker) {
+        let abs_pos = search_from + rel_pos;
 
-    if prompt.is_empty() {
-        None
-    } else {
-        Some(prompt)
+        // Skip the combined "Prompt for all review comments with AI agents" block
+        let context_start = abs_pos.saturating_sub(60);
+        if body[context_start..abs_pos].contains("all review comments") {
+            search_from = abs_pos + marker.len();
+            continue;
+        }
+
+        let after_marker = &body[abs_pos + marker.len()..];
+
+        if let Some(code_start) = after_marker.find("```") {
+            let code_content = &after_marker[code_start + 3..];
+            // Skip the language identifier line if present
+            let code_content = if let Some(nl) = code_content.find('\n') {
+                &code_content[nl + 1..]
+            } else {
+                code_content
+            };
+            if let Some(code_end) = code_content.find("```") {
+                let prompt = code_content[..code_end].trim().to_string();
+                if !prompt.is_empty() {
+                    prompts.push(prompt);
+                }
+            }
+        }
+
+        search_from = abs_pos + marker.len();
     }
+
+    prompts
 }
 
 /// Extract a clean finding text from a review comment body.
