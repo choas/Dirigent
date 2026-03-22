@@ -965,7 +965,9 @@ impl DirigentApp {
             crate::app::search::collect_files(&tree.entries, &mut all_files);
         }
 
-        // Bump generation to invalidate any previous in-flight search
+        // Cancel any previous in-flight search and bump generation
+        self.goto_def_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.goto_def_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.goto_def_gen = self.goto_def_gen.wrapping_add(1);
         let gen = self.goto_def_gen;
 
@@ -973,11 +975,15 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let word_owned = word.to_string();
         let tx = self.goto_def_tx.clone();
+        let cancelled = self.goto_def_cancel.clone();
 
         self.set_status_message(format!("Searching for `{}`...", word));
 
         std::thread::spawn(move || {
             for file_path in &all_files {
+                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
                 if crate::app::search::is_binary_ext(file_path) {
                     continue;
                 }
