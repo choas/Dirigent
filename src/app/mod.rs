@@ -147,7 +147,7 @@ pub(super) struct TabState {
     /// Whether to show the rendered markdown view (true) or raw source (false).
     pub(super) markdown_rendered: bool,
     /// Saved scroll offset so switching tabs preserves position.
-    pub(super) _scroll_offset: f32,
+    pub(super) scroll_offset: f32,
     /// Parsed symbols for outline and breadcrumb.
     pub(super) symbols: Vec<symbols::FileSymbol>,
 }
@@ -181,7 +181,7 @@ fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         cue_images: Vec::new(),
         markdown_blocks,
         markdown_rendered: true,
-        _scroll_offset: 0.0,
+        scroll_offset: 0.0,
         symbols: file_symbols,
     })
 }
@@ -1173,6 +1173,7 @@ impl eframe::App for DirigentApp {
         if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
             if gen == self.goto_def_gen {
                 if target_line > 0 {
+                    self.push_nav_history();
                     self.load_file(file_path);
                     self.viewer.scroll_to_line = Some(target_line);
                 }

@@ -600,7 +600,7 @@ impl DirigentApp {
                                         let ch_width = if ch == '\t' {
                                             approx_char_width * 4.0
                                         } else {
-                                            approx_char_width * (ch.len_utf8().max(1) as f32 / 1.0_f32).min(2.0)
+                                            approx_char_width * (ch.len_utf8().max(1) as f32).min(2.0)
                                         };
                                         if accumulated + ch_width * 0.5 > x_offset {
                                             byte_offset = idx;
@@ -730,10 +730,16 @@ impl DirigentApp {
                 let mut scroll_area = egui::ScrollArea::both().auto_shrink([false; 2]);
                 if let Some(offset) = scroll_offset {
                     scroll_area = scroll_area.vertical_scroll_offset(offset);
+                } else if self.viewer.tabs[active_idx].scroll_offset > 0.0 {
+                    scroll_area = scroll_area.vertical_scroll_offset(
+                        self.viewer.tabs[active_idx].scroll_offset,
+                    );
                 }
-                scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
+                let output = scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
                     render_lines!(ui, row_range);
                 });
+                // Save current scroll position so switching tabs preserves it.
+                self.viewer.tabs[active_idx].scroll_offset = output.state.offset.y;
             }
 
             if clear_selection {
@@ -916,8 +922,6 @@ impl DirigentApp {
             return;
         }
 
-        self.push_nav_history();
-
         let patterns = symbols::definition_patterns(word);
         if patterns.is_empty() {
             self.set_status_message(format!("No definition found for `{}`", word));
@@ -935,6 +939,7 @@ impl DirigentApp {
                 for re in &patterns {
                     if re.is_match(line) {
                         // Found in current file — jump to it
+                        self.push_nav_history();
                         self.viewer.scroll_to_line = Some(idx + 1);
                         self.set_status_message(format!(
                             "Definition: `{}` at line {}",
