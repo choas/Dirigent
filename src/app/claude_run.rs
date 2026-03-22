@@ -528,10 +528,21 @@ impl DirigentApp {
                     .map(|c| c.text.clone())
                     .unwrap_or_default();
                 self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
-                // Reload current file so user sees changes
-                if let Some(ref path) = self.viewer.current_file {
-                    let p = path.clone();
-                    self.load_file(p);
+                // Reload all open tabs so user sees changes
+                for tab in &mut self.viewer.tabs {
+                    if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                        if tab.markdown_blocks.is_some() {
+                            tab.markdown_blocks =
+                                Some(super::markdown_parser::parse_markdown(&content));
+                        }
+                        tab.content = content.lines().map(String::from).collect();
+                        let ext = tab
+                            .file_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("");
+                        tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                    }
                 }
                 self.reload_git_info();
             } else {

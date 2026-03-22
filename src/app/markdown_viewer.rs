@@ -6,7 +6,11 @@ use super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 impl DirigentApp {
     /// Render the parsed markdown blocks for the currently open file.
     pub(super) fn render_markdown_content(&self, ui: &mut egui::Ui) {
-        if let Some(ref blocks) = self.viewer.markdown_blocks {
+        let blocks_ref = self
+            .viewer
+            .active()
+            .and_then(|t| t.markdown_blocks.as_ref());
+        if let Some(blocks) = blocks_ref {
             render_blocks(
                 ui,
                 blocks,

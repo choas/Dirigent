@@ -10,6 +10,7 @@ mod notifications;
 mod panels;
 mod search;
 mod sources_poll;
+pub(super) mod symbols;
 mod tasks;
 mod theme;
 
@@ -131,9 +132,9 @@ enum CueAction {
     Push,
 }
 
-/// State for the code viewer panel.
-pub(super) struct CodeViewerState {
-    pub(super) current_file: Option<PathBuf>,
+/// State for a single open file tab.
+pub(super) struct TabState {
+    pub(super) file_path: PathBuf,
     pub(super) content: Vec<String>,
     /// Start of the selected line range (1-based, always <= selection_end).
     pub(super) selection_start: Option<usize>,
@@ -141,12 +142,195 @@ pub(super) struct CodeViewerState {
     pub(super) selection_end: Option<usize>,
     pub(super) cue_input: String,
     pub(super) cue_images: Vec<PathBuf>,
-    pub(super) scroll_to_line: Option<usize>,
-    pub(super) syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
     /// Cached parsed markdown blocks (set when a .md/.mdx file is loaded).
     pub(super) markdown_blocks: Option<Vec<markdown_parser::MarkdownBlock>>,
     /// Whether to show the rendered markdown view (true) or raw source (false).
     pub(super) markdown_rendered: bool,
+    /// Saved scroll offset so switching tabs preserves position.
+    pub(super) scroll_offset: f32,
+    /// Parsed symbols for outline and breadcrumb.
+    pub(super) symbols: Vec<symbols::FileSymbol>,
+}
+
+/// Read a file from disk and build a TabState with markdown parsing and symbol extraction.
+fn create_tab_state(path: &PathBuf) -> Option<TabState> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let is_md = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
+        .unwrap_or(false);
+    let markdown_blocks = if is_md {
+        Some(markdown_parser::parse_markdown(&content))
+    } else {
+        None
+    };
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let file_symbols = symbols::parse_symbols(&lines, &ext);
+    Some(TabState {
+        file_path: path.clone(),
+        content: lines,
+        selection_start: None,
+        selection_end: None,
+        cue_input: String::new(),
+        cue_images: Vec::new(),
+        markdown_blocks,
+        markdown_rendered: true,
+        scroll_offset: 0.0,
+        symbols: file_symbols,
+    })
+}
+
+/// Navigation history for back/forward.
+pub(super) struct NavigationHistory {
+    pub(super) entries: Vec<(PathBuf, usize)>, // (file, line)
+    pub(super) position: usize,
+}
+
+impl NavigationHistory {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            position: 0,
+        }
+    }
+
+    fn push(&mut self, file: PathBuf, line: usize) {
+        // If we're not at the end, truncate forward history
+        if self.position < self.entries.len() {
+            self.entries.truncate(self.position);
+        }
+        // Don't push duplicate of current position
+        if self.entries.last() == Some(&(file.clone(), line)) {
+            return;
+        }
+        self.entries.push((file, line));
+        if self.entries.len() > 50 {
+            self.entries.remove(0);
+        }
+        self.position = self.entries.len();
+    }
+
+    fn go_back(&mut self) -> Option<(PathBuf, usize)> {
+        if self.position > 1 {
+            self.position -= 1;
+            Some(self.entries[self.position - 1].clone())
+        } else {
+            None
+        }
+    }
+
+    fn go_forward(&mut self) -> Option<(PathBuf, usize)> {
+        if self.position < self.entries.len() {
+            self.position += 1;
+            Some(self.entries[self.position - 1].clone())
+        } else {
+            None
+        }
+    }
+}
+
+/// State for the code viewer panel (multi-tab).
+pub(super) struct CodeViewerState {
+    pub(super) tabs: Vec<TabState>,
+    pub(super) active_tab: Option<usize>,
+    pub(super) scroll_to_line: Option<usize>,
+    pub(super) syntax_theme: egui_extras::syntax_highlighting::CodeTheme,
+    pub(super) nav_history: NavigationHistory,
+    /// Whether the quick-open overlay (Cmd+P) is active.
+    pub(super) quick_open_active: bool,
+    pub(super) quick_open_query: String,
+    pub(super) quick_open_selected: usize,
+    /// Whether to show the symbol outline in the left panel.
+    pub(super) show_outline: bool,
+}
+
+impl CodeViewerState {
+    /// Get a reference to the active tab, if any.
+    pub(super) fn active(&self) -> Option<&TabState> {
+        self.active_tab.and_then(|i| self.tabs.get(i))
+    }
+
+    /// Get a mutable reference to the active tab, if any.
+    pub(super) fn active_mut(&mut self) -> Option<&mut TabState> {
+        self.active_tab.and_then(|i| self.tabs.get_mut(i))
+    }
+
+    /// Get the current file path, if a tab is active.
+    pub(super) fn current_file(&self) -> Option<&PathBuf> {
+        self.active().map(|t| &t.file_path)
+    }
+
+    /// Find a tab index by file path.
+    pub(super) fn find_tab(&self, path: &PathBuf) -> Option<usize> {
+        self.tabs.iter().position(|t| &t.file_path == path)
+    }
+
+    /// Find an existing tab or load the file into a new tab (without touching nav history).
+    /// Returns the tab index on success.
+    pub(super) fn open_file_without_history(&mut self, path: PathBuf) -> Option<usize> {
+        if let Some(idx) = self.find_tab(&path) {
+            self.active_tab = Some(idx);
+            return Some(idx);
+        }
+        let tab = create_tab_state(&path)?;
+        // Soft cap at 20 tabs — close the oldest (first) non-active tab
+        if self.tabs.len() >= 20 {
+            let close_idx = self
+                .tabs
+                .iter()
+                .enumerate()
+                .position(|(i, _)| Some(i) != self.active_tab)
+                .unwrap_or(0);
+            self.close_tab(close_idx);
+        }
+        self.tabs.push(tab);
+        let idx = self.tabs.len() - 1;
+        self.active_tab = Some(idx);
+        Some(idx)
+    }
+
+    /// Close the active tab and switch to the nearest remaining tab.
+    pub(super) fn close_active_tab(&mut self) {
+        if let Some(idx) = self.active_tab {
+            self.tabs.remove(idx);
+            if self.tabs.is_empty() {
+                self.active_tab = None;
+            } else if idx >= self.tabs.len() {
+                self.active_tab = Some(self.tabs.len() - 1);
+            } else {
+                self.active_tab = Some(idx);
+            }
+        }
+    }
+
+    /// Close a specific tab by index.
+    pub(super) fn close_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        self.tabs.remove(idx);
+        match self.active_tab {
+            Some(active) if active == idx => {
+                if self.tabs.is_empty() {
+                    self.active_tab = None;
+                } else if idx >= self.tabs.len() {
+                    self.active_tab = Some(self.tabs.len() - 1);
+                } else {
+                    self.active_tab = Some(idx);
+                }
+            }
+            Some(active) if active > idx => {
+                self.active_tab = Some(active - 1);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// State for in-file and project-wide search.
@@ -324,6 +508,12 @@ pub struct DirigentApp {
 
     // "git init" confirmation: path that is a directory but not a git repo
     git_init_confirm: Option<PathBuf>,
+
+    // Go-to-definition background search
+    goto_def_tx: mpsc::Sender<(u64, PathBuf, usize, String)>,
+    goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
+    goto_def_gen: u64,
+    goto_def_cancel: Arc<AtomicBool>,
 }
 
 fn start_fs_watcher(
@@ -432,6 +622,7 @@ impl DirigentApp {
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
+        let (goto_def_tx, goto_def_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -450,16 +641,15 @@ impl DirigentApp {
             file_tree_rx,
             file_tree_scanning: false,
             viewer: CodeViewerState {
-                current_file: None,
-                content: Vec::new(),
-                selection_start: None,
-                selection_end: None,
-                cue_input: String::new(),
-                cue_images: Vec::new(),
+                tabs: Vec::new(),
+                active_tab: None,
                 scroll_to_line: None,
                 syntax_theme,
-                markdown_blocks: None,
-                markdown_rendered: true,
+                nav_history: NavigationHistory::new(),
+                quick_open_active: false,
+                quick_open_query: String::new(),
+                quick_open_selected: 0,
+                show_outline: true,
             },
             cues,
             archived_cue_count,
@@ -535,6 +725,10 @@ impl DirigentApp {
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
+            goto_def_tx,
+            goto_def_rx,
+            goto_def_gen: 0,
+            goto_def_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -752,31 +946,38 @@ impl DirigentApp {
     }
 
     fn load_file(&mut self, path: PathBuf) {
-        if let Ok(content) = std::fs::read_to_string(&path) {
+        self.dismiss_central_overlays();
+        self.viewer.open_file_without_history(path);
+        // Reset in-file search state when switching or opening a file
+        self.search.in_file_active = false;
+        self.search.in_file_query.clear();
+        self.search.in_file_matches.clear();
+        self.search.in_file_current = None;
+    }
+
+    /// Push the current position onto the navigation history.
+    fn push_nav_history(&mut self) {
+        if let Some(tab) = self.viewer.active() {
+            let line = tab.selection_start.unwrap_or(1);
+            self.viewer.nav_history.push(tab.file_path.clone(), line);
+        }
+    }
+
+    /// Navigate back in history.
+    fn nav_back(&mut self) {
+        if let Some((path, line)) = self.viewer.nav_history.go_back() {
+            self.viewer.open_file_without_history(path);
+            self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
-            // Parse markdown if the file is a .md or .mdx
-            let is_markdown = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
-                .unwrap_or(false);
-            if is_markdown {
-                self.viewer.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
-                self.viewer.markdown_rendered = true;
-            } else {
-                self.viewer.markdown_blocks = None;
-            }
-            self.viewer.content = content.lines().map(String::from).collect();
-            self.viewer.current_file = Some(path);
-            self.viewer.selection_start = None;
-            self.viewer.selection_end = None;
-            self.viewer.cue_input.clear();
-            self.viewer.cue_images.clear();
-            // Reset in-file search state for the new file
-            self.search.in_file_active = false;
-            self.search.in_file_query.clear();
-            self.search.in_file_matches.clear();
-            self.search.in_file_current = None;
+        }
+    }
+
+    /// Navigate forward in history.
+    fn nav_forward(&mut self) {
+        if let Some((path, line)) = self.viewer.nav_history.go_forward() {
+            self.viewer.open_file_without_history(path);
+            self.viewer.scroll_to_line = Some(line);
+            self.dismiss_central_overlays();
         }
     }
 
@@ -788,7 +989,7 @@ impl DirigentApp {
     }
 
     fn file_cues(&self) -> Vec<&Cue> {
-        if let Some(ref current) = self.viewer.current_file {
+        if let Some(current) = self.viewer.current_file() {
             let rel = self.relative_path(current);
             self.cues.iter().filter(|c| c.file_path == rel).collect()
         } else {
@@ -855,13 +1056,15 @@ impl DirigentApp {
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
-        self.viewer.current_file = None;
+        self.viewer.tabs.clear();
+        self.viewer.active_tab = None;
+        self.viewer.nav_history = NavigationHistory::new();
+        self.viewer.quick_open_active = false;
+        self.viewer.quick_open_query.clear();
+        self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
         self.git.commit_history = git::read_commit_history(&self.project_root, 10);
         self.git.commit_history_total = git::count_commits(&self.project_root);
-        self.viewer.content.clear();
-        self.viewer.selection_start = None;
-        self.viewer.selection_end = None;
         self.expanded_dirs.clear();
         self.diff_review = None;
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
@@ -934,15 +1137,19 @@ impl eframe::App for DirigentApp {
             self.reload_file_tree();
             self.git.dirty_files = git::get_dirty_files(&self.project_root);
             self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
-            // Reload the currently open file so the code viewer shows fresh content
-            if let Some(ref path) = self.viewer.current_file {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    // Re-parse markdown if applicable
-                    if self.viewer.markdown_blocks.is_some() {
-                        self.viewer.markdown_blocks =
-                            Some(markdown_parser::parse_markdown(&content));
+            // Reload all open tabs so the code viewer shows fresh content
+            for tab in &mut self.viewer.tabs {
+                if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                    if tab.markdown_blocks.is_some() {
+                        tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
                     }
-                    self.viewer.content = content.lines().map(String::from).collect();
+                    tab.content = content.lines().map(String::from).collect();
+                    let ext = tab
+                        .file_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    tab.symbols = symbols::parse_symbols(&tab.content, ext);
                 }
             }
             // Trigger agents configured with OnFileChange
@@ -962,6 +1169,18 @@ impl eframe::App for DirigentApp {
         if let Ok(results) = self.search.search_result_rx.try_recv() {
             self.search.in_files_results = results;
             self.search.in_files_searching = false;
+        }
+
+        // Check for completed background go-to-definition
+        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
+            if gen == self.goto_def_gen {
+                if target_line > 0 {
+                    self.push_nav_history();
+                    self.load_file(file_path);
+                    self.viewer.scroll_to_line = Some(target_line);
+                }
+                self.set_status_message(msg);
+            }
         }
 
         // Poll for Claude results
@@ -1066,6 +1285,33 @@ impl eframe::App for DirigentApp {
         // Cmd+N = open a new Dirigent window
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
             crate::spawn_new_instance();
+        }
+
+        // Cmd+W = close active tab
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
+            self.viewer.close_active_tab();
+        }
+
+        // Cmd+P = quick file open
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
+            self.viewer.quick_open_active = !self.viewer.quick_open_active;
+            self.viewer.quick_open_query.clear();
+            self.viewer.quick_open_selected = 0;
+        }
+
+        // Cmd+[ = navigate back
+        if ctx.input(|i| {
+            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
+        }) {
+            self.push_nav_history();
+            self.nav_back();
+        }
+
+        // Cmd+] = navigate forward
+        if ctx.input(|i| {
+            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
+        }) {
+            self.nav_forward();
         }
 
         // Render all panels (order matters for layout)
