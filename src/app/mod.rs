@@ -339,6 +339,36 @@ impl CodeViewerState {
             _ => {}
         }
     }
+
+    /// Close all tabs.
+    pub(super) fn close_all_tabs(&mut self) {
+        self.tabs.clear();
+        self.active_tab = None;
+    }
+
+    /// Close all tabs except the one at `keep_idx`.
+    pub(super) fn close_other_tabs(&mut self, keep_idx: usize) {
+        if keep_idx >= self.tabs.len() {
+            return;
+        }
+        let kept = self.tabs.remove(keep_idx);
+        self.tabs.clear();
+        self.tabs.push(kept);
+        self.active_tab = Some(0);
+    }
+
+    /// Close all tabs to the right of `idx` (exclusive).
+    pub(super) fn close_tabs_to_right(&mut self, idx: usize) {
+        if idx + 1 < self.tabs.len() {
+            self.tabs.truncate(idx + 1);
+        }
+        // Fix active_tab if it was beyond the truncated range
+        if let Some(active) = self.active_tab {
+            if active >= self.tabs.len() {
+                self.active_tab = Some(self.tabs.len() - 1);
+            }
+        }
+    }
 }
 
 /// State for in-file and project-wide search.
