@@ -480,8 +480,10 @@ impl DirigentApp {
             let mut goto_def_word: Option<String> = None;
 
             // Handle scroll-to-line requests (from search, cue navigation, etc.)
+            // show_rows uses row_height + item_spacing.y per row, so include spacing.
             let scroll_offset = self.viewer.scroll_to_line.take().map(|target_line| {
-                (target_line.saturating_sub(1)) as f32 * line_height
+                let row_height_with_spacing = line_height + ui.spacing().item_spacing.y;
+                (target_line.saturating_sub(1)) as f32 * row_height_with_spacing
             });
 
             // Check if Cmd is held (for go-to-definition)
