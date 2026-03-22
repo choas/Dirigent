@@ -339,6 +339,35 @@ impl CodeViewerState {
             _ => {}
         }
     }
+
+    /// Close all tabs.
+    pub(super) fn close_all_tabs(&mut self) {
+        self.tabs.clear();
+        self.active_tab = None;
+    }
+
+    /// Close all tabs except the one at `keep_idx`.
+    pub(super) fn close_other_tabs(&mut self, keep_idx: usize) {
+        if keep_idx >= self.tabs.len() {
+            return;
+        }
+        let kept = self.tabs.remove(keep_idx);
+        self.tabs.clear();
+        self.tabs.push(kept);
+        self.active_tab = Some(0);
+    }
+
+    /// Close all tabs to the right of `idx` (exclusive).
+    pub(super) fn close_tabs_to_right(&mut self, idx: usize) {
+        if idx + 1 < self.tabs.len() {
+            self.tabs.truncate(idx + 1);
+        }
+        if let Some(active) = self.active_tab {
+            if active > idx {
+                self.active_tab = Some(idx);
+            }
+        }
+    }
 }
 
 /// State for in-file and project-wide search.
@@ -411,6 +440,10 @@ pub(super) struct GitState {
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Archived worktree DBs (cached list).
+    pub(super) archived_dbs: Vec<git::ArchivedDb>,
+    /// Whether the archived DBs section is expanded in the worktree panel.
+    pub(super) show_archived_dbs: bool,
 }
 
 pub struct DirigentApp {
@@ -731,6 +764,8 @@ impl DirigentApp {
                 import_pr_rx: None,
                 notifying_pr: false,
                 pr_notify_rx: None,
+                archived_dbs: Vec::new(),
+                show_archived_dbs: false,
             },
             settings,
             semantic,
@@ -1553,6 +1588,10 @@ impl DirigentApp {
 
     fn reload_worktrees(&mut self) {
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        // Refresh archived DBs list from main worktree
+        if let Ok(main_path) = git::main_worktree_path(&self.project_root) {
+            self.git.archived_dbs = git::list_archived_dbs(&main_path);
+        }
     }
 
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).

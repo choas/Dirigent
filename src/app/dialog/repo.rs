@@ -97,6 +97,8 @@ impl DirigentApp {
         let mut switch_to: Option<PathBuf> = None;
         let mut remove_path: Option<PathBuf> = None;
         let mut create_name: Option<String> = None;
+        let mut delete_archive: Option<PathBuf> = None;
+        let mut reveal_path: Option<PathBuf> = None;
         let fs = self.settings.font_size;
 
         egui::Window::new("Git Worktrees")
@@ -166,6 +168,52 @@ impl DirigentApp {
                         create_name = Some(self.git.new_worktree_name.clone());
                     }
                 });
+
+                // Archived worktree DBs section
+                if !self.git.archived_dbs.is_empty() {
+                    ui.add_space(SPACE_SM);
+                    let header = format!(
+                        "{} Archived Worktree DBs ({})",
+                        if self.git.show_archived_dbs { "\u{25BC}" } else { "\u{25B6}" },
+                        self.git.archived_dbs.len()
+                    );
+                    if ui
+                        .selectable_label(false, egui::RichText::new(&header).strong())
+                        .clicked()
+                    {
+                        self.git.show_archived_dbs = !self.git.show_archived_dbs;
+                    }
+
+                    if self.git.show_archived_dbs {
+                        for db in &self.git.archived_dbs {
+                            ui.horizontal(|ui| {
+                                ui.label(&db.name);
+                                let size_kb = db.size_bytes as f64 / 1024.0;
+                                let size_str = if size_kb >= 1024.0 {
+                                    format!("{:.1} MB", size_kb / 1024.0)
+                                } else {
+                                    format!("{:.0} KB", size_kb)
+                                };
+                                ui.label(
+                                    egui::RichText::new(size_str)
+                                        .small()
+                                        .color(self.semantic.secondary_text),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("Delete").clicked() {
+                                            delete_archive = Some(db.path.clone());
+                                        }
+                                        if ui.small_button("Reveal").clicked() {
+                                            reveal_path = Some(db.path.clone());
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    }
+                }
             });
 
         self.git.show_worktree_panel = open;
@@ -180,9 +228,48 @@ impl DirigentApp {
         }
 
         if let Some(path) = remove_path {
+            // Archive the worktree's DB before removal
+            let archive_msg = match git::main_worktree_path(&self.project_root) {
+                Ok(main_path) => {
+                    // Find the worktree name (branch name) for the archive filename
+                    let wt_name = self
+                        .git
+                        .worktrees
+                        .iter()
+                        .find(|wt| wt.path == path)
+                        .map(|wt| wt.name.clone())
+                        .unwrap_or_else(|| {
+                            path.file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "unknown".to_string())
+                        });
+                    match git::archive_worktree_db(&main_path, &path, &wt_name) {
+                        Ok(Some(archive_path)) => {
+                            let name = archive_path
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            Some(format!("DB archived as {}", name))
+                        }
+                        Ok(None) => None, // No DB to archive
+                        Err(e) => {
+                            eprintln!("Failed to archive worktree DB: {}", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Could not determine main worktree path: {}", e);
+                    None
+                }
+            };
+
             match git::remove_worktree(&self.project_root, &path) {
                 Ok(()) => {
                     self.reload_worktrees();
+                    if let Some(msg) = archive_msg {
+                        self.set_status_message(format!("Worktree removed. {}", msg));
+                    }
                 }
                 Err(e) => {
                     self.set_status_message(format!("Failed to remove worktree: {}", e));
@@ -199,6 +286,24 @@ impl DirigentApp {
                 Err(e) => {
                     self.set_status_message(format!("Failed to create worktree: {}", e));
                 }
+            }
+        }
+
+        if let Some(path) = delete_archive {
+            if std::fs::remove_file(&path).is_ok() {
+                self.reload_worktrees(); // refreshes archived_dbs list too
+            } else {
+                self.set_status_message("Failed to delete archived DB".to_string());
+            }
+        }
+
+        if let Some(path) = reveal_path {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open")
+                    .arg("-R")
+                    .arg(&path)
+                    .spawn();
             }
         }
     }
