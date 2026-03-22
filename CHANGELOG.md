@@ -2,6 +2,22 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.0] - 2026-03-22
+
+### Added
+- Code understanding: symbol parsing, quick-open (Cmd+P), file tabs, breadcrumbs, and go-to-definition
+- GitHub Pull Request creation dialog
+- PR findings import with analyze-and-fix workflow
+- Highlighted Push button on Done cues when local commits are ahead of remote
+- Keyboard navigation (arrow keys) in code viewer
+- Pagination for Archived column (show 50 with load more)
+
+### Fixed
+- Cancel superseded go-to-definition requests
+- Worktree creation when no remote repo is configured
+- Various code quality fixes from PR findings analysis
+- Resolved all compiler warnings
+
 ## [0.2.6] - 2026-03-20
 
 ### Changed
