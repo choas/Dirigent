@@ -639,7 +639,8 @@ impl DirigentApp {
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
             let ahead_of_remote = git::get_ahead_of_remote(&project_root);
-            let commit_history = git::read_commit_history(&project_root, 10);
+            let commit_history =
+                git::read_commit_history(&project_root, 10_usize.max(ahead_of_remote));
             let commit_history_total = git::count_commits(&project_root);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
             (
@@ -1326,8 +1327,8 @@ impl DirigentApp {
     }
 
     fn reload_commit_history(&mut self) {
-        self.git.commit_history =
-            git::read_commit_history(&self.project_root, self.git.commit_history_limit);
+        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
     }
 
@@ -1515,7 +1516,8 @@ impl DirigentApp {
         self.viewer.quick_open_query.clear();
         self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
-        self.git.commit_history = git::read_commit_history(&self.project_root, 10);
+        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
         self.expanded_dirs.clear();
         self.diff_review = None;
