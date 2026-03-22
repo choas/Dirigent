@@ -469,7 +469,9 @@ impl DirigentApp {
                             let max_msg_chars = ((avail_width / char_width) as usize)
                                 .saturating_sub(hash_prefix_len)
                                 .max(10);
-                            for commit in &self.git.commit_history {
+                            let ahead = self.git.ahead_of_remote;
+                            for (idx, commit) in self.git.commit_history.iter().enumerate() {
+                                let is_unpushed = idx < ahead;
                                 let msg = if commit.message.len() > max_msg_chars + 3 {
                                     format!(
                                         "{}...",
@@ -478,19 +480,32 @@ impl DirigentApp {
                                 } else {
                                     commit.message.clone()
                                 };
-                                let label = format!("{} {}", commit.short_hash, msg);
-                                if ui
-                                    .selectable_label(
-                                        false,
-                                        egui::RichText::new(&label).monospace().small(),
+                                let dot = if is_unpushed { "● " } else { "" };
+                                let label = format!("{}{} {}", dot, commit.short_hash, msg);
+                                let mut text = egui::RichText::new(&label).monospace().small();
+                                if is_unpushed {
+                                    text = text.color(ui.visuals().warn_fg_color);
+                                }
+                                let hover = if is_unpushed {
+                                    format!(
+                                        "⬆ Not pushed\n{} - {}\n{}\n{}",
+                                        commit.short_hash,
+                                        commit.author,
+                                        commit.message,
+                                        commit.time_ago
                                     )
-                                    .on_hover_text(format!(
+                                } else {
+                                    format!(
                                         "{} - {}\n{}\n{}",
                                         commit.short_hash,
                                         commit.author,
                                         commit.message,
                                         commit.time_ago
-                                    ))
+                                    )
+                                };
+                                if ui
+                                    .selectable_label(false, text)
+                                    .on_hover_text(hover)
                                     .clicked()
                                 {
                                     clicked_commit = Some((

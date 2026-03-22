@@ -339,6 +339,35 @@ impl CodeViewerState {
             _ => {}
         }
     }
+
+    /// Close all tabs.
+    pub(super) fn close_all_tabs(&mut self) {
+        self.tabs.clear();
+        self.active_tab = None;
+    }
+
+    /// Close all tabs except the one at `keep_idx`.
+    pub(super) fn close_other_tabs(&mut self, keep_idx: usize) {
+        if keep_idx >= self.tabs.len() {
+            return;
+        }
+        let kept = self.tabs.remove(keep_idx);
+        self.tabs.clear();
+        self.tabs.push(kept);
+        self.active_tab = Some(0);
+    }
+
+    /// Close all tabs to the right of `idx` (exclusive).
+    pub(super) fn close_tabs_to_right(&mut self, idx: usize) {
+        if idx + 1 < self.tabs.len() {
+            self.tabs.truncate(idx + 1);
+        }
+        if let Some(active) = self.active_tab {
+            if active > idx {
+                self.active_tab = Some(idx);
+            }
+        }
+    }
 }
 
 /// State for in-file and project-wide search.
@@ -411,6 +440,16 @@ pub(super) struct GitState {
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Archived worktree DBs (cached list).
+    pub(super) archived_dbs: Vec<git::ArchivedDb>,
+    /// Whether the archived DBs section is expanded in the worktree panel.
+    pub(super) show_archived_dbs: bool,
+    /// Pending worktree removal that needs force confirmation (path, error message).
+    pub(super) pending_force_remove: Option<(PathBuf, String)>,
+    /// Archive message from the archive step (preserved for force-remove flow).
+    pub(super) pending_archive_msg: Option<String>,
+    /// Pending archived DB deletion that needs user confirmation.
+    pub(super) pending_delete_archive: Option<PathBuf>,
 }
 
 pub struct DirigentApp {
@@ -639,7 +678,8 @@ impl DirigentApp {
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
             let ahead_of_remote = git::get_ahead_of_remote(&project_root);
-            let commit_history = git::read_commit_history(&project_root, 10);
+            let commit_history =
+                git::read_commit_history(&project_root, 10_usize.max(ahead_of_remote));
             let commit_history_total = git::count_commits(&project_root);
             let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
             (
@@ -730,6 +770,11 @@ impl DirigentApp {
                 import_pr_rx: None,
                 notifying_pr: false,
                 pr_notify_rx: None,
+                archived_dbs: Vec::new(),
+                show_archived_dbs: false,
+                pending_force_remove: None,
+                pending_archive_msg: None,
+                pending_delete_archive: None,
             },
             settings,
             semantic,
@@ -1326,8 +1371,8 @@ impl DirigentApp {
     }
 
     fn reload_commit_history(&mut self) {
-        self.git.commit_history =
-            git::read_commit_history(&self.project_root, self.git.commit_history_limit);
+        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
     }
 
@@ -1515,7 +1560,8 @@ impl DirigentApp {
         self.viewer.quick_open_query.clear();
         self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
-        self.git.commit_history = git::read_commit_history(&self.project_root, 10);
+        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
         self.expanded_dirs.clear();
         self.diff_review = None;
@@ -1551,6 +1597,10 @@ impl DirigentApp {
 
     fn reload_worktrees(&mut self) {
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        // Refresh archived DBs list from main worktree
+        if let Ok(main_path) = git::main_worktree_path(&self.project_root) {
+            self.git.archived_dbs = git::list_archived_dbs(&main_path);
+        }
     }
 
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).
@@ -1825,6 +1875,8 @@ impl eframe::App for DirigentApp {
 
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
+        self.render_force_remove_dialog(ctx); // floating
+        self.render_delete_archive_dialog(ctx); // floating
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating

@@ -779,11 +779,22 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     Ok(wt_path)
 }
 
-pub(crate) fn remove_worktree(repo_path: &Path, wt_path: &Path) -> crate::error::Result<()> {
+pub(crate) fn remove_worktree(
+    repo_path: &Path,
+    wt_path: &Path,
+    force: bool,
+) -> crate::error::Result<()> {
     use std::process::Command;
 
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    let wt_str = wt_path.to_string_lossy();
+    args.push(&wt_str);
+
     let output = Command::new("git")
-        .args(["worktree", "remove", &wt_path.to_string_lossy()])
+        .args(&args)
         .current_dir(repo_path)
         .output()?;
 
@@ -901,6 +912,110 @@ pub(crate) fn build_pr_body(repo_path: &Path, base: &str) -> String {
         .join("\n");
 
     format!("## Changes\n\n{}", bullet_list)
+}
+
+/// Returns the path to the main (non-linked) worktree / main repo.
+/// The first entry in `git worktree list` is always the main worktree.
+pub(crate) fn main_worktree_path(repo_path: &Path) -> crate::error::Result<PathBuf> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            return Ok(PathBuf::from(rest));
+        }
+    }
+
+    Err(DirigentError::GitCommand(
+        "no main worktree found".into(),
+    ))
+}
+
+/// Archives the worktree's .Dirigent/Dirigent.db to the main repo's
+/// .Dirigent/archives/<branch-name>.db before removal.
+/// Returns Ok(Some(archive_path)) if archived, Ok(None) if no DB existed.
+pub(crate) fn archive_worktree_db(
+    main_repo_path: &Path,
+    worktree_path: &Path,
+    worktree_name: &str,
+) -> crate::error::Result<Option<PathBuf>> {
+    let src_db = worktree_path.join(".Dirigent").join("Dirigent.db");
+    if !src_db.exists() {
+        return Ok(None);
+    }
+
+    let archives_dir = main_repo_path.join(".Dirigent").join("archives");
+    std::fs::create_dir_all(&archives_dir).map_err(|e| {
+        DirigentError::GitCommand(format!("failed to create archives dir: {}", e))
+    })?;
+
+    // Sanitize worktree name for use as filename (replace path separators)
+    let safe_name = worktree_name.replace(['/', '\\'], "-");
+
+    let mut target = archives_dir.join(format!("{}.db", safe_name));
+    if target.exists() {
+        // Append UTC timestamp to avoid collision
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
+        target = archives_dir.join(format!("{}_{}.db", safe_name, now));
+    }
+
+    std::fs::copy(&src_db, &target).map_err(|e| {
+        DirigentError::GitCommand(format!("failed to archive worktree DB: {}", e))
+    })?;
+
+    Ok(Some(target))
+}
+
+/// Archived worktree DB entry.
+#[derive(Debug, Clone)]
+pub(crate) struct ArchivedDb {
+    pub name: String,
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub modified: std::time::SystemTime,
+}
+
+/// Lists all archived worktree DBs in <main_repo>/.Dirigent/archives/.
+pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
+    let archives_dir = main_repo_path.join(".Dirigent").join("archives");
+    let entries = match std::fs::read_dir(&archives_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut result = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("db") {
+            if let Ok(meta) = entry.metadata() {
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                result.push(ArchivedDb {
+                    name,
+                    path,
+                    size_bytes: meta.len(),
+                    modified,
+                });
+            }
+        }
+    }
+    // Sort by modified time, newest first
+    result.sort_by(|a, b| b.modified.cmp(&a.modified));
+    result
 }
 
 #[cfg(test)]

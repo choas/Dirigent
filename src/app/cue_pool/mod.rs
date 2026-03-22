@@ -589,23 +589,67 @@ impl DirigentApp {
                                 if review_cues.is_empty() {
                                     self.set_status_message("No cues in Review".into());
                                 } else {
-                                    // Build commit message summarizing all Review cues
-                                    let summary_lines: Vec<String> = review_cues
+                                    // Build commit message with descriptive subject and full cue texts
+                                    let subject = if review_cues.len() == 1 {
+                                        let first_line = review_cues[0].text.lines()
+                                            .find(|l| !l.trim().is_empty())
+                                            .unwrap_or_else(|| review_cues[0].text.lines().next().unwrap_or(&review_cues[0].text));
+                                        let trimmed = first_line.trim();
+                                        let trimmed = if trimmed.is_empty() {
+                                            let fallback = review_cues[0].text.trim();
+                                            if fallback.is_empty() { "" } else { fallback }
+                                        } else {
+                                            trimmed
+                                        };
+                                        if trimmed.is_empty() {
+                                            "Dirigent".to_string()
+                                        } else {
+                                            let prefix = "Dirigent: ";
+                                            let allowed = 72 - prefix.len();
+                                            if trimmed.len() > allowed {
+                                                format!("{}{}...", prefix, crate::app::truncate_str(trimmed, allowed - 3))
+                                            } else {
+                                                format!("{}{}", prefix, trimmed)
+                                            }
+                                        }
+                                    } else {
+                                        // Collect first non-empty lines to build a combined subject
+                                        let short_names: Vec<&str> = review_cues
+                                            .iter()
+                                            .filter_map(|c| {
+                                                let first = c.text.lines()
+                                                    .find(|l| !l.trim().is_empty())
+                                                    .unwrap_or_else(|| c.text.lines().next().unwrap_or(&c.text));
+                                                let trimmed = first.trim();
+                                                if trimmed.is_empty() { None } else { Some(trimmed) }
+                                            })
+                                            .collect();
+                                        if short_names.is_empty() {
+                                            format!("Dirigent: {} cues", review_cues.len())
+                                        } else {
+                                            let combined = short_names.join(", ");
+                                            if combined.len() <= 62 {
+                                                format!("Dirigent: {}", combined)
+                                            } else {
+                                                let truncated = crate::app::truncate_str(&combined, 59);
+                                                if truncated.is_empty() {
+                                                    format!("Dirigent: {} cues", review_cues.len())
+                                                } else {
+                                                    format!("Dirigent: {}...", truncated)
+                                                }
+                                            }
+                                        }
+                                    };
+                                    let cue_details: Vec<String> = review_cues
                                         .iter()
                                         .map(|c| {
-                                            let text: String = c.text.lines().next().unwrap_or(&c.text).to_string();
-                                            if text.len() > 80 {
-                                                format!("- {}...", crate::app::truncate_str(&text, 77))
-                                            } else {
-                                                format!("- {}", text)
-                                            }
+                                            format!("- {}", c.text.trim())
                                         })
                                         .collect();
                                     let commit_msg = format!(
-                                        "Dirigent: {} cue{} committed\n\n{}",
-                                        review_cues.len(),
-                                        if review_cues.len() == 1 { "" } else { "s" },
-                                        summary_lines.join("\n"),
+                                        "{}\n\n{}",
+                                        subject,
+                                        cue_details.join("\n\n"),
                                     );
                                     let review_ids: Vec<i64> =
                                         review_cues.iter().map(|c| c.id).collect();

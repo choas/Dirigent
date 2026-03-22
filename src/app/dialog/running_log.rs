@@ -109,7 +109,7 @@ impl DirigentApp {
                         }
                         let reply_text = &mut self.conversation_reply;
                         let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
-                        let desired_rows = line_count.max(1).min(8);
+                        let desired_rows = line_count.clamp(1, 8);
                         let input_response = ui.add(
                             egui::TextEdit::multiline(reply_text)
                                 .desired_width(ui.available_width() - 44.0)
