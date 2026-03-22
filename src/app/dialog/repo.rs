@@ -420,7 +420,6 @@ impl DirigentApp {
             self.git.pending_force_remove = None;
             self.git.pending_archive_msg = None;
         } else if force {
-            let path = path.clone();
             self.git.pending_force_remove = None;
             self.do_remove_worktree(path, true);
         }
