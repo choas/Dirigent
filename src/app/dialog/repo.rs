@@ -324,6 +324,31 @@ impl DirigentApp {
             }
         };
 
+        // Preflight: check for dirty files before attempting removal
+        if !force {
+            let dirty = git::get_dirty_files(&path);
+            if !dirty.is_empty() {
+                let mut files: Vec<_> = dirty.iter().collect();
+                files.sort_by_key(|(p, _)| (*p).clone());
+                let listing: Vec<String> = files
+                    .iter()
+                    .take(10)
+                    .map(|(p, status)| format!("  {} {}", status, p))
+                    .collect();
+                let mut msg = format!(
+                    "{} modified or untracked file(s):\n{}",
+                    dirty.len(),
+                    listing.join("\n")
+                );
+                if dirty.len() > 10 {
+                    msg.push_str(&format!("\n  … and {} more", dirty.len() - 10));
+                }
+                self.git.pending_force_remove = Some((path, msg));
+                self.git.pending_archive_msg = archive_msg;
+                return;
+            }
+        }
+
         match git::remove_worktree(&self.project_root, &path, force) {
             Ok(()) => {
                 self.git.pending_force_remove = None;
@@ -334,17 +359,7 @@ impl DirigentApp {
                 }
             }
             Err(e) => {
-                let err_str = e.to_string();
-                if !force
-                    && (err_str.contains("modified or untracked")
-                        || err_str.contains("use --force"))
-                {
-                    // Store for force-remove confirmation dialog
-                    self.git.pending_force_remove = Some((path, err_str));
-                    self.git.pending_archive_msg = archive_msg;
-                } else {
-                    self.set_status_message(format!("Failed to remove worktree: {}", err_str));
-                }
+                self.set_status_message(format!("Failed to remove worktree: {}", e));
             }
         }
     }
