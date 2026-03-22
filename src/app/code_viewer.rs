@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
@@ -220,7 +220,14 @@ impl DirigentApp {
                 // Use selection or an estimated visible line
                 let current_line = self.viewer.tabs[active_idx]
                     .selection_start
-                    .unwrap_or(1);
+                    .unwrap_or_else(|| {
+                        let offset = self.viewer.tabs[active_idx].scroll_offset;
+                        if offset > 0.0 {
+                            (offset / 16.0) as usize + 1
+                        } else {
+                            1
+                        }
+                    });
                 if let Some(sym) =
                     symbols::enclosing_symbol(&self.viewer.tabs[active_idx].symbols, current_line)
                 {
@@ -602,7 +609,7 @@ impl DirigentApp {
                                         } else {
                                             approx_char_width * (ch.len_utf8().max(1) as f32).min(2.0)
                                         };
-                                        if accumulated + ch_width * 0.5 > x_offset {
+                                        if accumulated + ch_width > x_offset {
                                             byte_offset = idx;
                                             break;
                                         }
