@@ -6,6 +6,7 @@ mod git_init;
 mod import_pr;
 mod play_variables;
 mod pull_diverged;
+mod pull_unmerged;
 mod repo;
 mod running_log;
 mod settings;

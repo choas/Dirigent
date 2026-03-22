@@ -422,6 +422,8 @@ pub(super) struct GitState {
     pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Show dialog when pull fails due to diverged branches.
     pub(super) show_pull_diverged: bool,
+    /// Show dialog when pull fails due to unmerged files.
+    pub(super) show_pull_unmerged: bool,
     /// Whether the Create PR dialog is open.
     pub(super) show_create_pr: bool,
     /// PR dialog fields.
@@ -760,6 +762,7 @@ impl DirigentApp {
                 pulling: false,
                 pull_rx: None,
                 show_pull_diverged: false,
+                show_pull_unmerged: false,
                 show_create_pr: false,
                 pr_title: String::new(),
                 pr_body: String::new(),
@@ -1379,6 +1382,12 @@ impl DirigentApp {
                             self.set_status_message(
                                 "Pull: branches have diverged — choose a strategy".to_string(),
                             );
+                        } else if e.contains("unmerged files") || e.contains("unresolved conflict")
+                        {
+                            self.git.show_pull_unmerged = true;
+                            self.set_status_message(
+                                "Pull: resolve unmerged files first".to_string(),
+                            );
                         } else {
                             self.set_status_message(format!("Pull failed: {}", e));
                         }
@@ -1906,6 +1915,7 @@ impl eframe::App for DirigentApp {
         self.render_git_init_dialog(ctx); // floating
         self.render_create_pr_dialog(ctx); // floating
         self.render_pull_diverged_dialog(ctx); // floating
+        self.render_pull_unmerged_dialog(ctx); // floating
         self.render_import_pr_dialog(ctx); // floating
     }
 }
