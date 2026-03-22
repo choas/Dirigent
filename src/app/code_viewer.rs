@@ -270,9 +270,11 @@ impl DirigentApp {
                         let mut warn_count = 0usize;
                         for diags in self.agent_state.latest_diagnostics.values() {
                             for d in diags {
-                                if d.file == rel_path
-                                    || rel_path.ends_with(&d.file)
-                                    || d.file.ends_with(&rel_path)
+                                let (rel, diag_p) =
+                                    (Path::new(&rel_path), Path::new(&d.file));
+                                if diag_p == rel
+                                    || rel.ends_with(diag_p)
+                                    || diag_p.ends_with(rel)
                                 {
                                     match d.severity {
                                         Severity::Error => err_count += 1,
@@ -386,9 +388,11 @@ impl DirigentApp {
                 let mut map: HashMap<usize, Severity> = HashMap::new();
                 for diags in self.agent_state.latest_diagnostics.values() {
                     for d in diags {
-                        if d.file == rel_path
-                            || rel_path.ends_with(&d.file)
-                            || d.file.ends_with(&rel_path)
+                        let (rel, diag_p) =
+                            (Path::new(&rel_path), Path::new(&d.file));
+                        if diag_p == rel
+                            || rel.ends_with(diag_p)
+                            || diag_p.ends_with(rel)
                         {
                             let entry = map.entry(d.line).or_insert(Severity::Info);
                             match (&entry, &d.severity) {
@@ -408,9 +412,11 @@ impl DirigentApp {
                 let mut map: HashMap<usize, Vec<String>> = HashMap::new();
                 for diags in self.agent_state.latest_diagnostics.values() {
                     for d in diags {
-                        if d.file == rel_path
-                            || rel_path.ends_with(&d.file)
-                            || d.file.ends_with(&rel_path)
+                        let (rel, diag_p) =
+                            (Path::new(&rel_path), Path::new(&d.file));
+                        if diag_p == rel
+                            || rel.ends_with(diag_p)
+                            || diag_p.ends_with(rel)
                         {
                             map.entry(d.line).or_default().push(d.message.clone());
                         }
@@ -966,7 +972,8 @@ impl DirigentApp {
         }
 
         // Cancel any previous in-flight search and bump generation
-        self.goto_def_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.goto_def_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.goto_def_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.goto_def_gen = self.goto_def_gen.wrapping_add(1);
         let gen = self.goto_def_gen;
