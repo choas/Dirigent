@@ -312,14 +312,20 @@ impl DirigentApp {
                         }
                         Ok(None) => None,
                         Err(e) => {
-                            eprintln!("Failed to archive worktree DB: {}", e);
-                            None
+                            self.set_status_message(format!(
+                                "Cannot remove worktree: failed to archive DB: {}",
+                                e
+                            ));
+                            return;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Could not determine main worktree path: {}", e);
-                    None
+                    self.set_status_message(format!(
+                        "Cannot remove worktree: could not determine main worktree path: {}",
+                        e
+                    ));
+                    return;
                 }
             }
         };
