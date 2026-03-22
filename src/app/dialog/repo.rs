@@ -259,6 +259,23 @@ impl DirigentApp {
                     .arg(&path)
                     .spawn();
             }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", path.display()))
+                    .spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let dir = if path.is_dir() {
+                    path.clone()
+                } else {
+                    path.parent().map(|p| p.to_path_buf()).unwrap_or(path.clone())
+                };
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&dir)
+                    .spawn();
+            }
         }
     }
 
