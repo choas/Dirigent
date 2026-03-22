@@ -283,38 +283,44 @@ impl DirigentApp {
     /// If removal fails due to modified/untracked files, stores state for the
     /// force-remove confirmation dialog instead of just showing a status message.
     fn do_remove_worktree(&mut self, path: PathBuf, force: bool) {
-        // Archive the worktree's DB before removal
-        let archive_msg = match git::main_worktree_path(&self.project_root) {
-            Ok(main_path) => {
-                let wt_name = self
-                    .git
-                    .worktrees
-                    .iter()
-                    .find(|wt| wt.path == path)
-                    .map(|wt| wt.name.clone())
-                    .unwrap_or_else(|| {
-                        path.file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "unknown".to_string())
-                    });
-                match git::archive_worktree_db(&main_path, &path, &wt_name) {
-                    Ok(Some(archive_path)) => {
-                        let name = archive_path
-                            .file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        Some(format!("DB archived as {}", name))
-                    }
-                    Ok(None) => None,
-                    Err(e) => {
-                        eprintln!("Failed to archive worktree DB: {}", e);
-                        None
+        // On a force-confirmation retry, reuse the previously stored archive
+        // message instead of re-archiving the DB.
+        let archive_msg = if force && self.git.pending_archive_msg.is_some() {
+            self.git.pending_archive_msg.clone()
+        } else {
+            // Archive the worktree's DB before removal
+            match git::main_worktree_path(&self.project_root) {
+                Ok(main_path) => {
+                    let wt_name = self
+                        .git
+                        .worktrees
+                        .iter()
+                        .find(|wt| wt.path == path)
+                        .map(|wt| wt.name.clone())
+                        .unwrap_or_else(|| {
+                            path.file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "unknown".to_string())
+                        });
+                    match git::archive_worktree_db(&main_path, &path, &wt_name) {
+                        Ok(Some(archive_path)) => {
+                            let name = archive_path
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            Some(format!("DB archived as {}", name))
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            eprintln!("Failed to archive worktree DB: {}", e);
+                            None
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                eprintln!("Could not determine main worktree path: {}", e);
-                None
+                Err(e) => {
+                    eprintln!("Could not determine main worktree path: {}", e);
+                    None
+                }
             }
         };
 
