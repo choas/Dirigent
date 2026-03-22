@@ -647,9 +647,20 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
     ))
 }
 
+/// Strategy for resolving diverged branches during pull.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PullStrategy {
+    /// Only fast-forward (default, safest).
+    FfOnly,
+    /// Merge with a merge commit.
+    Merge,
+    /// Rebase local commits on top of remote.
+    Rebase,
+}
+
 /// Pull the current branch from its remote (typically `origin`).
 /// Returns a summary string describing the result.
-pub(crate) fn git_pull(repo_path: &Path) -> crate::error::Result<String> {
+pub(crate) fn git_pull(repo_path: &Path, strategy: PullStrategy) -> crate::error::Result<String> {
     use std::process::Command;
 
     // Determine current branch
@@ -662,8 +673,14 @@ pub(crate) fn git_pull(repo_path: &Path) -> crate::error::Result<String> {
         .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
         .to_string();
 
+    let args: Vec<&str> = match strategy {
+        PullStrategy::FfOnly => vec!["pull", "--ff-only"],
+        PullStrategy::Merge => vec!["pull", "--no-ff"],
+        PullStrategy::Rebase => vec!["pull", "--rebase"],
+    };
+
     let output = Command::new("git")
-        .args(["pull", "--ff-only"])
+        .args(&args)
         .current_dir(repo_path)
         .output()?;
 
@@ -677,7 +694,15 @@ pub(crate) fn git_pull(repo_path: &Path) -> crate::error::Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let summary = stdout.lines().next().unwrap_or("ok").trim();
-    Ok(format!("Pulled {} ({})", branch_name, summary))
+    let strategy_label = match strategy {
+        PullStrategy::FfOnly => "",
+        PullStrategy::Merge => ", merge",
+        PullStrategy::Rebase => ", rebase",
+    };
+    Ok(format!(
+        "Pulled {}{} ({})",
+        branch_name, strategy_label, summary
+    ))
 }
 
 // -- Worktree support --

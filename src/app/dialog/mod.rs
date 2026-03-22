@@ -5,6 +5,7 @@ mod diff_review;
 mod git_init;
 mod import_pr;
 mod play_variables;
+mod pull_diverged;
 mod repo;
 mod running_log;
 mod settings;

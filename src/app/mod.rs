@@ -420,6 +420,8 @@ pub(super) struct GitState {
     /// Whether a git pull is currently in progress.
     pub(super) pulling: bool,
     pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Show dialog when pull fails due to diverged branches.
+    pub(super) show_pull_diverged: bool,
     /// Whether the Create PR dialog is open.
     pub(super) show_create_pr: bool,
     /// PR dialog fields.
@@ -747,6 +749,7 @@ impl DirigentApp {
                 push_rx: None,
                 pulling: false,
                 pull_rx: None,
+                show_pull_diverged: false,
                 show_create_pr: false,
                 pr_title: String::new(),
                 pr_body: String::new(),
@@ -931,6 +934,11 @@ impl DirigentApp {
 
     /// Start an async git pull operation.
     fn start_git_pull(&mut self) {
+        self.start_git_pull_with_strategy(git::PullStrategy::FfOnly);
+    }
+
+    /// Start an async git pull with a specific strategy.
+    fn start_git_pull_with_strategy(&mut self, strategy: git::PullStrategy) {
         if self.git.pulling {
             return;
         }
@@ -939,10 +947,15 @@ impl DirigentApp {
         self.git.pull_rx = Some(rx);
         let root = self.project_root.clone();
         std::thread::spawn(move || {
-            let result = git::git_pull(&root).map_err(|e| e.to_string());
+            let result = git::git_pull(&root, strategy).map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
-        self.set_status_message("Pulling...".to_string());
+        let label = match strategy {
+            git::PullStrategy::FfOnly => "Pulling...",
+            git::PullStrategy::Merge => "Pulling (merge)...",
+            git::PullStrategy::Rebase => "Pulling (rebase)...",
+        };
+        self.set_status_message(label.to_string());
     }
 
     /// Open the Create PR dialog with pre-filled fields.
@@ -1343,7 +1356,17 @@ impl DirigentApp {
                         self.reload_commit_history();
                     }
                     Err(e) => {
-                        self.set_status_message(format!("Pull failed: {}", e));
+                        if e.contains("Not possible to fast-forward")
+                            || e.contains("Diverging branches")
+                            || e.contains("not possible to fast-forward")
+                        {
+                            self.git.show_pull_diverged = true;
+                            self.set_status_message(
+                                "Pull: branches have diverged — choose a strategy".to_string(),
+                            );
+                        } else {
+                            self.set_status_message(format!("Pull failed: {}", e));
+                        }
                     }
                 }
             }
@@ -1861,6 +1884,7 @@ impl eframe::App for DirigentApp {
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
         self.render_create_pr_dialog(ctx); // floating
+        self.render_pull_diverged_dialog(ctx); // floating
         self.render_import_pr_dialog(ctx); // floating
     }
 }
