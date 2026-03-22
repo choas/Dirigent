@@ -423,14 +423,17 @@ impl DirigentApp {
                                 let _ = self.db.delete_cue(id);
                             }
                             CueAction::Navigate(file_path, line, line_end) => {
+                                self.push_nav_history();
                                 let full_path = self.project_root.join(&file_path);
-                                if self.viewer.current_file.as_ref() != Some(&full_path) {
+                                if self.viewer.current_file() != Some(&full_path) {
                                     self.load_file(full_path);
                                 } else {
                                     self.dismiss_central_overlays();
                                 }
-                                self.viewer.selection_start = Some(line);
-                                self.viewer.selection_end = Some(line_end.unwrap_or(line));
+                                if let Some(tab) = self.viewer.active_mut() {
+                                    tab.selection_start = Some(line);
+                                    tab.selection_end = Some(line_end.unwrap_or(line));
+                                }
                                 self.viewer.scroll_to_line = Some(line);
                             }
                             CueAction::ShowDiff(cue_id) => {
@@ -532,10 +535,19 @@ impl DirigentApp {
                                     CueStatus::Inbox,
                                 );
                                 let _ = self.db.log_activity(cue_id, "Reverted");
-                                // Reload file to show reverted content
-                                if let Some(ref path) = self.viewer.current_file {
-                                    let p = path.clone();
-                                    self.load_file(p);
+                                // Reload open tabs to show reverted content
+                                for tab in &mut self.viewer.tabs {
+                                    if let Ok(content) =
+                                        std::fs::read_to_string(&tab.file_path)
+                                    {
+                                        tab.content =
+                                            content.lines().map(String::from).collect();
+                                        let ext = std::path::Path::new(&tab.file_path)
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .unwrap_or("");
+                                        tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                                    }
                                 }
                                 self.reload_git_info();
                             }

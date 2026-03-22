@@ -32,7 +32,7 @@ const BINARY_EXTENSIONS: &[&str] = &[
     "gz", "bz2", "exe", "dll", "so", "dylib", "o", "a", "lib", "pdf", "db", "sqlite",
 ];
 
-fn is_binary_ext(path: &Path) -> bool {
+pub(super) fn is_binary_ext(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     BINARY_EXTENSIONS.iter().any(|&b| b == ext)
 }
@@ -119,9 +119,11 @@ impl DirigentApp {
             return;
         }
         let query = self.search.in_file_query.to_lowercase();
-        for (idx, line) in self.viewer.content.iter().enumerate() {
-            if line.to_lowercase().contains(&query) {
-                self.search.in_file_matches.push(idx + 1);
+        if let Some(tab) = self.viewer.active() {
+            for (idx, line) in tab.content.iter().enumerate() {
+                if line.to_lowercase().contains(&query) {
+                    self.search.in_file_matches.push(idx + 1);
+                }
             }
         }
         if !self.search.in_file_matches.is_empty() {
@@ -370,6 +372,7 @@ impl DirigentApp {
             });
 
         if let Some((path, line)) = navigate_to {
+            self.push_nav_history();
             self.load_file(path);
             self.viewer.scroll_to_line = Some(line);
         }
@@ -383,7 +386,7 @@ impl DirigentApp {
                 if let Some(ref mut review) = self.diff_review {
                     review.search_active = true;
                 }
-            } else if self.viewer.current_file.is_some() {
+            } else if self.viewer.current_file().is_some() {
                 self.search.in_file_active = true;
             }
         }

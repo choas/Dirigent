@@ -65,11 +65,18 @@ impl DirigentApp {
                 AgentStatus::Passed => {
                     self.set_status_message(format!("{} passed ({})", label, dur));
 
-                    // After format passes, reload the current file to show reformatted code
+                    // After format passes, reload open tabs to show reformatted code
                     if result.kind == AgentKind::Format {
-                        if let Some(ref path) = self.viewer.current_file {
-                            let p = path.clone();
-                            self.load_file(p);
+                        for tab in &mut self.viewer.tabs {
+                            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                                tab.content = content.lines().map(String::from).collect();
+                                let ext = tab
+                                    .file_path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("");
+                                tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                            }
                         }
                         self.reload_git_info();
                     }
