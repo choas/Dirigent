@@ -283,54 +283,9 @@ impl DirigentApp {
     /// If removal fails due to modified/untracked files, stores state for the
     /// force-remove confirmation dialog instead of just showing a status message.
     fn do_remove_worktree(&mut self, path: PathBuf, force: bool) {
-        // On a force-confirmation retry, reuse the previously stored archive
-        // message instead of re-archiving the DB.
-        let archive_msg = if force && self.git.pending_archive_msg.is_some() {
-            self.git.pending_archive_msg.clone()
-        } else {
-            // Archive the worktree's DB before removal
-            match git::main_worktree_path(&self.project_root) {
-                Ok(main_path) => {
-                    let wt_name = self
-                        .git
-                        .worktrees
-                        .iter()
-                        .find(|wt| wt.path == path)
-                        .map(|wt| wt.name.clone())
-                        .unwrap_or_else(|| {
-                            path.file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "unknown".to_string())
-                        });
-                    match git::archive_worktree_db(&main_path, &path, &wt_name) {
-                        Ok(Some(archive_path)) => {
-                            let name = archive_path
-                                .file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            Some(format!("DB archived as {}", name))
-                        }
-                        Ok(None) => None,
-                        Err(e) => {
-                            self.set_status_message(format!(
-                                "Cannot remove worktree: failed to archive DB: {}",
-                                e
-                            ));
-                            return;
-                        }
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(format!(
-                        "Cannot remove worktree: could not determine main worktree path: {}",
-                        e
-                    ));
-                    return;
-                }
-            }
-        };
-
-        // Preflight: check for dirty files before attempting removal
+        // Preflight: check for dirty files before attempting removal.
+        // No archive is created here — archiving only happens once the user
+        // confirms removal (or if there are no dirty files).
         if !force {
             let dirty = git::get_dirty_files(&path);
             if !dirty.is_empty() {
@@ -350,10 +305,51 @@ impl DirigentApp {
                     msg.push_str(&format!("\n  … and {} more", dirty.len() - 10));
                 }
                 self.git.pending_force_remove = Some((path, msg));
-                self.git.pending_archive_msg = archive_msg;
+                self.git.pending_archive_msg = None;
                 return;
             }
         }
+
+        // Archive the worktree's DB just before removal.
+        let archive_msg = match git::main_worktree_path(&self.project_root) {
+            Ok(main_path) => {
+                let wt_name = self
+                    .git
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.path == path)
+                    .map(|wt| wt.name.clone())
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    });
+                match git::archive_worktree_db(&main_path, &path, &wt_name) {
+                    Ok(Some(archive_path)) => {
+                        let name = archive_path
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        Some(format!("DB archived as {}", name))
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        self.set_status_message(format!(
+                            "Cannot remove worktree: failed to archive DB: {}",
+                            e
+                        ));
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                self.set_status_message(format!(
+                    "Cannot remove worktree: could not determine main worktree path: {}",
+                    e
+                ));
+                return;
+            }
+        };
 
         match git::remove_worktree(&self.project_root, &path, force) {
             Ok(()) => {
