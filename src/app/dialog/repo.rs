@@ -228,53 +228,7 @@ impl DirigentApp {
         }
 
         if let Some(path) = remove_path {
-            // Archive the worktree's DB before removal
-            let archive_msg = match git::main_worktree_path(&self.project_root) {
-                Ok(main_path) => {
-                    // Find the worktree name (branch name) for the archive filename
-                    let wt_name = self
-                        .git
-                        .worktrees
-                        .iter()
-                        .find(|wt| wt.path == path)
-                        .map(|wt| wt.name.clone())
-                        .unwrap_or_else(|| {
-                            path.file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "unknown".to_string())
-                        });
-                    match git::archive_worktree_db(&main_path, &path, &wt_name) {
-                        Ok(Some(archive_path)) => {
-                            let name = archive_path
-                                .file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            Some(format!("DB archived as {}", name))
-                        }
-                        Ok(None) => None, // No DB to archive
-                        Err(e) => {
-                            eprintln!("Failed to archive worktree DB: {}", e);
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Could not determine main worktree path: {}", e);
-                    None
-                }
-            };
-
-            match git::remove_worktree(&self.project_root, &path) {
-                Ok(()) => {
-                    self.reload_worktrees();
-                    if let Some(msg) = archive_msg {
-                        self.set_status_message(format!("Worktree removed. {}", msg));
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to remove worktree: {}", e));
-                }
-            }
+            self.do_remove_worktree(path, false);
         }
 
         if let Some(name) = create_name {
@@ -305,6 +259,130 @@ impl DirigentApp {
                     .arg(&path)
                     .spawn();
             }
+        }
+    }
+
+    /// Attempt to remove a worktree, archiving its DB first.
+    /// If removal fails due to modified/untracked files, stores state for the
+    /// force-remove confirmation dialog instead of just showing a status message.
+    fn do_remove_worktree(&mut self, path: PathBuf, force: bool) {
+        // Archive the worktree's DB before removal
+        let archive_msg = match git::main_worktree_path(&self.project_root) {
+            Ok(main_path) => {
+                let wt_name = self
+                    .git
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.path == path)
+                    .map(|wt| wt.name.clone())
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    });
+                match git::archive_worktree_db(&main_path, &path, &wt_name) {
+                    Ok(Some(archive_path)) => {
+                        let name = archive_path
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        Some(format!("DB archived as {}", name))
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        eprintln!("Failed to archive worktree DB: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Could not determine main worktree path: {}", e);
+                None
+            }
+        };
+
+        match git::remove_worktree(&self.project_root, &path, force) {
+            Ok(()) => {
+                self.git.pending_force_remove = None;
+                self.git.pending_archive_msg = None;
+                self.reload_worktrees();
+                if let Some(msg) = archive_msg {
+                    self.set_status_message(format!("Worktree removed. {}", msg));
+                }
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if !force
+                    && (err_str.contains("modified or untracked")
+                        || err_str.contains("use --force"))
+                {
+                    // Store for force-remove confirmation dialog
+                    self.git.pending_force_remove = Some((path, err_str));
+                    self.git.pending_archive_msg = archive_msg;
+                } else {
+                    self.set_status_message(format!("Failed to remove worktree: {}", err_str));
+                }
+            }
+        }
+    }
+
+    /// Renders the force-remove confirmation dialog when a worktree has
+    /// modified or untracked files.
+    pub(in crate::app) fn render_force_remove_dialog(&mut self, ctx: &egui::Context) {
+        let Some((ref path, ref error_msg)) = self.git.pending_force_remove else {
+            return;
+        };
+        let path = path.clone();
+        let error_msg = error_msg.clone();
+
+        let mut force = false;
+        let mut cancel = false;
+
+        egui::Window::new("Remove Worktree")
+            .collapsible(false)
+            .resizable(false)
+            .default_size([420.0, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .show(ctx, |ui| {
+                ui.label("The worktree contains modified or untracked files:");
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(path.to_string_lossy().as_ref())
+                        .monospace()
+                        .color(self.semantic.secondary_text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(&error_msg)
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+                ui.add_space(8.0);
+                ui.label("Force remove will delete all changes in this worktree.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new("Force Remove").color(egui::Color32::RED))
+                            .clicked()
+                        {
+                            force = true;
+                        }
+                    });
+                });
+            });
+
+        if cancel {
+            self.git.pending_force_remove = None;
+            self.git.pending_archive_msg = None;
+        } else if force {
+            let path = path.clone();
+            self.git.pending_force_remove = None;
+            self.do_remove_worktree(path, true);
         }
     }
 }

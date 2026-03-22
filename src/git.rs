@@ -779,11 +779,22 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     Ok(wt_path)
 }
 
-pub(crate) fn remove_worktree(repo_path: &Path, wt_path: &Path) -> crate::error::Result<()> {
+pub(crate) fn remove_worktree(
+    repo_path: &Path,
+    wt_path: &Path,
+    force: bool,
+) -> crate::error::Result<()> {
     use std::process::Command;
 
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    let wt_str = wt_path.to_string_lossy();
+    args.push(&wt_str);
+
     let output = Command::new("git")
-        .args(["worktree", "remove", &wt_path.to_string_lossy()])
+        .args(&args)
         .current_dir(repo_path)
         .output()?;
 

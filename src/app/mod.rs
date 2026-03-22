@@ -444,6 +444,10 @@ pub(super) struct GitState {
     pub(super) archived_dbs: Vec<git::ArchivedDb>,
     /// Whether the archived DBs section is expanded in the worktree panel.
     pub(super) show_archived_dbs: bool,
+    /// Pending worktree removal that needs force confirmation (path, error message).
+    pub(super) pending_force_remove: Option<(PathBuf, String)>,
+    /// Archive message from the archive step (preserved for force-remove flow).
+    pub(super) pending_archive_msg: Option<String>,
 }
 
 pub struct DirigentApp {
@@ -766,6 +770,8 @@ impl DirigentApp {
                 pr_notify_rx: None,
                 archived_dbs: Vec::new(),
                 show_archived_dbs: false,
+                pending_force_remove: None,
+                pending_archive_msg: None,
             },
             settings,
             semantic,
@@ -1866,6 +1872,7 @@ impl eframe::App for DirigentApp {
 
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
+        self.render_force_remove_dialog(ctx); // floating
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
