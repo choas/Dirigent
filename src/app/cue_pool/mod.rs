@@ -591,7 +591,9 @@ impl DirigentApp {
                                 } else {
                                     // Build commit message with descriptive subject and full cue texts
                                     let subject = if review_cues.len() == 1 {
-                                        let first_line = review_cues[0].text.lines().next().unwrap_or(&review_cues[0].text);
+                                        let first_line = review_cues[0].text.lines()
+                                            .find(|l| !l.trim().is_empty())
+                                            .unwrap_or_else(|| review_cues[0].text.lines().next().unwrap_or(&review_cues[0].text));
                                         let trimmed = first_line.trim();
                                         if trimmed.len() > 72 {
                                             format!("Dirigent: {}...", crate::app::truncate_str(trimmed, 69))
@@ -599,16 +601,31 @@ impl DirigentApp {
                                             format!("Dirigent: {}", trimmed)
                                         }
                                     } else {
-                                        // Collect first lines to build a combined subject
+                                        // Collect first non-empty lines to build a combined subject
                                         let short_names: Vec<&str> = review_cues
                                             .iter()
-                                            .map(|c| c.text.lines().next().unwrap_or(&c.text).trim_end())
+                                            .filter_map(|c| {
+                                                let first = c.text.lines()
+                                                    .find(|l| !l.trim().is_empty())
+                                                    .unwrap_or_else(|| c.text.lines().next().unwrap_or(&c.text));
+                                                let trimmed = first.trim();
+                                                if trimmed.is_empty() { None } else { Some(trimmed) }
+                                            })
                                             .collect();
-                                        let combined = short_names.join(", ");
-                                        if combined.len() <= 62 {
-                                            format!("Dirigent: {}", combined)
-                                        } else {
+                                        if short_names.is_empty() {
                                             format!("Dirigent: {} cues", review_cues.len())
+                                        } else {
+                                            let combined = short_names.join(", ");
+                                            if combined.len() <= 62 {
+                                                format!("Dirigent: {}", combined)
+                                            } else {
+                                                let truncated = crate::app::truncate_str(&combined, 59);
+                                                if truncated.is_empty() {
+                                                    format!("Dirigent: {} cues", review_cues.len())
+                                                } else {
+                                                    format!("Dirigent: {}...", truncated)
+                                                }
+                                            }
                                         }
                                     };
                                     let cue_details: Vec<String> = review_cues
