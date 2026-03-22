@@ -129,15 +129,14 @@ impl DirigentApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if !wt.is_current && !wt.is_locked {
-                                            if ui.small_button("Remove").clicked() {
-                                                remove_path = Some(wt.path.clone());
-                                            }
+                                        if !wt.is_current
+                                            && !wt.is_locked
+                                            && ui.small_button("Remove").clicked()
+                                        {
+                                            remove_path = Some(wt.path.clone());
                                         }
-                                        if !wt.is_current {
-                                            if ui.small_button("Switch").clicked() {
-                                                switch_to = Some(wt.path.clone());
-                                            }
+                                        if !wt.is_current && ui.small_button("Switch").clicked() {
+                                            switch_to = Some(wt.path.clone());
                                         }
                                     },
                                 );

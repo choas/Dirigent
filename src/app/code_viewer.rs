@@ -318,14 +318,13 @@ impl DirigentApp {
                             toggle_markdown = true;
                         }
                     }
-                    if is_dirty {
-                        if ui
+                    if is_dirty
+                        && ui
                             .small_button("Show Diff")
                             .on_hover_text("Show uncommitted changes for this file")
                             .clicked()
-                        {
-                            show_file_diff = true;
-                        }
+                    {
+                        show_file_diff = true;
                     }
                 });
             });
