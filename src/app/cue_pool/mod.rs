@@ -595,10 +595,22 @@ impl DirigentApp {
                                             .find(|l| !l.trim().is_empty())
                                             .unwrap_or_else(|| review_cues[0].text.lines().next().unwrap_or(&review_cues[0].text));
                                         let trimmed = first_line.trim();
-                                        if trimmed.len() > 72 {
-                                            format!("Dirigent: {}...", crate::app::truncate_str(trimmed, 69))
+                                        let trimmed = if trimmed.is_empty() {
+                                            let fallback = review_cues[0].text.trim();
+                                            if fallback.is_empty() { "" } else { fallback }
                                         } else {
-                                            format!("Dirigent: {}", trimmed)
+                                            trimmed
+                                        };
+                                        if trimmed.is_empty() {
+                                            "Dirigent".to_string()
+                                        } else {
+                                            let prefix = "Dirigent: ";
+                                            let allowed = 72 - prefix.len();
+                                            if trimmed.len() > allowed {
+                                                format!("{}{}...", prefix, crate::app::truncate_str(trimmed, allowed - 3))
+                                            } else {
+                                                format!("{}{}", prefix, trimmed)
+                                            }
                                         }
                                     } else {
                                         // Collect first non-empty lines to build a combined subject
