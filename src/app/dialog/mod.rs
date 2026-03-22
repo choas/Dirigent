@@ -4,6 +4,7 @@ mod cue_agent_runs;
 mod diff_review;
 mod git_init;
 mod import_pr;
+mod merge_conflicts;
 mod play_variables;
 mod pull_diverged;
 mod pull_unmerged;

@@ -362,10 +362,9 @@ impl CodeViewerState {
         if idx + 1 < self.tabs.len() {
             self.tabs.truncate(idx + 1);
         }
-        // Fix active_tab if it was beyond the truncated range
         if let Some(active) = self.active_tab {
-            if active >= self.tabs.len() {
-                self.active_tab = Some(self.tabs.len() - 1);
+            if active > idx {
+                self.active_tab = Some(idx);
             }
         }
     }
@@ -424,6 +423,12 @@ pub(super) struct GitState {
     pub(super) show_pull_diverged: bool,
     /// Show dialog when pull fails due to unmerged files.
     pub(super) show_pull_unmerged: bool,
+    /// Show the merge conflict resolution dialog.
+    pub(super) show_merge_conflicts: bool,
+    /// The type of operation that caused conflicts (merge or rebase).
+    pub(super) merge_operation: Option<git::MergeOperation>,
+    /// List of files with conflicts (relative paths).
+    pub(super) conflict_files: Vec<String>,
     /// Whether the Create PR dialog is open.
     pub(super) show_create_pr: bool,
     /// PR dialog fields.
@@ -763,6 +768,9 @@ impl DirigentApp {
                 pull_rx: None,
                 show_pull_diverged: false,
                 show_pull_unmerged: false,
+                show_merge_conflicts: false,
+                merge_operation: None,
+                conflict_files: Vec::new(),
                 show_create_pr: false,
                 pr_title: String::new(),
                 pr_body: String::new(),
@@ -1382,12 +1390,16 @@ impl DirigentApp {
                             self.set_status_message(
                                 "Pull: branches have diverged — choose a strategy".to_string(),
                             );
+                        } else if e.contains("CONFLICT")
+                            || e.contains("Automatic merge failed")
+                            || e.contains("could not apply")
+                        {
+                            // Merge or rebase left conflicts — show resolution dialog
+                            self.open_merge_conflict_dialog();
                         } else if e.contains("unmerged files") || e.contains("unresolved conflict")
                         {
-                            self.git.show_pull_unmerged = true;
-                            self.set_status_message(
-                                "Pull: resolve unmerged files first".to_string(),
-                            );
+                            // Pre-existing conflicts — check if we can show the resolution dialog
+                            self.open_merge_conflict_dialog();
                         } else {
                             self.set_status_message(format!("Pull failed: {}", e));
                         }
@@ -1395,6 +1407,31 @@ impl DirigentApp {
                 }
             }
         }
+    }
+
+    /// Populate conflict state and show the merge conflict resolution dialog.
+    fn open_merge_conflict_dialog(&mut self) {
+        let op = git::detect_merge_operation(&self.project_root);
+        let files = git::get_conflicted_files(&self.project_root);
+        if files.is_empty() && op.is_none() {
+            // No active operation and no conflicts — fall back to the old informational dialog
+            self.git.show_pull_unmerged = true;
+            self.set_status_message("Pull: resolve unmerged files first".to_string());
+            return;
+        }
+        self.git.merge_operation = op;
+        self.git.conflict_files = files;
+        self.git.show_merge_conflicts = true;
+        let label = match op {
+            Some(git::MergeOperation::Merge) => "Merge",
+            Some(git::MergeOperation::Rebase) => "Rebase",
+            None => "Operation",
+        };
+        self.set_status_message(format!(
+            "{}: {} conflicted file(s) — resolve and continue",
+            label,
+            self.git.conflict_files.len()
+        ));
     }
 
     fn reload_git_info(&mut self) {
@@ -1916,6 +1953,7 @@ impl eframe::App for DirigentApp {
         self.render_create_pr_dialog(ctx); // floating
         self.render_pull_diverged_dialog(ctx); // floating
         self.render_pull_unmerged_dialog(ctx); // floating
+        self.render_merge_conflicts_dialog(ctx); // floating
         self.render_import_pr_dialog(ctx); // floating
     }
 }
