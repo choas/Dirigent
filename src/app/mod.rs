@@ -593,6 +593,11 @@ pub struct DirigentApp {
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
     goto_def_gen: u64,
     goto_def_cancel: Arc<AtomicBool>,
+
+    // Prompt history search
+    prompt_history_query: String,
+    prompt_history_results: Vec<(i64, String, String)>,
+    prompt_history_active: bool,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -849,6 +854,10 @@ impl DirigentApp {
             goto_def_rx,
             goto_def_gen: 0,
             goto_def_cancel: Arc::new(AtomicBool::new(false)),
+
+            prompt_history_query: String::new(),
+            prompt_history_results: Vec::new(),
+            prompt_history_active: false,
         }
     }
 

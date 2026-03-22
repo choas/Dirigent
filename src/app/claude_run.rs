@@ -21,6 +21,10 @@ struct ClaudeResult {
     diff: Option<String>,
     response: String,
     error: Option<String>,
+    /// Run metrics (cost, duration, turns) — populated on success.
+    cost_usd: f64,
+    duration_ms: u64,
+    num_turns: u64,
 }
 
 /// A log message from a running Claude worker thread.
@@ -91,13 +95,22 @@ impl DirigentApp {
                 (cue.text.clone(), None)
             };
 
+        // Gather auto-context (file snippet + git diff) for file-specific cues
+        let auto_context = claude::gather_auto_context(
+            &self.project_root,
+            &cue.file_path,
+            cue.line_number,
+            cue.line_number_end,
+        );
+
         let prompt = match self.settings.cli_provider {
-            CliProvider::Claude => claude::build_prompt(
+            CliProvider::Claude => claude::build_prompt_with_auto_context(
                 &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
                 &cue.attached_images,
+                &auto_context,
             ),
             CliProvider::OpenCode => opencode::build_prompt(
                 &effective_text,
@@ -199,6 +212,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                cost_usd: response.cost_usd,
+                                duration_ms: response.duration_ms,
+                                num_turns: response.num_turns,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -207,6 +223,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            cost_usd: 0.0,
+                            duration_ms: 0,
+                            num_turns: 0,
                         },
                     }
                 }
@@ -241,6 +260,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                cost_usd: response.cost_usd,
+                                duration_ms: response.duration_ms,
+                                num_turns: response.num_turns,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -249,6 +271,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            cost_usd: 0.0,
+                            duration_ms: 0,
+                            num_turns: 0,
                         },
                     }
                 }
@@ -419,6 +444,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                cost_usd: response.cost_usd,
+                                duration_ms: response.duration_ms,
+                                num_turns: response.num_turns,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -427,6 +455,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            cost_usd: 0.0,
+                            duration_ms: 0,
+                            num_turns: 0,
                         },
                     }
                 }
@@ -461,6 +492,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                cost_usd: response.cost_usd,
+                                duration_ms: response.duration_ms,
+                                num_turns: response.num_turns,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -469,6 +503,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            cost_usd: 0.0,
+                            duration_ms: 0,
+                            num_turns: 0,
                         },
                     }
                 }
@@ -512,9 +549,29 @@ impl DirigentApp {
                 let _ = self.db.log_activity(result.cue_id, "Run failed");
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
-                let _ = self
-                    .db
-                    .complete_execution(result.exec_id, &result.response, Some(diff));
+                let metrics_cost = if result.cost_usd > 0.0 {
+                    Some(result.cost_usd)
+                } else {
+                    None
+                };
+                let metrics_dur = if result.duration_ms > 0 {
+                    Some(result.duration_ms)
+                } else {
+                    None
+                };
+                let metrics_turns = if result.num_turns > 0 {
+                    Some(result.num_turns)
+                } else {
+                    None
+                };
+                let _ = self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    Some(diff),
+                    metrics_cost,
+                    metrics_dur,
+                    metrics_turns,
+                );
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
                 let _ = self
                     .db
@@ -547,9 +604,29 @@ impl DirigentApp {
                 self.reload_git_info();
             } else {
                 // Claude ran but no files were changed
-                let _ = self
-                    .db
-                    .complete_execution(result.exec_id, &result.response, None);
+                let metrics_cost = if result.cost_usd > 0.0 {
+                    Some(result.cost_usd)
+                } else {
+                    None
+                };
+                let metrics_dur = if result.duration_ms > 0 {
+                    Some(result.duration_ms)
+                } else {
+                    None
+                };
+                let metrics_turns = if result.num_turns > 0 {
+                    Some(result.num_turns)
+                } else {
+                    None
+                };
+                let _ = self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    None,
+                    metrics_cost,
+                    metrics_dur,
+                    metrics_turns,
+                );
                 let preview = self.cue_preview(result.cue_id);
                 self.set_status_message(format!(
                     "Claude completed but no file changes detected for \"{}\"",

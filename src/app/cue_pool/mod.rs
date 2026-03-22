@@ -213,6 +213,79 @@ impl DirigentApp {
                     });
                 }
 
+                // Prompt history search
+                ui.horizontal(|ui| {
+                    let search_icon = if self.prompt_history_active { "\u{2715}" } else { "\u{1F50D}" };
+                    if ui.small_button(search_icon)
+                        .on_hover_text(if self.prompt_history_active { "Close search" } else { "Search past prompts" })
+                        .clicked()
+                    {
+                        self.prompt_history_active = !self.prompt_history_active;
+                        if !self.prompt_history_active {
+                            self.prompt_history_query.clear();
+                            self.prompt_history_results.clear();
+                        }
+                    }
+                    if self.prompt_history_active {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.prompt_history_query)
+                                .desired_width(ui.available_width())
+                                .hint_text("Search past cues...")
+                                .font(egui::TextStyle::Small),
+                        );
+                        if response.changed() && self.prompt_history_query.len() >= 2 {
+                            self.prompt_history_results = self
+                                .db
+                                .search_cue_history(&self.prompt_history_query, 10)
+                                .unwrap_or_default();
+                        } else if self.prompt_history_query.len() < 2 {
+                            self.prompt_history_results.clear();
+                        }
+                    }
+                });
+                // Show search results
+                let mut reuse_text: Option<String> = None;
+                if self.prompt_history_active && !self.prompt_history_results.is_empty() {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(4))
+                        .corner_radius(4)
+                        .fill(self.semantic.selection_bg())
+                        .show(ui, |ui| {
+                            for (_id, text, file_path) in &self.prompt_history_results {
+                                ui.horizontal(|ui| {
+                                    let preview: String = text.lines().next().unwrap_or("").chars().take(60).collect();
+                                    let location = if file_path.is_empty() {
+                                        "Global".to_string()
+                                    } else {
+                                        file_path.clone()
+                                    };
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(&preview).small());
+                                        ui.label(
+                                            egui::RichText::new(&location)
+                                                .small()
+                                                .color(self.semantic.muted_text()),
+                                        );
+                                    });
+                                    if ui.small_button(icon("\u{21A9} Reuse", self.settings.font_size))
+                                        .on_hover_text("Create a new cue with this text")
+                                        .clicked()
+                                    {
+                                        reuse_text = Some(text.clone());
+                                    }
+                                });
+                                ui.add_space(2.0);
+                            }
+                        });
+                }
+                if let Some(text) = reuse_text {
+                    let _ = self.db.insert_cue(&text, "", 0, None, &[]);
+                    self.reload_cues();
+                    self.prompt_history_active = false;
+                    self.prompt_history_query.clear();
+                    self.prompt_history_results.clear();
+                }
+
                 ui.separator();
 
                 let panel_rect = ui.max_rect();
