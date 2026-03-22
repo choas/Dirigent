@@ -2,6 +2,18 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.1] - 2026-03-22
+
+### Added
+- Close-all, close-others, close-to-right tab operations
+- Unpushed commit indicators in Git Log
+- Commit All includes all cue texts in the commit message
+
+### Fixed
+- Outline not jumping to the correct line for symbols like `fn drop`
+- Various code quality fixes from PR findings analysis
+- Compilation error fix
+
 ## [0.3.0] - 2026-03-22
 
 ### Added
