@@ -1121,7 +1121,13 @@ pub(crate) fn main_worktree_path(repo_path: &Path) -> crate::error::Result<PathB
         }
     }
 
+<<<<<<< HEAD
     Err(DirigentError::GitCommand("no main worktree found".into()))
+=======
+    Err(DirigentError::GitCommand(
+        "no main worktree found".into(),
+    ))
+>>>>>>> deefb8521f1682e71c098d100d4a3cb75fd618a4
 }
 
 /// Archives the worktree's .Dirigent/Dirigent.db to the main repo's
@@ -1138,8 +1144,14 @@ pub(crate) fn archive_worktree_db(
     }
 
     let archives_dir = main_repo_path.join(".Dirigent").join("archives");
+<<<<<<< HEAD
     std::fs::create_dir_all(&archives_dir)
         .map_err(|e| DirigentError::GitCommand(format!("failed to create archives dir: {}", e)))?;
+=======
+    std::fs::create_dir_all(&archives_dir).map_err(|e| {
+        DirigentError::GitCommand(format!("failed to create archives dir: {}", e))
+    })?;
+>>>>>>> deefb8521f1682e71c098d100d4a3cb75fd618a4
 
     // Sanitize worktree name for use as filename (replace path separators)
     let safe_name = worktree_name.replace(['/', '\\'], "-");
@@ -1151,8 +1163,14 @@ pub(crate) fn archive_worktree_db(
         target = archives_dir.join(format!("{}_{}.db", safe_name, now));
     }
 
+<<<<<<< HEAD
     std::fs::copy(&src_db, &target)
         .map_err(|e| DirigentError::GitCommand(format!("failed to archive worktree DB: {}", e)))?;
+=======
+    std::fs::copy(&src_db, &target).map_err(|e| {
+        DirigentError::GitCommand(format!("failed to archive worktree DB: {}", e))
+    })?;
+>>>>>>> deefb8521f1682e71c098d100d4a3cb75fd618a4
 
     Ok(Some(target))
 }
