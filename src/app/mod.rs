@@ -443,6 +443,16 @@ pub(super) struct GitState {
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Archived worktree DBs (cached list).
+    pub(super) archived_dbs: Vec<git::ArchivedDb>,
+    /// Whether the archived DBs section is expanded in the worktree panel.
+    pub(super) show_archived_dbs: bool,
+    /// Pending worktree removal that needs force confirmation (path, error message).
+    pub(super) pending_force_remove: Option<(PathBuf, String)>,
+    /// Archive message from the archive step (preserved for force-remove flow).
+    pub(super) pending_archive_msg: Option<String>,
+    /// Pending archived DB deletion that needs user confirmation.
+    pub(super) pending_delete_archive: Option<PathBuf>,
 }
 
 pub struct DirigentApp {
@@ -764,6 +774,11 @@ impl DirigentApp {
                 import_pr_rx: None,
                 notifying_pr: false,
                 pr_notify_rx: None,
+                archived_dbs: Vec::new(),
+                show_archived_dbs: false,
+                pending_force_remove: None,
+                pending_archive_msg: None,
+                pending_delete_archive: None,
             },
             settings,
             semantic,
@@ -1606,6 +1621,10 @@ impl DirigentApp {
 
     fn reload_worktrees(&mut self) {
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        // Refresh archived DBs list from main worktree
+        if let Ok(main_path) = git::main_worktree_path(&self.project_root) {
+            self.git.archived_dbs = git::list_archived_dbs(&main_path);
+        }
     }
 
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).
@@ -1880,6 +1899,8 @@ impl eframe::App for DirigentApp {
 
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
+        self.render_force_remove_dialog(ctx); // floating
+        self.render_delete_archive_dialog(ctx); // floating
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
