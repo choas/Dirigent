@@ -448,6 +448,8 @@ pub(super) struct GitState {
     pub(super) pending_force_remove: Option<(PathBuf, String)>,
     /// Archive message from the archive step (preserved for force-remove flow).
     pub(super) pending_archive_msg: Option<String>,
+    /// Pending archived DB deletion that needs user confirmation.
+    pub(super) pending_delete_archive: Option<PathBuf>,
 }
 
 pub struct DirigentApp {
@@ -772,6 +774,7 @@ impl DirigentApp {
                 show_archived_dbs: false,
                 pending_force_remove: None,
                 pending_archive_msg: None,
+                pending_delete_archive: None,
             },
             settings,
             semantic,
@@ -1873,6 +1876,7 @@ impl eframe::App for DirigentApp {
         self.render_repo_picker(ctx); // floating
         self.render_worktree_panel(ctx); // floating
         self.render_force_remove_dialog(ctx); // floating
+        self.render_delete_archive_dialog(ctx); // floating
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating

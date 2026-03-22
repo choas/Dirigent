@@ -97,7 +97,7 @@ impl DirigentApp {
         let mut switch_to: Option<PathBuf> = None;
         let mut remove_path: Option<PathBuf> = None;
         let mut create_name: Option<String> = None;
-        let mut delete_archive: Option<PathBuf> = None;
+        let mut delete_archive_pending: Option<PathBuf> = None;
         let mut reveal_path: Option<PathBuf> = None;
         let fs = self.settings.font_size;
 
@@ -174,7 +174,11 @@ impl DirigentApp {
                     ui.add_space(SPACE_SM);
                     let header = format!(
                         "{} Archived Worktree DBs ({})",
-                        if self.git.show_archived_dbs { "\u{25BC}" } else { "\u{25B6}" },
+                        if self.git.show_archived_dbs {
+                            "\u{25BC}"
+                        } else {
+                            "\u{25B6}"
+                        },
                         self.git.archived_dbs.len()
                     );
                     if ui
@@ -203,7 +207,7 @@ impl DirigentApp {
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if ui.small_button("Delete").clicked() {
-                                            delete_archive = Some(db.path.clone());
+                                            delete_archive_pending = Some(db.path.clone());
                                         }
                                         if ui.small_button("Reveal").clicked() {
                                             reveal_path = Some(db.path.clone());
@@ -243,12 +247,8 @@ impl DirigentApp {
             }
         }
 
-        if let Some(path) = delete_archive {
-            if std::fs::remove_file(&path).is_ok() {
-                self.reload_worktrees(); // refreshes archived_dbs list too
-            } else {
-                self.set_status_message("Failed to delete archived DB".to_string());
-            }
+        if let Some(path) = delete_archive_pending {
+            self.git.pending_delete_archive = Some(path);
         }
 
         if let Some(path) = reveal_path {
@@ -270,11 +270,11 @@ impl DirigentApp {
                 let dir = if path.is_dir() {
                     path.clone()
                 } else {
-                    path.parent().map(|p| p.to_path_buf()).unwrap_or(path.clone())
+                    path.parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(path.clone())
                 };
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&dir)
-                    .spawn();
+                let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
             }
         }
     }
@@ -423,6 +423,60 @@ impl DirigentApp {
             let path = path.clone();
             self.git.pending_force_remove = None;
             self.do_remove_worktree(path, true);
+        }
+    }
+
+    /// Renders the confirmation dialog for deleting an archived worktree DB.
+    pub(in crate::app) fn render_delete_archive_dialog(&mut self, ctx: &egui::Context) {
+        let Some(ref path) = self.git.pending_delete_archive else {
+            return;
+        };
+        let path = path.clone();
+
+        let mut confirm = false;
+        let mut cancel = false;
+
+        egui::Window::new("Delete Archived DB")
+            .collapsible(false)
+            .resizable(false)
+            .default_size([400.0, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .show(ctx, |ui| {
+                ui.label("Are you sure you want to delete this archived database?");
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(path.to_string_lossy().as_ref())
+                        .monospace()
+                        .color(self.semantic.secondary_text),
+                );
+                ui.add_space(8.0);
+                ui.label("This action cannot be undone.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new("Delete").color(egui::Color32::RED))
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                    });
+                });
+            });
+
+        if cancel {
+            self.git.pending_delete_archive = None;
+        } else if confirm {
+            self.git.pending_delete_archive = None;
+            if std::fs::remove_file(&path).is_ok() {
+                self.reload_worktrees();
+            } else {
+                self.set_status_message("Failed to delete archived DB".to_string());
+            }
         }
     }
 }
