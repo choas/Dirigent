@@ -79,6 +79,9 @@ impl DirigentApp {
             if self.viewer.tabs.len() > 1 {
                 let mut tab_to_close: Option<usize> = None;
                 let mut tab_to_activate: Option<usize> = None;
+                let mut close_others: Option<usize> = None;
+                let mut close_all = false;
+                let mut close_to_right: Option<usize> = None;
 
                 ui.horizontal(|ui| {
                     for (i, tab) in self.viewer.tabs.iter().enumerate() {
@@ -109,7 +112,7 @@ impl DirigentApp {
                             egui::Frame::NONE.inner_margin(egui::Margin::symmetric(6, 3))
                         };
 
-                        frame.show(ui, |ui| {
+                        let tab_resp = frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let rel = tab
                                     .file_path
@@ -140,9 +143,47 @@ impl DirigentApp {
                                 }
                             });
                         });
+
+                        // Right-click context menu — Frame only senses hover,
+                        // so interact with click sense on the same rect.
+                        let ctx_resp = ui.interact(
+                            tab_resp.response.rect,
+                            ui.id().with(("tab_ctx", i)),
+                            egui::Sense::click(),
+                        );
+                        ctx_resp.context_menu(|ui| {
+                            if ui.button("Close").clicked() {
+                                tab_to_close = Some(i);
+                                ui.close();
+                            }
+                            if ui.button("Close Others").clicked() {
+                                close_others = Some(i);
+                                ui.close();
+                            }
+                            if ui.button("Close All").clicked() {
+                                close_all = true;
+                                ui.close();
+                            }
+                            if ui.button("Close Tabs to the Right").clicked() {
+                                close_to_right = Some(i);
+                                ui.close();
+                            }
+                        });
                     }
                 });
 
+                if close_all {
+                    self.viewer.close_all_tabs();
+                    return;
+                }
+                if let Some(idx) = close_others {
+                    self.viewer.close_other_tabs(idx);
+                    return;
+                }
+                if let Some(idx) = close_to_right {
+                    self.viewer.close_tabs_to_right(idx);
+                    return;
+                }
                 if let Some(idx) = tab_to_close {
                     self.viewer.close_tab(idx);
                     return;
