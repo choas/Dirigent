@@ -513,6 +513,7 @@ pub struct DirigentApp {
     goto_def_tx: mpsc::Sender<(u64, PathBuf, usize, String)>,
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
     goto_def_gen: u64,
+    goto_def_cancel: Arc<AtomicBool>,
 }
 
 fn start_fs_watcher(
@@ -727,6 +728,7 @@ impl DirigentApp {
             goto_def_tx,
             goto_def_rx,
             goto_def_gen: 0,
+            goto_def_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
