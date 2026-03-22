@@ -472,10 +472,9 @@ impl DirigentApp {
             self.git.pending_delete_archive = None;
         } else if confirm {
             self.git.pending_delete_archive = None;
-            if std::fs::remove_file(&path).is_ok() {
-                self.reload_worktrees();
-            } else {
-                self.set_status_message("Failed to delete archived DB".to_string());
+            match std::fs::remove_file(&path) {
+                Ok(()) => self.reload_worktrees(),
+                Err(e) => self.set_status_message(format!("Failed to delete archived DB: {}", e)),
             }
         }
     }
