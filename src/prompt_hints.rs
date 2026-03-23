@@ -104,9 +104,11 @@ pub(crate) fn analyze(text: &str) -> Vec<PromptHint> {
 
     // No action verb detected (only check if prompt is short enough to matter)
     if word_count < 20 {
-        let has_action = ACTION_VERBS
-            .iter()
-            .any(|v| lower.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *v));
+        let has_action = ACTION_VERBS.iter().any(|v| {
+            lower
+                .split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *v)
+        });
         if !has_action {
             hints.push(PromptHint {
                 label: "No clear action",
@@ -116,7 +118,10 @@ pub(crate) fn analyze(text: &str) -> Vec<PromptHint> {
     }
 
     // All-caps (shouting)
-    if trimmed.len() > 10 && trimmed == trimmed.to_uppercase() && trimmed.contains(char::is_alphabetic) {
+    if trimmed.len() > 10
+        && trimmed == trimmed.to_uppercase()
+        && trimmed.contains(char::is_alphabetic)
+    {
         hints.push(PromptHint {
             label: "All caps",
             detail: "Normal casing works better for AI prompts.",

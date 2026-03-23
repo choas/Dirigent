@@ -390,7 +390,14 @@ pub(crate) fn build_prompt(
     images: &[String],
 ) -> String {
     // OpenCode doesn't pass project_root for auto-context (no file embedding)
-    claude::build_prompt(cue_text, file_path, line_number, line_number_end, images, None)
+    claude::build_prompt(
+        cue_text,
+        file_path,
+        line_number,
+        line_number_end,
+        images,
+        None,
+    )
 }
 
 pub(crate) fn build_reply_prompt(
