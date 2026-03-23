@@ -31,9 +31,9 @@ impl std::fmt::Display for OpenCodeError {
 pub(crate) struct OpenCodeResponse {
     pub stdout: String,
     pub edited_files: Vec<String>,
-    pub cost_usd: f64,
-    pub duration_ms: u64,
-    pub num_turns: u64,
+    pub cost_usd: Option<f64>,
+    pub duration_ms: Option<u64>,
+    pub num_turns: Option<u64>,
 }
 
 pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
@@ -376,9 +376,9 @@ pub(crate) fn invoke_opencode_streaming(
     Ok(OpenCodeResponse {
         stdout: final_result,
         edited_files,
-        cost_usd: 0.0,
-        duration_ms: 0,
-        num_turns: 0,
+        cost_usd: None,
+        duration_ms: None,
+        num_turns: None,
     })
 }
 
