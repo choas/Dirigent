@@ -15,6 +15,7 @@ impl DirigentApp {
             .unwrap_or_default();
 
         let mut close = false;
+        let mut analyze_run_idx: Option<usize> = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Header bar
@@ -112,6 +113,21 @@ impl DirigentApp {
                                         .color(self.semantic.tertiary_text),
                                 );
                             }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .button(
+                                            egui::RichText::new("\u{1F50D} Analyze")
+                                                .small()
+                                                .color(self.semantic.accent),
+                                        )
+                                        .clicked()
+                                    {
+                                        analyze_run_idx = Some(idx);
+                                    }
+                                },
+                            );
                         });
 
                         // Output block
@@ -142,6 +158,32 @@ impl DirigentApp {
                     }
                 });
         });
+
+        // Create a cue from the selected run's output
+        if let Some(idx) = analyze_run_idx {
+            if let Some(run) = runs.get(idx) {
+                let status_label = match run.status.as_str() {
+                    "passed" => "PASSED",
+                    "failed" => "FAILED",
+                    "error" => "ERROR",
+                    other => other,
+                };
+                let cue_text = format!(
+                    "Analyze this {} agent run ({}):\n\n$ {}\n\n{}",
+                    kind.label(),
+                    status_label,
+                    run.command,
+                    run.output.trim(),
+                );
+                if let Ok(id) = self.db.insert_cue(&cue_text, "", 0, None, &[]) {
+                    self.editing_cue = Some(super::super::EditingCue {
+                        id,
+                        text: cue_text.clone(),
+                        focus_requested: true,
+                    });
+                }
+            }
+        }
 
         if close {
             self.agent_state.show_output = None;
