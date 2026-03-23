@@ -15,6 +15,14 @@ use crate::prompt_hints;
 use crate::prompt_suggestions;
 use crate::settings::SemanticColors;
 
+/// Actions triggered from the file tree context menu.
+enum FileTreeAction {
+    Open(PathBuf),
+    AddToGitignore(PathBuf),
+    Delete(PathBuf, bool),
+    RenameStart(PathBuf),
+}
+
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
         let mut push_clicked = false;
@@ -355,11 +363,11 @@ impl DirigentApp {
                     24.0 // just git log header
                 };
                 let file_tree_height = (available - reserved).max(80.0);
-                let file_to_load = egui::ScrollArea::vertical()
+                let tree_action = egui::ScrollArea::vertical()
                     .id_salt("file_tree_scroll")
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
-                        let mut file_to_load = None;
+                        let mut action = None;
                         if let Some(ref tree) = self.file_tree {
                             let current_file = self.viewer.current_file().cloned();
                             for entry in &tree.entries {
@@ -368,7 +376,7 @@ impl DirigentApp {
                                     entry,
                                     &mut self.expanded_dirs,
                                     &current_file,
-                                    &mut file_to_load,
+                                    &mut action,
                                     &self.project_root,
                                     &self.git.dirty_files,
                                     &self.semantic,
@@ -377,12 +385,59 @@ impl DirigentApp {
                                 );
                             }
                         }
-                        file_to_load
+                        action
                     })
                     .inner;
-                if let Some(path) = file_to_load {
-                    self.push_nav_history();
-                    self.load_file(path);
+                match tree_action {
+                    Some(FileTreeAction::Open(path)) => {
+                        self.push_nav_history();
+                        self.load_file(path);
+                    }
+                    Some(FileTreeAction::AddToGitignore(path)) => {
+                        let rel = path
+                            .strip_prefix(&self.project_root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
+                        let gitignore = self.project_root.join(".gitignore");
+                        let entry_line = if path.is_dir() {
+                            format!("{}/", rel)
+                        } else {
+                            rel.clone()
+                        };
+                        let current = std::fs::read_to_string(&gitignore).unwrap_or_default();
+                        let separator = if current.ends_with('\n') || current.is_empty() {
+                            ""
+                        } else {
+                            "\n"
+                        };
+                        if let Err(e) = std::fs::write(
+                            &gitignore,
+                            format!("{}{}{}\n", current, separator, entry_line),
+                        ) {
+                            self.set_status_message(format!("Failed to update .gitignore: {}", e));
+                        } else {
+                            self.set_status_message(format!(
+                                "Added '{}' to .gitignore",
+                                entry_line
+                            ));
+                            self.reload_file_tree();
+                        }
+                    }
+                    Some(FileTreeAction::Delete(path, is_dir)) => {
+                        self.pending_file_delete = Some((path, is_dir));
+                    }
+                    Some(FileTreeAction::RenameStart(path)) => {
+                        let name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        self.rename_target = Some(path);
+                        self.rename_buffer = name;
+                        self.rename_focus_requested = false;
+                    }
+                    None => {}
                 }
 
                 ui.separator();
@@ -412,8 +467,12 @@ impl DirigentApp {
                                                     .small()
                                                     .color(self.semantic.accent),
                                             );
-                                            let label =
-                                                format!("{} {}", sym.kind.label(), sym.name);
+                                            let kind_label = sym.kind.label();
+                                            let label = if kind_label.is_empty() {
+                                                sym.name.clone()
+                                            } else {
+                                                format!("{} {}", kind_label, sym.name)
+                                            };
                                             if ui
                                                 .add(
                                                     egui::Label::new(
@@ -576,7 +635,7 @@ impl DirigentApp {
         entry: &FileEntry,
         expanded: &mut HashSet<PathBuf>,
         current_file: &Option<PathBuf>,
-        file_to_load: &mut Option<PathBuf>,
+        action: &mut Option<FileTreeAction>,
         project_root: &Path,
         dirty_files: &HashMap<String, char>,
         semantic: &SemanticColors,
@@ -644,6 +703,54 @@ impl DirigentApp {
                 }
             }
 
+            // Context menu (right-click)
+            let entry_path = entry.path.clone();
+            let rel_path = entry_path
+                .strip_prefix(project_root)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .to_string();
+            response.context_menu(|ui| {
+                if ui.button("Copy Path").clicked() {
+                    ui.ctx().copy_text(entry_path.to_string_lossy().to_string());
+                    ui.close();
+                }
+                if ui.button("Copy Relative Path").clicked() {
+                    ui.ctx().copy_text(rel_path.clone());
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Reveal in Finder").clicked() {
+                    let _ = std::process::Command::new("open").arg(&entry_path).spawn();
+                    ui.close();
+                }
+                if ui.button("Open in Terminal").clicked() {
+                    let _ = std::process::Command::new("open")
+                        .args(["-a", "Terminal"])
+                        .arg(&entry_path)
+                        .spawn();
+                    ui.close();
+                }
+                ui.separator();
+                if !entry.is_ignored {
+                    if ui.button("Add to .gitignore").clicked() {
+                        *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
+                        ui.close();
+                    }
+                }
+                if ui.button("Rename…").clicked() {
+                    *action = Some(FileTreeAction::RenameStart(entry_path.clone()));
+                    ui.close();
+                }
+                if ui
+                    .button(egui::RichText::new("Delete Directory…").color(semantic.danger))
+                    .clicked()
+                {
+                    *action = Some(FileTreeAction::Delete(entry_path.clone(), true));
+                    ui.close();
+                }
+            });
+
             // Render children if expanded
             if is_expanded {
                 for child in &entry.children {
@@ -652,7 +759,7 @@ impl DirigentApp {
                         child,
                         expanded,
                         current_file,
-                        file_to_load,
+                        action,
                         project_root,
                         dirty_files,
                         semantic,
@@ -731,8 +838,56 @@ impl DirigentApp {
             }
 
             if response.clicked() {
-                *file_to_load = Some(entry.path.clone());
+                *action = Some(FileTreeAction::Open(entry.path.clone()));
             }
+
+            // Context menu (right-click)
+            let entry_path = entry.path.clone();
+            let rel_clone = rel.clone();
+            let parent_dir = entry_path.parent().unwrap_or(&entry_path).to_path_buf();
+            response.context_menu(|ui| {
+                if ui.button("Copy Path").clicked() {
+                    ui.ctx().copy_text(entry_path.to_string_lossy().to_string());
+                    ui.close();
+                }
+                if ui.button("Copy Relative Path").clicked() {
+                    ui.ctx().copy_text(rel_clone.clone());
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Reveal in Finder").clicked() {
+                    let _ = std::process::Command::new("open")
+                        .arg("-R")
+                        .arg(&entry_path)
+                        .spawn();
+                    ui.close();
+                }
+                if ui.button("Open in Terminal").clicked() {
+                    let _ = std::process::Command::new("open")
+                        .args(["-a", "Terminal"])
+                        .arg(&parent_dir)
+                        .spawn();
+                    ui.close();
+                }
+                ui.separator();
+                if !entry.is_ignored {
+                    if ui.button("Add to .gitignore").clicked() {
+                        *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
+                        ui.close();
+                    }
+                }
+                if ui.button("Rename…").clicked() {
+                    *action = Some(FileTreeAction::RenameStart(entry_path.clone()));
+                    ui.close();
+                }
+                if ui
+                    .button(egui::RichText::new("Delete File…").color(semantic.danger))
+                    .clicked()
+                {
+                    *action = Some(FileTreeAction::Delete(entry_path.clone(), false));
+                    ui.close();
+                }
+            });
         }
     }
 

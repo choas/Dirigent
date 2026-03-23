@@ -21,6 +21,7 @@ pub(crate) enum SymbolKind {
     Constant,
     Module,
     Type,
+    Heading,
 }
 
 impl SymbolKind {
@@ -35,6 +36,7 @@ impl SymbolKind {
             SymbolKind::Constant => "K",
             SymbolKind::Module => "M",
             SymbolKind::Type => "T",
+            SymbolKind::Heading => "H",
         }
     }
 
@@ -50,6 +52,7 @@ impl SymbolKind {
             SymbolKind::Constant => "const",
             SymbolKind::Module => "mod",
             SymbolKind::Type => "type",
+            SymbolKind::Heading => "",
         }
     }
 }
@@ -69,6 +72,7 @@ pub(super) fn parse_symbols(content: &[String], ext: &str) -> Vec<FileSymbol> {
         "ex" | "exs" => parse_elixir_symbols(content),
         "zig" => parse_zig_symbols(content),
         "lua" => parse_lua_symbols(content),
+        "md" | "mdx" => parse_markdown_headings(content),
         _ => Vec::new(),
     }
 }
@@ -438,6 +442,39 @@ fn parse_lua_symbols(content: &[String]) -> Vec<FileSymbol> {
         )]
     });
     parse_with_patterns(content, &RE)
+}
+
+fn parse_markdown_headings(content: &[String]) -> Vec<FileSymbol> {
+    let mut symbols = Vec::new();
+    let mut in_code_block = false;
+
+    for (idx, line) in content.iter().enumerate() {
+        let trimmed = line.trim_start();
+
+        // Track fenced code blocks to avoid matching headings inside them
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+
+        // Match # through #### headings
+        let level = trimmed.bytes().take_while(|&b| b == b'#').count();
+        if level >= 1 && level <= 4 && trimmed.as_bytes().get(level) == Some(&b' ') {
+            let name = trimmed[level..].trim().to_string();
+            if !name.is_empty() {
+                symbols.push(FileSymbol {
+                    name,
+                    kind: SymbolKind::Heading,
+                    line: idx + 1,
+                    depth: level - 1, // # = 0, ## = 1, ### = 2, #### = 3
+                });
+            }
+        }
+    }
+    symbols
 }
 
 // -- Comment detection --
