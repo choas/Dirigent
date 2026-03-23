@@ -27,6 +27,29 @@ struct ClaudeResult {
     num_turns: u64,
 }
 
+impl ClaudeResult {
+    /// Return metrics as Options, treating zero values as absent.
+    fn normalized_metrics(&self) -> (Option<f64>, Option<u64>, Option<u64>) {
+        (
+            if self.cost_usd > 0.0 {
+                Some(self.cost_usd)
+            } else {
+                None
+            },
+            if self.duration_ms > 0 {
+                Some(self.duration_ms)
+            } else {
+                None
+            },
+            if self.num_turns > 0 {
+                Some(self.num_turns)
+            } else {
+                None
+            },
+        )
+    }
+}
+
 /// A log message from a running Claude worker thread.
 struct LogUpdate {
     cue_id: i64,
@@ -549,28 +572,14 @@ impl DirigentApp {
                 let _ = self.db.log_activity(result.cue_id, "Run failed");
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
-                let metrics_cost = if result.cost_usd > 0.0 {
-                    Some(result.cost_usd)
-                } else {
-                    None
-                };
-                let metrics_dur = if result.duration_ms > 0 {
-                    Some(result.duration_ms)
-                } else {
-                    None
-                };
-                let metrics_turns = if result.num_turns > 0 {
-                    Some(result.num_turns)
-                } else {
-                    None
-                };
+                let (m_cost, m_dur, m_turns) = result.normalized_metrics();
                 let _ = self.db.complete_execution(
                     result.exec_id,
                     &result.response,
                     Some(diff),
-                    metrics_cost,
-                    metrics_dur,
-                    metrics_turns,
+                    m_cost,
+                    m_dur,
+                    m_turns,
                 );
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
                 let _ = self
@@ -604,28 +613,14 @@ impl DirigentApp {
                 self.reload_git_info();
             } else {
                 // Claude ran but no files were changed
-                let metrics_cost = if result.cost_usd > 0.0 {
-                    Some(result.cost_usd)
-                } else {
-                    None
-                };
-                let metrics_dur = if result.duration_ms > 0 {
-                    Some(result.duration_ms)
-                } else {
-                    None
-                };
-                let metrics_turns = if result.num_turns > 0 {
-                    Some(result.num_turns)
-                } else {
-                    None
-                };
+                let (m_cost, m_dur, m_turns) = result.normalized_metrics();
                 let _ = self.db.complete_execution(
                     result.exec_id,
                     &result.response,
                     None,
-                    metrics_cost,
-                    metrics_dur,
-                    metrics_turns,
+                    m_cost,
+                    m_dur,
+                    m_turns,
                 );
                 let preview = self.cue_preview(result.cue_id);
                 self.set_status_message(format!(
