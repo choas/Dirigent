@@ -960,22 +960,6 @@ impl DirigentApp {
                     });
                     ui.add_space(SPACE_XS);
                 }
-                // Prompt refinement hints
-                let hints = prompt_hints::analyze(&self.global_prompt_input);
-                if !hints.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        for hint in &hints {
-                            ui.label(
-                                egui::RichText::new(format!("\u{26A0} {}", hint.label))
-                                    .small()
-                                    .color(self.semantic.warning),
-                            )
-                            .on_hover_text(hint.detail);
-                        }
-                    });
-                    ui.add_space(SPACE_XS);
-                }
-
                 ui.horizontal(|ui| {
                     ui.label(icon("\u{25B6}", self.settings.font_size).color(self.semantic.accent));
                     if ui
@@ -1048,6 +1032,23 @@ impl DirigentApp {
                         }
                     });
                 });
+
+                // Prompt refinement hints (gated by same setting)
+                if self.settings.prompt_suggestions_enabled {
+                    let hints = prompt_hints::analyze(&self.global_prompt_input);
+                    if !hints.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            for hint in &hints {
+                                ui.label(
+                                    egui::RichText::new(format!("\u{26A0} {}", hint.label))
+                                        .small()
+                                        .color(self.semantic.warning),
+                                )
+                                .on_hover_text(hint.detail);
+                            }
+                        });
+                    }
+                }
 
                 // Prompt refinement suggestions (non-blocking hints)
                 let suggestions = if self.settings.prompt_suggestions_enabled {

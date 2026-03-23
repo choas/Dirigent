@@ -81,6 +81,12 @@ pub(crate) fn analyze(text: &str) -> Vec<PromptHint> {
 
     let mut hints = Vec::new();
     let word_count = trimmed.split_whitespace().count();
+
+    // Don't show any hints until the user has typed at least two words
+    if word_count < 2 {
+        return hints;
+    }
+
     let lower = trimmed.to_lowercase();
 
     // Too short — likely missing context
@@ -138,6 +144,12 @@ mod tests {
     #[test]
     fn empty_prompt_no_hints() {
         assert!(analyze("").is_empty());
+    }
+
+    #[test]
+    fn single_word_no_hints() {
+        // Should not trigger any hints for a single word
+        assert!(analyze("fix").is_empty());
     }
 
     #[test]
