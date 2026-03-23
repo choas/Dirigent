@@ -407,6 +407,18 @@ impl DirigentApp {
 
             // Render Markdown view if applicable
             if is_markdown && self.viewer.tabs[active_idx].markdown_rendered {
+                // Convert scroll_to_line into scroll_to_heading for rendered view
+                if let Some(target_line) = self.viewer.scroll_to_line.take() {
+                    let symbols = &self.viewer.tabs[active_idx].symbols;
+                    let mut heading_idx = 0usize;
+                    for sym in symbols {
+                        if sym.line == target_line {
+                            self.viewer.scroll_to_heading = Some(heading_idx);
+                            break;
+                        }
+                        heading_idx += 1;
+                    }
+                }
                 egui::ScrollArea::both()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {

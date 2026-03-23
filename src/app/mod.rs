@@ -256,6 +256,8 @@ pub(super) struct CodeViewerState {
     pub(super) quick_open_selected: usize,
     /// Whether to show the symbol outline in the left panel.
     pub(super) show_outline: bool,
+    /// Scroll to the Nth heading in rendered markdown view (0-based).
+    pub(super) scroll_to_heading: Option<usize>,
 }
 
 impl CodeViewerState {
@@ -766,6 +768,7 @@ impl DirigentApp {
                 quick_open_query: String::new(),
                 quick_open_selected: 0,
                 show_outline: true,
+                scroll_to_heading: None,
             },
             cues,
             archived_cue_count,

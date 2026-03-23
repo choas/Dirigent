@@ -5,7 +5,8 @@ use super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     /// Render the parsed markdown blocks for the currently open file.
-    pub(super) fn render_markdown_content(&self, ui: &mut egui::Ui) {
+    pub(super) fn render_markdown_content(&mut self, ui: &mut egui::Ui) {
+        let scroll_target = self.viewer.scroll_to_heading.take();
         let blocks_ref = self
             .viewer
             .active()
@@ -18,6 +19,7 @@ impl DirigentApp {
                 &self.viewer.syntax_theme,
                 &self.semantic,
                 0,
+                scroll_target,
             );
         }
     }
@@ -30,8 +32,10 @@ fn render_blocks(
     syntax_theme: &egui_extras::syntax_highlighting::CodeTheme,
     semantic: &crate::settings::SemanticColors,
     indent_level: usize,
+    scroll_to_heading: Option<usize>,
 ) {
     let indent = indent_level as f32 * SPACE_MD;
+    let mut heading_counter = 0usize;
 
     for (block_idx, block) in blocks.iter().enumerate() {
         if indent > 0.0 {
@@ -39,6 +43,9 @@ fn render_blocks(
         }
         match block {
             MarkdownBlock::Heading { level, segments } => {
+                let should_scroll = scroll_to_heading == Some(heading_counter);
+                heading_counter += 1;
+
                 ui.add_space(SPACE_SM);
                 let scale = match level {
                     1 => 2.0,
@@ -48,7 +55,7 @@ fn render_blocks(
                     5 => 1.05,
                     _ => 1.0,
                 };
-                ui.horizontal_wrapped(|ui| {
+                let resp = ui.horizontal_wrapped(|ui| {
                     if indent > 0.0 {
                         ui.add_space(indent);
                     }
@@ -56,6 +63,9 @@ fn render_blocks(
                         render_segment(ui, seg, font_size * scale, true, semantic);
                     }
                 });
+                if should_scroll {
+                    resp.response.scroll_to_me(Some(egui::Align::TOP));
+                }
                 if *level <= 2 {
                     ui.separator();
                 }
@@ -171,6 +181,7 @@ fn render_blocks(
                                 syntax_theme,
                                 semantic,
                                 indent_level + 1,
+                                None,
                             );
                         }
                     } else {
@@ -190,6 +201,7 @@ fn render_blocks(
                             syntax_theme,
                             semantic,
                             indent_level + 1,
+                            None,
                         );
                     }
                 }
@@ -211,7 +223,7 @@ fn render_blocks(
 
                     ui.vertical(|ui| {
                         ui.add_space(SPACE_XS);
-                        render_blocks(ui, blocks, font_size, syntax_theme, semantic, 0);
+                        render_blocks(ui, blocks, font_size, syntax_theme, semantic, 0, None);
                         ui.add_space(SPACE_XS);
 
                         // Paint the accent bar spanning the full content height
