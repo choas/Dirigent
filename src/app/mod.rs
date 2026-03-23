@@ -1644,6 +1644,9 @@ impl DirigentApp {
         self.git.commit_history_total = git::count_commits(&self.project_root);
         self.expanded_dirs.clear();
         self.diff_review = None;
+        self.prompt_history_query = String::new();
+        self.prompt_history_results = Vec::new();
+        self.prompt_history_active = false;
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
 
         // Load project-specific settings if the new repo has them,
