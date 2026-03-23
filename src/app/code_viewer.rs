@@ -151,6 +151,9 @@ impl DirigentApp {
                             ui.id().with(("tab_ctx", i)),
                             egui::Sense::click(),
                         );
+                        if ctx_resp.clicked() {
+                            tab_to_activate = Some(i);
+                        }
                         ctx_resp.context_menu(|ui| {
                             if ui.button("Close").clicked() {
                                 tab_to_close = Some(i);
