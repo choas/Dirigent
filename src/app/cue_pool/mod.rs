@@ -213,64 +213,77 @@ impl DirigentApp {
                     });
                 }
 
-                ui.separator();
-
                 // Prompt history search
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("\u{1F50D}").small());
-                    let search_resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.prompt_history_query)
-                            .desired_width(ui.available_width())
-                            .hint_text("Search past prompts...")
-                            .font(egui::TextStyle::Small),
-                    );
-                    if search_resp.changed() {
-                        if self.prompt_history_query.len() >= 2 {
+                    let search_icon = if self.prompt_history_active { "\u{2715}" } else { "\u{1F50D}" };
+                    if ui.small_button(search_icon)
+                        .on_hover_text(if self.prompt_history_active { "Close search" } else { "Search past prompts" })
+                        .clicked()
+                    {
+                        self.prompt_history_active = !self.prompt_history_active;
+                        if !self.prompt_history_active {
+                            self.prompt_history_query.clear();
+                            self.prompt_history_results.clear();
+                        }
+                    }
+                    if self.prompt_history_active {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.prompt_history_query)
+                                .desired_width(ui.available_width())
+                                .hint_text("Search past cues...")
+                                .font(egui::TextStyle::Small),
+                        );
+                        if response.changed() && self.prompt_history_query.len() >= 2 {
                             self.prompt_history_results = self
                                 .db
-                                .search_executions(&self.prompt_history_query, 10)
+                                .search_cue_history(&self.prompt_history_query, 10)
                                 .unwrap_or_default();
-                        } else {
+                        } else if self.prompt_history_query.len() < 2 {
                             self.prompt_history_results.clear();
                         }
                     }
                 });
-
                 // Show search results
-                if !self.prompt_history_results.is_empty() {
-                    let mut reuse_text: Option<String> = None;
+                let mut reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)> = None;
+                if self.prompt_history_active && !self.prompt_history_results.is_empty() {
                     egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(4, 2))
+                        .inner_margin(egui::Margin::same(4))
+                        .corner_radius(4)
+                        .fill(self.semantic.selection_bg())
                         .show(ui, |ui| {
-                            for exec in &self.prompt_history_results {
-                                let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
-                                let preview = if user_text.len() > 80 {
-                                    format!("{}...", &user_text[..80])
-                                } else {
-                                    user_text.clone()
-                                };
+                            for (_id, text, file_path, line_number, line_number_end, images) in &self.prompt_history_results {
                                 ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(&preview)
-                                            .small()
-                                            .color(self.semantic.secondary_text),
-                                    );
-                                    if ui
-                                        .small_button("\u{21BB}")
-                                        .on_hover_text("Reuse this prompt")
+                                    let preview: String = text.lines().next().unwrap_or("").chars().take(60).collect();
+                                    let location = if file_path.is_empty() {
+                                        "Global".to_string()
+                                    } else {
+                                        file_path.clone()
+                                    };
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(&preview).small());
+                                        ui.label(
+                                            egui::RichText::new(&location)
+                                                .small()
+                                                .color(self.semantic.muted_text()),
+                                        );
+                                    });
+                                    if ui.small_button(icon("\u{21A9} Reuse", self.settings.font_size))
+                                        .on_hover_text("Create a new cue with this text")
                                         .clicked()
                                     {
-                                        reuse_text = Some(user_text);
+                                        reuse_cue = Some((text.clone(), file_path.clone(), *line_number, *line_number_end, images.clone()));
                                     }
                                 });
+                                ui.add_space(2.0);
                             }
                         });
-                    if let Some(text) = reuse_text {
-                        self.global_prompt_input = text;
-                        self.prompt_history_query.clear();
-                        self.prompt_history_results.clear();
-                    }
-                    ui.separator();
+                }
+                if let Some((text, file_path, line_number, line_number_end, images)) = reuse_cue {
+                    let _ = self.db.insert_cue(&text, &file_path, line_number, line_number_end, &images);
+                    self.reload_cues();
+                    self.prompt_history_active = false;
+                    self.prompt_history_query.clear();
+                    self.prompt_history_results.clear();
                 }
 
                 let panel_rect = ui.max_rect();

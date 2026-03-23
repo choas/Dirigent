@@ -92,14 +92,32 @@ impl DirigentApp {
                 (cue.text.clone(), None)
             };
 
+        // Gather auto-context only when at least one source is enabled and the
+        // CLI provider actually uses it (OpenCode builds its own prompt).
+        let want_file = self.settings.auto_context_file;
+        let want_diff = self.settings.auto_context_git_diff;
+        let auto_context =
+            if (want_file || want_diff) && self.settings.cli_provider == CliProvider::Claude {
+                claude::gather_auto_context(
+                    &self.project_root,
+                    &cue.file_path,
+                    cue.line_number,
+                    cue.line_number_end,
+                    want_file,
+                    want_diff,
+                )
+            } else {
+                String::new()
+            };
+
         let prompt = match self.settings.cli_provider {
-            CliProvider::Claude => claude::build_prompt(
+            CliProvider::Claude => claude::build_prompt_with_auto_context(
                 &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
                 &cue.attached_images,
-                Some(&self.project_root),
+                &auto_context,
             ),
             CliProvider::OpenCode => opencode::build_prompt(
                 &effective_text,
@@ -505,6 +523,7 @@ impl DirigentApp {
         self.drain_log_channel();
 
         let results: Vec<ClaudeResult> = self.claude.rx.try_iter().collect();
+        let had_results = !results.is_empty();
 
         for result in results {
             // Save the running log to DB before processing
@@ -533,9 +552,19 @@ impl DirigentApp {
                 let _ = self.db.log_activity(result.cue_id, "Run failed");
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
-                let _ = self
-                    .db
-                    .complete_execution(result.exec_id, &result.response, Some(diff));
+                let (m_cost, m_dur, m_turns) = (
+                    Some(result.metrics.cost_usd),
+                    Some(result.metrics.duration_ms),
+                    Some(result.metrics.num_turns),
+                );
+                let _ = self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    Some(diff),
+                    m_cost,
+                    m_dur,
+                    m_turns,
+                );
                 let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
                 let _ = self
                     .db
@@ -568,9 +597,19 @@ impl DirigentApp {
                 self.reload_git_info();
             } else {
                 // Claude ran but no files were changed
-                let _ = self
-                    .db
-                    .complete_execution(result.exec_id, &result.response, None);
+                let (m_cost, m_dur, m_turns) = (
+                    Some(result.metrics.cost_usd),
+                    Some(result.metrics.duration_ms),
+                    Some(result.metrics.num_turns),
+                );
+                let _ = self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    None,
+                    m_cost,
+                    m_dur,
+                    m_turns,
+                );
                 let preview = self.cue_preview(result.cue_id);
                 self.set_status_message(format!(
                     "Claude completed but no file changes detected for \"{}\"",
@@ -590,6 +629,11 @@ impl DirigentApp {
             }
 
             self.reload_cues();
+        }
+
+        // Refresh cached total cost once after processing all results
+        if had_results {
+            self.cached_total_cost = self.db.total_cost().unwrap_or(self.cached_total_cost);
         }
     }
 

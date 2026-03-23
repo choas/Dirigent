@@ -172,34 +172,28 @@ impl DirigentApp {
                 }
             }
 
-            // Run metrics (cost, duration) for completed executions
+            // Run metrics (cost, duration, turns) for completed cues
             if matches!(
-                cue.status,
+                status,
                 CueStatus::Review | CueStatus::Done | CueStatus::Archived
             ) {
-                if let Ok(Some(exec)) = self.db.get_latest_execution(cue.id) {
-                    if exec.cost_usd > 0.0 || exec.duration_ms > 0 {
-                        ui.horizontal(|ui| {
-                            let mut parts = Vec::new();
-                            if exec.duration_ms > 0 {
-                                parts.push(format!("{:.1}s", exec.duration_ms as f64 / 1000.0));
-                            }
-                            if exec.cost_usd > 0.0 {
-                                parts.push(format!("${:.4}", exec.cost_usd));
-                            }
-                            if exec.num_turns > 0 {
-                                parts.push(format!("{} turns", exec.num_turns));
-                            }
-                            let tokens_total = exec.input_tokens + exec.output_tokens;
-                            if tokens_total > 0 {
-                                parts.push(format!("{}k tok", tokens_total / 1000));
-                            }
-                            ui.label(
-                                egui::RichText::new(parts.join(" \u{00B7} "))
-                                    .small()
-                                    .color(self.semantic.tertiary_text),
-                            );
-                        });
+                if let Some(metrics) = self.latest_exec_cache.get(&cue.id) {
+                    let mut parts = Vec::new();
+                    if let Some(turns) = metrics.num_turns {
+                        parts.push(format!("{} turns", turns));
+                    }
+                    if let Some(ms) = metrics.duration_ms {
+                        parts.push(format!("{:.1}s", ms as f64 / 1000.0));
+                    }
+                    if let Some(cost) = metrics.cost_usd {
+                        parts.push(format!("${:.4}", cost));
+                    }
+                    if !parts.is_empty() {
+                        ui.label(
+                            egui::RichText::new(parts.join("  "))
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        );
                     }
                 }
             }

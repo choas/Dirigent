@@ -579,10 +579,6 @@ pub struct DirigentApp {
     // Tag input for "Tag All Review" (visible when toggled)
     tag_all_review_input: Option<String>,
 
-    // Prompt history search
-    prompt_history_query: String,
-    prompt_history_results: Vec<crate::db::Execution>,
-
     // Lava lamp enlarged toggle
     lava_lamp_big: bool,
 
@@ -597,6 +593,17 @@ pub struct DirigentApp {
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
     goto_def_gen: u64,
     goto_def_cancel: Arc<AtomicBool>,
+
+    // Prompt history search
+    prompt_history_query: String,
+    prompt_history_results: Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>,
+    prompt_history_active: bool,
+
+    // Cached total cost (refreshed when executions complete, avoids SQL aggregate per frame)
+    cached_total_cost: f64,
+
+    // Cached latest execution metrics per cue (avoids DB reads during repaint)
+    latest_exec_cache: HashMap<i64, crate::db::ExecutionMetrics>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -730,6 +737,8 @@ impl DirigentApp {
         };
 
         let semantic = settings.theme.semantic_colors();
+        let initial_total_cost = db.total_cost().unwrap_or(0.0);
+        let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
         DirigentApp {
             project_root,
@@ -846,8 +855,6 @@ impl DirigentApp {
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),
             tag_all_review_input: None,
-            prompt_history_query: String::new(),
-            prompt_history_results: Vec::new(),
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
@@ -855,6 +862,13 @@ impl DirigentApp {
             goto_def_rx,
             goto_def_gen: 0,
             goto_def_cancel: Arc::new(AtomicBool::new(false)),
+
+            prompt_history_query: String::new(),
+            prompt_history_results: Vec::new(),
+            prompt_history_active: false,
+
+            cached_total_cost: initial_total_cost,
+            latest_exec_cache: initial_exec_cache,
         }
     }
 
@@ -926,6 +940,10 @@ impl DirigentApp {
             .all_cues_limited_archived(self.archived_cue_limit)
             .unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+        self.latest_exec_cache = self
+            .db
+            .get_all_latest_execution_metrics()
+            .unwrap_or_default();
     }
 
     /// Start an async git push operation.
@@ -1641,7 +1659,15 @@ impl DirigentApp {
         self.git.commit_history_total = git::count_commits(&self.project_root);
         self.expanded_dirs.clear();
         self.diff_review = None;
+        self.prompt_history_query = String::new();
+        self.prompt_history_results = Vec::new();
+        self.prompt_history_active = false;
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        self.cached_total_cost = self.db.total_cost().unwrap_or(0.0);
+        self.latest_exec_cache = self
+            .db
+            .get_all_latest_execution_metrics()
+            .unwrap_or_default();
 
         // Load project-specific settings if the new repo has them,
         // carrying over recent_repos from the current session.

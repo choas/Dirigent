@@ -6,6 +6,10 @@ use std::time::Duration;
 
 const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Maximum bytes per auto-context section (file snippet or git diff).
+/// Keeps the final prompt well under OS `ARG_MAX` limits (~1 MB on macOS).
+const AUTO_CONTEXT_MAX_BYTES: usize = 100_000;
+
 #[derive(Debug)]
 pub(crate) enum ClaudeError {
     NotFound,
@@ -73,7 +77,26 @@ pub(crate) fn build_prompt(
     line_number: usize,
     line_number_end: Option<usize>,
     images: &[String],
-    project_root: Option<&Path>,
+    _project_root: Option<&Path>,
+) -> String {
+    build_prompt_with_auto_context(
+        cue_text,
+        file_path,
+        line_number,
+        line_number_end,
+        images,
+        "",
+    )
+}
+
+/// Build a structured prompt with optional auto-context (file snippet + git diff).
+pub(crate) fn build_prompt_with_auto_context(
+    cue_text: &str,
+    file_path: &str,
+    line_number: usize,
+    line_number_end: Option<usize>,
+    images: &[String],
+    auto_context: &str,
 ) -> String {
     let images_section = if images.is_empty() {
         String::new()
@@ -85,13 +108,18 @@ pub(crate) fn build_prompt(
             list.join("\n"),
         )
     };
+    let auto_ctx_section = if auto_context.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", auto_context)
+    };
     if file_path.is_empty() {
         format!(
-            "## Task\n\n{}{}\n\n\
+            "## Task\n\n{}{}{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, images_section,
+            cue_text, images_section, auto_ctx_section,
         )
     } else {
         let line_ref = match line_number_end {
@@ -99,107 +127,129 @@ pub(crate) fn build_prompt(
             None => format!("line {}", line_number),
         };
 
-        // Auto-context: include file content around the cue location
-        let file_context = project_root
-            .map(|root| build_file_context(root, file_path, line_number, line_number_end))
-            .unwrap_or_default();
-
-        // Auto-context: include recent git diff for this file
-        let git_context = project_root
-            .map(|root| build_git_diff_context(root, file_path))
-            .unwrap_or_default();
-
         format!(
             "## Task\n\n{}{}\n\n\
              ## Context\n\n\
-             Focus on {} in `{}`.\n\
-             {}{}\n\
+             Focus on {} in `{}`.\n{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, images_section, line_ref, file_path, file_context, git_context,
+            cue_text, images_section, line_ref, file_path, auto_ctx_section,
         )
     }
 }
 
-/// Read ±50 lines around the cue location from the file.
-fn build_file_context(
-    project_root: &Path,
+/// Generate auto-context for a file-specific cue: a snippet of the file around
+/// the target line(s), and the git diff for the file (recent uncommitted changes).
+///
+/// Returns a formatted string to include in the prompt, or empty if no context
+/// could be gathered (e.g. file doesn't exist or is a global cue).
+pub(crate) fn gather_auto_context(
+    project_root: &std::path::Path,
     file_path: &str,
     line_number: usize,
     line_number_end: Option<usize>,
+    include_file: bool,
+    include_git_diff: bool,
 ) -> String {
-    let full_path = project_root.join(file_path);
-    let content = match std::fs::read_to_string(&full_path) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
-    };
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.is_empty() || line_number == 0 {
+    if file_path.is_empty() {
         return String::new();
     }
 
-    let center_start = line_number.saturating_sub(1); // 0-indexed
-    let center_end = line_number_end.unwrap_or(line_number).saturating_sub(1);
-    let window_start = center_start.saturating_sub(50);
-    let window_end = (center_end + 51).min(lines.len());
+    let mut sections = Vec::new();
 
-    if window_start >= lines.len() {
-        return String::new();
-    }
+    // 1. File content snippet (~50 lines window around the target)
+    if include_file {
+        let full_path = project_root.join(file_path);
+        if let Ok(content) = std::fs::read_to_string(&full_path) {
+            let lines: Vec<&str> = content.lines().collect();
+            if !lines.is_empty() {
+                let center = line_number.saturating_sub(1); // 0-indexed
+                let end_line = line_number_end.unwrap_or(line_number).saturating_sub(1);
+                let span = end_line.saturating_sub(center) + 1;
+                // Window: 50 lines total, centered on the target range
+                let padding = 50usize.saturating_sub(span) / 2;
+                let start = center.saturating_sub(padding);
+                let end = (end_line + padding + 1).min(lines.len());
 
-    let mut snippet = String::new();
-    for (i, line) in lines[window_start..window_end].iter().enumerate() {
-        let line_num = window_start + i + 1;
-        snippet.push_str(&format!("{:4} | {}\n", line_num, line));
-    }
+                let snippet: Vec<String> = lines[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
+                    .collect();
+                let snippet_text = snippet.join("\n");
 
-    format!(
-        "\n### File content (`{}`, lines {}-{}):\n\n```\n{}```\n",
-        file_path,
-        window_start + 1,
-        window_end,
-        snippet,
-    )
-}
+                if snippet_text.len() <= AUTO_CONTEXT_MAX_BYTES {
+                    sections.push(format!(
+                        "## File Content\n\n\
+                     `{}` (lines {}-{}):\n```\n{}\n```",
+                        file_path,
+                        start + 1,
+                        end,
+                        snippet_text,
+                    ));
+                } else {
+                    // Truncate to fit within the byte ceiling
+                    let truncated: String = snippet_text
+                        .char_indices()
+                        .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
+                        .map(|(_, c)| c)
+                        .collect();
+                    sections.push(format!(
+                        "## File Content\n\n\
+                     `{}` (lines {}-{}, truncated):\n```\n{}\n... (truncated)\n```",
+                        file_path,
+                        start + 1,
+                        end,
+                        truncated,
+                    ));
+                }
+            }
+        }
+    } // include_file
 
-/// Get the recent git diff for a specific file (unstaged + staged changes).
-fn build_git_diff_context(project_root: &Path, file_path: &str) -> String {
-    use std::process::Command;
+    // 2. Git diff for this file (uncommitted changes)
+    if include_git_diff {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["diff", "--", file_path])
+            .current_dir(project_root)
+            .output()
+        {
+            if output.status.success() {
+                let diff = String::from_utf8_lossy(&output.stdout);
+                let diff = diff.trim();
+                if !diff.is_empty() {
+                    // Limit diff to ~200 lines to avoid bloating the prompt
+                    let diff_lines: Vec<&str> = diff.lines().collect();
+                    let mut truncated = if diff_lines.len() > 200 {
+                        format!(
+                            "{}\n... ({} more lines)",
+                            diff_lines[..200].join("\n"),
+                            diff_lines.len() - 200
+                        )
+                    } else {
+                        diff.to_string()
+                    };
+                    // Enforce byte ceiling on top of line-count limit
+                    if truncated.len() > AUTO_CONTEXT_MAX_BYTES {
+                        truncated = truncated
+                            .char_indices()
+                            .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
+                            .map(|(_, c)| c)
+                            .collect();
+                        truncated.push_str("\n... (truncated)");
+                    }
+                    sections.push(format!(
+                        "## Recent Changes (uncommitted)\n\n\
+                     ```diff\n{}\n```",
+                        truncated,
+                    ));
+                }
+            }
+        }
+    } // include_git_diff
 
-    // Get combined diff (staged + unstaged)
-    let output = Command::new("git")
-        .args(["diff", "HEAD", "--", file_path])
-        .current_dir(project_root)
-        .output();
-
-    let diff = match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return String::new(),
-    };
-
-    let trimmed = diff.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    // Limit diff context to avoid bloating the prompt
-    let max_lines = 100;
-    let diff_lines: Vec<&str> = trimmed.lines().collect();
-    let truncated = if diff_lines.len() > max_lines {
-        format!(
-            "{}\n... ({} more lines truncated)",
-            diff_lines[..max_lines].join("\n"),
-            diff_lines.len() - max_lines
-        )
-    } else {
-        trimmed.to_string()
-    };
-
-    format!(
-        "\n### Recent changes to `{}`:\n\n```diff\n{}\n```\n",
-        file_path, truncated,
-    )
+    sections.join("\n\n")
 }
 
 /// Build a follow-up prompt for replying to a Review cue with feedback.
@@ -483,10 +533,7 @@ pub(crate) fn invoke_claude_streaming(
                     .get("duration_ms")
                     .and_then(|d| d.as_u64())
                     .unwrap_or(0);
-                metrics.num_turns = event
-                    .get("num_turns")
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(0);
+                metrics.num_turns = event.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0);
                 metrics.input_tokens = event
                     .get("total_input_tokens")
                     .and_then(|t| t.as_u64())

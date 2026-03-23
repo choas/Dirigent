@@ -10,6 +10,7 @@ mod file_tree;
 mod git;
 mod opencode;
 mod prompt_hints;
+mod prompt_suggestions;
 mod settings;
 mod sources;
 

@@ -123,12 +123,20 @@ pub(crate) struct Execution {
     #[allow(dead_code)]
     pub status: ExecutionStatus,
     pub provider: CliProvider,
-    /// Run metrics (cost, duration, tokens, turns).
-    pub cost_usd: f64,
-    pub duration_ms: u64,
-    pub num_turns: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    /// Cost in USD (from Claude stream-json).
+    pub cost_usd: Option<f64>,
+    /// Duration in milliseconds.
+    pub duration_ms: Option<u64>,
+    /// Number of conversation turns.
+    pub num_turns: Option<u64>,
+}
+
+/// Lightweight execution metrics for display in cue cards (avoids fetching full Execution blobs).
+#[derive(Debug, Clone)]
+pub(crate) struct ExecutionMetrics {
+    pub cost_usd: Option<f64>,
+    pub duration_ms: Option<u64>,
+    pub num_turns: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -271,11 +279,11 @@ impl Database {
             .is_ok();
         if !has_cost_col {
             let _ = self.conn.execute_batch(
-                "ALTER TABLE executions ADD COLUMN cost_usd REAL DEFAULT 0;
-                 ALTER TABLE executions ADD COLUMN duration_ms INTEGER DEFAULT 0;
-                 ALTER TABLE executions ADD COLUMN num_turns INTEGER DEFAULT 0;
-                 ALTER TABLE executions ADD COLUMN input_tokens INTEGER DEFAULT 0;
-                 ALTER TABLE executions ADD COLUMN output_tokens INTEGER DEFAULT 0;",
+                "ALTER TABLE executions ADD COLUMN cost_usd REAL;
+                 ALTER TABLE executions ADD COLUMN duration_ms INTEGER;
+                 ALTER TABLE executions ADD COLUMN num_turns INTEGER;
+                 ALTER TABLE executions ADD COLUMN input_tokens INTEGER;
+                 ALTER TABLE executions ADD COLUMN output_tokens INTEGER;",
             );
         }
         // Activity log table for cue lifecycle timestamps
@@ -521,10 +529,27 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn complete_execution(&self, id: i64, response: &str, diff: Option<&str>) -> Result<()> {
+    pub fn complete_execution(
+        &self,
+        id: i64,
+        response: &str,
+        diff: Option<&str>,
+        cost_usd: Option<f64>,
+        duration_ms: Option<u64>,
+        num_turns: Option<u64>,
+    ) -> Result<()> {
         self.conn.execute(
-            "UPDATE executions SET response = ?1, diff = ?2, status = ?3 WHERE id = ?4",
-            params![response, diff, ExecutionStatus::Completed.as_str(), id],
+            "UPDATE executions SET response = ?1, diff = ?2, status = ?3, \
+             cost_usd = ?5, duration_ms = ?6, num_turns = ?7 WHERE id = ?4",
+            params![
+                response,
+                diff,
+                ExecutionStatus::Completed.as_str(),
+                id,
+                cost_usd,
+                duration_ms.map(|v| v as i64),
+                num_turns.map(|v| v as i64),
+            ],
         )?;
         Ok(())
     }
@@ -546,16 +571,6 @@ impl Database {
         Ok(())
     }
 
-    /// Get total cost across all executions.
-    pub fn total_cost(&self) -> Result<f64> {
-        let cost: f64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM executions",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(cost)
-    }
-
     pub fn fail_execution(&self, id: i64, response: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE executions SET response = ?1, status = ?2 WHERE id = ?3",
@@ -572,9 +587,19 @@ impl Database {
         Ok(())
     }
 
+    /// Get the total cost across all executions in this project.
+    pub fn total_cost(&self) -> Result<f64> {
+        let cost: f64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM executions",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(cost)
+    }
+
     pub fn get_latest_execution(&self, cue_id: i64) -> Result<Option<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id])?;
         if let Some(row) = rows.next()? {
@@ -584,10 +609,36 @@ impl Database {
         }
     }
 
+    /// Get the latest execution metrics for every cue that has at least one execution.
+    /// Returns a map from cue_id to its latest ExecutionMetrics.
+    pub fn get_all_latest_execution_metrics(
+        &self,
+    ) -> Result<std::collections::HashMap<i64, ExecutionMetrics>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.cue_id, e.cost_usd, e.duration_ms, e.num_turns \
+             FROM executions e \
+             WHERE e.id = (SELECT MAX(e2.id) FROM executions e2 WHERE e2.cue_id = e.cue_id)",
+        )?;
+        let mut map = std::collections::HashMap::new();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let cue_id: i64 = row.get(0)?;
+            map.insert(
+                cue_id,
+                ExecutionMetrics {
+                    cost_usd: row.get(1)?,
+                    duration_ms: row.get::<_, Option<i64>>(2)?.map(|v| v as u64),
+                    num_turns: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                },
+            );
+        }
+        Ok(map)
+    }
+
     /// Get all executions for a cue, ordered by id (oldest first).
     pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
         let mut execs = Vec::new();
@@ -623,6 +674,46 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    // -- Prompt history search --
+
+    /// Search past cue texts matching a query string (case-insensitive LIKE).
+    /// Returns up to `limit` results, most recent first, as
+    /// (cue_id, text, file_path, line_number, line_number_end, attached_images).
+    pub fn search_cue_history(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>> {
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{}%", escaped);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, file_path, line_number, line_number_end, attached_images FROM cues WHERE text LIKE ?1 ESCAPE '\\' ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |row| {
+            let line_end: Option<i64> = row.get(4)?;
+            let images_json: Option<String> = row.get(5)?;
+            let images: Vec<String> = images_json
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default();
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? as usize,
+                line_end.map(|n| n as usize),
+                images,
+            ))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
     }
 
     // -- Source integration --
@@ -878,6 +969,8 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
         "OpenCode" => CliProvider::OpenCode,
         _ => CliProvider::Claude,
     };
+    let duration_raw: Option<i64> = row.get(9)?;
+    let turns_raw: Option<i64> = row.get(10)?;
     Ok(Execution {
         id: row.get(0)?,
         cue_id: row.get(1)?,
@@ -887,11 +980,9 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
         log: row.get(5)?,
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
         provider,
-        cost_usd: row.get::<_, f64>(8).unwrap_or(0.0),
-        duration_ms: row.get::<_, i64>(9).unwrap_or(0) as u64,
-        num_turns: row.get::<_, i64>(10).unwrap_or(0) as u64,
-        input_tokens: row.get::<_, i64>(11).unwrap_or(0) as u64,
-        output_tokens: row.get::<_, i64>(12).unwrap_or(0) as u64,
+        cost_usd: row.get(8)?,
+        duration_ms: duration_raw.map(|v| v as u64),
+        num_turns: turns_raw.map(|v| v as u64),
     })
 }
 
@@ -1021,12 +1112,22 @@ mod tests {
         let exec_id = db
             .insert_execution(cue_id, "prompt", &CliProvider::Claude)
             .unwrap();
-        db.complete_execution(exec_id, "response text", Some("diff content"))
-            .unwrap();
+        db.complete_execution(
+            exec_id,
+            "response text",
+            Some("diff content"),
+            Some(0.0123),
+            Some(5000),
+            Some(3),
+        )
+        .unwrap();
         let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
         assert_eq!(exec.status, ExecutionStatus::Completed);
         assert_eq!(exec.response.as_deref(), Some("response text"));
         assert_eq!(exec.diff.as_deref(), Some("diff content"));
+        assert!((exec.cost_usd.unwrap() - 0.0123).abs() < 0.0001);
+        assert_eq!(exec.duration_ms, Some(5000));
+        assert_eq!(exec.num_turns, Some(3));
     }
 
     #[test]
