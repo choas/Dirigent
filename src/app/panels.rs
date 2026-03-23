@@ -849,19 +849,17 @@ impl DirigentApp {
                     }
                 }
 
-                // Total project cost (right-aligned)
-                if let Ok(total) = self.db.total_cost() {
-                    if total > 0.0 {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new(format!("${:.2}", total))
-                                    .monospace()
-                                    .small()
-                                    .color(self.semantic.muted_text()),
-                            ).on_hover_text("Total project cost across all runs");
-                            // Return to left-to-right for the rest
-                        });
-                    }
+                // Total project cost (right-aligned, cached)
+                if self.cached_total_cost > 0.0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("${:.2}", self.cached_total_cost))
+                                .monospace()
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        ).on_hover_text("Total project cost across all runs");
+                        // Return to left-to-right for the rest
+                    });
                 }
 
                 // Show transient status message (auto-dismiss after 6s, fade during last 2s)

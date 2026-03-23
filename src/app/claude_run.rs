@@ -222,9 +222,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
-                                cost_usd: response.cost_usd,
-                                duration_ms: response.duration_ms,
-                                num_turns: response.num_turns,
+                                cost_usd: Some(response.cost_usd),
+                                duration_ms: Some(response.duration_ms),
+                                num_turns: Some(response.num_turns),
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -454,9 +454,9 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
-                                cost_usd: response.cost_usd,
-                                duration_ms: response.duration_ms,
-                                num_turns: response.num_turns,
+                                cost_usd: Some(response.cost_usd),
+                                duration_ms: Some(response.duration_ms),
+                                num_turns: Some(response.num_turns),
                             }
                         }
                         Err(e) => ClaudeResult {
