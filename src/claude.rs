@@ -30,6 +30,18 @@ pub(crate) struct ClaudeResponse {
     pub stdout: String,
     /// File paths that Claude edited (from Edit/Write tool_use events).
     pub edited_files: Vec<String>,
+    /// Run metrics extracted from the stream-json "result" event.
+    pub metrics: RunMetrics,
+}
+
+/// Cost and performance metrics from a Claude run.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RunMetrics {
+    pub cost_usd: f64,
+    pub duration_ms: u64,
+    pub num_turns: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// Parse a `[command]` prefix from cue text.
@@ -51,12 +63,17 @@ pub(crate) fn parse_command_prefix(text: &str) -> Option<(&str, &str)> {
 }
 
 /// Build a structured prompt for Claude given a cue's context.
+///
+/// When `project_root` is provided and `file_path` is non-empty, the prompt
+/// includes the surrounding file content (±50 lines) and any recent git diff
+/// for the file, so Claude has immediate context without extra tool calls.
 pub(crate) fn build_prompt(
     cue_text: &str,
     file_path: &str,
     line_number: usize,
     line_number_end: Option<usize>,
     images: &[String],
+    project_root: Option<&Path>,
 ) -> String {
     let images_section = if images.is_empty() {
         String::new()
@@ -81,16 +98,108 @@ pub(crate) fn build_prompt(
             Some(end) => format!("lines {}-{}", line_number, end),
             None => format!("line {}", line_number),
         };
+
+        // Auto-context: include file content around the cue location
+        let file_context = project_root
+            .map(|root| build_file_context(root, file_path, line_number, line_number_end))
+            .unwrap_or_default();
+
+        // Auto-context: include recent git diff for this file
+        let git_context = project_root
+            .map(|root| build_git_diff_context(root, file_path))
+            .unwrap_or_default();
+
         format!(
             "## Task\n\n{}{}\n\n\
              ## Context\n\n\
-             Focus on {} in `{}`.\n\n\
+             Focus on {} in `{}`.\n\
+             {}{}\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, images_section, line_ref, file_path,
+            cue_text, images_section, line_ref, file_path, file_context, git_context,
         )
     }
+}
+
+/// Read ±50 lines around the cue location from the file.
+fn build_file_context(
+    project_root: &Path,
+    file_path: &str,
+    line_number: usize,
+    line_number_end: Option<usize>,
+) -> String {
+    let full_path = project_root.join(file_path);
+    let content = match std::fs::read_to_string(&full_path) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() || line_number == 0 {
+        return String::new();
+    }
+
+    let center_start = line_number.saturating_sub(1); // 0-indexed
+    let center_end = line_number_end.unwrap_or(line_number).saturating_sub(1);
+    let window_start = center_start.saturating_sub(50);
+    let window_end = (center_end + 51).min(lines.len());
+
+    if window_start >= lines.len() {
+        return String::new();
+    }
+
+    let mut snippet = String::new();
+    for (i, line) in lines[window_start..window_end].iter().enumerate() {
+        let line_num = window_start + i + 1;
+        snippet.push_str(&format!("{:4} | {}\n", line_num, line));
+    }
+
+    format!(
+        "\n### File content (`{}`, lines {}-{}):\n\n```\n{}```\n",
+        file_path,
+        window_start + 1,
+        window_end,
+        snippet,
+    )
+}
+
+/// Get the recent git diff for a specific file (unstaged + staged changes).
+fn build_git_diff_context(project_root: &Path, file_path: &str) -> String {
+    use std::process::Command;
+
+    // Get combined diff (staged + unstaged)
+    let output = Command::new("git")
+        .args(["diff", "HEAD", "--", file_path])
+        .current_dir(project_root)
+        .output();
+
+    let diff = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return String::new(),
+    };
+
+    let trimmed = diff.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Limit diff context to avoid bloating the prompt
+    let max_lines = 100;
+    let diff_lines: Vec<&str> = trimmed.lines().collect();
+    let truncated = if diff_lines.len() > max_lines {
+        format!(
+            "{}\n... ({} more lines truncated)",
+            diff_lines[..max_lines].join("\n"),
+            diff_lines.len() - max_lines
+        )
+    } else {
+        trimmed.to_string()
+    };
+
+    format!(
+        "\n### Recent changes to `{}`:\n\n```diff\n{}\n```\n",
+        file_path, truncated,
+    )
 }
 
 /// Build a follow-up prompt for replying to a Review cue with feedback.
@@ -103,6 +212,7 @@ pub(crate) fn build_reply_prompt(
     previous_diff: &str,
     reply: &str,
     images: &[String],
+    _project_root: Option<&Path>,
 ) -> String {
     let context = if file_path.is_empty() {
         String::new()
@@ -285,6 +395,7 @@ pub(crate) fn invoke_claude_streaming(
     let reader = std::io::BufReader::new(stdout_handle);
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
+    let mut metrics = RunMetrics::default();
 
     for line_result in reader.lines() {
         // Check cancellation between lines for fast response
@@ -363,21 +474,34 @@ pub(crate) fn invoke_claude_streaming(
                 if let Some(result) = event.get("result").and_then(|r| r.as_str()) {
                     final_result = result.to_string();
                 }
-                // Show cost and duration
-                let cost = event
+                // Extract run metrics
+                metrics.cost_usd = event
                     .get("cost_usd")
                     .and_then(|c| c.as_f64())
                     .unwrap_or(0.0);
-                let duration = event
+                metrics.duration_ms = event
                     .get("duration_ms")
                     .and_then(|d| d.as_u64())
                     .unwrap_or(0);
-                let turns = event.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0);
+                metrics.num_turns = event
+                    .get("num_turns")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0);
+                metrics.input_tokens = event
+                    .get("total_input_tokens")
+                    .and_then(|t| t.as_u64())
+                    .or_else(|| event.get("input_tokens").and_then(|t| t.as_u64()))
+                    .unwrap_or(0);
+                metrics.output_tokens = event
+                    .get("total_output_tokens")
+                    .and_then(|t| t.as_u64())
+                    .or_else(|| event.get("output_tokens").and_then(|t| t.as_u64()))
+                    .unwrap_or(0);
                 on_log(&format!(
                     "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
-                    turns,
-                    duration as f64 / 1000.0,
-                    cost
+                    metrics.num_turns,
+                    metrics.duration_ms as f64 / 1000.0,
+                    metrics.cost_usd
                 ));
             }
             // Silently ignore known but uninteresting event types
@@ -460,6 +584,7 @@ pub(crate) fn invoke_claude_streaming(
     Ok(ClaudeResponse {
         stdout: final_result,
         edited_files,
+        metrics,
     })
 }
 
@@ -673,14 +798,14 @@ mod tests {
 
     #[test]
     fn build_prompt_global_cue() {
-        let prompt = build_prompt("Add tests", "", 0, None, &[]);
+        let prompt = build_prompt("Add tests", "", 0, None, &[], None);
         assert!(prompt.contains("Add tests"));
         assert!(!prompt.contains("Focus on"));
     }
 
     #[test]
     fn build_prompt_with_file_single_line() {
-        let prompt = build_prompt("Fix bug", "src/main.rs", 42, None, &[]);
+        let prompt = build_prompt("Fix bug", "src/main.rs", 42, None, &[], None);
         assert!(prompt.contains("Fix bug"));
         assert!(prompt.contains("line 42"));
         assert!(prompt.contains("`src/main.rs`"));
@@ -688,7 +813,7 @@ mod tests {
 
     #[test]
     fn build_prompt_with_file_line_range() {
-        let prompt = build_prompt("Refactor", "lib.rs", 10, Some(20), &[]);
+        let prompt = build_prompt("Refactor", "lib.rs", 10, Some(20), &[], None);
         assert!(prompt.contains("lines 10-20"));
         assert!(prompt.contains("`lib.rs`"));
     }
@@ -699,7 +824,7 @@ mod tests {
             "/tmp/screenshot.png".to_string(),
             "/tmp/design.jpg".to_string(),
         ];
-        let prompt = build_prompt("Implement this design", "", 0, None, &images);
+        let prompt = build_prompt("Implement this design", "", 0, None, &images, None);
         assert!(prompt.contains("Attached Images"));
         assert!(prompt.contains("/tmp/screenshot.png"));
         assert!(prompt.contains("/tmp/design.jpg"));
@@ -831,13 +956,13 @@ Done!";
 
     #[test]
     fn extract_task_from_initial_prompt() {
-        let prompt = build_prompt("Fix the bug", "src/main.rs", 42, None, &[]);
+        let prompt = build_prompt("Fix the bug", "src/main.rs", 42, None, &[], None);
         assert_eq!(extract_user_text_from_prompt(&prompt), "Fix the bug");
     }
 
     #[test]
     fn extract_task_from_global_prompt() {
-        let prompt = build_prompt("Add tests", "", 0, None, &[]);
+        let prompt = build_prompt("Add tests", "", 0, None, &[], None);
         assert_eq!(extract_user_text_from_prompt(&prompt), "Add tests");
     }
 
@@ -851,6 +976,7 @@ Done!";
             "some diff",
             "please fix the typo",
             &[],
+            None,
         );
         assert_eq!(
             extract_user_text_from_prompt(&prompt),

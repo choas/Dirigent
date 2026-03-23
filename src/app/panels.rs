@@ -11,6 +11,7 @@ use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
+use crate::prompt_hints;
 use crate::settings::SemanticColors;
 
 impl DirigentApp {
@@ -786,6 +787,20 @@ impl DirigentApp {
                     }
                 }
 
+                // Total project cost
+                if let Ok(total_cost) = self.db.total_cost() {
+                    if total_cost > 0.0 {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!("${:.2}", total_cost))
+                                .monospace()
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        )
+                        .on_hover_text("Total API cost for this project");
+                    }
+                }
+
                 // Agent status indicators (format, lint, build, test)
                 {
                     let has_any_status = self.settings.agents.iter().any(|a| {
@@ -931,6 +946,22 @@ impl DirigentApp {
                     });
                     ui.add_space(SPACE_XS);
                 }
+                // Prompt refinement hints
+                let hints = prompt_hints::analyze(&self.global_prompt_input);
+                if !hints.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for hint in &hints {
+                            ui.label(
+                                egui::RichText::new(format!("\u{26A0} {}", hint.label))
+                                    .small()
+                                    .color(self.semantic.warning),
+                            )
+                            .on_hover_text(hint.detail);
+                        }
+                    });
+                    ui.add_space(SPACE_XS);
+                }
+
                 ui.horizontal(|ui| {
                     ui.label(icon("\u{25B6}", self.settings.font_size).color(self.semantic.accent));
                     if ui

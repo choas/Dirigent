@@ -215,6 +215,64 @@ impl DirigentApp {
 
                 ui.separator();
 
+                // Prompt history search
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("\u{1F50D}").small());
+                    let search_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.prompt_history_query)
+                            .desired_width(ui.available_width())
+                            .hint_text("Search past prompts...")
+                            .font(egui::TextStyle::Small),
+                    );
+                    if search_resp.changed() {
+                        if self.prompt_history_query.len() >= 2 {
+                            self.prompt_history_results = self
+                                .db
+                                .search_executions(&self.prompt_history_query, 10)
+                                .unwrap_or_default();
+                        } else {
+                            self.prompt_history_results.clear();
+                        }
+                    }
+                });
+
+                // Show search results
+                if !self.prompt_history_results.is_empty() {
+                    let mut reuse_text: Option<String> = None;
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(4, 2))
+                        .show(ui, |ui| {
+                            for exec in &self.prompt_history_results {
+                                let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
+                                let preview = if user_text.len() > 80 {
+                                    format!("{}...", &user_text[..80])
+                                } else {
+                                    user_text.clone()
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&preview)
+                                            .small()
+                                            .color(self.semantic.secondary_text),
+                                    );
+                                    if ui
+                                        .small_button("\u{21BB}")
+                                        .on_hover_text("Reuse this prompt")
+                                        .clicked()
+                                    {
+                                        reuse_text = Some(user_text);
+                                    }
+                                });
+                            }
+                        });
+                    if let Some(text) = reuse_text {
+                        self.global_prompt_input = text;
+                        self.prompt_history_query.clear();
+                        self.prompt_history_results.clear();
+                    }
+                    ui.separator();
+                }
+
                 let panel_rect = ui.max_rect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();

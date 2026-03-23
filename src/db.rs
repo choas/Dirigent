@@ -123,6 +123,12 @@ pub(crate) struct Execution {
     #[allow(dead_code)]
     pub status: ExecutionStatus,
     pub provider: CliProvider,
+    /// Run metrics (cost, duration, tokens, turns).
+    pub cost_usd: f64,
+    pub duration_ms: u64,
+    pub num_turns: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +263,20 @@ impl Database {
             let _ = self
                 .conn
                 .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
+        }
+        // Migration: add run metrics columns to executions
+        let has_cost_col: bool = self
+            .conn
+            .prepare("SELECT cost_usd FROM executions LIMIT 0")
+            .is_ok();
+        if !has_cost_col {
+            let _ = self.conn.execute_batch(
+                "ALTER TABLE executions ADD COLUMN cost_usd REAL DEFAULT 0;
+                 ALTER TABLE executions ADD COLUMN duration_ms INTEGER DEFAULT 0;
+                 ALTER TABLE executions ADD COLUMN num_turns INTEGER DEFAULT 0;
+                 ALTER TABLE executions ADD COLUMN input_tokens INTEGER DEFAULT 0;
+                 ALTER TABLE executions ADD COLUMN output_tokens INTEGER DEFAULT 0;",
+            );
         }
         // Activity log table for cue lifecycle timestamps
         self.conn.execute_batch(
@@ -509,6 +529,33 @@ impl Database {
         Ok(())
     }
 
+    /// Store run metrics (cost, duration, tokens, turns) for an execution.
+    pub fn update_execution_metrics(
+        &self,
+        id: i64,
+        cost_usd: f64,
+        duration_ms: u64,
+        num_turns: u64,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE executions SET cost_usd = ?1, duration_ms = ?2, num_turns = ?3, input_tokens = ?4, output_tokens = ?5 WHERE id = ?6",
+            params![cost_usd, duration_ms as i64, num_turns as i64, input_tokens as i64, output_tokens as i64, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get total cost across all executions.
+    pub fn total_cost(&self) -> Result<f64> {
+        let cost: f64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM executions",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(cost)
+    }
+
     pub fn fail_execution(&self, id: i64, response: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE executions SET response = ?1, status = ?2 WHERE id = ?3",
@@ -527,7 +574,7 @@ impl Database {
 
     pub fn get_latest_execution(&self, cue_id: i64) -> Result<Option<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id])?;
         if let Some(row) = rows.next()? {
@@ -540,9 +587,23 @@ impl Database {
     /// Get all executions for a cue, ordered by id (oldest first).
     pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
+        let mut execs = Vec::new();
+        for row in rows {
+            execs.push(row?);
+        }
+        Ok(execs)
+    }
+
+    /// Search executions by prompt text (LIKE query). Returns up to `limit` results, most recent first.
+    pub fn search_executions(&self, query: &str, limit: usize) -> Result<Vec<Execution>> {
+        let pattern = format!("%{}%", query);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE prompt LIKE ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |row| row_to_execution(row))?;
         let mut execs = Vec::new();
         for row in rows {
             execs.push(row?);
@@ -826,6 +887,11 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
         log: row.get(5)?,
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
         provider,
+        cost_usd: row.get::<_, f64>(8).unwrap_or(0.0),
+        duration_ms: row.get::<_, i64>(9).unwrap_or(0) as u64,
+        num_turns: row.get::<_, i64>(10).unwrap_or(0) as u64,
+        input_tokens: row.get::<_, i64>(11).unwrap_or(0) as u64,
+        output_tokens: row.get::<_, i64>(12).unwrap_or(0) as u64,
     })
 }
 

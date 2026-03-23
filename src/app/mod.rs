@@ -579,6 +579,10 @@ pub struct DirigentApp {
     // Tag input for "Tag All Review" (visible when toggled)
     tag_all_review_input: Option<String>,
 
+    // Prompt history search
+    prompt_history_query: String,
+    prompt_history_results: Vec<crate::db::Execution>,
+
     // Lava lamp enlarged toggle
     lava_lamp_big: bool,
 
@@ -842,6 +846,8 @@ impl DirigentApp {
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),
             tag_all_review_input: None,
+            prompt_history_query: String::new(),
+            prompt_history_results: Vec::new(),
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,

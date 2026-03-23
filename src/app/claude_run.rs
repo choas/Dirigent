@@ -21,6 +21,7 @@ struct ClaudeResult {
     diff: Option<String>,
     response: String,
     error: Option<String>,
+    metrics: claude::RunMetrics,
 }
 
 /// A log message from a running Claude worker thread.
@@ -98,6 +99,7 @@ impl DirigentApp {
                 cue.line_number,
                 cue.line_number_end,
                 &cue.attached_images,
+                Some(&self.project_root),
             ),
             CliProvider::OpenCode => opencode::build_prompt(
                 &effective_text,
@@ -199,6 +201,7 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                metrics: response.metrics,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -207,6 +210,7 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            metrics: claude::RunMetrics::default(),
                         },
                     }
                 }
@@ -241,6 +245,7 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                metrics: claude::RunMetrics::default(),
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -249,6 +254,7 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            metrics: claude::RunMetrics::default(),
                         },
                     }
                 }
@@ -311,6 +317,7 @@ impl DirigentApp {
                 &previous_diff,
                 reply,
                 &all_images,
+                Some(&self.project_root),
             ),
             CliProvider::OpenCode => opencode::build_reply_prompt(
                 &original_text,
@@ -419,6 +426,7 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                metrics: response.metrics,
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -427,6 +435,7 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            metrics: claude::RunMetrics::default(),
                         },
                     }
                 }
@@ -461,6 +470,7 @@ impl DirigentApp {
                                 diff,
                                 response: response.stdout,
                                 error: None,
+                                metrics: claude::RunMetrics::default(),
                             }
                         }
                         Err(e) => ClaudeResult {
@@ -469,6 +479,7 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
+                            metrics: claude::RunMetrics::default(),
                         },
                     }
                 }
@@ -503,6 +514,16 @@ impl DirigentApp {
             // Clean up runtime tracking (keep running_logs for viewing)
             self.claude.exec_ids.remove(&result.cue_id);
             self.claude.start_times.remove(&result.cue_id);
+
+            // Store run metrics
+            let _ = self.db.update_execution_metrics(
+                result.exec_id,
+                result.metrics.cost_usd,
+                result.metrics.duration_ms,
+                result.metrics.num_turns,
+                result.metrics.input_tokens,
+                result.metrics.output_tokens,
+            );
 
             if let Some(ref error) = result.error {
                 let preview = self.cue_preview(result.cue_id);

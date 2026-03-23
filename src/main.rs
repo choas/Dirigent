@@ -9,6 +9,7 @@ mod error;
 mod file_tree;
 mod git;
 mod opencode;
+mod prompt_hints;
 mod settings;
 mod sources;
 
