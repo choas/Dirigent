@@ -326,23 +326,39 @@ impl DirigentApp {
                     ui.end_row();
                 });
 
-            // Sources section
+            // Sources section (foldable)
             ui.add_space(SPACE_MD);
             ui.separator();
             ui.add_space(SPACE_SM);
             ui.horizontal(|ui| {
-                ui.strong("Sources");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("+ Add Source").clicked() {
-                        self.settings.sources.push(SourceConfig::default());
-                    }
-                });
+                let arrow = if self.sources_expanded { "\u{25BC}" } else { "\u{25B6}" };
+                if ui.button(icon(&format!("{} Sources", arrow), fs)).clicked() {
+                    self.sources_expanded = !self.sources_expanded;
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}/{}",
+                        self.settings.sources.iter().filter(|s| s.enabled).count(),
+                        self.settings.sources.len()
+                    ))
+                    .small()
+                    .color(self.semantic.secondary_text),
+                );
+                if self.sources_expanded {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("+ Add Source").clicked() {
+                            self.settings.sources.push(SourceConfig::default());
+                        }
+                    });
+                }
             });
+
+            if self.sources_expanded {
             ui.add_space(SPACE_SM);
 
             if self.settings.sources.is_empty() {
                 ui.label(
-                    egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Notion, MCP, or custom commands.")
+                    egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, SonarQube, Notion, MCP, or custom commands.")
                         .italics()
                         .color(self.semantic.tertiary_text),
                 );
@@ -442,6 +458,41 @@ impl DirigentApp {
                                         );
                                         ui.end_row();
                                     }
+                                    SourceKind::SonarQube => {
+                                        ui.label("Host URL:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].host_url,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("http://localhost:9000")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Project Key:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].project_key,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("e.g. my-project")
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+
+                                        ui.label("Token:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.settings.sources[i].token,
+                                            )
+                                            .desired_width(200.0)
+                                            .hint_text("leave empty to use .env SONAR_TOKEN")
+                                            .password(true)
+                                            .font(egui::TextStyle::Monospace),
+                                        );
+                                        ui.end_row();
+                                    }
                                     _ => {
                                         ui.label("Command:");
                                         ui.add(
@@ -488,6 +539,7 @@ impl DirigentApp {
             if let Some(idx) = remove_idx {
                 self.settings.sources.remove(idx);
             }
+            } // end sources_expanded
 
             // Agents section
             ui.add_space(SPACE_MD);

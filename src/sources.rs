@@ -149,6 +149,133 @@ pub(crate) fn fetch_slack_messages(
         .collect())
 }
 
+/// Fetch issues from a SonarQube instance using its Web API.
+/// Reads the token from the project-root `.env` file if `token` is empty.
+pub(crate) fn fetch_sonarqube_issues(
+    project_root: &Path,
+    host_url: &str,
+    project_key: &str,
+    token: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if host_url.is_empty() {
+        return Err(DirigentError::Source(
+            "SonarQube host URL is empty".to_string(),
+        ));
+    }
+    if project_key.is_empty() {
+        return Err(DirigentError::Source(
+            "SonarQube project key is empty".to_string(),
+        ));
+    }
+
+    // Resolve token: use explicit token, fall back to .env SONAR_TOKEN
+    let resolved_token = if token.is_empty() {
+        load_env_var(project_root, "SONAR_TOKEN").unwrap_or_default()
+    } else {
+        token.to_string()
+    };
+    if resolved_token.is_empty() {
+        return Err(DirigentError::Source(
+            "SonarQube token is empty (set in source config or SONAR_TOKEN in .env)".to_string(),
+        ));
+    }
+
+    let url = format!(
+        "{}/api/issues/search?componentKeys={}&resolved=false&ps=100",
+        host_url.trim_end_matches('/'),
+        project_key,
+    );
+
+    let child = Command::new("curl")
+        .arg("-s")
+        .arg("-u")
+        .arg(format!("{}:", resolved_token))
+        .arg(&url)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+    let output = output_with_timeout(child, timeout)?;
+
+    if !output.status.success() {
+        return Err(DirigentError::Source(format!(
+            "SonarQube API request failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let resp: serde_json::Value = serde_json::from_str(&json_str)?;
+
+    let issues = resp
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(issues
+        .iter()
+        .filter_map(|issue| {
+            let key = issue.get("key")?.as_str()?;
+            let message = issue.get("message")?.as_str()?;
+            let severity = issue
+                .get("severity")
+                .and_then(|s| s.as_str())
+                .unwrap_or("INFO");
+            let component = issue
+                .get("component")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let line = issue.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
+            let rule = issue.get("rule").and_then(|r| r.as_str()).unwrap_or("");
+
+            let text = if component.is_empty() {
+                format!("[{}] {}", severity, message)
+            } else if line > 0 {
+                format!(
+                    "[{}] {} ({}:{}, rule: {})",
+                    severity, message, component, line, rule
+                )
+            } else {
+                format!("[{}] {} ({}, rule: {})", severity, message, component, rule)
+            };
+
+            Some(SourceItem {
+                external_id: key.to_string(),
+                text,
+                source_label: source_label.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Load a variable from the `.env` file in the project root.
+/// Returns `None` if the file doesn't exist or the key is not found.
+fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
+    let env_path = project_root.join(".env");
+    let content = std::fs::read_to_string(env_path).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix(key) {
+            if let Some(value) = rest.strip_prefix('=') {
+                // Strip surrounding quotes if present
+                let value = value.trim();
+                let value = value
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                    .unwrap_or(value);
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Maximum length for a custom source command string.
 const MAX_COMMAND_LENGTH: usize = 4096;
 

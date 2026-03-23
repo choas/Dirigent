@@ -816,6 +816,7 @@ impl Default for CliProvider {
 pub(crate) enum SourceKind {
     GitHubIssues,
     Slack,
+    SonarQube,
     Notion,
     Mcp,
     Custom,
@@ -826,6 +827,7 @@ impl SourceKind {
         match self {
             SourceKind::GitHubIssues => "GitHub Issues",
             SourceKind::Slack => "Slack",
+            SourceKind::SonarQube => "SonarQube",
             SourceKind::Notion => "Notion",
             SourceKind::Mcp => "MCP",
             SourceKind::Custom => "Custom",
@@ -836,6 +838,7 @@ impl SourceKind {
         &[
             SourceKind::GitHubIssues,
             SourceKind::Slack,
+            SourceKind::SonarQube,
             SourceKind::Notion,
             SourceKind::Mcp,
             SourceKind::Custom,
@@ -858,6 +861,10 @@ pub(crate) struct SourceConfig {
     pub token: String,
     #[serde(default)]
     pub channel: String,
+    #[serde(default)]
+    pub host_url: String,
+    #[serde(default)]
+    pub project_key: String,
 }
 
 impl Default for SourceConfig {
@@ -872,6 +879,8 @@ impl Default for SourceConfig {
             command: String::new(),
             token: String::new(),
             channel: String::new(),
+            host_url: String::new(),
+            project_key: String::new(),
         }
     }
 }

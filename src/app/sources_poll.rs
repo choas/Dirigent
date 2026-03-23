@@ -90,6 +90,17 @@ impl DirigentApp {
                             Vec::new()
                         })
                 }
+                SourceKind::SonarQube => sources::fetch_sonarqube_issues(
+                    &project_root,
+                    &source.host_url,
+                    &source.project_key,
+                    &source.token,
+                    &source.label,
+                )
+                .unwrap_or_else(|e| {
+                    let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
+                    Vec::new()
+                }),
                 SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
                     if source.command.is_empty() {
                         Vec::new()
