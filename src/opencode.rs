@@ -28,6 +28,7 @@ impl std::fmt::Display for OpenCodeError {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Metric fields are stubs for future OpenCode metrics support (§1)
 pub(crate) struct OpenCodeResponse {
     pub stdout: String,
     pub edited_files: Vec<String>,
