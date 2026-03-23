@@ -604,6 +604,14 @@ pub struct DirigentApp {
 
     // Cached latest execution metrics per cue (avoids DB reads during repaint)
     latest_exec_cache: HashMap<i64, crate::db::ExecutionMetrics>,
+
+    // Pending file/directory delete confirmation (path, is_dir)
+    pending_file_delete: Option<(PathBuf, bool)>,
+
+    // Inline rename in file tree
+    rename_target: Option<PathBuf>,
+    rename_buffer: String,
+    rename_focus_requested: bool,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -869,6 +877,12 @@ impl DirigentApp {
 
             cached_total_cost: initial_total_cost,
             latest_exec_cache: initial_exec_cache,
+
+            pending_file_delete: None,
+
+            rename_target: None,
+            rename_buffer: String::new(),
+            rename_focus_requested: false,
         }
     }
 
@@ -1979,6 +1993,8 @@ impl eframe::App for DirigentApp {
         self.render_worktree_panel(ctx); // floating
         self.render_force_remove_dialog(ctx); // floating
         self.render_delete_archive_dialog(ctx); // floating
+        self.render_file_delete_dialog(ctx); // floating
+        self.render_rename_dialog(ctx); // floating
         self.render_about_dialog(ctx); // floating
         self.render_play_variables_dialog(ctx); // floating
         self.render_git_init_dialog(ctx); // floating
