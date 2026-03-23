@@ -6,6 +6,10 @@ use std::time::Duration;
 
 const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Maximum bytes per auto-context section (file snippet or git diff).
+/// Keeps the final prompt well under OS `ARG_MAX` limits (~1 MB on macOS).
+const AUTO_CONTEXT_MAX_BYTES: usize = 100_000;
+
 #[derive(Debug)]
 pub(crate) enum ClaudeError {
     NotFound,
@@ -158,15 +162,33 @@ pub(crate) fn gather_auto_context(
                 .enumerate()
                 .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
                 .collect();
+            let snippet_text = snippet.join("\n");
 
-            sections.push(format!(
-                "## File Content\n\n\
-                 `{}` (lines {}-{}):\n```\n{}\n```",
-                file_path,
-                start + 1,
-                end,
-                snippet.join("\n"),
-            ));
+            if snippet_text.len() <= AUTO_CONTEXT_MAX_BYTES {
+                sections.push(format!(
+                    "## File Content\n\n\
+                     `{}` (lines {}-{}):\n```\n{}\n```",
+                    file_path,
+                    start + 1,
+                    end,
+                    snippet_text,
+                ));
+            } else {
+                // Truncate to fit within the byte ceiling
+                let truncated: String = snippet_text
+                    .char_indices()
+                    .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
+                    .map(|(_, c)| c)
+                    .collect();
+                sections.push(format!(
+                    "## File Content\n\n\
+                     `{}` (lines {}-{}, truncated):\n```\n{}\n... (truncated)\n```",
+                    file_path,
+                    start + 1,
+                    end,
+                    truncated,
+                ));
+            }
         }
     }
 
@@ -182,7 +204,7 @@ pub(crate) fn gather_auto_context(
             if !diff.is_empty() {
                 // Limit diff to ~200 lines to avoid bloating the prompt
                 let diff_lines: Vec<&str> = diff.lines().collect();
-                let truncated = if diff_lines.len() > 200 {
+                let mut truncated = if diff_lines.len() > 200 {
                     format!(
                         "{}\n... ({} more lines)",
                         diff_lines[..200].join("\n"),
@@ -191,6 +213,15 @@ pub(crate) fn gather_auto_context(
                 } else {
                     diff.to_string()
                 };
+                // Enforce byte ceiling on top of line-count limit
+                if truncated.len() > AUTO_CONTEXT_MAX_BYTES {
+                    truncated = truncated
+                        .char_indices()
+                        .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
+                        .map(|(_, c)| c)
+                        .collect();
+                    truncated.push_str("\n... (truncated)");
+                }
                 sections.push(format!(
                     "## Recent Changes (uncommitted)\n\n\
                      ```diff\n{}\n```",
