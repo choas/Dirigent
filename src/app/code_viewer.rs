@@ -8,6 +8,7 @@ use super::{
     FONT_SCALE_SUBHEADING, SPACE_MD, SPACE_SM,
 };
 use crate::agents::Severity;
+use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
@@ -485,6 +486,13 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
+            // Build symbol lookup: line_num -> (kind_label, name) for "Implement" button
+            let symbol_lines: HashMap<usize, (String, String)> = self.viewer.tabs[active_idx]
+                .symbols
+                .iter()
+                .map(|s| (s.line, (s.kind.label().to_string(), s.name.clone())))
+                .collect();
+
             let sel_start = self.viewer.tabs[active_idx].selection_start;
             let sel_end = self.viewer.tabs[active_idx].selection_end;
             let mut new_sel_start = sel_start;
@@ -493,6 +501,7 @@ impl DirigentApp {
             let mut clear_selection = false;
             let mut fix_diagnostic_line: Option<usize> = None;
             let mut goto_def_word: Option<String> = None;
+            let mut implement_symbol: Option<(String, String, usize)> = None; // (kind_label, name, line)
 
             // Handle scroll-to-line requests (from search, cue navigation, etc.)
             // show_rows uses row_height + item_spacing.y per row, so include spacing.
@@ -700,6 +709,58 @@ impl DirigentApp {
                             }
                         }
 
+                        // Show "Implement" button on hover for symbol definition lines
+                        if line_response.hovered() && !cmd_held && sel_start.is_none() {
+                            if let Some((kind_label, sym_name)) = symbol_lines.get(&line_num) {
+                                let label = format!(" Implement {} ", sym_name);
+                                let font_id = egui::FontId::monospace(
+                                    self.settings.font_size * FONT_SCALE_SMALL,
+                                );
+                                let galley = $ui.painter().layout_no_wrap(
+                                    label,
+                                    font_id,
+                                    self.semantic.accent,
+                                );
+                                let text_size = galley.size();
+                                let btn_pos = egui::pos2(
+                                    code_resp.rect.right() + 12.0,
+                                    code_resp.rect.center().y - text_size.y / 2.0,
+                                );
+                                let btn_rect = egui::Rect::from_min_size(
+                                    btn_pos,
+                                    text_size,
+                                )
+                                .expand(3.0);
+                                let btn_resp = $ui.interact(
+                                    btn_rect,
+                                    egui::Id::new(("implement_btn", line_idx)),
+                                    egui::Sense::click(),
+                                );
+                                let bg_alpha = if btn_resp.hovered() { 0.25 } else { 0.15 };
+                                $ui.painter().rect_filled(
+                                    btn_rect,
+                                    3.0,
+                                    self.semantic.accent.linear_multiply(bg_alpha),
+                                );
+                                $ui.painter().galley(
+                                    btn_pos + egui::vec2(3.0, 3.0),
+                                    galley,
+                                    self.semantic.accent,
+                                );
+                                if btn_resp.hovered() {
+                                    $ui.ctx()
+                                        .set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                if btn_resp.clicked() {
+                                    implement_symbol = Some((
+                                        kind_label.clone(),
+                                        sym_name.clone(),
+                                        line_num,
+                                    ));
+                                }
+                            }
+                        }
+
                         // Show cue input after the last line of the selection
                         if is_selection_end {
                             let range_label = if sel_start == sel_end {
@@ -856,6 +917,24 @@ impl DirigentApp {
                             .insert_cue(&text, &rel_path, start, line_end, &images);
                     self.viewer.tabs[active_idx].cue_input.clear();
                     self.reload_cues();
+                }
+            }
+
+            // Handle "Implement" button click: create cue and run immediately
+            if let Some((kind_label, name, line)) = implement_symbol {
+                let text = if kind_label.is_empty() {
+                    format!("Implement `{}`", name)
+                } else {
+                    format!("Implement {} `{}`", kind_label, name)
+                };
+                if let Ok(id) =
+                    self.db
+                        .insert_cue(&text, &rel_path, line, None, &[])
+                {
+                    let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                    self.claude.expand_running = true;
+                    self.reload_cues();
+                    self.trigger_claude(id);
                 }
             }
 
