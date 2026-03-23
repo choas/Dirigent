@@ -596,8 +596,11 @@ pub struct DirigentApp {
 
     // Prompt history search
     prompt_history_query: String,
-    prompt_history_results: Vec<(i64, String, String)>,
+    prompt_history_results: Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>,
     prompt_history_active: bool,
+
+    // Cached total cost (refreshed when executions complete, avoids SQL aggregate per frame)
+    cached_total_cost: f64,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -731,6 +734,7 @@ impl DirigentApp {
         };
 
         let semantic = settings.theme.semantic_colors();
+        let initial_total_cost = db.total_cost().unwrap_or(0.0);
 
         DirigentApp {
             project_root,
@@ -858,6 +862,8 @@ impl DirigentApp {
             prompt_history_query: String::new(),
             prompt_history_results: Vec::new(),
             prompt_history_active: false,
+
+            cached_total_cost: initial_total_cost,
         }
     }
 

@@ -625,25 +625,34 @@ impl Database {
     // -- Prompt history search --
 
     /// Search past cue texts matching a query string (case-insensitive LIKE).
-    /// Returns up to `limit` results, most recent first, as (cue_id, text, file_path).
+    /// Returns up to `limit` results, most recent first, as
+    /// (cue_id, text, file_path, line_number, line_number_end, attached_images).
     pub fn search_cue_history(
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(i64, String, String)>> {
+    ) -> Result<Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>> {
         let escaped = query
             .replace('\\', "\\\\")
             .replace('%', "\\%")
             .replace('_', "\\_");
         let pattern = format!("%{}%", escaped);
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path FROM cues WHERE text LIKE ?1 ESCAPE '\\' ORDER BY id DESC LIMIT ?2",
+            "SELECT id, text, file_path, line_number, line_number_end, attached_images FROM cues WHERE text LIKE ?1 ESCAPE '\\' ORDER BY id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
+            let line_end: Option<i64> = row.get(4)?;
+            let images_json: Option<String> = row.get(5)?;
+            let images: Vec<String> = images_json
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default();
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? as usize,
+                line_end.map(|n| n as usize),
+                images,
             ))
         })?;
         let mut results = Vec::new();

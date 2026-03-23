@@ -244,14 +244,14 @@ impl DirigentApp {
                     }
                 });
                 // Show search results
-                let mut reuse_text: Option<String> = None;
+                let mut reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)> = None;
                 if self.prompt_history_active && !self.prompt_history_results.is_empty() {
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::same(4))
                         .corner_radius(4)
                         .fill(self.semantic.selection_bg())
                         .show(ui, |ui| {
-                            for (_id, text, file_path) in &self.prompt_history_results {
+                            for (_id, text, file_path, line_number, line_number_end, images) in &self.prompt_history_results {
                                 ui.horizontal(|ui| {
                                     let preview: String = text.lines().next().unwrap_or("").chars().take(60).collect();
                                     let location = if file_path.is_empty() {
@@ -271,15 +271,15 @@ impl DirigentApp {
                                         .on_hover_text("Create a new cue with this text")
                                         .clicked()
                                     {
-                                        reuse_text = Some(text.clone());
+                                        reuse_cue = Some((text.clone(), file_path.clone(), *line_number, *line_number_end, images.clone()));
                                     }
                                 });
                                 ui.add_space(2.0);
                             }
                         });
                 }
-                if let Some(text) = reuse_text {
-                    let _ = self.db.insert_cue(&text, "", 0, None, &[]);
+                if let Some((text, file_path, line_number, line_number_end, images)) = reuse_cue {
+                    let _ = self.db.insert_cue(&text, &file_path, line_number, line_number_end, &images);
                     self.reload_cues();
                     self.prompt_history_active = false;
                     self.prompt_history_query.clear();
