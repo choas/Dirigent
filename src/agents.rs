@@ -903,83 +903,19 @@ pub(crate) fn run_agent(
     let kind = config.kind;
     let timeout = Duration::from_secs(config.timeout_secs);
 
-    // Build effective command: optional shell init + the agent command
-    let effective_cmd = if shell_init.trim().is_empty() {
-        config.command.clone()
-    } else {
-        format!("{}\n{}", shell_init.trim(), config.command)
-    };
+    let effective_cmd = prepend_shell_init(shell_init, &config.command);
 
-    // Working directory: project root + optional subdirectory.
-    // Reject paths that escape the project root (e.g. via "..").
-    let cwd = if config.working_dir.trim().is_empty() {
-        project_root.to_path_buf()
-    } else {
-        let candidate = project_root.join(config.working_dir.trim());
-        let resolved = candidate.canonicalize().unwrap_or(candidate.clone());
-        let root_resolved = project_root
-            .canonicalize()
-            .unwrap_or(project_root.to_path_buf());
-        if !resolved.starts_with(&root_resolved) {
-            let _ = tx.send(AgentResult {
-                kind,
-                cue_id,
-                status: AgentStatus::Error,
-                output: format!("working_dir '{}' escapes project root", config.working_dir),
-                diagnostics: Vec::new(),
-                duration_ms: start.elapsed().as_millis() as u64,
-            });
+    let cwd = match resolve_working_dir(project_root, &config.working_dir) {
+        Ok(p) => p,
+        Err(msg) => {
+            let _ = tx.send(make_error_result(kind, cue_id, msg, &start));
             return;
         }
-        candidate
     };
 
-    // Execute before_run hook if configured.
-    // The prompt is available as $PROMPT env var and expanded in the command.
-    if !config.before_run.trim().is_empty() {
-        let before_cmd = config.before_run.replace("$PROMPT", prompt);
-        let before_effective = if shell_init.trim().is_empty() {
-            before_cmd
-        } else {
-            format!("{}\n{}", shell_init.trim(), before_cmd)
-        };
-        let before_result = Command::new("sh")
-            .arg("-c")
-            .arg(&before_effective)
-            .current_dir(&cwd)
-            .env("PROMPT", prompt)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-
-        match before_result {
-            Ok(output) if !output.status.success() => {
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let combined = if stderr.is_empty() { stdout } else { stderr };
-                let _ = tx.send(AgentResult {
-                    kind,
-                    cue_id,
-                    status: AgentStatus::Error,
-                    output: format!("before_run failed (exit {}):\n{}", output.status, combined),
-                    diagnostics: Vec::new(),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                });
-                return;
-            }
-            Err(e) => {
-                let _ = tx.send(AgentResult {
-                    kind,
-                    cue_id,
-                    status: AgentStatus::Error,
-                    output: format!("before_run failed to execute: {}", e),
-                    diagnostics: Vec::new(),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                });
-                return;
-            }
-            _ => {} // success — continue to main command
-        }
+    if let Err(msg) = run_before_hook(config, shell_init, prompt, &cwd) {
+        let _ = tx.send(make_error_result(kind, cue_id, msg, &start));
+        return;
     }
 
     let mut cmd = Command::new("sh");
@@ -997,107 +933,172 @@ pub(crate) fn run_agent(
         cmd.process_group(0);
     }
 
-    let child = cmd.spawn();
-
-    match child {
-        Ok(mut child) => {
-            // Wait with timeout enforcement
-            let result = wait_with_timeout(&mut child, timeout, cancel);
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            match result {
-                WaitResult::Completed(output) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    let combined = if stderr.is_empty() {
-                        stdout.clone()
-                    } else if stdout.is_empty() {
-                        stderr.clone()
-                    } else {
-                        format!("{}\n{}", stdout, stderr)
-                    };
-
-                    let status = match kind {
-                        // Lint & Format: a completed run is always "passed" —
-                        // findings are reported via diagnostics, not as agent failure.
-                        AgentKind::Lint | AgentKind::Format => AgentStatus::Passed,
-                        // Build, Test, and Custom: exit code determines pass/fail.
-                        _ => {
-                            if output.status.success() {
-                                AgentStatus::Passed
-                            } else {
-                                AgentStatus::Failed
-                            }
-                        }
-                    };
-
-                    // Parse diagnostics from output (cargo JSON for Rust, generic patterns for others)
-                    let diagnostics = match kind {
-                        AgentKind::Lint
-                        | AgentKind::Build
-                        | AgentKind::Test
-                        | AgentKind::Custom(_) => {
-                            let cargo_diags = parse_cargo_diagnostics(&stdout);
-                            if cargo_diags.is_empty() {
-                                parse_generic_diagnostics(&combined)
-                            } else {
-                                cargo_diags
-                            }
-                        }
-                        _ => Vec::new(),
-                    };
-
-                    let _ = tx.send(AgentResult {
-                        kind,
-                        cue_id,
-                        status,
-                        output: combined,
-                        diagnostics,
-                        duration_ms,
-                    });
-                }
-                WaitResult::TimedOut => {
-                    // Kill the process group on timeout
-                    kill_process_tree(&child);
-                    let _ = child.wait(); // reap zombie
-                    let _ = tx.send(AgentResult {
-                        kind,
-                        cue_id,
-                        status: AgentStatus::Error,
-                        output: format!(
-                            "Agent timed out after {}s (limit: {}s)",
-                            duration_ms / 1000,
-                            config.timeout_secs
-                        ),
-                        diagnostics: Vec::new(),
-                        duration_ms,
-                    });
-                }
-                WaitResult::Cancelled => {
-                    kill_process_tree(&child);
-                    let _ = child.wait();
-                    let _ = tx.send(AgentResult {
-                        kind,
-                        cue_id,
-                        status: AgentStatus::Error,
-                        output: "Cancelled by user".to_string(),
-                        diagnostics: Vec::new(),
-                        duration_ms,
-                    });
-                }
-            }
-        }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
         Err(e) => {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            let _ = tx.send(AgentResult {
+            let msg = format!("Failed to execute command: {}", e);
+            let _ = tx.send(make_error_result(kind, cue_id, msg, &start));
+            return;
+        }
+    };
+
+    let result = wait_with_timeout(&mut child, timeout, cancel);
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let agent_result = match result {
+        WaitResult::Completed(output) => {
+            build_completed_result(kind, cue_id, &output, duration_ms)
+        }
+        WaitResult::TimedOut => {
+            kill_process_tree(&child);
+            let _ = child.wait();
+            AgentResult {
                 kind,
                 cue_id,
                 status: AgentStatus::Error,
-                output: format!("Failed to execute command: {}", e),
+                output: format!(
+                    "Agent timed out after {}s (limit: {}s)",
+                    duration_ms / 1000,
+                    config.timeout_secs
+                ),
                 diagnostics: Vec::new(),
                 duration_ms,
-            });
+            }
         }
+        WaitResult::Cancelled => {
+            kill_process_tree(&child);
+            let _ = child.wait();
+            AgentResult {
+                kind,
+                cue_id,
+                status: AgentStatus::Error,
+                output: "Cancelled by user".to_string(),
+                diagnostics: Vec::new(),
+                duration_ms,
+            }
+        }
+    };
+    let _ = tx.send(agent_result);
+}
+
+/// Prepend an optional shell init snippet to a command string.
+fn prepend_shell_init(shell_init: &str, command: &str) -> String {
+    if shell_init.trim().is_empty() {
+        command.to_string()
+    } else {
+        format!("{}\n{}", shell_init.trim(), command)
+    }
+}
+
+/// Resolve and validate the working directory for an agent.
+/// Returns `Err(message)` if the path escapes the project root.
+fn resolve_working_dir(project_root: &Path, working_dir: &str) -> Result<std::path::PathBuf, String> {
+    if working_dir.trim().is_empty() {
+        return Ok(project_root.to_path_buf());
+    }
+    let candidate = project_root.join(working_dir.trim());
+    let resolved = candidate.canonicalize().unwrap_or(candidate.clone());
+    let root_resolved = project_root
+        .canonicalize()
+        .unwrap_or(project_root.to_path_buf());
+    if !resolved.starts_with(&root_resolved) {
+        return Err(format!("working_dir '{}' escapes project root", working_dir));
+    }
+    Ok(candidate)
+}
+
+/// Execute the before_run hook if configured. Returns `Err(message)` on failure.
+fn run_before_hook(
+    config: &AgentConfig,
+    shell_init: &str,
+    prompt: &str,
+    cwd: &Path,
+) -> Result<(), String> {
+    if config.before_run.trim().is_empty() {
+        return Ok(());
+    }
+    let before_cmd = config.before_run.replace("$PROMPT", prompt);
+    let before_effective = prepend_shell_init(shell_init, &before_cmd);
+    let before_result = Command::new("sh")
+        .arg("-c")
+        .arg(&before_effective)
+        .current_dir(cwd)
+        .env("PROMPT", prompt)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    match before_result {
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let combined = if stderr.is_empty() { stdout } else { stderr };
+            Err(format!("before_run failed (exit {}):\n{}", output.status, combined))
+        }
+        Err(e) => Err(format!("before_run failed to execute: {}", e)),
+        _ => Ok(()),
+    }
+}
+
+/// Build an error `AgentResult` with the given message.
+fn make_error_result(
+    kind: AgentKind,
+    cue_id: Option<i64>,
+    output: String,
+    start: &Instant,
+) -> AgentResult {
+    AgentResult {
+        kind,
+        cue_id,
+        status: AgentStatus::Error,
+        output,
+        diagnostics: Vec::new(),
+        duration_ms: start.elapsed().as_millis() as u64,
+    }
+}
+
+/// Build the `AgentResult` for a completed (non-timeout, non-cancelled) process.
+fn build_completed_result(
+    kind: AgentKind,
+    cue_id: Option<i64>,
+    output: &std::process::Output,
+    duration_ms: u64,
+) -> AgentResult {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = if stderr.is_empty() {
+        stdout.clone()
+    } else if stdout.is_empty() {
+        stderr.clone()
+    } else {
+        format!("{}\n{}", stdout, stderr)
+    };
+
+    let status = match kind {
+        AgentKind::Lint | AgentKind::Format => AgentStatus::Passed,
+        _ if output.status.success() => AgentStatus::Passed,
+        _ => AgentStatus::Failed,
+    };
+
+    let diagnostics = match kind {
+        AgentKind::Lint | AgentKind::Build | AgentKind::Test | AgentKind::Custom(_) => {
+            let cargo_diags = parse_cargo_diagnostics(&stdout);
+            if cargo_diags.is_empty() {
+                parse_generic_diagnostics(&combined)
+            } else {
+                cargo_diags
+            }
+        }
+        _ => Vec::new(),
+    };
+
+    AgentResult {
+        kind,
+        cue_id,
+        status,
+        output: combined,
+        diagnostics,
+        duration_ms,
     }
 }
 
@@ -1246,61 +1247,88 @@ pub(crate) fn trigger_agents(
 /// Parse compiler/clippy diagnostics from `cargo --message-format=json` output.
 fn parse_cargo_diagnostics(output: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-
     for line in output.lines() {
         let line = line.trim();
         if !line.starts_with('{') {
             continue;
         }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-            // Cargo wraps compiler messages in {"reason":"compiler-message","message":{...}}
-            let msg = if value.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
-                value.get("message")
-            } else {
-                // Direct rustc JSON diagnostic
-                Some(&value)
-            };
-
-            if let Some(msg) = msg {
-                if let Some(message_text) = msg.get("message").and_then(|m| m.as_str()) {
-                    let severity = match msg.get("level").and_then(|l| l.as_str()) {
-                        Some("error") => Severity::Error,
-                        Some("warning") => Severity::Warning,
-                        _ => Severity::Info,
-                    };
-
-                    // Get the primary span
-                    if let Some(spans) = msg.get("spans").and_then(|s| s.as_array()) {
-                        for span in spans {
-                            let is_primary =
-                                span.get("is_primary").and_then(|p| p.as_bool()) == Some(true);
-                            if !is_primary && spans.len() > 1 {
-                                continue;
-                            }
-                            if let (Some(file), Some(line)) = (
-                                span.get("file_name").and_then(|f| f.as_str()),
-                                span.get("line_start").and_then(|l| l.as_u64()),
-                            ) {
-                                let col = span
-                                    .get("column_start")
-                                    .and_then(|c| c.as_u64())
-                                    .map(|c| c as usize);
-                                diagnostics.push(Diagnostic {
-                                    file: file.to_string(),
-                                    line: line as usize,
-                                    col,
-                                    message: message_text.to_string(),
-                                    severity,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let value = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        extract_cargo_message_diagnostics(&value, &mut diagnostics);
     }
-
     diagnostics
+}
+
+/// Extract diagnostics from a single parsed cargo JSON message.
+fn extract_cargo_message_diagnostics(
+    value: &serde_json::Value,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    // Cargo wraps compiler messages in {"reason":"compiler-message","message":{...}}
+    let msg = if value.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
+        match value.get("message") {
+            Some(m) => m,
+            None => return,
+        }
+    } else {
+        // Direct rustc JSON diagnostic
+        value
+    };
+
+    let message_text = match msg.get("message").and_then(|m| m.as_str()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    let severity = match msg.get("level").and_then(|l| l.as_str()) {
+        Some("error") => Severity::Error,
+        Some("warning") => Severity::Warning,
+        _ => Severity::Info,
+    };
+
+    let spans = match msg.get("spans").and_then(|s| s.as_array()) {
+        Some(s) => s,
+        None => return,
+    };
+
+    for span in spans {
+        collect_span_diagnostic(span, spans.len(), message_text, severity, diagnostics);
+    }
+}
+
+/// Process a single span entry and push a diagnostic if it qualifies.
+fn collect_span_diagnostic(
+    span: &serde_json::Value,
+    span_count: usize,
+    message_text: &str,
+    severity: Severity,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let is_primary = span.get("is_primary").and_then(|p| p.as_bool()) == Some(true);
+    if !is_primary && span_count > 1 {
+        return;
+    }
+    let file = match span.get("file_name").and_then(|f| f.as_str()) {
+        Some(f) => f,
+        None => return,
+    };
+    let line = match span.get("line_start").and_then(|l| l.as_u64()) {
+        Some(l) => l as usize,
+        None => return,
+    };
+    let col = span
+        .get("column_start")
+        .and_then(|c| c.as_u64())
+        .map(|c| c as usize);
+    diagnostics.push(Diagnostic {
+        file: file.to_string(),
+        line,
+        col,
+        message: message_text.to_string(),
+        severity,
+    });
 }
 
 // ---------------------------------------------------------------------------

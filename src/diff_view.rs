@@ -43,84 +43,127 @@ pub(crate) enum DiffLineKind {
     Deletion,
 }
 
+// ---------------------------------------------------------------------------
+// Parsing
+// ---------------------------------------------------------------------------
+
 pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
     let mut files = Vec::new();
     let lines: Vec<&str> = diff_text.lines().collect();
     let mut i = 0;
 
     while i < lines.len() {
-        if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
-            // Skip the "--- a/..." line (old path not needed).
-            let new_path = lines[i + 1]
-                .strip_prefix("+++ b/")
-                .or_else(|| lines[i + 1].strip_prefix("+++ "))
-                .unwrap_or("")
-                .to_string();
-            i += 2;
-
-            let mut hunks = Vec::new();
-            while i < lines.len() && !lines[i].starts_with("--- ") {
-                if lines[i].starts_with("@@ ") {
-                    let (old_start, new_start) = parse_hunk_header(lines[i]);
-                    i += 1;
-
-                    let mut hunk_lines = Vec::new();
-                    let mut old_line = old_start;
-                    let mut new_line = new_start;
-
-                    while i < lines.len() {
-                        let line = lines[i];
-                        if line.starts_with("@@ ") || line.starts_with("--- ") {
-                            break;
-                        }
-                        if line.starts_with('+') {
-                            hunk_lines.push(DiffLine {
-                                kind: DiffLineKind::Addition,
-                                old_lineno: None,
-                                new_lineno: Some(new_line),
-                                content: line[1..].to_string(),
-                            });
-                            new_line += 1;
-                        } else if line.starts_with('-') {
-                            hunk_lines.push(DiffLine {
-                                kind: DiffLineKind::Deletion,
-                                old_lineno: Some(old_line),
-                                new_lineno: None,
-                                content: line[1..].to_string(),
-                            });
-                            old_line += 1;
-                        } else if line.starts_with(' ') || line.is_empty() {
-                            let content = if line.is_empty() { "" } else { &line[1..] };
-                            hunk_lines.push(DiffLine {
-                                kind: DiffLineKind::Context,
-                                old_lineno: Some(old_line),
-                                new_lineno: Some(new_line),
-                                content: content.to_string(),
-                            });
-                            old_line += 1;
-                            new_line += 1;
-                        } else {
-                            break;
-                        }
-                        i += 1;
-                    }
-
-                    hunks.push(DiffHunk {
-                        new_start,
-                        lines: hunk_lines,
-                    });
-                } else {
-                    i += 1;
-                }
-            }
-
-            files.push(FileDiff { new_path, hunks });
-        } else {
+        let is_file_header = lines[i].starts_with("--- ")
+            && i + 1 < lines.len()
+            && lines[i + 1].starts_with("+++ ");
+        if !is_file_header {
             i += 1;
+            continue;
         }
+
+        let new_path = lines[i + 1]
+            .strip_prefix("+++ b/")
+            .or_else(|| lines[i + 1].strip_prefix("+++ "))
+            .unwrap_or("")
+            .to_string();
+        i += 2;
+
+        let (hunks, next_i) = parse_file_hunks(&lines, i);
+        i = next_i;
+        files.push(FileDiff { new_path, hunks });
     }
 
     ParsedDiff { files }
+}
+
+/// Parse all hunks for a single file, starting at position `i`.
+/// Returns the hunks and the updated line index.
+fn parse_file_hunks(lines: &[&str], mut i: usize) -> (Vec<DiffHunk>, usize) {
+    let mut hunks = Vec::new();
+
+    while i < lines.len() && !lines[i].starts_with("--- ") {
+        if !lines[i].starts_with("@@ ") {
+            i += 1;
+            continue;
+        }
+
+        let (old_start, new_start) = parse_hunk_header(lines[i]);
+        i += 1;
+
+        let (hunk_lines, next_i) = parse_hunk_lines(lines, i, old_start, new_start);
+        i = next_i;
+
+        hunks.push(DiffHunk {
+            new_start,
+            lines: hunk_lines,
+        });
+    }
+
+    (hunks, i)
+}
+
+/// Parse the individual lines within a single hunk.
+/// Returns the diff lines and the updated line index.
+fn parse_hunk_lines(
+    lines: &[&str],
+    mut i: usize,
+    mut old_line: usize,
+    mut new_line: usize,
+) -> (Vec<DiffLine>, usize) {
+    let mut hunk_lines = Vec::new();
+
+    while i < lines.len() {
+        let line = lines[i];
+        if line.starts_with("@@ ") || line.starts_with("--- ") {
+            break;
+        }
+
+        if let Some(diff_line) = classify_hunk_line(line, &mut old_line, &mut new_line) {
+            hunk_lines.push(diff_line);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    (hunk_lines, i)
+}
+
+/// Classify a single line within a hunk, updating line counters.
+/// Returns `None` if the line doesn't match any expected prefix.
+fn classify_hunk_line(line: &str, old_line: &mut usize, new_line: &mut usize) -> Option<DiffLine> {
+    if line.starts_with('+') {
+        let dl = DiffLine {
+            kind: DiffLineKind::Addition,
+            old_lineno: None,
+            new_lineno: Some(*new_line),
+            content: line[1..].to_string(),
+        };
+        *new_line += 1;
+        Some(dl)
+    } else if line.starts_with('-') {
+        let dl = DiffLine {
+            kind: DiffLineKind::Deletion,
+            old_lineno: Some(*old_line),
+            new_lineno: None,
+            content: line[1..].to_string(),
+        };
+        *old_line += 1;
+        Some(dl)
+    } else if line.starts_with(' ') || line.is_empty() {
+        let content = if line.is_empty() { "" } else { &line[1..] };
+        let dl = DiffLine {
+            kind: DiffLineKind::Context,
+            old_lineno: Some(*old_line),
+            new_lineno: Some(*new_line),
+            content: content.to_string(),
+        };
+        *old_line += 1;
+        *new_line += 1;
+        Some(dl)
+    } else {
+        None
+    }
 }
 
 fn parse_hunk_header(header: &str) -> (usize, usize) {
@@ -146,11 +189,120 @@ fn parse_hunk_header(header: &str) -> (usize, usize) {
     (old_start, new_start)
 }
 
+// ---------------------------------------------------------------------------
+// Shared rendering helpers
+// ---------------------------------------------------------------------------
+
 /// Optional search highlight state for diff rendering.
 pub(crate) struct DiffSearchHighlight<'a> {
     pub query_lower: &'a str,
     /// The current match to scroll to: (file_idx, hunk_idx, line_idx).
     pub current: Option<(usize, usize, usize)>,
+}
+
+/// Count additions and deletions in a file.
+fn count_file_changes(file: &FileDiff) -> (usize, usize) {
+    let all_lines = file.hunks.iter().flat_map(|h| &h.lines);
+    let additions = all_lines
+        .clone()
+        .filter(|l| l.kind == DiffLineKind::Addition)
+        .count();
+    let deletions = all_lines
+        .filter(|l| l.kind == DiffLineKind::Deletion)
+        .count();
+    (additions, deletions)
+}
+
+/// Render the collapsible file header. Returns true if clicked.
+fn render_file_header(
+    ui: &mut egui::Ui,
+    file: &FileDiff,
+    is_collapsed: bool,
+    colors: &SemanticColors,
+) -> bool {
+    let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
+    let (additions, deletions) = count_file_changes(file);
+    let stats = format!(" +{} -{}", additions, deletions);
+
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
+                .strong()
+                .color(colors.diff_header()),
+        )
+        .sense(egui::Sense::click()),
+    )
+    .clicked()
+}
+
+/// Toggle file collapsed state.
+fn toggle_collapsed(collapsed_files: &mut HashSet<usize>, file_idx: usize) {
+    if collapsed_files.contains(&file_idx) {
+        collapsed_files.remove(&file_idx);
+    } else {
+        collapsed_files.insert(file_idx);
+    }
+}
+
+/// Compute effective background for a diff line considering search state.
+fn effective_background(
+    is_current: bool,
+    is_match: bool,
+    default_bg: Option<egui::Color32>,
+    colors: &SemanticColors,
+) -> Option<egui::Color32> {
+    if is_current {
+        Some(colors.search_current_bg())
+    } else if is_match {
+        Some(colors.search_match_bg())
+    } else {
+        default_bg
+    }
+}
+
+/// Check if a line matches the search query.
+fn is_line_search_match(line: &DiffLine, search: Option<&DiffSearchHighlight<'_>>) -> bool {
+    search
+        .map(|s| !s.query_lower.is_empty() && line.content.to_lowercase().contains(s.query_lower))
+        .unwrap_or(false)
+}
+
+/// Check if a line is the current search match.
+fn is_line_current_match(
+    search: Option<&DiffSearchHighlight<'_>>,
+    file_idx: usize,
+    hunk_idx: usize,
+    line_idx: usize,
+) -> bool {
+    search
+        .and_then(|s| s.current)
+        .map(|c| c == (file_idx, hunk_idx, line_idx))
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Inline diff rendering
+// ---------------------------------------------------------------------------
+
+struct InlineLineColors {
+    green_bg: egui::Color32,
+    red_bg: egui::Color32,
+    green_text: egui::Color32,
+    red_text: egui::Color32,
+    context_text: egui::Color32,
+    gutter_color: egui::Color32,
+}
+
+/// Determine prefix, text color, and background color for a diff line kind.
+fn line_style(
+    kind: DiffLineKind,
+    lc: &InlineLineColors,
+) -> (&'static str, egui::Color32, Option<egui::Color32>) {
+    match kind {
+        DiffLineKind::Addition => ("+", lc.green_text, Some(lc.green_bg)),
+        DiffLineKind::Deletion => ("-", lc.red_text, Some(lc.red_bg)),
+        DiffLineKind::Context => (" ", lc.context_text, None),
+    }
 }
 
 pub(crate) fn render_inline_diff(
@@ -160,128 +312,99 @@ pub(crate) fn render_inline_diff(
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
 ) {
-    let green_bg = colors.addition_bg();
-    let red_bg = colors.deletion_bg();
-    let green_text = colors.success;
-    let red_text = colors.danger;
-    let context_text = colors.secondary_text;
-    let gutter_color = colors.tertiary_text;
-
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
-        let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
-        let additions: usize = file
-            .hunks
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == DiffLineKind::Addition)
-            .count();
-        let deletions: usize = file
-            .hunks
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == DiffLineKind::Deletion)
-            .count();
-        let stats = format!(" +{} -{}", additions, deletions);
-
-        if ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
-                        .strong()
-                        .color(colors.diff_header()),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .clicked()
-        {
-            if is_collapsed {
-                collapsed_files.remove(&file_idx);
-            } else {
-                collapsed_files.insert(file_idx);
-            }
+        if render_file_header(ui, file, is_collapsed, colors) {
+            toggle_collapsed(collapsed_files, file_idx);
         }
 
-        if !is_collapsed {
+        if !collapsed_files.contains(&file_idx) {
             ui.add_space(SPACE_XS);
-
-            for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-                for (line_idx, line) in hunk.lines.iter().enumerate() {
-                    let old_num = line
-                        .old_lineno
-                        .map(|n| format!("{:>4}", n))
-                        .unwrap_or_else(|| "    ".to_string());
-                    let new_num = line
-                        .new_lineno
-                        .map(|n| format!("{:>4}", n))
-                        .unwrap_or_else(|| "    ".to_string());
-                    let prefix = match line.kind {
-                        DiffLineKind::Addition => "+",
-                        DiffLineKind::Deletion => "-",
-                        DiffLineKind::Context => " ",
-                    };
-                    let (text_color, bg_color) = match line.kind {
-                        DiffLineKind::Addition => (green_text, Some(green_bg)),
-                        DiffLineKind::Deletion => (red_text, Some(red_bg)),
-                        DiffLineKind::Context => (context_text, None),
-                    };
-
-                    let is_search_match = search
-                        .as_ref()
-                        .map(|s| {
-                            !s.query_lower.is_empty()
-                                && line.content.to_lowercase().contains(s.query_lower)
-                        })
-                        .unwrap_or(false);
-                    let is_current_match = search
-                        .as_ref()
-                        .and_then(|s| s.current)
-                        .map(|c| c == (file_idx, hunk_idx, line_idx))
-                        .unwrap_or(false);
-
-                    let response = ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
-                                .monospace()
-                                .color(gutter_color),
-                        );
-                        if is_search_match {
-                            render_highlighted_text(
-                                ui,
-                                &line.content,
-                                search.unwrap().query_lower,
-                                text_color,
-                                colors,
-                            );
-                        } else {
-                            ui.label(
-                                egui::RichText::new(&line.content)
-                                    .monospace()
-                                    .color(text_color),
-                            );
-                        }
-                    });
-
-                    if is_current_match {
-                        response.response.scroll_to_me(Some(egui::Align::Center));
-                    }
-
-                    let effective_bg = if is_current_match {
-                        Some(colors.search_current_bg())
-                    } else if is_search_match {
-                        Some(colors.search_match_bg())
-                    } else {
-                        bg_color
-                    };
-                    if let Some(bg) = effective_bg {
-                        ui.painter().rect_filled(response.response.rect, 0, bg);
-                    }
-                }
-                ui.add_space(SPACE_SM);
-            }
+            render_inline_file_hunks(ui, file, file_idx, search, colors);
         }
 
         ui.separator();
+    }
+}
+
+/// Render all hunks for a single file in inline mode.
+fn render_inline_file_hunks(
+    ui: &mut egui::Ui,
+    file: &FileDiff,
+    file_idx: usize,
+    search: Option<&DiffSearchHighlight<'_>>,
+    colors: &SemanticColors,
+) {
+    let lc = InlineLineColors {
+        green_bg: colors.addition_bg(),
+        red_bg: colors.deletion_bg(),
+        green_text: colors.success,
+        red_text: colors.danger,
+        context_text: colors.secondary_text,
+        gutter_color: colors.tertiary_text,
+    };
+
+    for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+        for (line_idx, line) in hunk.lines.iter().enumerate() {
+            render_inline_line(ui, line, file_idx, hunk_idx, line_idx, search, colors, &lc);
+        }
+        ui.add_space(SPACE_SM);
+    }
+}
+
+/// Render a single inline diff line.
+fn render_inline_line(
+    ui: &mut egui::Ui,
+    line: &DiffLine,
+    file_idx: usize,
+    hunk_idx: usize,
+    line_idx: usize,
+    search: Option<&DiffSearchHighlight<'_>>,
+    colors: &SemanticColors,
+    lc: &InlineLineColors,
+) {
+    let old_num = line
+        .old_lineno
+        .map(|n| format!("{:>4}", n))
+        .unwrap_or_else(|| "    ".to_string());
+    let new_num = line
+        .new_lineno
+        .map(|n| format!("{:>4}", n))
+        .unwrap_or_else(|| "    ".to_string());
+    let (prefix, text_color, bg_color) = line_style(line.kind, lc);
+
+    let is_search = is_line_search_match(line, search);
+    let is_current = is_line_current_match(search, file_idx, hunk_idx, line_idx);
+
+    let response = ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
+                .monospace()
+                .color(lc.gutter_color),
+        );
+        if is_search {
+            render_highlighted_text(
+                ui,
+                &line.content,
+                search.unwrap().query_lower,
+                text_color,
+                colors,
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(&line.content)
+                    .monospace()
+                    .color(text_color),
+            );
+        }
+    });
+
+    if is_current {
+        response.response.scroll_to_me(Some(egui::Align::Center));
+    }
+
+    if let Some(bg) = effective_background(is_current, is_search, bg_color, colors) {
+        ui.painter().rect_filled(response.response.rect, 0, bg);
     }
 }
 
@@ -340,6 +463,20 @@ fn render_highlighted_text(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Side-by-side diff rendering
+// ---------------------------------------------------------------------------
+
+struct SbsColors {
+    green_bg: egui::Color32,
+    red_bg: egui::Color32,
+    green_text: egui::Color32,
+    red_text: egui::Color32,
+    context_text: egui::Color32,
+    gutter_color: egui::Color32,
+    sep_color: egui::Color32,
+}
+
 pub(crate) fn render_side_by_side_diff(
     ui: &mut egui::Ui,
     diff: &ParsedDiff,
@@ -347,169 +484,186 @@ pub(crate) fn render_side_by_side_diff(
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
 ) {
-    let green_bg = colors.addition_bg();
-    let red_bg = colors.deletion_bg();
-    let green_text = colors.success;
-    let red_text = colors.danger;
-    let context_text = colors.secondary_text;
-    let gutter_color = colors.tertiary_text;
-    let sep_color = colors.separator;
+    let sc = SbsColors {
+        green_bg: colors.addition_bg(),
+        red_bg: colors.deletion_bg(),
+        green_text: colors.success,
+        red_text: colors.danger,
+        context_text: colors.secondary_text,
+        gutter_color: colors.tertiary_text,
+        sep_color: colors.separator,
+    };
 
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
-        let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
-        let additions: usize = file
-            .hunks
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == DiffLineKind::Addition)
-            .count();
-        let deletions: usize = file
-            .hunks
-            .iter()
-            .flat_map(|h| &h.lines)
-            .filter(|l| l.kind == DiffLineKind::Deletion)
-            .count();
-        let stats = format!(" +{} -{}", additions, deletions);
-
-        if ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
-                        .strong()
-                        .color(colors.diff_header()),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .clicked()
-        {
-            if is_collapsed {
-                collapsed_files.remove(&file_idx);
-            } else {
-                collapsed_files.insert(file_idx);
-            }
+        if render_file_header(ui, file, is_collapsed, colors) {
+            toggle_collapsed(collapsed_files, file_idx);
         }
 
-        if is_collapsed {
+        if collapsed_files.contains(&file_idx) {
             ui.separator();
             continue;
         }
 
         ui.add_space(SPACE_XS);
-
-        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-            let pairs = build_side_by_side_pairs(&hunk.lines);
-
-            egui::Grid::new(format!(
-                "sbs_{}_{}_{}",
-                file.new_path, hunk_idx, hunk.new_start
-            ))
-            .num_columns(5)
-            .spacing([SPACE_XS, 0.0])
-            .min_col_width(0.0)
-            .show(ui, |ui| {
-                let current_match = search.as_ref().and_then(|s| s.current);
-                let query_lower = search.as_ref().map(|s| s.query_lower).unwrap_or("");
-
-                for (left, right) in &pairs {
-                    // Check if either side is the current search match
-                    let left_is_current = left
-                        .as_ref()
-                        .map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx)))
-                        .unwrap_or(false);
-                    let right_is_current = right
-                        .as_ref()
-                        .map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx)))
-                        .unwrap_or(false);
-                    let is_current = left_is_current || right_is_current;
-
-                    // Old line number
-                    if let Some((_, ref line)) = left {
-                        ui.label(
-                            egui::RichText::new(format!("{:>4}", line.old_lineno.unwrap_or(0)))
-                                .monospace()
-                                .color(gutter_color),
-                        );
-                    } else {
-                        ui.label(egui::RichText::new("    ").monospace().color(gutter_color));
-                    }
-
-                    // Old content
-                    if let Some((_, ref line)) = left {
-                        let (color, bg) = match line.kind {
-                            DiffLineKind::Deletion => (red_text, Some(red_bg)),
-                            _ => (context_text, None),
-                        };
-                        let is_match = !query_lower.is_empty()
-                            && line.content.to_lowercase().contains(query_lower);
-                        let resp =
-                            ui.label(egui::RichText::new(&line.content).monospace().color(color));
-                        let effective_bg = if left_is_current {
-                            Some(colors.search_current_bg())
-                        } else if is_match {
-                            Some(colors.search_match_bg())
-                        } else {
-                            bg
-                        };
-                        if let Some(bg) = effective_bg {
-                            ui.painter().rect_filled(resp.rect, 0, bg);
-                        }
-                    } else {
-                        ui.label(egui::RichText::new(" ").monospace());
-                    }
-
-                    // Separator
-                    let sep_resp =
-                        ui.label(egui::RichText::new("\u{2502}").monospace().color(sep_color));
-                    if is_current {
-                        sep_resp.scroll_to_me(Some(egui::Align::Center));
-                    }
-
-                    // New line number
-                    if let Some((_, ref line)) = right {
-                        ui.label(
-                            egui::RichText::new(format!("{:>4}", line.new_lineno.unwrap_or(0)))
-                                .monospace()
-                                .color(gutter_color),
-                        );
-                    } else {
-                        ui.label(egui::RichText::new("    ").monospace().color(gutter_color));
-                    }
-
-                    // New content
-                    if let Some((_, ref line)) = right {
-                        let (color, bg) = match line.kind {
-                            DiffLineKind::Addition => (green_text, Some(green_bg)),
-                            _ => (context_text, None),
-                        };
-                        let is_match = !query_lower.is_empty()
-                            && line.content.to_lowercase().contains(query_lower);
-                        let resp =
-                            ui.label(egui::RichText::new(&line.content).monospace().color(color));
-                        let effective_bg = if right_is_current {
-                            Some(colors.search_current_bg())
-                        } else if is_match {
-                            Some(colors.search_match_bg())
-                        } else {
-                            bg
-                        };
-                        if let Some(bg) = effective_bg {
-                            ui.painter().rect_filled(resp.rect, 0, bg);
-                        }
-                    } else {
-                        ui.label(egui::RichText::new(" ").monospace());
-                    }
-
-                    ui.end_row();
-                }
-            });
-
-            ui.add_space(SPACE_SM);
-        }
-
+        render_sbs_file_hunks(ui, file, file_idx, search, colors, &sc);
         ui.separator();
     }
 }
+
+/// Render all hunks for a single file in side-by-side mode.
+fn render_sbs_file_hunks(
+    ui: &mut egui::Ui,
+    file: &FileDiff,
+    file_idx: usize,
+    search: Option<&DiffSearchHighlight<'_>>,
+    colors: &SemanticColors,
+    sc: &SbsColors,
+) {
+    for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+        let pairs = build_side_by_side_pairs(&hunk.lines);
+
+        egui::Grid::new(format!(
+            "sbs_{}_{}_{}",
+            file.new_path, hunk_idx, hunk.new_start
+        ))
+        .num_columns(5)
+        .spacing([SPACE_XS, 0.0])
+        .min_col_width(0.0)
+        .show(ui, |ui| {
+            let current_match = search.as_ref().and_then(|s| s.current);
+            let query_lower = search.as_ref().map(|s| s.query_lower).unwrap_or("");
+
+            for (left, right) in &pairs {
+                render_sbs_row(
+                    ui,
+                    left,
+                    right,
+                    file_idx,
+                    hunk_idx,
+                    current_match,
+                    query_lower,
+                    colors,
+                    sc,
+                );
+                ui.end_row();
+            }
+        });
+
+        ui.add_space(SPACE_SM);
+    }
+}
+
+/// Check if one side of a pair is the current search match.
+fn is_side_current(
+    side: &Option<(usize, DiffLine)>,
+    current_match: Option<(usize, usize, usize)>,
+    file_idx: usize,
+    hunk_idx: usize,
+) -> bool {
+    side.as_ref()
+        .map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx)))
+        .unwrap_or(false)
+}
+
+/// Render a line number gutter cell.
+fn render_sbs_line_number(ui: &mut egui::Ui, lineno: Option<usize>, gutter_color: egui::Color32) {
+    let text = lineno
+        .map(|n| format!("{:>4}", n))
+        .unwrap_or_else(|| "    ".to_string());
+    ui.label(egui::RichText::new(text).monospace().color(gutter_color));
+}
+
+/// Render a content cell on one side of the side-by-side view.
+fn render_sbs_content_cell(
+    ui: &mut egui::Ui,
+    side: &Option<(usize, DiffLine)>,
+    side_is_current: bool,
+    query_lower: &str,
+    highlight_kind: DiffLineKind,
+    highlight_text: egui::Color32,
+    highlight_bg: egui::Color32,
+    context_text: egui::Color32,
+    colors: &SemanticColors,
+) {
+    let Some((_, ref line)) = side else {
+        ui.label(egui::RichText::new(" ").monospace());
+        return;
+    };
+
+    let (color, bg) = if line.kind == highlight_kind {
+        (highlight_text, Some(highlight_bg))
+    } else {
+        (context_text, None)
+    };
+    let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
+    let resp = ui.label(egui::RichText::new(&line.content).monospace().color(color));
+
+    if let Some(bg) = effective_background(side_is_current, is_match, bg, colors) {
+        ui.painter().rect_filled(resp.rect, 0, bg);
+    }
+}
+
+/// Render one complete row (left number, left content, separator, right number, right content).
+fn render_sbs_row(
+    ui: &mut egui::Ui,
+    left: &Option<(usize, DiffLine)>,
+    right: &Option<(usize, DiffLine)>,
+    file_idx: usize,
+    hunk_idx: usize,
+    current_match: Option<(usize, usize, usize)>,
+    query_lower: &str,
+    colors: &SemanticColors,
+    sc: &SbsColors,
+) {
+    let left_is_current = is_side_current(left, current_match, file_idx, hunk_idx);
+    let right_is_current = is_side_current(right, current_match, file_idx, hunk_idx);
+    let row_is_current = left_is_current || right_is_current;
+
+    // Old line number
+    let old_lineno = left.as_ref().and_then(|(_, l)| l.old_lineno);
+    render_sbs_line_number(ui, old_lineno, sc.gutter_color);
+
+    // Old content
+    render_sbs_content_cell(
+        ui,
+        left,
+        left_is_current,
+        query_lower,
+        DiffLineKind::Deletion,
+        sc.red_text,
+        sc.red_bg,
+        sc.context_text,
+        colors,
+    );
+
+    // Separator
+    let sep_resp = ui.label(egui::RichText::new("\u{2502}").monospace().color(sc.sep_color));
+    if row_is_current {
+        sep_resp.scroll_to_me(Some(egui::Align::Center));
+    }
+
+    // New line number
+    let new_lineno = right.as_ref().and_then(|(_, l)| l.new_lineno);
+    render_sbs_line_number(ui, new_lineno, sc.gutter_color);
+
+    // New content
+    render_sbs_content_cell(
+        ui,
+        right,
+        right_is_current,
+        query_lower,
+        DiffLineKind::Addition,
+        sc.green_text,
+        sc.green_bg,
+        sc.context_text,
+        colors,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Side-by-side pair building
+// ---------------------------------------------------------------------------
 
 /// A side-by-side pair with optional original line indices.
 type SbsPair = (Option<(usize, DiffLine)>, Option<(usize, DiffLine)>);
