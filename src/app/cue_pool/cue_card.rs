@@ -177,15 +177,15 @@ impl DirigentApp {
                 status,
                 CueStatus::Review | CueStatus::Done | CueStatus::Archived
             ) {
-                if let Ok(Some(exec)) = self.db.get_latest_execution(cue.id) {
+                if let Some(metrics) = self.latest_exec_cache.get(&cue.id) {
                     let mut parts = Vec::new();
-                    if let Some(turns) = exec.num_turns {
+                    if let Some(turns) = metrics.num_turns {
                         parts.push(format!("{} turns", turns));
                     }
-                    if let Some(ms) = exec.duration_ms {
+                    if let Some(ms) = metrics.duration_ms {
                         parts.push(format!("{:.1}s", ms as f64 / 1000.0));
                     }
-                    if let Some(cost) = exec.cost_usd {
+                    if let Some(cost) = metrics.cost_usd {
                         parts.push(format!("${:.4}", cost));
                     }
                     if !parts.is_empty() {

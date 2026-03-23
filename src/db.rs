@@ -131,6 +131,14 @@ pub(crate) struct Execution {
     pub num_turns: Option<u64>,
 }
 
+/// Lightweight execution metrics for display in cue cards (avoids fetching full Execution blobs).
+#[derive(Debug, Clone)]
+pub(crate) struct ExecutionMetrics {
+    pub cost_usd: Option<f64>,
+    pub duration_ms: Option<u64>,
+    pub num_turns: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ActivityEntry {
     pub timestamp: String,
@@ -593,6 +601,32 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get the latest execution metrics for every cue that has at least one execution.
+    /// Returns a map from cue_id to its latest ExecutionMetrics.
+    pub fn get_all_latest_execution_metrics(
+        &self,
+    ) -> Result<std::collections::HashMap<i64, ExecutionMetrics>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.cue_id, e.cost_usd, e.duration_ms, e.num_turns \
+             FROM executions e \
+             WHERE e.id = (SELECT MAX(e2.id) FROM executions e2 WHERE e2.cue_id = e.cue_id)",
+        )?;
+        let mut map = std::collections::HashMap::new();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let cue_id: i64 = row.get(0)?;
+            map.insert(
+                cue_id,
+                ExecutionMetrics {
+                    cost_usd: row.get(1)?,
+                    duration_ms: row.get::<_, Option<i64>>(2)?.map(|v| v as u64),
+                    num_turns: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                },
+            );
+        }
+        Ok(map)
     }
 
     /// Get all executions for a cue, ordered by id (oldest first).
