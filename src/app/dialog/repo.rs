@@ -24,6 +24,10 @@ impl DirigentApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
+                // Consume clicks on empty space so they don't pass through
+                // to the modal overlay and dismiss this dialog.
+                ui.interact(ui.max_rect(), ui.id().with("body_bg"), egui::Sense::click());
+
                 ui.horizontal(|ui| {
                     ui.label("Path:");
                     ui.add(
