@@ -137,6 +137,8 @@ pub(crate) fn gather_auto_context(
     file_path: &str,
     line_number: usize,
     line_number_end: Option<usize>,
+    include_file: bool,
+    include_git_diff: bool,
 ) -> String {
     if file_path.is_empty() {
         return String::new();
@@ -145,91 +147,95 @@ pub(crate) fn gather_auto_context(
     let mut sections = Vec::new();
 
     // 1. File content snippet (~50 lines window around the target)
-    let full_path = project_root.join(file_path);
-    if let Ok(content) = std::fs::read_to_string(&full_path) {
-        let lines: Vec<&str> = content.lines().collect();
-        if !lines.is_empty() {
-            let center = line_number.saturating_sub(1); // 0-indexed
-            let end_line = line_number_end.unwrap_or(line_number).saturating_sub(1);
-            let span = end_line.saturating_sub(center) + 1;
-            // Window: 50 lines total, centered on the target range
-            let padding = 50usize.saturating_sub(span) / 2;
-            let start = center.saturating_sub(padding);
-            let end = (end_line + padding + 1).min(lines.len());
+    if include_file {
+        let full_path = project_root.join(file_path);
+        if let Ok(content) = std::fs::read_to_string(&full_path) {
+            let lines: Vec<&str> = content.lines().collect();
+            if !lines.is_empty() {
+                let center = line_number.saturating_sub(1); // 0-indexed
+                let end_line = line_number_end.unwrap_or(line_number).saturating_sub(1);
+                let span = end_line.saturating_sub(center) + 1;
+                // Window: 50 lines total, centered on the target range
+                let padding = 50usize.saturating_sub(span) / 2;
+                let start = center.saturating_sub(padding);
+                let end = (end_line + padding + 1).min(lines.len());
 
-            let snippet: Vec<String> = lines[start..end]
-                .iter()
-                .enumerate()
-                .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
-                .collect();
-            let snippet_text = snippet.join("\n");
-
-            if snippet_text.len() <= AUTO_CONTEXT_MAX_BYTES {
-                sections.push(format!(
-                    "## File Content\n\n\
-                     `{}` (lines {}-{}):\n```\n{}\n```",
-                    file_path,
-                    start + 1,
-                    end,
-                    snippet_text,
-                ));
-            } else {
-                // Truncate to fit within the byte ceiling
-                let truncated: String = snippet_text
-                    .char_indices()
-                    .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
-                    .map(|(_, c)| c)
+                let snippet: Vec<String> = lines[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| format!("{:>4} | {}", start + i + 1, line))
                     .collect();
-                sections.push(format!(
-                    "## File Content\n\n\
-                     `{}` (lines {}-{}, truncated):\n```\n{}\n... (truncated)\n```",
-                    file_path,
-                    start + 1,
-                    end,
-                    truncated,
-                ));
-            }
-        }
-    }
+                let snippet_text = snippet.join("\n");
 
-    // 2. Git diff for this file (uncommitted changes)
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["diff", "--", file_path])
-        .current_dir(project_root)
-        .output()
-    {
-        if output.status.success() {
-            let diff = String::from_utf8_lossy(&output.stdout);
-            let diff = diff.trim();
-            if !diff.is_empty() {
-                // Limit diff to ~200 lines to avoid bloating the prompt
-                let diff_lines: Vec<&str> = diff.lines().collect();
-                let mut truncated = if diff_lines.len() > 200 {
-                    format!(
-                        "{}\n... ({} more lines)",
-                        diff_lines[..200].join("\n"),
-                        diff_lines.len() - 200
-                    )
+                if snippet_text.len() <= AUTO_CONTEXT_MAX_BYTES {
+                    sections.push(format!(
+                        "## File Content\n\n\
+                     `{}` (lines {}-{}):\n```\n{}\n```",
+                        file_path,
+                        start + 1,
+                        end,
+                        snippet_text,
+                    ));
                 } else {
-                    diff.to_string()
-                };
-                // Enforce byte ceiling on top of line-count limit
-                if truncated.len() > AUTO_CONTEXT_MAX_BYTES {
-                    truncated = truncated
+                    // Truncate to fit within the byte ceiling
+                    let truncated: String = snippet_text
                         .char_indices()
                         .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
                         .map(|(_, c)| c)
                         .collect();
-                    truncated.push_str("\n... (truncated)");
+                    sections.push(format!(
+                        "## File Content\n\n\
+                     `{}` (lines {}-{}, truncated):\n```\n{}\n... (truncated)\n```",
+                        file_path,
+                        start + 1,
+                        end,
+                        truncated,
+                    ));
                 }
-                sections.push(format!(
-                    "## Recent Changes (uncommitted)\n\n\
-                     ```diff\n{}\n```",
-                    truncated,
-                ));
             }
         }
-    }
+    } // include_file
+
+    // 2. Git diff for this file (uncommitted changes)
+    if include_git_diff {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["diff", "--", file_path])
+            .current_dir(project_root)
+            .output()
+        {
+            if output.status.success() {
+                let diff = String::from_utf8_lossy(&output.stdout);
+                let diff = diff.trim();
+                if !diff.is_empty() {
+                    // Limit diff to ~200 lines to avoid bloating the prompt
+                    let diff_lines: Vec<&str> = diff.lines().collect();
+                    let mut truncated = if diff_lines.len() > 200 {
+                        format!(
+                            "{}\n... ({} more lines)",
+                            diff_lines[..200].join("\n"),
+                            diff_lines.len() - 200
+                        )
+                    } else {
+                        diff.to_string()
+                    };
+                    // Enforce byte ceiling on top of line-count limit
+                    if truncated.len() > AUTO_CONTEXT_MAX_BYTES {
+                        truncated = truncated
+                            .char_indices()
+                            .take_while(|&(i, _)| i < AUTO_CONTEXT_MAX_BYTES)
+                            .map(|(_, c)| c)
+                            .collect();
+                        truncated.push_str("\n... (truncated)");
+                    }
+                    sections.push(format!(
+                        "## Recent Changes (uncommitted)\n\n\
+                     ```diff\n{}\n```",
+                        truncated,
+                    ));
+                }
+            }
+        }
+    } // include_git_diff
 
     sections.join("\n\n")
 }

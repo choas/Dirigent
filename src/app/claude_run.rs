@@ -22,32 +22,9 @@ struct ClaudeResult {
     response: String,
     error: Option<String>,
     /// Run metrics (cost, duration, turns) — populated on success.
-    cost_usd: f64,
-    duration_ms: u64,
-    num_turns: u64,
-}
-
-impl ClaudeResult {
-    /// Return metrics as Options, treating zero values as absent.
-    fn normalized_metrics(&self) -> (Option<f64>, Option<u64>, Option<u64>) {
-        (
-            if self.cost_usd > 0.0 {
-                Some(self.cost_usd)
-            } else {
-                None
-            },
-            if self.duration_ms > 0 {
-                Some(self.duration_ms)
-            } else {
-                None
-            },
-            if self.num_turns > 0 {
-                Some(self.num_turns)
-            } else {
-                None
-            },
-        )
-    }
+    cost_usd: Option<f64>,
+    duration_ms: Option<u64>,
+    num_turns: Option<u64>,
 }
 
 /// A log message from a running Claude worker thread.
@@ -118,13 +95,23 @@ impl DirigentApp {
                 (cue.text.clone(), None)
             };
 
-        // Gather auto-context (file snippet + git diff) for file-specific cues
-        let auto_context = claude::gather_auto_context(
-            &self.project_root,
-            &cue.file_path,
-            cue.line_number,
-            cue.line_number_end,
-        );
+        // Gather auto-context only when at least one source is enabled and the
+        // CLI provider actually uses it (OpenCode builds its own prompt).
+        let want_file = self.settings.auto_context_file;
+        let want_diff = self.settings.auto_context_git_diff;
+        let auto_context =
+            if (want_file || want_diff) && self.settings.cli_provider == CliProvider::Claude {
+                claude::gather_auto_context(
+                    &self.project_root,
+                    &cue.file_path,
+                    cue.line_number,
+                    cue.line_number_end,
+                    want_file,
+                    want_diff,
+                )
+            } else {
+                String::new()
+            };
 
         let prompt = match self.settings.cli_provider {
             CliProvider::Claude => claude::build_prompt_with_auto_context(
@@ -246,9 +233,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
-                            cost_usd: 0.0,
-                            duration_ms: 0,
-                            num_turns: 0,
+                            cost_usd: None,
+                            duration_ms: None,
+                            num_turns: None,
                         },
                     }
                 }
@@ -294,9 +281,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
-                            cost_usd: 0.0,
-                            duration_ms: 0,
-                            num_turns: 0,
+                            cost_usd: None,
+                            duration_ms: None,
+                            num_turns: None,
                         },
                     }
                 }
@@ -478,9 +465,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
-                            cost_usd: 0.0,
-                            duration_ms: 0,
-                            num_turns: 0,
+                            cost_usd: None,
+                            duration_ms: None,
+                            num_turns: None,
                         },
                     }
                 }
@@ -526,9 +513,9 @@ impl DirigentApp {
                             diff: None,
                             response: String::new(),
                             error: Some(e.to_string()),
-                            cost_usd: 0.0,
-                            duration_ms: 0,
-                            num_turns: 0,
+                            cost_usd: None,
+                            duration_ms: None,
+                            num_turns: None,
                         },
                     }
                 }
@@ -554,6 +541,7 @@ impl DirigentApp {
         self.drain_log_channel();
 
         let results: Vec<ClaudeResult> = self.claude.rx.try_iter().collect();
+        let had_results = !results.is_empty();
 
         for result in results {
             // Save the running log to DB before processing
@@ -572,7 +560,8 @@ impl DirigentApp {
                 let _ = self.db.log_activity(result.cue_id, "Run failed");
             } else if let Some(ref diff) = result.diff {
                 // Claude already edited files directly. Store the diff for review.
-                let (m_cost, m_dur, m_turns) = result.normalized_metrics();
+                let (m_cost, m_dur, m_turns) =
+                    (result.cost_usd, result.duration_ms, result.num_turns);
                 let _ = self.db.complete_execution(
                     result.exec_id,
                     &result.response,
@@ -613,7 +602,8 @@ impl DirigentApp {
                 self.reload_git_info();
             } else {
                 // Claude ran but no files were changed
-                let (m_cost, m_dur, m_turns) = result.normalized_metrics();
+                let (m_cost, m_dur, m_turns) =
+                    (result.cost_usd, result.duration_ms, result.num_turns);
                 let _ = self.db.complete_execution(
                     result.exec_id,
                     &result.response,
@@ -641,6 +631,11 @@ impl DirigentApp {
             }
 
             self.reload_cues();
+        }
+
+        // Refresh cached total cost once after processing all results
+        if had_results {
+            self.cached_total_cost = self.db.total_cost().unwrap_or(self.cached_total_cost);
         }
     }
 
