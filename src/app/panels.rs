@@ -11,6 +11,7 @@ use crate::db::CueStatus;
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
+use crate::prompt_suggestions;
 use crate::settings::SemanticColors;
 
 impl DirigentApp {
@@ -848,6 +849,19 @@ impl DirigentApp {
                     }
                 }
 
+                // Total project cost (right-aligned, cached)
+                if self.cached_total_cost > 0.0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("${:.2}", self.cached_total_cost))
+                                .monospace()
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        ).on_hover_text("Total project cost across all runs");
+                        // Return to left-to-right for the rest
+                    });
+                }
+
                 // Show transient status message (auto-dismiss after 6s, fade during last 2s)
                 // Don't auto-dismiss while async operations are still in progress
                 let busy = self.git.importing_pr
@@ -1003,6 +1017,33 @@ impl DirigentApp {
                         }
                     });
                 });
+
+                // Prompt refinement suggestions (non-blocking hints)
+                let suggestions = if self.settings.prompt_suggestions_enabled {
+                    prompt_suggestions::analyse_prompt(
+                        &self.global_prompt_input,
+                        false, // global prompt has no file context
+                    )
+                } else {
+                    Vec::new()
+                };
+                if !suggestions.is_empty() {
+                    ui.add_space(SPACE_XS);
+                    for suggestion in &suggestions {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("\u{26A0} {}", suggestion.label))
+                                    .small()
+                                    .color(self.semantic.warning),
+                            );
+                            ui.label(
+                                egui::RichText::new(suggestion.detail)
+                                    .small()
+                                    .color(self.semantic.muted_text()),
+                            );
+                        });
+                    }
+                }
             });
     }
 }

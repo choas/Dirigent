@@ -172,6 +172,32 @@ impl DirigentApp {
                 }
             }
 
+            // Run metrics (cost, duration, turns) for completed cues
+            if matches!(
+                status,
+                CueStatus::Review | CueStatus::Done | CueStatus::Archived
+            ) {
+                if let Some(metrics) = self.latest_exec_cache.get(&cue.id) {
+                    let mut parts = Vec::new();
+                    if let Some(turns) = metrics.num_turns {
+                        parts.push(format!("{} turns", turns));
+                    }
+                    if let Some(ms) = metrics.duration_ms {
+                        parts.push(format!("{:.1}s", ms as f64 / 1000.0));
+                    }
+                    if let Some(cost) = metrics.cost_usd {
+                        parts.push(format!("${:.4}", cost));
+                    }
+                    if !parts.is_empty() {
+                        ui.label(
+                            egui::RichText::new(parts.join("  "))
+                                .small()
+                                .color(self.semantic.muted_text()),
+                        );
+                    }
+                }
+            }
+
             // Action buttons — separated from content zone
             ui.add_space(SPACE_XS);
             ui.horizontal_wrapped(|ui| {

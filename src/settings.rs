@@ -1109,6 +1109,15 @@ pub(crate) struct Settings {
     /// Command modes triggered by `[name]` prefix in cue text.
     #[serde(default = "default_commands")]
     pub commands: Vec<CueCommand>,
+    /// Show heuristic prompt-refinement suggestions below the prompt field.
+    #[serde(default)]
+    pub prompt_suggestions_enabled: bool,
+    /// Automatically include file content (±50 lines) around the cue location in the prompt.
+    #[serde(default)]
+    pub auto_context_file: bool,
+    /// Automatically include the git diff in the prompt.
+    #[serde(default)]
+    pub auto_context_git_diff: bool,
 }
 
 fn default_true() -> bool {
@@ -1152,6 +1161,9 @@ impl Default for Settings {
             agent_shell_init: String::new(),
             agents: default_agents(),
             commands: default_commands(),
+            prompt_suggestions_enabled: false,
+            auto_context_file: false,
+            auto_context_git_diff: false,
         }
     }
 }

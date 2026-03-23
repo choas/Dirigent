@@ -299,6 +299,33 @@ impl DirigentApp {
                     ui.end_row();
                 });
 
+            // Smart AI Interaction section
+            ui.add_space(SPACE_MD);
+            ui.separator();
+            ui.add_space(SPACE_SM);
+            ui.strong("Smart AI Interaction");
+            ui.add_space(SPACE_XS);
+
+            egui::Grid::new("smart_ai_grid")
+                .num_columns(2)
+                .spacing([SPACE_MD, SPACE_SM])
+                .show(ui, |ui| {
+                    ui.label("Prompt Suggestions:");
+                    ui.checkbox(&mut self.settings.prompt_suggestions_enabled, "Show refinement hints below prompt field")
+                        .on_hover_text("Heuristic checks for short, vague, or missing-verb prompts.");
+                    ui.end_row();
+
+                    ui.label("Auto-Context File:");
+                    ui.checkbox(&mut self.settings.auto_context_file, "Include file content (\u{00B1}50 lines) around cue location")
+                        .on_hover_text("Sends the surrounding source code directly to the AI, reducing tool calls and latency.");
+                    ui.end_row();
+
+                    ui.label("Auto-Context Git Diff:");
+                    ui.checkbox(&mut self.settings.auto_context_git_diff, "Include git diff in prompt")
+                        .on_hover_text("Appends the current unstaged diff so the AI sees recent changes without an extra tool call.");
+                    ui.end_row();
+                });
+
             // Sources section
             ui.add_space(SPACE_MD);
             ui.separator();
