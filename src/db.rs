@@ -648,20 +648,6 @@ impl Database {
         Ok(execs)
     }
 
-    /// Search executions by prompt text (LIKE query). Returns up to `limit` results, most recent first.
-    pub fn search_executions(&self, query: &str, limit: usize) -> Result<Vec<Execution>> {
-        let pattern = format!("%{}%", query);
-        let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, input_tokens, output_tokens FROM executions WHERE prompt LIKE ?1 ORDER BY id DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![pattern, limit as i64], |row| row_to_execution(row))?;
-        let mut execs = Vec::new();
-        for row in rows {
-            execs.push(row?);
-        }
-        Ok(execs)
-    }
-
     /// Get the last activity event matching a prefix for a cue.
     pub fn get_last_activity_matching(&self, cue_id: i64, prefix: &str) -> Result<Option<String>> {
         let pattern = format!("{}%", prefix);

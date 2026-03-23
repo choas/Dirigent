@@ -2,6 +2,26 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.2] - 2026-03-23
+
+### Added
+- Run metrics tracking (cost, duration, tokens) for executions
+- Prompt auto-context and refinement hints
+- Execution history search
+
+### Fixed
+- Left-clicking a file tab not switching to that file
+- First character lost when typing in the global prompt
+- Clicking "Change" opening incorrect dialog
+- Worktree dialog click handling
+- Git pull merge conflict resolution
+
+### Changed
+- Removed unused `search_executions` database method
+- Various code quality fixes from PR findings analysis
+- Resolved all compiler warnings
+- Updated README documentation
+
 ## [0.3.1] - 2026-03-22
 
 ### Added
