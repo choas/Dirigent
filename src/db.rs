@@ -265,20 +265,29 @@ impl Database {
                 .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
         }
         // Migration: add cost/duration/turns columns to executions
-        let has_cost_col: bool = self
+        if self
             .conn
             .prepare("SELECT cost_usd FROM executions LIMIT 0")
-            .is_ok();
-        if !has_cost_col {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions ADD COLUMN cost_usd REAL;");
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions ADD COLUMN duration_ms INTEGER;");
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions ADD COLUMN num_turns INTEGER;");
+            .is_err()
+        {
+            self.conn
+                .execute_batch("ALTER TABLE executions ADD COLUMN cost_usd REAL;")?;
+        }
+        if self
+            .conn
+            .prepare("SELECT duration_ms FROM executions LIMIT 0")
+            .is_err()
+        {
+            self.conn
+                .execute_batch("ALTER TABLE executions ADD COLUMN duration_ms INTEGER;")?;
+        }
+        if self
+            .conn
+            .prepare("SELECT num_turns FROM executions LIMIT 0")
+            .is_err()
+        {
+            self.conn
+                .execute_batch("ALTER TABLE executions ADD COLUMN num_turns INTEGER;")?;
         }
         // Activity log table for cue lifecycle timestamps
         self.conn.execute_batch(
@@ -622,9 +631,13 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(i64, String, String)>> {
-        let pattern = format!("%{}%", query);
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{}%", escaped);
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path FROM cues WHERE text LIKE ?1 ORDER BY id DESC LIMIT ?2",
+            "SELECT id, text, file_path FROM cues WHERE text LIKE ?1 ESCAPE '\\' ORDER BY id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
             Ok((
