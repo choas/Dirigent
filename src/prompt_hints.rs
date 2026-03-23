@@ -79,6 +79,11 @@ pub(crate) fn analyze(text: &str) -> Vec<PromptHint> {
         return Vec::new();
     }
 
+    // Skip analysis for [command] prefixed cues — they expand to full prompts
+    if trimmed.starts_with('[') && trimmed.contains(']') {
+        return Vec::new();
+    }
+
     let mut hints = Vec::new();
     let word_count = trimmed.split_whitespace().count();
 
@@ -180,6 +185,12 @@ mod tests {
     fn all_caps_warns() {
         let hints = analyze("FIX THE BROKEN LOGIN PAGE NOW");
         assert!(hints.iter().any(|h| h.label == "All caps"));
+    }
+
+    #[test]
+    fn command_prefix_skipped() {
+        assert!(analyze("[plan] fix the login").is_empty());
+        assert!(analyze("[test] add coverage").is_empty());
     }
 
     #[test]
