@@ -10,6 +10,9 @@ pub(crate) enum TextSegment {
     Code(String),
     Link { text: String, url: String },
     Strikethrough(String),
+    StrikethroughBold(String),
+    StrikethroughItalic(String),
+    StrikethroughBoldItalic(String),
     SoftBreak,
     HardBreak,
 }
@@ -360,16 +363,15 @@ fn collect_item(events: &[Event]) -> (Vec<MarkdownBlock>, usize) {
 
 /// Map text to the appropriate styled segment based on current formatting state.
 fn styled_text(text: String, bold: bool, italic: bool, strikethrough: bool) -> TextSegment {
-    if strikethrough {
-        TextSegment::Strikethrough(text)
-    } else if bold && italic {
-        TextSegment::BoldItalic(text)
-    } else if bold {
-        TextSegment::Bold(text)
-    } else if italic {
-        TextSegment::Italic(text)
-    } else {
-        TextSegment::Plain(text)
+    match (strikethrough, bold, italic) {
+        (true, true, true) => TextSegment::StrikethroughBoldItalic(text),
+        (true, true, false) => TextSegment::StrikethroughBold(text),
+        (true, false, true) => TextSegment::StrikethroughItalic(text),
+        (true, false, false) => TextSegment::Strikethrough(text),
+        (false, true, true) => TextSegment::BoldItalic(text),
+        (false, true, false) => TextSegment::Bold(text),
+        (false, false, true) => TextSegment::Italic(text),
+        (false, false, false) => TextSegment::Plain(text),
     }
 }
 

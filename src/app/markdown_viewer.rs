@@ -235,6 +235,7 @@ fn render_list_item(
     prefix: &str,
     item_blocks: &[MarkdownBlock],
     ctx: &RenderCtx,
+    heading_counter: &mut usize,
 ) {
     let first = item_blocks.first();
     let first_is_inline = matches!(
@@ -243,7 +244,7 @@ fn render_list_item(
     );
 
     if !first_is_inline {
-        render_list_item_fallback(ui, prefix, item_blocks, ctx);
+        render_list_item_fallback(ui, prefix, item_blocks, ctx, heading_counter);
         return;
     }
 
@@ -251,7 +252,7 @@ fn render_list_item(
 
     if item_blocks.len() > 1 {
         let nested = ctx.nested();
-        render_blocks_with_ctx(ui, &item_blocks[1..], &nested);
+        render_blocks_with_ctx(ui, &item_blocks[1..], &nested, heading_counter);
     }
 }
 
@@ -312,6 +313,7 @@ fn render_list_item_fallback(
     prefix: &str,
     item_blocks: &[MarkdownBlock],
     ctx: &RenderCtx,
+    heading_counter: &mut usize,
 ) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
@@ -323,7 +325,7 @@ fn render_list_item_fallback(
         );
     });
     let nested = ctx.nested();
-    render_blocks_with_ctx(ui, item_blocks, &nested);
+    render_blocks_with_ctx(ui, item_blocks, &nested, heading_counter);
 }
 
 fn render_block_quote(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderCtx) {
