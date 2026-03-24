@@ -59,25 +59,222 @@ pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
     }
 }
 
+/// Run a hook script (pre-run or post-run) and log its output.
+/// Returns `Err` only for pre-run failures (when `fail_on_error` is true).
+fn run_hook_script(
+    label: &str,
+    script: &str,
+    project_root: &Path,
+    on_log: &mut impl FnMut(&str),
+    fail_on_error: bool,
+) -> Result<(), OpenCodeError> {
+    if script.trim().is_empty() {
+        return Ok(());
+    }
+    on_log(&format!("\u{25B6} {}: {}\n", label, script.trim()));
+    let result = Command::new("sh")
+        .arg("-c")
+        .arg(script.trim())
+        .current_dir(project_root)
+        .output();
+    match result {
+        Ok(output) => {
+            if !output.stdout.is_empty() {
+                on_log(&String::from_utf8_lossy(&output.stdout));
+            }
+            if !output.stderr.is_empty() {
+                on_log(&String::from_utf8_lossy(&output.stderr));
+            }
+            if !output.status.success() {
+                let msg = format!("{} script failed (exit {})", label, output.status);
+                on_log(&format!("\u{2717} {}\n", msg));
+                if fail_on_error {
+                    return Err(OpenCodeError::SpawnFailed(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        msg,
+                    )));
+                }
+            }
+        }
+        Err(e) => {
+            on_log(&format!("\u{2717} {} script error: {}\n", label, e));
+            if fail_on_error {
+                return Err(OpenCodeError::SpawnFailed(e));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Process a "text" event from the OpenCode JSON stream.
+fn process_text_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) {
+    let text = event
+        .get("part")
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str());
+    if let Some(text) = text {
+        on_log(text);
+        on_log("\n");
+    } else {
+        on_log(&format!(
+            "[DEBUG] text event but no text found: {:?}\n",
+            event
+        ));
+    }
+}
+
+/// Process a "tool_use" or "tool" event from the OpenCode JSON stream.
+/// Returns any newly discovered file path to add to edited_files.
+fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) -> Option<String> {
+    let part = event.get("part");
+    let name = part
+        .and_then(|p| p.get("tool").or_else(|| p.get("name")))
+        .and_then(|n| n.as_str())
+        .unwrap_or("?");
+    let input = part
+        .and_then(|p| p.get("input"))
+        .cloned()
+        .unwrap_or_default();
+
+    let mut new_edited_file = None;
+    if is_file_tool(name) {
+        new_edited_file = extract_file_path_from_input(&input);
+        if new_edited_file.is_none() {
+            // Log bash commands when no file path is found
+            if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
+                if name.to_ascii_lowercase() == "bash" {
+                    on_log(&format!(
+                        "\u{2192} {} {}\n",
+                        name,
+                        command.lines().next().unwrap_or("")
+                    ));
+                }
+            }
+        }
+    }
+
+    let detail = build_tool_detail(&input);
+    if !detail.is_empty() {
+        on_log(&format!("\u{2192} {}{}\n", name, detail));
+    }
+
+    new_edited_file
+}
+
+/// Check whether a tool name refers to a file-modifying tool.
+fn is_file_tool(name: &str) -> bool {
+    let name_lower = name.to_ascii_lowercase();
+    matches!(name, "Write" | "Edit" | "Bash" | "Task")
+        || matches!(
+            name_lower.as_str(),
+            "write"
+                | "edit"
+                | "bash"
+                | "task"
+                | "write_file"
+                | "edit_file"
+                | "create_file"
+                | "str_replace_editor"
+                | "file_editor"
+                | "write_to_file"
+                | "apply_diff"
+        )
+}
+
+/// Extract a file path from tool input using common field names.
+fn extract_file_path_from_input(input: &serde_json::Value) -> Option<String> {
+    input
+        .get("file_path")
+        .or_else(|| input.get("path"))
+        .or_else(|| input.get("file"))
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Build a human-readable detail string from tool input.
+fn build_tool_detail(input: &serde_json::Value) -> String {
+    if let Some(file_path) = input.get("file_path").and_then(|p| p.as_str()) {
+        format!(" {}", file_path)
+    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
+        format!(" $ {}", command.lines().next().unwrap_or(""))
+    } else if let Some(grep) = input.get("pattern").and_then(|p| p.as_str()) {
+        format!(" \"{}\"", grep)
+    } else {
+        String::new()
+    }
+}
+
+/// Process a "step_finish" event from the OpenCode JSON stream.
+/// Returns the final result text if the step finished with reason "stop".
+fn process_step_finish_event(
+    event: &serde_json::Value,
+    on_log: &mut impl FnMut(&str),
+) -> Option<String> {
+    let part = event.get("part");
+    let reason = part
+        .and_then(|p| p.get("reason"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
+    if reason != "stop" {
+        return None;
+    }
+
+    let cost = part
+        .and_then(|p| p.get("cost"))
+        .and_then(|c| c.as_f64())
+        .unwrap_or(0.0);
+    let tokens = part.and_then(|p| p.get("tokens"));
+    let duration = tokens
+        .and_then(|t| t.get("total"))
+        .and_then(|t| t.as_u64())
+        .unwrap_or(0);
+
+    let final_text = part
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    on_log(&format!(
+        "\n\u{2713} Done ({:.1}s, ${:.4})\n",
+        duration as f64 / 1_000_000.0,
+        cost
+    ));
+
+    Some(final_text)
+}
+
+/// Process an "error" event from the OpenCode JSON stream.
+fn process_error_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) {
+    if let Some(error_msg) = event.get("error").and_then(|e| e.get("message")) {
+        on_log(&format!("\nError: {}\n", error_msg));
+    }
+}
+
+/// Configuration for the OpenCode CLI invocation, bundling string parameters.
+pub(crate) struct OpenCodeRunConfig<'a> {
+    pub model: &'a str,
+    pub cli_path: &'a str,
+    pub extra_args: &'a str,
+    pub env_vars: &'a str,
+    pub pre_run_script: &'a str,
+    pub post_run_script: &'a str,
+}
+
 pub(crate) fn invoke_opencode_streaming(
     prompt: &str,
     project_root: &Path,
-    model: &str,
-    cli_path: &str,
-    extra_args: &str,
-    env_vars: &str,
-    pre_run_script: &str,
-    post_run_script: &str,
+    config: &OpenCodeRunConfig<'_>,
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<OpenCodeResponse, OpenCodeError> {
     use std::io::{BufRead, Read};
     use std::process::Stdio;
 
-    let opencode_bin = if cli_path.is_empty() {
+    let opencode_bin = if config.cli_path.is_empty() {
         "opencode"
     } else {
-        cli_path
+        config.cli_path
     };
 
     let which_result = Command::new("which").arg(opencode_bin).output();
@@ -89,17 +286,17 @@ pub(crate) fn invoke_opencode_streaming(
 
     let mut cmd = Command::new(opencode_bin);
     cmd.arg("run").arg(prompt).arg("--format").arg("json");
-    if !model.is_empty() {
-        cmd.arg("--model").arg(model);
+    if !config.model.is_empty() {
+        cmd.arg("--model").arg(config.model);
     }
-    for arg in extra_args.split_whitespace() {
+    for arg in config.extra_args.split_whitespace() {
         if !arg.is_empty() {
             cmd.arg(arg);
         }
     }
 
     // Apply user-supplied environment variables (KEY=VALUE per line)
-    for line in env_vars.lines() {
+    for line in config.env_vars.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -114,36 +311,7 @@ pub(crate) fn invoke_opencode_streaming(
     }
 
     // Run pre-run script
-    if !pre_run_script.trim().is_empty() {
-        on_log(&format!("\u{25B6} pre-run: {}\n", pre_run_script.trim()));
-        let pre_result = Command::new("sh")
-            .arg("-c")
-            .arg(pre_run_script.trim())
-            .current_dir(project_root)
-            .output();
-        match pre_result {
-            Ok(output) => {
-                if !output.stdout.is_empty() {
-                    on_log(&String::from_utf8_lossy(&output.stdout));
-                }
-                if !output.stderr.is_empty() {
-                    on_log(&String::from_utf8_lossy(&output.stderr));
-                }
-                if !output.status.success() {
-                    let msg = format!("pre-run script failed (exit {})", output.status);
-                    on_log(&format!("\u{2717} {}\n", msg));
-                    return Err(OpenCodeError::SpawnFailed(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        msg,
-                    )));
-                }
-            }
-            Err(e) => {
-                on_log(&format!("\u{2717} pre-run script error: {}\n", e));
-                return Err(OpenCodeError::SpawnFailed(e));
-            }
-        }
-    }
+    run_hook_script("pre-run", config.pre_run_script, project_root, &mut on_log, true)?;
 
     let mut child = cmd
         .current_dir(project_root)
@@ -207,119 +375,22 @@ pub(crate) fn invoke_opencode_streaming(
         let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match event_type {
-            "text" => {
-                let text = event
-                    .get("part")
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str());
-                if let Some(text) = text {
-                    on_log(text);
-                    on_log("\n");
-                } else {
-                    on_log(&format!(
-                        "[DEBUG] text event but no text found: {:?}\n",
-                        event
-                    ));
-                }
-            }
+            "text" => process_text_event(&event, &mut on_log),
             "tool_use" | "tool" => {
-                let name = event
-                    .get("part")
-                    .and_then(|p| p.get("tool").or_else(|| p.get("name")))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("?");
-                let input = event
-                    .get("part")
-                    .and_then(|p| p.get("input"))
-                    .cloned()
-                    .unwrap_or_default();
-                let name_lower = name.to_ascii_lowercase();
-                let is_file_tool = matches!(name, "Write" | "Edit" | "Bash" | "Task")
-                    || matches!(
-                        name_lower.as_str(),
-                        "write"
-                            | "edit"
-                            | "bash"
-                            | "task"
-                            | "write_file"
-                            | "edit_file"
-                            | "create_file"
-                            | "str_replace_editor"
-                            | "file_editor"
-                            | "write_to_file"
-                            | "apply_diff"
-                    );
-                if is_file_tool {
-                    // Check common field names for file paths
-                    let path = input
-                        .get("file_path")
-                        .or_else(|| input.get("path"))
-                        .or_else(|| input.get("file"))
-                        .and_then(|p| p.as_str());
-                    if let Some(path) = path {
-                        if !edited_files.contains(&path.to_string()) {
-                            edited_files.push(path.to_string());
-                        }
-                    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-                        if name_lower == "bash" {
-                            on_log(&format!(
-                                "\u{2192} {} {}\n",
-                                name,
-                                command.lines().next().unwrap_or("")
-                            ));
-                        }
+                if let Some(path) = process_tool_event(&event, &mut on_log) {
+                    if !edited_files.contains(&path) {
+                        edited_files.push(path);
                     }
-                }
-                let detail =
-                    if let Some(file_path) = input.get("file_path").and_then(|p| p.as_str()) {
-                        format!(" {}", file_path)
-                    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-                        format!(" $ {}", command.lines().next().unwrap_or(""))
-                    } else if let Some(grep) = input.get("pattern").and_then(|p| p.as_str()) {
-                        format!(" \"{}\"", grep)
-                    } else {
-                        String::new()
-                    };
-                if !detail.is_empty() {
-                    on_log(&format!("\u{2192} {}{}\n", name, detail));
                 }
             }
             "step_finish" => {
-                let reason = event
-                    .get("part")
-                    .and_then(|p| p.get("reason"))
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("");
-                let cost = event
-                    .get("part")
-                    .and_then(|p| p.get("cost"))
-                    .and_then(|c| c.as_f64())
-                    .unwrap_or(0.0);
-                let tokens = event.get("part").and_then(|p| p.get("tokens"));
-                let duration = tokens
-                    .and_then(|t| t.get("total"))
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(0);
-                if reason == "stop" {
-                    if let Some(text) = event
-                        .get("part")
-                        .and_then(|p| p.get("text"))
-                        .and_then(|t| t.as_str())
-                    {
-                        final_result = text.to_string();
+                if let Some(text) = process_step_finish_event(&event, &mut on_log) {
+                    if !text.is_empty() {
+                        final_result = text;
                     }
-                    on_log(&format!(
-                        "\n\u{2713} Done ({:.1}s, ${:.4})\n",
-                        duration as f64 / 1_000_000.0,
-                        cost
-                    ));
                 }
             }
-            "error" => {
-                if let Some(error_msg) = event.get("error").and_then(|e| e.get("message")) {
-                    on_log(&format!("\nError: {}\n", error_msg));
-                }
-            }
+            "error" => process_error_event(&event, &mut on_log),
             _ => {}
         }
     }
@@ -346,33 +417,13 @@ pub(crate) fn invoke_opencode_streaming(
     }
 
     // Run post-run script
-    if !post_run_script.trim().is_empty() {
-        on_log(&format!("\u{25B6} post-run: {}\n", post_run_script.trim()));
-        let post_result = Command::new("sh")
-            .arg("-c")
-            .arg(post_run_script.trim())
-            .current_dir(project_root)
-            .output();
-        match post_result {
-            Ok(output) => {
-                if !output.stdout.is_empty() {
-                    on_log(&String::from_utf8_lossy(&output.stdout));
-                }
-                if !output.stderr.is_empty() {
-                    on_log(&String::from_utf8_lossy(&output.stderr));
-                }
-                if !output.status.success() {
-                    on_log(&format!(
-                        "\u{2717} post-run script failed (exit {})\n",
-                        output.status
-                    ));
-                }
-            }
-            Err(e) => {
-                on_log(&format!("\u{2717} post-run script error: {}\n", e));
-            }
-        }
-    }
+    run_hook_script(
+        "post-run",
+        config.post_run_script,
+        project_root,
+        &mut on_log,
+        false,
+    )?;
 
     Ok(OpenCodeResponse {
         stdout: final_result,

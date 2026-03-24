@@ -50,6 +50,29 @@ pub(super) fn parse_markdown_sections(content: &str) -> Vec<ImportedSection> {
 
 /// Clean up section body: strip `---` separators, code fences, and collapse
 /// excessive blank lines while preserving the full content.
+/// Collapse runs of consecutive blank lines down to a single blank line.
+fn collapse_blank_lines(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut consecutive_blanks = 0u32;
+
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            consecutive_blanks += 1;
+            if consecutive_blanks <= 1 {
+                result.push('\n');
+            }
+        } else {
+            consecutive_blanks = 0;
+            if !result.is_empty() && !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push_str(line);
+        }
+    }
+
+    result
+}
+
 fn clean_body(lines: &[&str]) -> String {
     let mut out = Vec::new();
     let mut in_code_block = false;
@@ -71,28 +94,11 @@ fn clean_body(lines: &[&str]) -> String {
         out.push(line);
     }
 
-    // Trim leading/trailing blank lines and collapse runs of 3+ blanks to 2
+    // Trim leading/trailing blank lines and collapse consecutive blanks
     let text = out.join("\n");
     let text = text.trim();
 
-    let mut result = String::with_capacity(text.len());
-    let mut consecutive_blanks = 0u32;
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            consecutive_blanks += 1;
-            if consecutive_blanks <= 1 {
-                result.push('\n');
-            }
-        } else {
-            consecutive_blanks = 0;
-            if !result.is_empty() && !result.ends_with('\n') {
-                result.push('\n');
-            }
-            result.push_str(line);
-        }
-    }
-
-    result
+    collapse_blank_lines(text)
 }
 
 pub(super) fn pick_markdown_file(start_dir: &std::path::Path) -> Option<PathBuf> {

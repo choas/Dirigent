@@ -515,6 +515,23 @@ pub(crate) fn is_comment_line(trimmed: &str, in_block_comment: &mut bool) -> boo
 
 // -- Generic parser --
 
+/// Extract the symbol name from regex captures, handling `impl` blocks specially.
+/// Returns `None` when required capture groups are missing.
+fn extract_symbol_name(caps: &regex::Captures<'_>, kind: SymbolKind) -> Option<String> {
+    if kind == SymbolKind::Impl {
+        // For impl blocks: "Trait for Type" or just "Type"
+        match (caps.get(1), caps.get(2)) {
+            (Some(trait_or_type), Some(target)) => {
+                Some(format!("{} for {}", trait_or_type.as_str(), target.as_str()))
+            }
+            (Some(m), None) => Some(m.as_str().to_string()),
+            _ => None,
+        }
+    } else {
+        caps.get(1).map(|m| m.as_str().to_string())
+    }
+}
+
 fn parse_with_patterns(content: &[String], patterns: &[(Regex, SymbolKind)]) -> Vec<FileSymbol> {
     let mut symbols = Vec::new();
     let mut in_block_comment = false;
@@ -527,36 +544,26 @@ fn parse_with_patterns(content: &[String], patterns: &[(Regex, SymbolKind)]) -> 
         }
 
         for (re, kind) in patterns {
-            if let Some(caps) = re.captures(line) {
-                let name = if *kind == SymbolKind::Impl {
-                    // For impl blocks: "Trait for Type" or just "Type"
-                    match (caps.get(1), caps.get(2)) {
-                        (Some(trait_or_type), Some(target)) => {
-                            format!("{} for {}", trait_or_type.as_str(), target.as_str())
-                        }
-                        (Some(m), None) => m.as_str().to_string(),
-                        _ => continue,
-                    }
-                } else {
-                    match caps.get(1) {
-                        Some(m) => m.as_str().to_string(),
-                        None => continue,
-                    }
-                };
-
-                if !name.is_empty() {
-                    let indent = line.len() - line.trim_start().len();
-                    let depth = indent / 4;
-
-                    symbols.push(FileSymbol {
-                        name,
-                        kind: *kind,
-                        line: idx + 1,
-                        depth,
-                    });
-                    break; // Only match first pattern per line
-                }
+            let Some(caps) = re.captures(line) else {
+                continue;
+            };
+            let Some(name) = extract_symbol_name(&caps, *kind) else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
             }
+
+            let indent = line.len() - line.trim_start().len();
+            let depth = indent / 4;
+
+            symbols.push(FileSymbol {
+                name,
+                kind: *kind,
+                line: idx + 1,
+                depth,
+            });
+            break; // Only match first pattern per line
         }
     }
     symbols

@@ -25,6 +25,29 @@ impl DirigentApp {
     }
 }
 
+/// Shared context passed to all block-rendering helpers.
+struct RenderCtx<'a> {
+    font_size: f32,
+    syntax_theme: &'a egui_extras::syntax_highlighting::CodeTheme,
+    semantic: &'a crate::settings::SemanticColors,
+    indent_level: usize,
+}
+
+impl<'a> RenderCtx<'a> {
+    fn indent(&self) -> f32 {
+        self.indent_level as f32 * SPACE_MD
+    }
+
+    fn nested(&self) -> Self {
+        RenderCtx {
+            font_size: self.font_size,
+            syntax_theme: self.syntax_theme,
+            semantic: self.semantic,
+            indent_level: self.indent_level + 1,
+        }
+    }
+}
+
 fn render_blocks(
     ui: &mut egui::Ui,
     blocks: &[MarkdownBlock],
@@ -34,7 +57,13 @@ fn render_blocks(
     indent_level: usize,
     scroll_to_heading: Option<usize>,
 ) {
-    let indent = indent_level as f32 * SPACE_MD;
+    let ctx = RenderCtx {
+        font_size,
+        syntax_theme,
+        semantic,
+        indent_level,
+    };
+    let indent = ctx.indent();
     let mut heading_counter = 0usize;
 
     for (block_idx, block) in blocks.iter().enumerate() {
@@ -45,307 +74,462 @@ fn render_blocks(
             MarkdownBlock::Heading { level, segments } => {
                 let should_scroll = scroll_to_heading == Some(heading_counter);
                 heading_counter += 1;
-
-                ui.add_space(SPACE_SM);
-                let scale = match level {
-                    1 => 2.0,
-                    2 => 1.6,
-                    3 => 1.35,
-                    4 => 1.15,
-                    5 => 1.05,
-                    _ => 1.0,
-                };
-                let resp = ui.horizontal_wrapped(|ui| {
-                    if indent > 0.0 {
-                        ui.add_space(indent);
-                    }
-                    for seg in segments {
-                        render_segment(ui, seg, font_size * scale, true, semantic);
-                    }
-                });
-                if should_scroll {
-                    resp.response.scroll_to_me(Some(egui::Align::TOP));
-                }
-                if *level <= 2 {
-                    ui.separator();
-                }
-                ui.add_space(SPACE_XS);
+                render_heading(ui, segments, *level, should_scroll, &ctx);
             }
             MarkdownBlock::Paragraph { segments } => {
-                ui.horizontal_wrapped(|ui| {
-                    if indent > 0.0 {
-                        ui.add_space(indent);
-                    }
-                    for seg in segments {
-                        render_segment(ui, seg, font_size, false, semantic);
-                    }
-                });
-                ui.add_space(SPACE_SM);
+                render_paragraph(ui, segments, &ctx);
             }
             MarkdownBlock::CodeBlock { language, code } => {
-                ui.add_space(SPACE_XS);
-                let frame_fill = if semantic.is_dark() {
-                    egui::Color32::from_white_alpha(12)
-                } else {
-                    egui::Color32::from_black_alpha(12)
-                };
-                egui::Frame::new()
-                    .fill(frame_fill)
-                    .corner_radius(4.0)
-                    .inner_margin(SPACE_SM)
-                    .outer_margin(egui::Margin {
-                        left: indent as i8,
-                        ..Default::default()
-                    })
-                    .show(ui, |ui| {
-                        let ext = language.as_deref().unwrap_or("");
-                        if !ext.is_empty() {
-                            // Use syntect highlighting for known languages
-                            for line in code.lines() {
-                                let job = egui_extras::syntax_highlighting::highlight(
-                                    ui.ctx(),
-                                    ui.style(),
-                                    syntax_theme,
-                                    line,
-                                    ext,
-                                );
-                                ui.label(job);
-                            }
-                        } else {
-                            ui.label(
-                                egui::RichText::new(code.as_str())
-                                    .monospace()
-                                    .size(font_size),
-                            );
-                        }
-                    });
-                ui.add_space(SPACE_SM);
+                render_code_block(ui, language.as_deref(), code, &ctx);
             }
             MarkdownBlock::List {
                 ordered,
                 start,
                 items,
             } => {
-                let base_num = start.unwrap_or(1);
-                for (idx, item_blocks) in items.iter().enumerate() {
-                    let prefix = if *ordered {
-                        format!("{}.", base_num + idx as u64)
-                    } else {
-                        "\u{2022}".to_string() // bullet
-                    };
-                    // Render bullet + first paragraph inline on the same line
-                    let first_is_paragraph = matches!(
-                        item_blocks.first(),
-                        Some(MarkdownBlock::Paragraph { .. })
-                            | Some(MarkdownBlock::Checkbox { .. })
-                    );
-                    if first_is_paragraph {
-                        match item_blocks.first() {
-                            Some(MarkdownBlock::Paragraph { segments }) => {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.add_space(indent + SPACE_MD);
-                                    ui.label(
-                                        egui::RichText::new(&prefix)
-                                            .size(font_size)
-                                            .color(semantic.secondary_text),
-                                    );
-                                    for seg in segments {
-                                        render_segment(ui, seg, font_size, false, semantic);
-                                    }
-                                });
-                            }
-                            Some(MarkdownBlock::Checkbox { checked, segments }) => {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.add_space(indent + SPACE_MD);
-                                    let icon = if *checked { "\u{2611}" } else { "\u{2610}" };
-                                    ui.label(egui::RichText::new(icon).size(font_size).color(
-                                        if *checked {
-                                            semantic.success
-                                        } else {
-                                            semantic.secondary_text
-                                        },
-                                    ));
-                                    for seg in segments {
-                                        render_segment(ui, seg, font_size, false, semantic);
-                                    }
-                                });
-                            }
-                            _ => {}
-                        }
-                        // Render remaining blocks with indent
-                        if item_blocks.len() > 1 {
-                            render_blocks(
-                                ui,
-                                &item_blocks[1..],
-                                font_size,
-                                syntax_theme,
-                                semantic,
-                                indent_level + 1,
-                                None,
-                            );
-                        }
-                    } else {
-                        // Fallback: bullet on its own, content below
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(indent + SPACE_MD);
-                            ui.label(
-                                egui::RichText::new(&prefix)
-                                    .size(font_size)
-                                    .color(semantic.secondary_text),
-                            );
-                        });
-                        render_blocks(
-                            ui,
-                            item_blocks,
-                            font_size,
-                            syntax_theme,
-                            semantic,
-                            indent_level + 1,
-                            None,
-                        );
-                    }
-                }
-                ui.add_space(SPACE_XS);
+                render_list(ui, *ordered, *start, items, &ctx);
             }
             MarkdownBlock::BlockQuote { blocks } => {
-                ui.add_space(SPACE_XS);
-                let left_margin = indent + SPACE_SM;
-                // Draw a colored left border using a frame
-                ui.horizontal(|ui| {
-                    ui.add_space(left_margin);
-                    // Vertical accent bar
-                    let (bar_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(3.0, 0.0), // width; height will be determined by content
-                        egui::Sense::hover(),
-                    );
-                    // We'll paint the bar after knowing the height
-                    let start_y = bar_rect.min.y;
-
-                    ui.vertical(|ui| {
-                        ui.add_space(SPACE_XS);
-                        render_blocks(ui, blocks, font_size, syntax_theme, semantic, 0, None);
-                        ui.add_space(SPACE_XS);
-
-                        // Paint the accent bar spanning the full content height
-                        let end_y = ui.min_rect().max.y;
-                        let bar = egui::Rect::from_min_max(
-                            egui::pos2(bar_rect.min.x, start_y),
-                            egui::pos2(bar_rect.min.x + 3.0, end_y),
-                        );
-                        ui.painter().rect_filled(bar, 1.0, semantic.accent);
-                    });
-                });
-                ui.add_space(SPACE_SM);
+                render_block_quote(ui, blocks, &ctx);
             }
             MarkdownBlock::Table { headers, rows } => {
-                ui.add_space(SPACE_XS);
-                let border = if semantic.is_dark() {
-                    egui::Color32::from_white_alpha(30)
-                } else {
-                    egui::Color32::from_black_alpha(30)
-                };
-                let header_bg = if semantic.is_dark() {
-                    egui::Color32::from_white_alpha(15)
-                } else {
-                    egui::Color32::from_black_alpha(10)
-                };
-                let col_count = headers.len();
-
-                if indent > 0.0 {
-                    ui.add_space(indent);
-                }
-
-                egui::Frame::new()
-                    .stroke(egui::Stroke::new(1.0, border))
-                    .corner_radius(4.0)
-                    .show(ui, |ui| {
-                        // Header row with background
-                        egui::Frame::new()
-                            .fill(header_bg)
-                            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
-                            .show(ui, |ui| {
-                                egui::Grid::new(ui.id().with(("md_th", block_idx)))
-                                    .num_columns(col_count)
-                                    .min_col_width(60.0)
-                                    .spacing(egui::vec2(SPACE_MD, SPACE_XS))
-                                    .show(ui, |ui| {
-                                        for cell in headers {
-                                            ui.horizontal_wrapped(|ui| {
-                                                for seg in cell {
-                                                    render_segment(
-                                                        ui, seg, font_size, true, semantic,
-                                                    );
-                                                }
-                                            });
-                                        }
-                                        ui.end_row();
-                                    });
-                            });
-
-                        // Separator line between header and body
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().line_segment(
-                            [
-                                egui::pos2(rect.left(), rect.top()),
-                                egui::pos2(rect.right(), rect.top()),
-                            ],
-                            egui::Stroke::new(1.0, border),
-                        );
-
-                        // Data rows
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
-                            .show(ui, |ui| {
-                                egui::Grid::new(ui.id().with(("md_td", block_idx)))
-                                    .num_columns(col_count)
-                                    .striped(true)
-                                    .min_col_width(60.0)
-                                    .spacing(egui::vec2(SPACE_MD, SPACE_XS))
-                                    .show(ui, |ui| {
-                                        for row in rows {
-                                            for cell in row {
-                                                ui.horizontal_wrapped(|ui| {
-                                                    for seg in cell {
-                                                        render_segment(
-                                                            ui, seg, font_size, false, semantic,
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                            ui.end_row();
-                                        }
-                                    });
-                            });
-                    });
-                ui.add_space(SPACE_SM);
+                render_table(ui, headers, rows, block_idx, &ctx);
             }
             MarkdownBlock::ThematicBreak => {
-                ui.add_space(SPACE_SM);
-                ui.separator();
-                ui.add_space(SPACE_SM);
+                render_thematic_break(ui);
             }
             MarkdownBlock::Checkbox { checked, segments } => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(indent + SPACE_MD);
-                    let icon = if *checked { "\u{2611}" } else { "\u{2610}" };
-                    ui.label(
-                        egui::RichText::new(icon)
-                            .size(font_size)
-                            .color(if *checked {
-                                semantic.success
-                            } else {
-                                semantic.secondary_text
-                            }),
-                    );
-                    for seg in segments {
-                        render_segment(ui, seg, font_size, false, semantic);
-                    }
-                });
-                ui.add_space(SPACE_XS);
+                render_checkbox(ui, *checked, segments, &ctx);
             }
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Block-type helpers
+// ---------------------------------------------------------------------------
+
+fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 2.0,
+        2 => 1.6,
+        3 => 1.35,
+        4 => 1.15,
+        5 => 1.05,
+        _ => 1.0,
+    }
+}
+
+fn render_heading(
+    ui: &mut egui::Ui,
+    segments: &[TextSegment],
+    level: u8,
+    should_scroll: bool,
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_SM);
+    let scale = heading_scale(level);
+    let resp = ui.horizontal_wrapped(|ui| {
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        for seg in segments {
+            render_segment(ui, seg, ctx.font_size * scale, true, ctx.semantic);
+        }
+    });
+    if should_scroll {
+        resp.response.scroll_to_me(Some(egui::Align::TOP));
+    }
+    if level <= 2 {
+        ui.separator();
+    }
+    ui.add_space(SPACE_XS);
+}
+
+fn render_paragraph(ui: &mut egui::Ui, segments: &[TextSegment], ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.horizontal_wrapped(|ui| {
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        for seg in segments {
+            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+        }
+    });
+    ui.add_space(SPACE_SM);
+}
+
+fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    let frame_fill = code_block_fill(ctx.semantic);
+    egui::Frame::new()
+        .fill(frame_fill)
+        .corner_radius(4.0)
+        .inner_margin(SPACE_SM)
+        .outer_margin(egui::Margin {
+            left: indent as i8,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            render_code_block_body(ui, language, code, ctx);
+        });
+    ui.add_space(SPACE_SM);
+}
+
+fn code_block_fill(semantic: &crate::settings::SemanticColors) -> egui::Color32 {
+    if semantic.is_dark() {
+        egui::Color32::from_white_alpha(12)
+    } else {
+        egui::Color32::from_black_alpha(12)
+    }
+}
+
+fn render_code_block_body(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx: &RenderCtx) {
+    let ext = language.unwrap_or("");
+    if !ext.is_empty() {
+        for line in code.lines() {
+            let job = egui_extras::syntax_highlighting::highlight(
+                ui.ctx(),
+                ui.style(),
+                ctx.syntax_theme,
+                line,
+                ext,
+            );
+            ui.label(job);
+        }
+    } else {
+        ui.label(
+            egui::RichText::new(code)
+                .monospace()
+                .size(ctx.font_size),
+        );
+    }
+}
+
+fn render_list(
+    ui: &mut egui::Ui,
+    ordered: bool,
+    start: Option<u64>,
+    items: &[Vec<MarkdownBlock>],
+    ctx: &RenderCtx,
+) {
+    let base_num = start.unwrap_or(1);
+    for (idx, item_blocks) in items.iter().enumerate() {
+        let prefix = list_prefix(ordered, base_num, idx);
+        render_list_item(ui, &prefix, item_blocks, ctx);
+    }
+    ui.add_space(SPACE_XS);
+}
+
+fn list_prefix(ordered: bool, base_num: u64, idx: usize) -> String {
+    if ordered {
+        format!("{}.", base_num + idx as u64)
+    } else {
+        "\u{2022}".to_string()
+    }
+}
+
+fn render_list_item(
+    ui: &mut egui::Ui,
+    prefix: &str,
+    item_blocks: &[MarkdownBlock],
+    ctx: &RenderCtx,
+) {
+    let first = item_blocks.first();
+    let first_is_inline = matches!(
+        first,
+        Some(MarkdownBlock::Paragraph { .. }) | Some(MarkdownBlock::Checkbox { .. })
+    );
+
+    if !first_is_inline {
+        render_list_item_fallback(ui, prefix, item_blocks, ctx);
+        return;
+    }
+
+    render_list_item_inline_first(ui, prefix, first.unwrap(), ctx);
+
+    if item_blocks.len() > 1 {
+        let nested = ctx.nested();
+        render_blocks_with_ctx(ui, &item_blocks[1..], &nested);
+    }
+}
+
+fn render_list_item_inline_first(
+    ui: &mut egui::Ui,
+    prefix: &str,
+    first_block: &MarkdownBlock,
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    match first_block {
+        MarkdownBlock::Paragraph { segments } => {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(indent + SPACE_MD);
+                ui.label(
+                    egui::RichText::new(prefix)
+                        .size(ctx.font_size)
+                        .color(ctx.semantic.secondary_text),
+                );
+                for seg in segments {
+                    render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+                }
+            });
+        }
+        MarkdownBlock::Checkbox { checked, segments } => {
+            render_checkbox_in_list(ui, *checked, segments, prefix, ctx);
+        }
+        _ => {}
+    }
+}
+
+fn render_checkbox_in_list(
+    ui: &mut egui::Ui,
+    checked: bool,
+    segments: &[TextSegment],
+    _prefix: &str,
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(indent + SPACE_MD);
+        let icon = checkbox_icon(checked);
+        let color = checkbox_color(checked, ctx.semantic);
+        ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        for seg in segments {
+            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+        }
+    });
+}
+
+fn render_list_item_fallback(
+    ui: &mut egui::Ui,
+    prefix: &str,
+    item_blocks: &[MarkdownBlock],
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(indent + SPACE_MD);
+        ui.label(
+            egui::RichText::new(prefix)
+                .size(ctx.font_size)
+                .color(ctx.semantic.secondary_text),
+        );
+    });
+    let nested = ctx.nested();
+    render_blocks_with_ctx(ui, item_blocks, &nested);
+}
+
+fn render_block_quote(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    let left_margin = indent + SPACE_SM;
+    ui.horizontal(|ui| {
+        ui.add_space(left_margin);
+        let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 0.0), egui::Sense::hover());
+        let start_y = bar_rect.min.y;
+
+        ui.vertical(|ui| {
+            ui.add_space(SPACE_XS);
+            render_blocks_with_ctx(
+                ui,
+                blocks,
+                &RenderCtx {
+                    font_size: ctx.font_size,
+                    syntax_theme: ctx.syntax_theme,
+                    semantic: ctx.semantic,
+                    indent_level: 0,
+                },
+            );
+            ui.add_space(SPACE_XS);
+
+            let end_y = ui.min_rect().max.y;
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(bar_rect.min.x, start_y),
+                egui::pos2(bar_rect.min.x + 3.0, end_y),
+            );
+            ui.painter().rect_filled(bar, 1.0, ctx.semantic.accent);
+        });
+    });
+    ui.add_space(SPACE_SM);
+}
+
+fn render_table(
+    ui: &mut egui::Ui,
+    headers: &[Vec<TextSegment>],
+    rows: &[Vec<Vec<TextSegment>>],
+    block_idx: usize,
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    let border = table_border_color(ctx.semantic);
+    let header_bg = table_header_bg(ctx.semantic);
+    let col_count = headers.len();
+
+    if indent > 0.0 {
+        ui.add_space(indent);
+    }
+
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, border))
+        .corner_radius(4.0)
+        .show(ui, |ui| {
+            render_table_header(ui, headers, col_count, block_idx, header_bg, ctx);
+            render_table_separator(ui, border);
+            render_table_body(ui, rows, col_count, block_idx, ctx);
+        });
+    ui.add_space(SPACE_SM);
+}
+
+fn table_border_color(semantic: &crate::settings::SemanticColors) -> egui::Color32 {
+    if semantic.is_dark() {
+        egui::Color32::from_white_alpha(30)
+    } else {
+        egui::Color32::from_black_alpha(30)
+    }
+}
+
+fn table_header_bg(semantic: &crate::settings::SemanticColors) -> egui::Color32 {
+    if semantic.is_dark() {
+        egui::Color32::from_white_alpha(15)
+    } else {
+        egui::Color32::from_black_alpha(10)
+    }
+}
+
+fn render_table_header(
+    ui: &mut egui::Ui,
+    headers: &[Vec<TextSegment>],
+    col_count: usize,
+    block_idx: usize,
+    header_bg: egui::Color32,
+    ctx: &RenderCtx,
+) {
+    egui::Frame::new()
+        .fill(header_bg)
+        .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
+        .show(ui, |ui| {
+            egui::Grid::new(ui.id().with(("md_th", block_idx)))
+                .num_columns(col_count)
+                .min_col_width(60.0)
+                .spacing(egui::vec2(SPACE_MD, SPACE_XS))
+                .show(ui, |ui| {
+                    for cell in headers {
+                        ui.horizontal_wrapped(|ui| {
+                            for seg in cell {
+                                render_segment(ui, seg, ctx.font_size, true, ctx.semantic);
+                            }
+                        });
+                    }
+                    ui.end_row();
+                });
+        });
+}
+
+fn render_table_separator(ui: &mut egui::Ui, border: egui::Color32) {
+    let rect = ui.available_rect_before_wrap();
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.left(), rect.top()),
+            egui::pos2(rect.right(), rect.top()),
+        ],
+        egui::Stroke::new(1.0, border),
+    );
+}
+
+fn render_table_body(
+    ui: &mut egui::Ui,
+    rows: &[Vec<Vec<TextSegment>>],
+    col_count: usize,
+    block_idx: usize,
+    ctx: &RenderCtx,
+) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
+        .show(ui, |ui| {
+            egui::Grid::new(ui.id().with(("md_td", block_idx)))
+                .num_columns(col_count)
+                .striped(true)
+                .min_col_width(60.0)
+                .spacing(egui::vec2(SPACE_MD, SPACE_XS))
+                .show(ui, |ui| {
+                    for row in rows {
+                        for cell in row {
+                            ui.horizontal_wrapped(|ui| {
+                                for seg in cell {
+                                    render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+                                }
+                            });
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn render_thematic_break(ui: &mut egui::Ui) {
+    ui.add_space(SPACE_SM);
+    ui.separator();
+    ui.add_space(SPACE_SM);
+}
+
+fn render_checkbox(
+    ui: &mut egui::Ui,
+    checked: bool,
+    segments: &[TextSegment],
+    ctx: &RenderCtx,
+) {
+    let indent = ctx.indent();
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(indent + SPACE_MD);
+        let icon = checkbox_icon(checked);
+        let color = checkbox_color(checked, ctx.semantic);
+        ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        for seg in segments {
+            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+        }
+    });
+    ui.add_space(SPACE_XS);
+}
+
+// ---------------------------------------------------------------------------
+// Small shared helpers
+// ---------------------------------------------------------------------------
+
+fn checkbox_icon(checked: bool) -> &'static str {
+    if checked { "\u{2611}" } else { "\u{2610}" }
+}
+
+fn checkbox_color(
+    checked: bool,
+    semantic: &crate::settings::SemanticColors,
+) -> egui::Color32 {
+    if checked {
+        semantic.success
+    } else {
+        semantic.secondary_text
+    }
+}
+
+/// Render blocks using a pre-built `RenderCtx` (no scroll-to-heading support).
+fn render_blocks_with_ctx(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderCtx) {
+    render_blocks(
+        ui,
+        blocks,
+        ctx.font_size,
+        ctx.syntax_theme,
+        ctx.semantic,
+        ctx.indent_level,
+        None,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Inline segment renderer (unchanged)
+// ---------------------------------------------------------------------------
 
 fn render_segment(
     ui: &mut egui::Ui,

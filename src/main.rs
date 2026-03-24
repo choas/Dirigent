@@ -36,6 +36,44 @@ pub fn spawn_new_instance() {
 }
 
 #[cfg(target_os = "macos")]
+/// Walk the main menu to find the About item and retarget it to our helper.
+///
+/// # Safety
+/// Caller must pass valid ObjC pointers obtained from NSApplication.
+unsafe fn retarget_about_menu_item(
+    app: *mut objc::runtime::Object,
+    helper: *mut objc::runtime::Object,
+) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+
+    let main_menu: *mut Object = msg_send![app, mainMenu];
+    if main_menu.is_null() {
+        return;
+    }
+    let count: isize = msg_send![main_menu, numberOfItems];
+    if count == 0 {
+        return;
+    }
+    let app_menu_item: *mut Object = msg_send![main_menu, itemAtIndex:0_isize];
+    let submenu: *mut Object = msg_send![app_menu_item, submenu];
+    if submenu.is_null() {
+        return;
+    }
+    let sub_count: isize = msg_send![submenu, numberOfItems];
+    let about_sel = sel!(orderFrontStandardAboutPanel:);
+    for i in 0..sub_count {
+        let item: *mut Object = msg_send![submenu, itemAtIndex:i];
+        let action: objc::runtime::Sel = msg_send![item, action];
+        if action == about_sel {
+            let _: () = msg_send![item, setTarget:helper];
+            let _: () = msg_send![item, setAction:sel!(showAbout:)];
+            break;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn setup_macos_about_panel() {
     use objc::declare::ClassDecl;
     use objc::runtime::{Class, Object, Sel};
@@ -105,27 +143,7 @@ fn setup_macos_about_panel() {
             let helper: *mut Object = msg_send![helper_class, new];
 
             // Find the native About menu item and retarget it to our helper
-            let main_menu: *mut Object = msg_send![app, mainMenu];
-            if !main_menu.is_null() {
-                let count: isize = msg_send![main_menu, numberOfItems];
-                if count > 0 {
-                    let app_menu_item: *mut Object = msg_send![main_menu, itemAtIndex:0_isize];
-                    let submenu: *mut Object = msg_send![app_menu_item, submenu];
-                    if !submenu.is_null() {
-                        let sub_count: isize = msg_send![submenu, numberOfItems];
-                        let about_sel = sel!(orderFrontStandardAboutPanel:);
-                        for i in 0..sub_count {
-                            let item: *mut Object = msg_send![submenu, itemAtIndex:i];
-                            let action: Sel = msg_send![item, action];
-                            if action == about_sel {
-                                let _: () = msg_send![item, setTarget:helper];
-                                let _: () = msg_send![item, setAction:sel!(showAbout:)];
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            retarget_about_menu_item(app, helper);
 
             let _ = helper; // prevent deallocation
         }

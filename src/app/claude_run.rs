@@ -230,15 +230,18 @@ fn run_opencode_provider(
     cue_id: i64,
     exec_id: i64,
 ) -> ClaudeResult {
+    let opencode_config = opencode::OpenCodeRunConfig {
+        model: &config.model,
+        cli_path: &config.cli_path,
+        extra_args: &config.extra_args,
+        env_vars: &config.env_vars,
+        pre_run_script: &config.pre_run_script,
+        post_run_script: &config.post_run_script,
+    };
     let res = opencode::invoke_opencode_streaming(
         prompt,
         project_root,
-        &config.model,
-        &config.cli_path,
-        &config.extra_args,
-        &config.env_vars,
-        &config.pre_run_script,
-        &config.post_run_script,
+        &opencode_config,
         on_log,
         cancel,
     );

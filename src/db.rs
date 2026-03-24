@@ -792,21 +792,12 @@ impl Database {
     // -- Agent runs --
 
     /// Record a completed agent run.
-    pub fn insert_agent_run(
-        &self,
-        agent_kind: &str,
-        cue_id: Option<i64>,
-        command: &str,
-        status: &str,
-        output: &str,
-        diagnostics_json: Option<&str>,
-        duration_ms: u64,
-    ) -> Result<i64> {
+    pub fn insert_agent_run(&self, record: &AgentRunRecord<'_>) -> Result<i64> {
         let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
             "INSERT INTO agent_runs (agent_kind, cue_id, command, status, output, diagnostics, duration_ms, started_at, finished_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-            params![agent_kind, cue_id, command, status, output, diagnostics_json, duration_ms as i64, now],
+            params![record.agent_kind, record.cue_id, record.command, record.status, record.output, record.diagnostics_json, record.duration_ms as i64, now],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -891,6 +882,17 @@ impl Database {
 
         Ok(total_deleted)
     }
+}
+
+/// Parameters for inserting a new agent run via [`Database::insert_agent_run`].
+pub struct AgentRunRecord<'a> {
+    pub agent_kind: &'a str,
+    pub cue_id: Option<i64>,
+    pub command: &'a str,
+    pub status: &'a str,
+    pub output: &'a str,
+    pub diagnostics_json: Option<&'a str>,
+    pub duration_ms: u64,
 }
 
 /// An agent run entry returned by [`Database::get_agent_runs_for_cue`].

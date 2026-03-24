@@ -83,27 +83,18 @@ const BLOBS: [Blob; 4] = [
     },
 ];
 
-/// Total pixel dimensions of the lamp widget at the given scale.
-pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+/// Precomputed color palette for the lava lamp.
+struct LampColors {
+    frame_color: egui::Color32,
+    cap_color: egui::Color32,
+    liquid_bg: egui::Color32,
+    blob_core: egui::Color32,
+    blob_mid: egui::Color32,
+    blob_dim: egui::Color32,
 }
 
-/// Paint the lava lamp at a specific position using the given painter.
-///
-/// Unlike `paint`, this does not allocate UI space — it just draws pixels
-/// directly, making it suitable for overlaying on top of existing content.
-pub fn paint_at(
-    painter: &egui::Painter,
-    ctx: &egui::Context,
-    origin: egui::Pos2,
-    accent: egui::Color32,
-    is_dark: bool,
-    scale: f32,
-) {
-    let px = PX * scale;
-    let t = ctx.input(|i| i.time) as f32;
-
+/// Compute the full color palette from the accent color and theme mode.
+fn compute_colors(accent: egui::Color32, is_dark: bool) -> LampColors {
     let [ar, ag, ab, _] = accent.to_array();
 
     let frame_color = if is_dark {
@@ -129,6 +120,85 @@ pub fn paint_at(
         (ab as u16 * 2 / 3) as u8,
     );
 
+    LampColors {
+        frame_color,
+        cap_color,
+        liquid_bg,
+        blob_core,
+        blob_mid,
+        blob_dim,
+    }
+}
+
+/// Determine the color for a single pixel given its grid position.
+///
+/// Returns `Some(color)` when the pixel should be painted, or `None` for
+/// empty background cells.
+fn pixel_color(
+    row: usize,
+    col: usize,
+    blob_positions: &[(f32, f32, f32)],
+    colors: &LampColors,
+) -> Option<egui::Color32> {
+    if FRAME[row][col] == 1 {
+        let color = if row <= 1 || row >= 11 {
+            colors.cap_color
+        } else {
+            colors.frame_color
+        };
+        return Some(color);
+    }
+
+    if INTERIOR[row][col] != 1 {
+        return None;
+    }
+
+    let cy = row as f32 + 0.5;
+    let cx = col as f32 + 0.5;
+
+    let mut intensity: f32 = 0.0;
+    for &(bx, by, br) in blob_positions {
+        let dx = cx - bx;
+        let dy = cy - by;
+        let dist = (dx * dx + dy * dy).sqrt();
+        intensity = intensity.max((1.0 - dist / br).clamp(0.0, 1.0));
+    }
+
+    let color = if intensity > 0.6 {
+        colors.blob_core
+    } else if intensity > 0.3 {
+        colors.blob_mid
+    } else if intensity > 0.1 {
+        colors.blob_dim
+    } else {
+        colors.liquid_bg
+    };
+    Some(color)
+}
+
+/// Total pixel dimensions of the lamp widget at the given scale.
+pub fn size(scale: f32) -> (f32, f32) {
+    let px = PX * scale;
+    (W as f32 * px, H as f32 * px)
+}
+
+/// Paint the lava lamp at a specific position using the given painter.
+///
+/// Unlike `paint`, this does not allocate UI space — it just draws pixels
+/// directly, making it suitable for overlaying on top of existing content.
+pub fn paint_at(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    origin: egui::Pos2,
+    accent: egui::Color32,
+    is_dark: bool,
+    scale: f32,
+) {
+    let px = PX * scale;
+    let t = ctx.input(|i| i.time) as f32;
+
+    let colors = compute_colors(accent, is_dark);
+
     let blob_positions: Vec<(f32, f32, f32)> = BLOBS
         .iter()
         .map(|b| {
@@ -141,40 +211,11 @@ pub fn paint_at(
 
     for row in 0..H {
         for col in 0..W {
-            let px_rect = egui::Rect::from_min_size(
-                origin + egui::vec2(col as f32 * px, row as f32 * px),
-                egui::vec2(px, px),
-            );
-
-            if FRAME[row][col] == 1 {
-                let color = if row <= 1 || row >= 11 {
-                    cap_color
-                } else {
-                    frame_color
-                };
-                painter.rect_filled(px_rect, 0.0, color);
-            } else if INTERIOR[row][col] == 1 {
-                let cy = row as f32 + 0.5;
-                let cx = col as f32 + 0.5;
-
-                let mut intensity: f32 = 0.0;
-                for &(bx, by, br) in &blob_positions {
-                    let dx = cx - bx;
-                    let dy = cy - by;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    intensity = intensity.max((1.0 - dist / br).clamp(0.0, 1.0));
-                }
-
-                let color = if intensity > 0.6 {
-                    blob_core
-                } else if intensity > 0.3 {
-                    blob_mid
-                } else if intensity > 0.1 {
-                    blob_dim
-                } else {
-                    liquid_bg
-                };
-
+            if let Some(color) = pixel_color(row, col, &blob_positions, &colors) {
+                let px_rect = egui::Rect::from_min_size(
+                    origin + egui::vec2(col as f32 * px, row as f32 * px),
+                    egui::vec2(px, px),
+                );
                 painter.rect_filled(px_rect, 0.0, color);
             }
         }
