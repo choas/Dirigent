@@ -134,13 +134,11 @@ impl DirigentApp {
                     self.viewer.close_tab(idx);
                 }
             }
-        } else {
-            for tab in &mut self.viewer.tabs {
-                if tab.file_path.starts_with(old_path) {
-                    if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
-                        tab.file_path = new_path.join(rel);
-                    }
-                }
+            return;
+        }
+        for tab in &mut self.viewer.tabs {
+            if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
+                tab.file_path = new_path.join(rel);
             }
         }
     }
