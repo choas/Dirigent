@@ -153,12 +153,7 @@ impl DirigentApp {
                         .on_hover_text("Attach files (or drag & drop)")
                         .clicked()
                     {
-                        if let Some(paths) = rfd::FileDialog::new()
-                            .add_filter("All files", &["*"])
-                            .pick_files()
-                        {
-                            self.conversation_reply_images.extend(paths);
-                        }
+                        self.open_file_picker();
                     }
                     let reply_text = &mut self.conversation_reply;
                     let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
@@ -184,20 +179,9 @@ impl DirigentApp {
                             .add(send_btn)
                             .on_hover_text("Send feedback (\u{2318}Enter)")
                             .clicked();
-                        let (enter_submitted, cmd_enter) = if input_response.has_focus() {
-                            ui.input(|i| {
-                                let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
-                                (
-                                    pressed && !i.modifiers.command,
-                                    pressed && i.modifiers.command,
-                                )
-                            })
-                        } else {
-                            (false, false)
-                        };
-                        if (btn_clicked || enter_submitted || cmd_enter)
-                            && !reply_text.trim().is_empty()
-                        {
+                        let keyboard_submit =
+                            Self::is_submit_shortcut(ui, input_response.has_focus());
+                        if (btn_clicked || keyboard_submit) && !reply_text.trim().is_empty() {
                             reply_send = Some(reply_text.trim().to_string());
                         }
                     });
@@ -392,6 +376,27 @@ impl DirigentApp {
                     .color(self.semantic.tertiary_text),
             );
         }
+    }
+
+    /// Open a file picker dialog and add selected files to the reply attachments.
+    fn open_file_picker(&mut self) {
+        if let Some(paths) = rfd::FileDialog::new()
+            .add_filter("All files", &["*"])
+            .pick_files()
+        {
+            self.conversation_reply_images.extend(paths);
+        }
+    }
+
+    /// Check if the user pressed Enter or Cmd+Enter to submit the reply.
+    fn is_submit_shortcut(ui: &egui::Ui, has_focus: bool) -> bool {
+        if !has_focus {
+            return false;
+        }
+        ui.input(|i| {
+            let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
+            (pressed && !i.modifiers.command) || (pressed && i.modifiers.command)
+        })
     }
 
     /// Render content inside a standard indented frame used for conversation messages.
