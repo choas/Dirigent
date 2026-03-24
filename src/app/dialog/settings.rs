@@ -137,24 +137,24 @@ impl DirigentApp {
                     });
             }
             CliProvider::OpenCode => {
+                let models = if self.opencode_models.is_empty() {
+                    vec![
+                        "openai/o1".to_string(),
+                        "openai/o1-mini".to_string(),
+                        "openai/o3".to_string(),
+                        "openai/o3-mini".to_string(),
+                        "openai/o4-mini".to_string(),
+                        "openai/gpt-4.1".to_string(),
+                        "anthropic/claude-sonnet-4-6".to_string(),
+                        "anthropic/claude-opus-4-6".to_string(),
+                    ]
+                } else {
+                    self.opencode_models.clone()
+                };
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("model_combo")
                         .selected_text(&self.settings.opencode_model)
                         .show_ui(ui, |ui| {
-                            let models = if self.opencode_models.is_empty() {
-                                vec![
-                                    "openai/o1".to_string(),
-                                    "openai/o1-mini".to_string(),
-                                    "openai/o3".to_string(),
-                                    "openai/o3-mini".to_string(),
-                                    "openai/o4-mini".to_string(),
-                                    "openai/gpt-4.1".to_string(),
-                                    "anthropic/claude-sonnet-4-6".to_string(),
-                                    "anthropic/claude-opus-4-6".to_string(),
-                                ]
-                            } else {
-                                self.opencode_models.clone()
-                            };
                             for model in &models {
                                 ui.selectable_value(
                                     &mut self.settings.opencode_model,
@@ -611,11 +611,7 @@ impl DirigentApp {
         ui.separator();
         ui.add_space(SPACE_SM);
         ui.horizontal(|ui| {
-            let arrow = if self.agents_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
+            let arrow = ["\u{25B6}", "\u{25BC}"][self.agents_expanded as usize];
             if ui.button(icon(&format!("{} Agents", arrow), fs)).clicked() {
                 self.agents_expanded = !self.agents_expanded;
             }
@@ -824,16 +820,12 @@ impl DirigentApp {
                     1 => AgentTrigger::AfterCommit,
                     2 => {
                         let own_kind = self.settings.agents[i].kind;
-                        let default_kind = self
-                            .settings
+                        self.settings
                             .agents
                             .iter()
                             .find(|a| a.kind != own_kind)
-                            .map(|a| a.kind);
-                        match default_kind {
-                            Some(k) => AgentTrigger::AfterAgent(k),
-                            None => AgentTrigger::AfterRun,
-                        }
+                            .map(|a| AgentTrigger::AfterAgent(a.kind))
+                            .unwrap_or(AgentTrigger::AfterRun)
                     }
                     3 => AgentTrigger::OnFileChange,
                     _ => AgentTrigger::Manual,
@@ -1001,11 +993,7 @@ impl DirigentApp {
         ui.separator();
         ui.add_space(SPACE_SM);
         ui.horizontal(|ui| {
-            let arrow = if self.commands_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
+            let arrow = ["\u{25B6}", "\u{25BC}"][self.commands_expanded as usize];
             if ui
                 .button(icon(&format!("{} Commands", arrow), fs))
                 .clicked()
@@ -1137,11 +1125,7 @@ impl DirigentApp {
         ui.separator();
         ui.add_space(SPACE_SM);
         ui.horizontal(|ui| {
-            let arrow = if self.playbook_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
+            let arrow = ["\u{25B6}", "\u{25BC}"][self.playbook_expanded as usize];
             if ui
                 .button(icon(&format!("{} Playbook", arrow), fs))
                 .clicked()
