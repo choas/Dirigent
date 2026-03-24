@@ -545,11 +545,10 @@ impl DirigentApp {
                                     .color(accent),
                             );
                             let kind_label = sym.kind.label();
-                            let label = if kind_label.is_empty() {
-                                sym.name.clone()
-                            } else {
-                                format!("{} {}", kind_label, sym.name)
-                            };
+                            let mut label = sym.name.clone();
+                            if !kind_label.is_empty() {
+                                label = format!("{} {}", kind_label, sym.name);
+                            }
                             if ui
                                 .add(
                                     egui::Label::new(egui::RichText::new(&label).small())
@@ -614,23 +613,7 @@ impl DirigentApp {
                 let ahead = self.git.ahead_of_remote;
                 for (idx, commit) in self.git.commit_history.iter().enumerate() {
                     let is_unpushed = idx < ahead;
-                    let msg = if commit.message.len() > max_msg_chars + 3 {
-                        format!("{}...", super::truncate_str(&commit.message, max_msg_chars))
-                    } else {
-                        commit.message.clone()
-                    };
-                    let dot = if is_unpushed { "\u{25CF} " } else { "" };
-                    let label = format!("{}{} {}", dot, commit.short_hash, msg);
-                    let mut text = egui::RichText::new(&label).monospace().small();
-                    if is_unpushed {
-                        text = text.color(ui.visuals().warn_fg_color);
-                    }
-                    let hover = Self::format_commit_hover(commit, is_unpushed);
-                    if ui
-                        .selectable_label(false, text)
-                        .on_hover_text(hover)
-                        .clicked()
-                    {
+                    if Self::render_commit_entry(ui, commit, is_unpushed, max_msg_chars) {
                         clicked_commit = Some((
                             commit.full_hash.clone(),
                             commit.message.clone(),
@@ -657,6 +640,30 @@ impl DirigentApp {
             self.reload_commit_history();
         }
         clicked_commit
+    }
+
+    /// Render a single commit entry and return whether it was clicked.
+    fn render_commit_entry(
+        ui: &mut egui::Ui,
+        commit: &crate::git::CommitInfo,
+        is_unpushed: bool,
+        max_msg_chars: usize,
+    ) -> bool {
+        let msg = if commit.message.len() > max_msg_chars + 3 {
+            format!("{}...", super::truncate_str(&commit.message, max_msg_chars))
+        } else {
+            commit.message.clone()
+        };
+        let dot = if is_unpushed { "\u{25CF} " } else { "" };
+        let label = format!("{}{} {}", dot, commit.short_hash, msg);
+        let mut text = egui::RichText::new(&label).monospace().small();
+        if is_unpushed {
+            text = text.color(ui.visuals().warn_fg_color);
+        }
+        let hover = Self::format_commit_hover(commit, is_unpushed);
+        ui.selectable_label(false, text)
+            .on_hover_text(hover)
+            .clicked()
     }
 
     /// Format the hover tooltip for a commit entry.
