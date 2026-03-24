@@ -60,7 +60,7 @@ impl DirigentApp {
                 );
             });
 
-        self.apply_merge_conflict_actions(actions, op, op_label, has_conflicts);
+        self.apply_merge_conflict_actions(actions, op, op_label);
     }
 
     fn render_conflict_body(
@@ -181,7 +181,6 @@ impl DirigentApp {
         actions: MergeConflictActions,
         op: Option<MergeOperation>,
         op_label: &str,
-        _has_conflicts: bool,
     ) {
         if let Some(file) = actions.file_to_open {
             let path = self.project_root.join(&file);
