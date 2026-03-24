@@ -764,27 +764,46 @@ impl DirigentApp {
     }
 
     fn process_revert_review(&mut self, cue_id: i64) {
-        if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
-            if let Some(ref diff) = exec.diff {
-                let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
-                if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
-                    self.set_status_message(format!("Revert failed: {}", e));
+        let reverted = match self.db.get_latest_execution(cue_id) {
+            Ok(Some(exec)) => {
+                if let Some(ref diff) = exec.diff {
+                    let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
+                    match git::revert_files(&self.project_root, &file_paths) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            self.set_status_message(format!("Revert failed: {}", e));
+                            false
+                        }
+                    }
+                } else {
+                    self.set_status_message("Nothing to revert — no diff in execution".into());
+                    false
                 }
             }
-        }
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(cue_id, "Reverted");
-        for tab in &mut self.viewer.tabs {
-            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                tab.content = content.lines().map(String::from).collect();
-                let ext = std::path::Path::new(&tab.file_path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
-                tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+            Ok(None) => {
+                self.set_status_message("Nothing to revert — no execution found".into());
+                false
             }
+            Err(e) => {
+                self.set_status_message(format!("Revert failed: {}", e));
+                false
+            }
+        };
+        if reverted {
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.log_activity(cue_id, "Reverted");
+            for tab in &mut self.viewer.tabs {
+                if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                    tab.content = content.lines().map(String::from).collect();
+                    let ext = std::path::Path::new(&tab.file_path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                }
+            }
+            self.reload_git_info();
         }
-        self.reload_git_info();
     }
 
     fn process_show_running_log(&mut self, cue_id: i64) {
