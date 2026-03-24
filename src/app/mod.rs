@@ -138,6 +138,8 @@ enum CueAction {
     PushAndNotifyPR,
     /// Refresh PR findings (re-import from the same PR).
     RefreshPR,
+    /// Queue a follow-up prompt for a currently running cue.
+    QueueFollowUp(i64, String),
 }
 
 /// State for a single open file tab.
@@ -570,6 +572,9 @@ pub struct DirigentApp {
     // Run queue: cues waiting to run after all running cues finish (FIFO order)
     run_queue: Vec<i64>,
 
+    // Follow-up prompts queued for currently running cues (cue_id -> FIFO list of prompts)
+    follow_up_queue: HashMap<i64, Vec<String>>,
+
     // Scheduled runs: cue_id -> when to trigger
     scheduled_runs: HashMap<i64, Instant>,
 
@@ -862,6 +867,7 @@ impl DirigentApp {
             opencode_models: Vec::new(),
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
+            follow_up_queue: HashMap::new(),
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),
@@ -1717,6 +1723,7 @@ impl DirigentApp {
         // Cancel all running tasks — they belong to the old repo.
         self.cancel_all_tasks();
         self.run_queue.clear();
+        self.follow_up_queue.clear();
         self.scheduled_runs.clear();
         self.schedule_inputs.clear();
 

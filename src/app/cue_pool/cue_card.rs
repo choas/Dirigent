@@ -365,7 +365,7 @@ impl DirigentApp {
     }
 
     fn render_ready_buttons(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         cue: &Cue,
         actions: &mut Vec<(i64, CueAction)>,
@@ -386,6 +386,26 @@ impl DirigentApp {
         }
         ui.ctx()
             .request_repaint_after(super::super::ELAPSED_REPAINT);
+        if ui
+            .small_button(icon("\u{21A9} Follow-up", fs))
+            .on_hover_text("Queue a follow-up prompt for when this run completes")
+            .clicked()
+        {
+            toggle_reply_input(&mut self.reply_inputs, cue.id);
+        }
+        let queued_count = self
+            .follow_up_queue
+            .get(&cue.id)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        if queued_count > 0 {
+            let plural = if queued_count == 1 { "" } else { "s" };
+            ui.label(
+                egui::RichText::new(format!("{} follow-up{} queued", queued_count, plural))
+                    .small()
+                    .color(self.semantic.accent),
+            );
+        }
         if ui
             .small_button(icon("\u{2715} Cancel", fs))
             .on_hover_text("Cancel and move back to Inbox")
@@ -743,22 +763,40 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let fs = self.settings.font_size;
+        let is_running = cue.status == CueStatus::Ready;
         if let Some(reply_text) = self.reply_inputs.get_mut(&cue.id) {
             ui.add_space(SPACE_XS);
+            let hint = if is_running {
+                "Follow-up prompt (sent when this run completes)..."
+            } else {
+                "Describe what needs to change..."
+            };
             let response = ui.add(
                 egui::TextEdit::multiline(reply_text)
                     .desired_rows(2)
                     .desired_width(f32::INFINITY)
-                    .hint_text("Describe what needs to change..."),
+                    .hint_text(hint),
             );
+            let (btn_label, btn_hover) = if is_running {
+                (
+                    "\u{23F3} Queue",
+                    "Queue follow-up for when this run completes (also Cmd+Enter)",
+                )
+            } else {
+                ("\u{25B6} Send", "Send feedback to Claude (also Cmd+Enter)")
+            };
             let submit = ui
-                .small_button(icon("\u{25B6} Send", fs))
-                .on_hover_text("Send feedback to Claude (also Cmd+Enter)")
+                .small_button(icon(btn_label, fs))
+                .on_hover_text(btn_hover)
                 .clicked()
                 || (response.has_focus()
                     && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
             if submit && !reply_text.trim().is_empty() {
-                actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
+                if is_running {
+                    actions.push((cue.id, CueAction::QueueFollowUp(cue.id, reply_text.clone())));
+                } else {
+                    actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
+                }
             }
         }
     }

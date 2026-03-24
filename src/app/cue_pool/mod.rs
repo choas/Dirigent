@@ -636,6 +636,18 @@ impl DirigentApp {
             CueAction::TagAllReview(tag) => {
                 self.process_tag_all_review(&tag);
             }
+            CueAction::QueueFollowUp(cue_id, text) => {
+                self.reply_inputs.remove(&cue_id);
+                self.follow_up_queue.entry(cue_id).or_default().push(text);
+                let count = self
+                    .follow_up_queue
+                    .get(&cue_id)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                let _ = self
+                    .db
+                    .log_activity(cue_id, &format!("Follow-up queued ({} pending)", count));
+            }
         }
         self.reload_cues();
     }
@@ -643,6 +655,7 @@ impl DirigentApp {
     fn process_move_to(&mut self, id: i64, new_status: CueStatus) {
         if new_status != CueStatus::Ready {
             self.cancel_cue_task(id);
+            self.follow_up_queue.remove(&id);
         }
         self.run_queue.retain(|&cid| cid != id);
         self.scheduled_runs.remove(&id);
@@ -668,6 +681,7 @@ impl DirigentApp {
     fn process_delete(&mut self, id: i64) {
         self.cancel_cue_task(id);
         self.run_queue.retain(|&cid| cid != id);
+        self.follow_up_queue.remove(&id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
         let _ = self.db.delete_cue(id);

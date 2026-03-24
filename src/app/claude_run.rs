@@ -474,6 +474,7 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
+        let is_error = result.error.is_some();
         if let Some(ref error) = result.error {
             self.handle_run_error(&result, error);
         } else if result.diff.is_some() {
@@ -482,12 +483,52 @@ impl DirigentApp {
             self.handle_run_no_changes(&result);
         }
 
+        // Auto-trigger queued follow-ups on successful completion.
+        if !is_error {
+            self.try_dispatch_follow_up(result.cue_id);
+        }
+
         if self.claude.show_log == Some(result.cue_id) {
             if let Ok(execs) = self.db.get_all_executions(result.cue_id) {
                 self.claude.conversation_history = execs;
             }
         }
         self.reload_cues();
+    }
+
+    /// If there are queued follow-up prompts for this cue, pop the first one
+    /// and trigger a reply run automatically.
+    fn try_dispatch_follow_up(&mut self, cue_id: i64) {
+        let next = self.follow_up_queue.get_mut(&cue_id).and_then(|queue| {
+            if queue.is_empty() {
+                None
+            } else {
+                Some(queue.remove(0))
+            }
+        });
+        if let Some(follow_up_text) = next {
+            // Clean up empty queue entry
+            if self
+                .follow_up_queue
+                .get(&cue_id)
+                .map(|q| q.is_empty())
+                .unwrap_or(false)
+            {
+                self.follow_up_queue.remove(&cue_id);
+            }
+            let remaining = self
+                .follow_up_queue
+                .get(&cue_id)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let msg = if remaining > 0 {
+                format!("Auto-sending follow-up ({} more queued)", remaining)
+            } else {
+                "Auto-sending follow-up".to_string()
+            };
+            let _ = self.db.log_activity(cue_id, &msg);
+            self.trigger_claude_reply(cue_id, &follow_up_text, &[]);
+        }
     }
 
     fn handle_run_error(&mut self, result: &ClaudeResult, error: &str) {
