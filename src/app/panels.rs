@@ -1367,24 +1367,90 @@ fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
     }
 }
 
-/// Render "Reveal in Finder" and "Open in Terminal" context menu items.
+/// Render "Reveal in File Manager" and "Open in Terminal" context menu items.
 fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, terminal_path: &Path) {
-    if ui.button("Reveal in Finder").clicked() {
-        if reveal_path.is_file() {
-            let _ = std::process::Command::new("open")
-                .arg("-R")
-                .arg(reveal_path)
-                .spawn();
-        } else {
-            let _ = std::process::Command::new("open").arg(reveal_path).spawn();
-        }
+    let reveal_label = if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Reveal in Explorer"
+    } else {
+        "Reveal in File Manager"
+    };
+
+    if ui.button(reveal_label).clicked() {
+        let _ = spawn_reveal(reveal_path);
         ui.close();
     }
     if ui.button("Open in Terminal").clicked() {
-        let _ = std::process::Command::new("open")
-            .args(["-a", "Terminal"])
-            .arg(terminal_path)
-            .spawn();
+        let _ = spawn_terminal(terminal_path);
         ui.close();
+    }
+}
+
+/// Open the system file manager to reveal the given path.
+fn spawn_reveal(path: &Path) -> std::io::Result<std::process::Child> {
+    if cfg!(target_os = "macos") {
+        if path.is_file() {
+            std::process::Command::new("open")
+                .arg("-R")
+                .arg(path)
+                .spawn()
+        } else {
+            std::process::Command::new("open").arg(path).spawn()
+        }
+    } else if cfg!(target_os = "windows") {
+        if path.is_file() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", path.display()))
+                .spawn()
+        } else {
+            std::process::Command::new("explorer").arg(path).spawn()
+        }
+    } else {
+        // Linux / other: xdg-open on the parent directory for files
+        let target = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        std::process::Command::new("xdg-open").arg(target).spawn()
+    }
+}
+
+/// Open a terminal emulator at the given directory.
+fn spawn_terminal(dir: &Path) -> std::io::Result<std::process::Child> {
+    if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(dir)
+            .spawn()
+    } else if cfg!(target_os = "windows") {
+        // Try Windows Terminal first, fall back to cmd.exe
+        std::process::Command::new("wt")
+            .arg("-d")
+            .arg(dir)
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("cmd.exe")
+                    .args(["/C", "start", "cmd.exe"])
+                    .current_dir(dir)
+                    .spawn()
+            })
+    } else {
+        // Linux: try common terminals in order of preference
+        std::process::Command::new("gnome-terminal")
+            .arg(format!("--working-directory={}", dir.display()))
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("konsole")
+                    .arg(format!("--workdir={}", dir.display()))
+                    .spawn()
+            })
+            .or_else(|_| {
+                std::process::Command::new("x-terminal-emulator")
+                    .current_dir(dir)
+                    .spawn()
+            })
+            .or_else(|_| std::process::Command::new("xdg-open").arg(dir).spawn())
     }
 }
