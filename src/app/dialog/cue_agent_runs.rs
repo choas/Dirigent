@@ -87,7 +87,7 @@ impl DirigentApp {
             .settings
             .agents
             .iter()
-            .filter(|a| a.enabled)
+            .filter(|a| a.enabled && !a.command.trim().is_empty())
             .map(|a| {
                 let is_running = self.agent_state.statuses.get(&a.kind).copied()
                     == Some(crate::agents::AgentStatus::Running);
