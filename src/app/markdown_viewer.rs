@@ -64,32 +64,32 @@ fn render_blocks(
             MarkdownBlock::Heading { level, segments } => {
                 let should_scroll = scroll_to_heading == Some(*heading_counter);
                 *heading_counter += 1;
-                render_heading(ui, segments, *level, should_scroll, &ctx);
+                render_heading(ui, segments, *level, should_scroll, ctx);
             }
             MarkdownBlock::Paragraph { segments } => {
-                render_paragraph(ui, segments, &ctx);
+                render_paragraph(ui, segments, ctx);
             }
             MarkdownBlock::CodeBlock { language, code } => {
-                render_code_block(ui, language.as_deref(), code, &ctx);
+                render_code_block(ui, language.as_deref(), code, ctx);
             }
             MarkdownBlock::List {
                 ordered,
                 start,
                 items,
             } => {
-                render_list(ui, *ordered, *start, items, &ctx, heading_counter);
+                render_list(ui, *ordered, *start, items, ctx, heading_counter);
             }
             MarkdownBlock::BlockQuote { blocks } => {
-                render_block_quote(ui, blocks, &ctx, heading_counter);
+                render_block_quote(ui, blocks, ctx, heading_counter);
             }
             MarkdownBlock::Table { headers, rows } => {
-                render_table(ui, headers, rows, block_idx, &ctx);
+                render_table(ui, headers, rows, block_idx, ctx);
             }
             MarkdownBlock::ThematicBreak => {
-                render_thematic_break(ui, &ctx);
+                render_thematic_break(ui, ctx);
             }
             MarkdownBlock::Checkbox { checked, segments } => {
-                render_checkbox(ui, *checked, segments, &ctx);
+                render_checkbox(ui, *checked, segments, ctx);
             }
         }
     }

@@ -599,7 +599,7 @@ pub struct DirigentApp {
 
     // Prompt history search
     prompt_history_query: String,
-    prompt_history_results: Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>,
+    prompt_history_results: Vec<crate::db::CueHistoryRow>,
     prompt_history_active: bool,
 
     // Cached total cost (refreshed when executions complete, avoids SQL aggregate per frame)

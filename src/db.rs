@@ -6,6 +6,9 @@ use std::path::Path;
 
 use crate::settings::CliProvider;
 
+/// (cue_id, text, file_path, line_number, line_number_end, attached_images)
+pub(crate) type CueHistoryRow = (i64, String, String, usize, Option<usize>, Vec<String>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CueStatus {
     Inbox,
@@ -677,11 +680,7 @@ impl Database {
     /// Search past cue texts matching a query string (case-insensitive LIKE).
     /// Returns up to `limit` results, most recent first, as
     /// (cue_id, text, file_path, line_number, line_number_end, attached_images).
-    pub fn search_cue_history(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>> {
+    pub fn search_cue_history(&self, query: &str, limit: usize) -> Result<Vec<CueHistoryRow>> {
         let escaped = query
             .replace('\\', "\\\\")
             .replace('%', "\\%")

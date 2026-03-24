@@ -326,7 +326,7 @@ fn collect_item(events: &[Event]) -> (Vec<MarkdownBlock>, usize) {
 
     // Detect tight vs loose list items.
     // Tight items have bare inline content (no Paragraph/block-level wrapper).
-    let is_block_content = item_events.first().map_or(true, |ev| {
+    let is_block_content = item_events.first().is_none_or(|ev| {
         matches!(
             ev,
             Event::Start(Tag::Paragraph)

@@ -10,6 +10,9 @@ use std::collections::HashMap;
 
 use super::{icon, CueAction, DirigentApp, PendingPlay, FONT_SCALE_SUBHEADING, SPACE_XS};
 use crate::db::{Cue, CueStatus};
+
+/// (text, file_path, line_number, line_number_end, attached_images)
+type ReuseCueData = (String, String, usize, Option<usize>, Vec<String>);
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 use crate::settings::{self, CliProvider};
@@ -247,10 +250,7 @@ impl DirigentApp {
         });
     }
 
-    fn render_prompt_history(
-        &mut self,
-        ui: &mut egui::Ui,
-    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)> {
+    fn render_prompt_history(&mut self, ui: &mut egui::Ui) -> Option<ReuseCueData> {
         self.render_prompt_history_search_bar(ui);
         self.render_prompt_history_results(ui)
     }
@@ -296,14 +296,11 @@ impl DirigentApp {
         }
     }
 
-    fn render_prompt_history_results(
-        &mut self,
-        ui: &mut egui::Ui,
-    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)> {
+    fn render_prompt_history_results(&mut self, ui: &mut egui::Ui) -> Option<ReuseCueData> {
         if !self.prompt_history_active || self.prompt_history_results.is_empty() {
             return None;
         }
-        let mut reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)> = None;
+        let mut reuse_cue: Option<ReuseCueData> = None;
         egui::Frame::NONE
             .inner_margin(egui::Margin::same(4))
             .corner_radius(4)
@@ -348,10 +345,7 @@ impl DirigentApp {
         reuse_cue
     }
 
-    fn handle_reuse_cue(
-        &mut self,
-        reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)>,
-    ) {
+    fn handle_reuse_cue(&mut self, reuse_cue: Option<ReuseCueData>) {
         let Some((text, file_path, line_number, line_number_end, images)) = reuse_cue else {
             return;
         };

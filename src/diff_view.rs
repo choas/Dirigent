@@ -259,26 +259,6 @@ fn effective_background(
     }
 }
 
-/// Check if a line matches the search query.
-fn is_line_search_match(line: &DiffLine, search: Option<&DiffSearchHighlight<'_>>) -> bool {
-    search
-        .map(|s| !s.query_lower.is_empty() && line.content.to_lowercase().contains(s.query_lower))
-        .unwrap_or(false)
-}
-
-/// Check if a line is the current search match.
-fn is_line_current_match(
-    search: Option<&DiffSearchHighlight<'_>>,
-    file_idx: usize,
-    hunk_idx: usize,
-    line_idx: usize,
-) -> bool {
-    search
-        .and_then(|s| s.current)
-        .map(|c| c == (file_idx, hunk_idx, line_idx))
-        .unwrap_or(false)
-}
-
 // ---------------------------------------------------------------------------
 // Inline diff rendering
 // ---------------------------------------------------------------------------

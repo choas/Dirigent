@@ -287,6 +287,7 @@ pub(crate) fn gather_auto_context(
 
 /// Build a follow-up prompt for replying to a Review cue with feedback.
 /// Includes the original task, the previous diff, and the user's reply.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_reply_prompt(
     original_cue: &str,
     file_path: &str,
@@ -724,6 +725,7 @@ fn reap_child(child: &Arc<Mutex<std::process::Child>>) {
 ///
 /// The `cancel` token allows the caller to abort the run: a watchdog thread
 /// monitors the flag and kills the child process when it is set.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn invoke_claude_streaming(
     prompt: &str,
     project_root: &Path,

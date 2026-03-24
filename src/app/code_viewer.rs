@@ -497,7 +497,7 @@ impl DirigentApp {
             if i > 0 {
                 ui.label(egui::RichText::new("\u{203A}").color(self.semantic.tertiary_text));
             }
-            self.render_breadcrumb_segment(ui, *segment, i, &segments);
+            self.render_breadcrumb_segment(ui, segment, i, &segments);
         }
 
         let current_line = self.estimate_current_line(active_idx);
@@ -1291,6 +1291,7 @@ fn render_search_flash(ui: &egui::Ui, rect: egui::Rect, app: &DirigentApp) {
 }
 
 /// Handle a click on a code line.
+#[allow(clippy::too_many_arguments)]
 fn handle_line_click(
     ui: &mut egui::Ui,
     app: &DirigentApp,

@@ -1232,6 +1232,7 @@ fn kill_process_tree(child: &std::process::Child) {
 // ---------------------------------------------------------------------------
 
 /// Spawn agents that match the given trigger. Returns the number of agents started.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn trigger_agents(
     agents: &[AgentConfig],
     trigger: &AgentTrigger,
