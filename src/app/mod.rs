@@ -1199,61 +1199,79 @@ impl DirigentApp {
         for finding in findings {
             match self.db.get_cue_by_source_ref(&finding.external_id) {
                 Ok(Some((existing_id, existing_text, existing_status))) => {
-                    self.update_existing_finding(
+                    match self.update_existing_finding(
                         finding,
                         existing_id,
                         &existing_text,
                         &existing_status,
-                        &mut updated_count,
-                        &mut refreshed_count,
-                    );
+                    ) {
+                        Ok(Some("updated")) => updated_count += 1,
+                        Ok(Some("refreshed")) => refreshed_count += 1,
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!("DB error updating finding {}: {e}", finding.external_id)
+                        }
+                    }
                     continue;
                 }
                 Ok(None) => {} // New finding — fall through to insert
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "DB error looking up source ref {}: {e}",
+                        finding.external_id
+                    );
+                    continue;
+                }
             }
-            if let Ok(id) =
-                self.db
-                    .insert_cue_from_source(&finding.text, "PR Review", &finding.external_id)
+            match self
+                .db
+                .insert_cue_from_source(&finding.text, "PR Review", &finding.external_id)
             {
-                let _ = self.db.update_cue_tag(id, Some(tag));
-                new_count += 1;
+                Ok(id) => {
+                    if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
+                        eprintln!("DB error tagging new cue {id}: {e}");
+                    } else {
+                        new_count += 1;
+                    }
+                }
+                Err(e) => eprintln!("DB error inserting finding {}: {e}", finding.external_id),
             }
         }
         (new_count, updated_count, refreshed_count)
     }
 
     /// Handle a single existing finding: update text or reset status as needed.
+    /// Returns `Ok(Some("updated"))` or `Ok(Some("refreshed"))` on success,
+    /// `Ok(None)` when no change was needed, or `Err` if a DB write failed.
     fn update_existing_finding(
         &mut self,
         finding: &crate::sources::PrFinding,
         existing_id: i64,
         existing_text: &str,
         existing_status: &str,
-        updated_count: &mut usize,
-        refreshed_count: &mut usize,
-    ) {
+    ) -> Result<Option<&'static str>, rusqlite::Error> {
         let text_changed = existing_text.trim() != finding.text.trim();
         let is_completed = existing_status == "Done" || existing_status == "Archived";
         if text_changed {
             // Text changed: update and reset to Inbox
-            let _ = self
-                .db
-                .update_cue_text_by_source_ref(&finding.external_id, &finding.text);
-            let _ = self.db.update_cue_status(existing_id, CueStatus::Inbox);
+            self.db
+                .update_cue_text_by_source_ref(&finding.external_id, &finding.text)?;
+            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
             let _ = self
                 .db
                 .log_activity(existing_id, "PR comment updated, reset to Inbox");
-            *updated_count += 1;
+            Ok(Some("updated"))
         } else if is_completed {
             // Same text but Done/Archived: reset to Inbox for re-check
-            let _ = self.db.update_cue_status(existing_id, CueStatus::Inbox);
+            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
             let _ = self
                 .db
                 .log_activity(existing_id, "PR refreshed, reset to Inbox");
-            *refreshed_count += 1;
+            Ok(Some("refreshed"))
+        } else {
+            // If still in Inbox/Ready/Review, leave as-is
+            Ok(None)
         }
-        // If still in Inbox/Ready/Review, leave as-is
     }
 
     /// Build a human-readable summary of finding counts.
@@ -2001,16 +2019,23 @@ impl DirigentApp {
                 ui.painter()
                     .rect_filled(rect, 0.0, self.semantic.modal_overlay());
                 if resp.clicked() {
-                    self.dismiss_topmost_modal();
+                    self.dismiss_topmost_modal(true);
                 }
             });
     }
 
     /// Dismiss the topmost modal dialog (priority order).
-    fn dismiss_topmost_modal(&mut self) {
+    /// When `keep_pending_play` is true, `pending_play` is left intact
+    /// (used for backdrop/overlay clicks so selections are not lost).
+    fn dismiss_topmost_modal(&mut self, keep_pending_play: bool) {
         if self.pending_play.is_some() {
-            self.pending_play = None;
-        } else if self.git.show_create_pr {
+            if !keep_pending_play {
+                self.pending_play = None;
+            }
+            // pending_play is the topmost modal; don't fall through.
+            return;
+        }
+        if self.git.show_create_pr {
             self.git.show_create_pr = false;
         } else if self.show_about {
             self.show_about = false;
