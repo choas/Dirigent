@@ -378,13 +378,20 @@ impl DirigentApp {
         let Some((text, file_path, line_number, line_number_end, images)) = reuse_cue else {
             return;
         };
-        let _ = self
+        match self
             .db
-            .insert_cue(&text, &file_path, line_number, line_number_end, &images);
-        self.reload_cues();
-        self.prompt_history_active = false;
-        self.prompt_history_query.clear();
-        self.prompt_history_results.clear();
+            .insert_cue(&text, &file_path, line_number, line_number_end, &images)
+        {
+            Ok(_) => {
+                self.reload_cues();
+                self.prompt_history_active = false;
+                self.prompt_history_query.clear();
+                self.prompt_history_results.clear();
+            }
+            Err(e) => {
+                eprintln!("Failed to insert cue: {e}");
+            }
+        }
     }
 
     fn render_cue_section(
@@ -669,7 +676,13 @@ impl DirigentApp {
         self.run_queue.retain(|&cid| cid != id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
-        let _ = self.db.update_cue_status(id, new_status);
+        if let Err(e) = self.db.update_cue_status(id, new_status) {
+            let _ = self.db.log_activity(
+                id,
+                &format!("Failed to move to {}: {}", new_status.label(), e),
+            );
+            return;
+        }
         let _ = self
             .db
             .log_activity(id, &format!("Moved to {}", new_status.label()));
