@@ -860,6 +860,7 @@ pub(crate) struct WorktreeInfo {
     pub path: PathBuf,
     pub is_current: bool,
     pub is_locked: bool,
+    pub is_main: bool,
 }
 
 pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
@@ -899,11 +900,13 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
                                 .unwrap_or_else(|| "main".to_string())
                         });
                     let is_current = canon_wt == current || current.starts_with(&canon_wt);
+                    let is_main = worktrees.is_empty();
                     worktrees.push(WorktreeInfo {
                         name,
                         path: p,
                         is_current,
                         is_locked,
+                        is_main,
                     });
                 }
             }
