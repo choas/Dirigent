@@ -298,23 +298,33 @@ impl DirigentApp {
         }
 
         for db in &self.git.archived_dbs {
-            ui.horizontal(|ui| {
-                ui.label(&db.name);
-                ui.label(
-                    egui::RichText::new(format_size(db.size_bytes))
-                        .small()
-                        .color(self.semantic.secondary_text),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Delete").clicked() {
-                        actions.delete_archive_pending = Some(db.path.clone());
-                    }
-                    if ui.small_button("Reveal").clicked() {
-                        actions.reveal_path = Some(db.path.clone());
-                    }
-                });
-            });
+            self.render_archived_db_row(ui, db, actions);
         }
+    }
+
+    /// Single archived DB row with name, size, and action buttons.
+    fn render_archived_db_row(
+        &self,
+        ui: &mut egui::Ui,
+        db: &git::ArchivedDb,
+        actions: &mut WorktreeActions,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(&db.name);
+            ui.label(
+                egui::RichText::new(format_size(db.size_bytes))
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Delete").clicked() {
+                    actions.delete_archive_pending = Some(db.path.clone());
+                }
+                if ui.small_button("Reveal").clicked() {
+                    actions.reveal_path = Some(db.path.clone());
+                }
+            });
+        });
     }
 
     /// Process all deferred actions collected during the worktree panel frame.
