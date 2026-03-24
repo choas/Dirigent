@@ -1,6 +1,9 @@
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+
+/// Width reserved for the send button and its surrounding padding.
+const SEND_BUTTON_RESERVED_WIDTH: f32 = 44.0;
 use crate::db::{CueStatus, Execution};
 use crate::settings::CliProvider;
 
@@ -162,7 +165,7 @@ impl DirigentApp {
                     let desired_rows = line_count.clamp(1, 8);
                     let input_response = ui.add(
                         egui::TextEdit::multiline(reply_text)
-                            .desired_width(ui.available_width() - 44.0)
+                            .desired_width(ui.available_width() - SEND_BUTTON_RESERVED_WIDTH)
                             .desired_rows(desired_rows)
                             .hint_text("Reply with feedback...")
                             .font(egui::TextStyle::Monospace),
