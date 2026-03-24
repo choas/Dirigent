@@ -12,6 +12,13 @@ use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::git;
 
+/// Highlight state for a single code line.
+struct LineHighlight {
+    in_selection: bool,
+    current_search_match: bool,
+    search_match: bool,
+}
+
 /// Accumulated actions from code line rendering, applied after the UI pass.
 struct CodeLineActions {
     new_sel_start: Option<usize>,
@@ -21,6 +28,19 @@ struct CodeLineActions {
     fix_diagnostic_line: Option<usize>,
     goto_def_word: Option<String>,
     implement_click_line: Option<usize>,
+}
+
+/// Per-render-pass context shared across all code lines.
+struct CodeLineContext<'a> {
+    active_idx: usize,
+    sel_start: Option<usize>,
+    sel_end: Option<usize>,
+    lines_with_cues: &'a HashMap<usize, bool>,
+    diag_lines: &'a HashMap<usize, Severity>,
+    diag_messages: &'a HashMap<usize, Vec<String>>,
+    ext: &'a str,
+    symbol_lines: &'a HashMap<usize, (String, String)>,
+    cmd_held: bool,
 }
 
 /// Result of tab bar rendering: what action, if any, to apply.
@@ -174,23 +194,20 @@ impl DirigentApp {
 
         let scroll_area =
             build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset);
+        let ctx = CodeLineContext {
+            active_idx,
+            sel_start,
+            sel_end,
+            lines_with_cues: &lines_with_cues,
+            diag_lines: &diag_lines,
+            diag_messages: &diag_messages,
+            ext: &ext,
+            symbol_lines: &symbol_lines,
+            cmd_held,
+        };
         let output = scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
             for line_idx in row_range {
-                render_code_line(
-                    ui,
-                    self,
-                    active_idx,
-                    line_idx,
-                    sel_start,
-                    sel_end,
-                    &lines_with_cues,
-                    &diag_lines,
-                    &diag_messages,
-                    &ext,
-                    &symbol_lines,
-                    cmd_held,
-                    &mut actions,
-                );
+                render_code_line(ui, self, line_idx, &ctx, &mut actions);
             }
         });
         self.viewer.tabs[active_idx].scroll_offset = output.state.offset.y;
@@ -1120,9 +1137,11 @@ fn render_code_line(
         render_line_background(
             ui,
             rect,
-            is_in_selection,
-            is_current_search_match,
-            is_search_match,
+            &LineHighlight {
+                in_selection: is_in_selection,
+                current_search_match: is_current_search_match,
+                search_match: is_search_match,
+            },
             app,
         );
 
@@ -1225,24 +1244,17 @@ fn render_cmd_hover_underline(
 }
 
 /// Render the line background: selection, search highlights, flash animation.
-fn render_line_background(
-    ui: &egui::Ui,
-    rect: egui::Rect,
-    is_in_selection: bool,
-    is_current_search_match: bool,
-    is_search_match: bool,
-    app: &DirigentApp,
-) {
-    if is_in_selection {
+fn render_line_background(ui: &egui::Ui, rect: egui::Rect, hl: &LineHighlight, app: &DirigentApp) {
+    if hl.in_selection {
         ui.painter()
             .rect_filled(rect, 0.0, app.semantic.selection_bg());
     }
 
-    if is_current_search_match {
+    if hl.current_search_match {
         ui.painter()
             .rect_filled(rect, 0.0, app.semantic.code_search_current());
         render_search_flash(ui, rect, app);
-    } else if is_search_match {
+    } else if hl.search_match {
         ui.painter()
             .rect_filled(rect, 0.0, app.semantic.code_search_match());
     }
