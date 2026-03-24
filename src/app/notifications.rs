@@ -241,8 +241,10 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
 }
 
 /// Build `UNMutableNotificationContent`, create a `UNNotificationRequest`,
-/// and deliver it via the given `UNUserNotificationCenter`. Returns `true`
-/// on success.
+/// and deliver it via the given `UNUserNotificationCenter`.
+/// Returns `true` only if the completion handler reports no error within a
+/// 2-second timeout; returns `false` on scheduling failure or timeout so the
+/// caller can fall back to `osascript`.
 #[cfg(target_os = "macos")]
 unsafe fn deliver_notification(
     center: *mut objc::runtime::Object,
@@ -252,6 +254,46 @@ unsafe fn deliver_notification(
 ) -> bool {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
+
+    extern "C" {
+        static _NSConcreteStackBlock: std::ffi::c_void;
+        fn _Block_copy(block: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn _Block_release(block: *const std::ffi::c_void);
+        fn dispatch_semaphore_create(value: isize) -> *const std::ffi::c_void;
+        fn dispatch_semaphore_signal(dsema: *const std::ffi::c_void) -> isize;
+        fn dispatch_semaphore_wait(dsema: *const std::ffi::c_void, timeout: u64) -> isize;
+        fn dispatch_time(when: u64, delta: i64) -> u64;
+        fn dispatch_release(object: *const std::ffi::c_void);
+    }
+
+    #[repr(C)]
+    struct CompletionBlockDesc {
+        reserved: usize,
+        size: usize,
+    }
+
+    /// Block layout for `void (^)(NSError *)` with captured state for
+    /// synchronously reporting the scheduling result back to Rust.
+    #[repr(C)]
+    struct CompletionBlock {
+        isa: *const std::ffi::c_void,
+        flags: i32,
+        reserved: i32,
+        invoke: unsafe extern "C" fn(*mut CompletionBlock, *mut Object),
+        descriptor: *const CompletionBlockDesc,
+        success: *mut bool,
+        semaphore: *const std::ffi::c_void,
+    }
+
+    static COMPLETION_DESC: CompletionBlockDesc = CompletionBlockDesc {
+        reserved: 0,
+        size: std::mem::size_of::<CompletionBlock>(),
+    };
+
+    unsafe extern "C" fn completion_invoke(block: *mut CompletionBlock, error: *mut Object) {
+        *(*block).success = error.is_null();
+        dispatch_semaphore_signal((*block).semaphore);
+    }
 
     let content_cls = match Class::get("UNMutableNotificationContent") {
         Some(cls) => cls,
@@ -278,12 +320,40 @@ unsafe fn deliver_notification(
         content:content
         trigger:trigger];
 
-    // completionHandler is nullable.
-    let nil: *const std::ffi::c_void = std::ptr::null();
+    let mut success = false;
+    let semaphore = dispatch_semaphore_create(0);
+
+    let stack_block = CompletionBlock {
+        isa: &_NSConcreteStackBlock as *const std::ffi::c_void,
+        flags: 0,
+        reserved: 0,
+        invoke: completion_invoke,
+        descriptor: &COMPLETION_DESC,
+        success: &mut success,
+        semaphore,
+    };
+
+    // Copy to heap so the async callback can safely invoke the block
+    // after this stack frame proceeds to the semaphore wait.
+    let heap_block = _Block_copy(&stack_block as *const _ as *const std::ffi::c_void);
+
     let _: () = msg_send![center,
         addNotificationRequest:request
-        withCompletionHandler:nil];
-    true
+        withCompletionHandler:heap_block];
+
+    // Wait up to 2 seconds for the completion handler.
+    let timeout = dispatch_time(0, 2_000_000_000);
+    let wait_result = dispatch_semaphore_wait(semaphore, timeout);
+
+    _Block_release(heap_block);
+    dispatch_release(semaphore);
+
+    if wait_result != 0 {
+        // Timed out — treat as scheduling failure.
+        return false;
+    }
+
+    success
 }
 
 /// Fallback notification via `osascript display notification`.
