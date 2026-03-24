@@ -328,7 +328,12 @@ fn render_list_item_fallback(
     render_blocks_with_ctx(ui, item_blocks, &nested, heading_counter);
 }
 
-fn render_block_quote(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderCtx) {
+fn render_block_quote(
+    ui: &mut egui::Ui,
+    blocks: &[MarkdownBlock],
+    ctx: &RenderCtx,
+    heading_counter: &mut usize,
+) {
     let indent = ctx.indent();
     ui.add_space(SPACE_XS);
     let left_margin = indent + SPACE_SM;
@@ -348,6 +353,7 @@ fn render_block_quote(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderC
                     semantic: ctx.semantic,
                     indent_level: 0,
                 },
+                heading_counter,
             );
             ui.add_space(SPACE_XS);
 
@@ -528,7 +534,12 @@ fn checkbox_color(checked: bool, semantic: &crate::settings::SemanticColors) -> 
 }
 
 /// Render blocks using a pre-built `RenderCtx` (no scroll-to-heading support).
-fn render_blocks_with_ctx(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &RenderCtx) {
+fn render_blocks_with_ctx(
+    ui: &mut egui::Ui,
+    blocks: &[MarkdownBlock],
+    ctx: &RenderCtx,
+    heading_counter: &mut usize,
+) {
     render_blocks(
         ui,
         blocks,
@@ -537,6 +548,7 @@ fn render_blocks_with_ctx(ui: &mut egui::Ui, blocks: &[MarkdownBlock], ctx: &Ren
         ctx.semantic,
         ctx.indent_level,
         None,
+        heading_counter,
     );
 }
 
