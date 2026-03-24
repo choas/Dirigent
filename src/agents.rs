@@ -913,7 +913,7 @@ pub(crate) fn run_agent(
         }
     };
 
-    if let Err(msg) = run_before_hook(config, shell_init, prompt, &cwd) {
+    if let Err(msg) = run_before_hook(config, shell_init, prompt, &cwd, cancel) {
         let _ = tx.send(make_error_result(kind, cue_id, msg, &start));
         return;
     }
@@ -1014,27 +1014,42 @@ fn resolve_working_dir(
 }
 
 /// Execute the before_run hook if configured. Returns `Err(message)` on failure.
+/// Uses spawn + timeout/cancellation logic consistent with the main agent process.
 fn run_before_hook(
     config: &AgentConfig,
     shell_init: &str,
     prompt: &str,
     cwd: &Path,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     if config.before_run.trim().is_empty() {
         return Ok(());
     }
     let before_effective = prepend_shell_init(shell_init, &config.before_run);
-    let before_result = Command::new("sh")
-        .arg("-c")
+    let timeout = Duration::from_secs(config.timeout_secs);
+
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(&before_effective)
         .current_dir(cwd)
         .env("PROMPT", prompt)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
+        .stderr(Stdio::piped());
 
-    match before_result {
-        Ok(output) if !output.status.success() => {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("before_run failed to execute: {}", e))?;
+
+    let result = wait_with_timeout(&mut child, timeout, cancel);
+
+    match result {
+        WaitResult::Completed(output) if !output.status.success() => {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let combined = if stderr.is_empty() { stdout } else { stderr };
@@ -1043,8 +1058,22 @@ fn run_before_hook(
                 output.status, combined
             ))
         }
-        Err(e) => Err(format!("before_run failed to execute: {}", e)),
-        _ => Ok(()),
+        WaitResult::Completed(_) => Ok(()),
+        WaitResult::TimedOut => {
+            kill_process_tree(&child);
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!(
+                "before_run timed out after {}s",
+                config.timeout_secs
+            ))
+        }
+        WaitResult::Cancelled => {
+            kill_process_tree(&child);
+            let _ = child.kill();
+            let _ = child.wait();
+            Err("before_run cancelled by user".to_string())
+        }
     }
 }
 
