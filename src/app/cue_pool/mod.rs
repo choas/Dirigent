@@ -235,7 +235,7 @@ impl DirigentApp {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to check source ref {}: {}", source_ref, e);
+                    eprintln!("Failed to check source ref {}: {}", source_ref, e);
                 }
             }
         }
