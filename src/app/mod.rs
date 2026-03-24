@@ -1170,9 +1170,24 @@ impl DirigentApp {
         }
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
-        let (new_count, updated_count, refreshed_count) = self.upsert_pr_findings(&findings, &tag);
+        let (new_count, updated_count, refreshed_count, error_count) =
+            self.upsert_pr_findings(&findings, &tag);
         let has_changes = new_count > 0 || updated_count > 0 || refreshed_count > 0;
-        if has_changes {
+        if error_count > 0 && !has_changes {
+            self.set_status_message(format!(
+                "PR #{}: import failed ({} DB errors across {} findings)",
+                pr_number,
+                error_count,
+                findings.len()
+            ));
+        } else if error_count > 0 {
+            self.reload_cues();
+            let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
+            self.set_status_message(format!(
+                "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
+                pr_number, summary, tag, error_count
+            ));
+        } else if has_changes {
             self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
             self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
@@ -1186,15 +1201,16 @@ impl DirigentApp {
     }
 
     /// Upsert each PR finding: update existing cues or insert new ones.
-    /// Returns (new_count, updated_count, refreshed_count).
+    /// Returns (new_count, updated_count, refreshed_count, error_count).
     fn upsert_pr_findings(
         &mut self,
         findings: &[crate::sources::PrFinding],
         tag: &str,
-    ) -> (usize, usize, usize) {
+    ) -> (usize, usize, usize, usize) {
         let mut new_count = 0;
         let mut updated_count = 0;
         let mut refreshed_count = 0;
+        let mut error_count = 0;
         for finding in findings {
             match self.db.get_cue_by_source_ref(&finding.external_id) {
                 Ok(Some((existing_id, existing_text, existing_status))) => {
@@ -1208,7 +1224,8 @@ impl DirigentApp {
                         Ok(Some("refreshed")) => refreshed_count += 1,
                         Ok(_) => {}
                         Err(e) => {
-                            eprintln!("DB error updating finding {}: {e}", finding.external_id)
+                            eprintln!("DB error updating finding {}: {e}", finding.external_id);
+                            error_count += 1;
                         }
                     }
                     continue;
@@ -1219,6 +1236,7 @@ impl DirigentApp {
                         "DB error looking up source ref {}: {e}",
                         finding.external_id
                     );
+                    error_count += 1;
                     continue;
                 }
             }
@@ -1229,14 +1247,18 @@ impl DirigentApp {
                 Ok(id) => {
                     if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
                         eprintln!("DB error tagging new cue {id}: {e}");
+                        error_count += 1;
                     } else {
                         new_count += 1;
                     }
                 }
-                Err(e) => eprintln!("DB error inserting finding {}: {e}", finding.external_id),
+                Err(e) => {
+                    eprintln!("DB error inserting finding {}: {e}", finding.external_id);
+                    error_count += 1;
+                }
             }
         }
-        (new_count, updated_count, refreshed_count)
+        (new_count, updated_count, refreshed_count, error_count)
     }
 
     /// Handle a single existing finding: update text or reset status as needed.
