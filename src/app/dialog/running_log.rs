@@ -66,46 +66,14 @@ impl DirigentApp {
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    if past_execs.is_empty() && current_running_log.is_empty() {
-                        let msg = if is_running {
-                            "Waiting for output..."
-                        } else {
-                            "No output recorded."
-                        };
-                        ui.label(
-                            egui::RichText::new(msg)
-                                .italics()
-                                .color(self.semantic.tertiary_text),
-                        );
-                    }
-
-                    for (idx, exec) in past_execs.iter().enumerate() {
-                        let is_current_running = current_exec_id == Some(exec.id);
-                        self.render_conversation_entry(
-                            ui,
-                            exec,
-                            idx,
-                            is_current_running,
-                            &current_running_log,
-                        );
-
-                        if idx < past_execs.len() - 1 {
-                            ui.separator();
-                        }
-                    }
-
-                    // If currently running but not yet in past_execs (just started)
-                    if is_running
-                        && current_exec_id.is_some()
-                        && !past_execs.iter().any(|e| Some(e.id) == current_exec_id)
-                    {
-                        self.render_current_running_entry(
-                            ui,
-                            &past_execs,
-                            &current_provider,
-                            &current_running_log,
-                        );
-                    }
+                    self.render_conversation_scroll_content(
+                        ui,
+                        &past_execs,
+                        &current_running_log,
+                        is_running,
+                        current_exec_id,
+                        &current_provider,
+                    );
                 });
         });
 
@@ -121,6 +89,58 @@ impl DirigentApp {
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
             self.trigger_claude_reply(cue_id, &reply, &images);
+        }
+    }
+
+    /// Render the scroll area content with conversation history and running entry.
+    fn render_conversation_scroll_content(
+        &self,
+        ui: &mut egui::Ui,
+        past_execs: &[Execution],
+        current_running_log: &str,
+        is_running: bool,
+        current_exec_id: Option<i64>,
+        current_provider: &CliProvider,
+    ) {
+        if past_execs.is_empty() && current_running_log.is_empty() {
+            let msg = if is_running {
+                "Waiting for output..."
+            } else {
+                "No output recorded."
+            };
+            ui.label(
+                egui::RichText::new(msg)
+                    .italics()
+                    .color(self.semantic.tertiary_text),
+            );
+        }
+
+        for (idx, exec) in past_execs.iter().enumerate() {
+            let is_current_running = current_exec_id == Some(exec.id);
+            self.render_conversation_entry(
+                ui,
+                exec,
+                idx,
+                is_current_running,
+                current_running_log,
+            );
+
+            if idx < past_execs.len() - 1 {
+                ui.separator();
+            }
+        }
+
+        // If currently running but not yet in past_execs (just started)
+        if is_running
+            && current_exec_id.is_some()
+            && !past_execs.iter().any(|e| Some(e.id) == current_exec_id)
+        {
+            self.render_current_running_entry(
+                ui,
+                past_execs,
+                current_provider,
+                current_running_log,
+            );
         }
     }
 
