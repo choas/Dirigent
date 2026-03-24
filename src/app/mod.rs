@@ -1928,8 +1928,14 @@ impl DirigentApp {
         if has_async_git {
             ctx.request_repaint_after(REPAINT_SLOW);
         }
-        // Compute the earliest next source poll and schedule repaint accordingly.
-        let mut min_source_delay = None::<Duration>;
+        if let Some(delay) = self.next_source_poll_delay() {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
+    /// Compute the earliest next source poll delay.
+    fn next_source_poll_delay(&self) -> Option<Duration> {
+        let mut min_delay = None::<Duration>;
         for s in &self.settings.sources {
             if !s.enabled || s.poll_interval_secs == 0 {
                 continue;
@@ -1937,17 +1943,15 @@ impl DirigentApp {
             let interval = Duration::from_secs(s.poll_interval_secs);
             let remaining = match self.sources.last_poll.get(&s.name) {
                 Some(last) => interval.saturating_sub(last.elapsed()),
-                None => Duration::ZERO, // Never polled yet — poll immediately.
+                None => Duration::ZERO,
             };
             let clamped = remaining.max(Duration::from_secs(1));
-            min_source_delay = Some(match min_source_delay {
+            min_delay = Some(match min_delay {
                 Some(cur) => cur.min(clamped),
                 None => clamped,
             });
         }
-        if let Some(delay) = min_source_delay {
-            ctx.request_repaint_after(delay);
-        }
+        min_delay
     }
 
     /// Handle drag-and-drop of files onto the window.
