@@ -414,7 +414,7 @@ impl DirigentApp {
         }
         ui.input(|i| {
             let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
-            (pressed && !i.modifiers.command) || (pressed && i.modifiers.command)
+            pressed
         })
     }
 
