@@ -79,46 +79,20 @@ impl DirigentApp {
     }
 
     fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool) {
-        let mut selected_play_prompt: Option<String> = None;
-        let mut custom_cue_requested = false;
-        let mut import_requested = false;
+        let mut result = (None, false, false);
+        let heading_text = build_heading_text(&self.cues);
+        let font_size = self.settings.font_size;
         ui.horizontal(|ui| {
-            let heading_text = build_heading_text(&self.cues);
             ui.label(
                 egui::RichText::new(heading_text)
-                    .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                    .size(font_size * FONT_SCALE_SUBHEADING)
                     .strong(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let plus_btn = ui.button("+").on_hover_text("Playbook");
-                if ui
-                    .button("\u{2193}")
-                    .on_hover_text("Import from document")
-                    .clicked()
-                {
-                    import_requested = true;
-                }
-                egui::Popup::menu(&plus_btn)
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-                    .show(|ui| {
-                        ui.set_min_width(200.0);
-                        ui.label(egui::RichText::new("Playbook").strong());
-                        ui.separator();
-                        for play in &self.settings.playbook {
-                            if ui.selectable_label(false, &play.name).clicked() {
-                                selected_play_prompt = Some(play.prompt.clone());
-                            }
-                        }
-                        if !self.settings.playbook.is_empty() {
-                            ui.separator();
-                        }
-                        if ui.selectable_label(false, "+ Custom cue...").clicked() {
-                            custom_cue_requested = true;
-                        }
-                    });
+                result = render_cue_pool_buttons(ui, &self.settings.playbook);
             });
         });
-        (selected_play_prompt, custom_cue_requested, import_requested)
+        result
     }
 
     fn handle_playbook_selection(&mut self, selected_play_prompt: Option<String>) {
@@ -1000,6 +974,44 @@ fn build_heading_text(cues: &[Cue]) -> String {
     } else {
         format!("Cues ({})", counts.join(", "))
     }
+}
+
+fn render_cue_pool_buttons(
+    ui: &mut egui::Ui,
+    playbook: &[settings::Play],
+) -> (Option<String>, bool, bool) {
+    let mut selected_play_prompt = None;
+    let mut custom_cue_requested = false;
+    let mut import_requested = false;
+
+    let plus_btn = ui.button("+").on_hover_text("Playbook");
+    if ui
+        .button("\u{2193}")
+        .on_hover_text("Import from document")
+        .clicked()
+    {
+        import_requested = true;
+    }
+    egui::Popup::menu(&plus_btn)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+        .show(|ui| {
+            ui.set_min_width(200.0);
+            ui.label(egui::RichText::new("Playbook").strong());
+            ui.separator();
+            for play in playbook {
+                if ui.selectable_label(false, &play.name).clicked() {
+                    selected_play_prompt = Some(play.prompt.clone());
+                }
+            }
+            if !playbook.is_empty() {
+                ui.separator();
+            }
+            if ui.selectable_label(false, "+ Custom cue...").clicked() {
+                custom_cue_requested = true;
+            }
+        });
+
+    (selected_play_prompt, custom_cue_requested, import_requested)
 }
 
 /// Collect unique source labels from cues and settings.
