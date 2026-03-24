@@ -25,6 +25,7 @@ impl DirigentApp {
             .default_width(360.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 self.render_import_pr_body(ui, is_refresh);
                 self.render_import_pr_buttons(ui, is_refresh, &mut do_import, &mut dismiss);

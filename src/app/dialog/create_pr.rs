@@ -19,6 +19,7 @@ impl DirigentApp {
             .default_width(480.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let branch = self
                     .git

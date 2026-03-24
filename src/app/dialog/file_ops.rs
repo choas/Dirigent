@@ -42,6 +42,7 @@ impl DirigentApp {
             .default_size([400.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let display = target
                     .strip_prefix(&self.project_root)
@@ -162,6 +163,7 @@ impl DirigentApp {
             .default_size([400.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label(format!(
                     "Are you sure you want to delete this {}?",

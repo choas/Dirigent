@@ -50,6 +50,7 @@ impl DirigentApp {
             .default_width(420.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 Self::render_conflict_body(
                     ui,

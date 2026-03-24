@@ -342,6 +342,7 @@ impl DirigentApp {
             .title_bar(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.about_dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     if let Some(ref tex) = self.logo_texture {

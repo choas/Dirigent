@@ -19,6 +19,7 @@ impl DirigentApp {
             .default_size([400.0, 200.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let pending = self.pending_play.as_mut().unwrap();
                 Self::render_play_variable_inputs(ui, pending);
