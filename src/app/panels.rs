@@ -516,9 +516,13 @@ impl DirigentApp {
 
     /// Render the symbol outline collapsible section.
     fn render_symbol_outline(&mut self, ui: &mut egui::Ui) {
-        let symbols = match self.viewer.active().map(|t| &t.symbols) {
-            Some(s) if !s.is_empty() => s,
-            _ => return,
+        let Some(symbols) = self
+            .viewer
+            .active()
+            .map(|t| &t.symbols)
+            .filter(|s| !s.is_empty())
+        else {
+            return;
         };
 
         let outline_header = egui::CollapsingHeader::new(
