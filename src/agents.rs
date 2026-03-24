@@ -949,6 +949,7 @@ pub(crate) fn run_agent(
         WaitResult::Completed(output) => build_completed_result(kind, cue_id, &output, duration_ms),
         WaitResult::TimedOut => {
             kill_process_tree(&child);
+            let _ = child.kill();
             let _ = child.wait();
             AgentResult {
                 kind,
@@ -965,6 +966,7 @@ pub(crate) fn run_agent(
         }
         WaitResult::Cancelled => {
             kill_process_tree(&child);
+            let _ = child.kill();
             let _ = child.wait();
             AgentResult {
                 kind,
@@ -1021,8 +1023,7 @@ fn run_before_hook(
     if config.before_run.trim().is_empty() {
         return Ok(());
     }
-    let before_cmd = config.before_run.replace("$PROMPT", prompt);
-    let before_effective = prepend_shell_init(shell_init, &before_cmd);
+    let before_effective = prepend_shell_init(shell_init, &config.before_run);
     let before_result = Command::new("sh")
         .arg("-c")
         .arg(&before_effective)
@@ -1082,7 +1083,8 @@ fn build_completed_result(
     };
 
     let status = match kind {
-        AgentKind::Lint | AgentKind::Format => AgentStatus::Passed,
+        AgentKind::Lint | AgentKind::Format if output.status.success() => AgentStatus::Passed,
+        AgentKind::Lint | AgentKind::Format => AgentStatus::Failed,
         _ if output.status.success() => AgentStatus::Passed,
         _ => AgentStatus::Failed,
     };
