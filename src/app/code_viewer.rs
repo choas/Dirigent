@@ -336,18 +336,34 @@ impl DirigentApp {
             TabBarAction::None => false,
             TabBarAction::CloseAll => {
                 self.viewer.close_all_tabs();
+                self.search.in_file_active = false;
+                self.search.in_file_query.clear();
+                self.search.in_file_matches.clear();
+                self.search.in_file_current = None;
                 true
             }
             TabBarAction::CloseOthers(idx) => {
                 self.viewer.close_other_tabs(idx);
+                self.search.in_file_active = false;
+                self.search.in_file_query.clear();
+                self.search.in_file_matches.clear();
+                self.search.in_file_current = None;
                 true
             }
             TabBarAction::CloseToRight(idx) => {
                 self.viewer.close_tabs_to_right(idx);
+                self.search.in_file_active = false;
+                self.search.in_file_query.clear();
+                self.search.in_file_matches.clear();
+                self.search.in_file_current = None;
                 true
             }
             TabBarAction::CloseOne(idx) => {
                 self.viewer.close_tab(idx);
+                self.search.in_file_active = false;
+                self.search.in_file_query.clear();
+                self.search.in_file_matches.clear();
+                self.search.in_file_current = None;
                 true
             }
             TabBarAction::Activate(idx) => {
@@ -530,6 +546,10 @@ impl DirigentApp {
             }
             BreadcrumbAction::CloseFile => {
                 self.viewer.close_active_tab();
+                self.search.in_file_active = false;
+                self.search.in_file_query.clear();
+                self.search.in_file_matches.clear();
+                self.search.in_file_current = None;
                 true
             }
             BreadcrumbAction::ShowFileDiff => {
