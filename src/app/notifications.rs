@@ -40,7 +40,9 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
 }
 
 /// Try to send a notification via the modern `UNUserNotificationCenter` API
-/// (macOS 10.14+). Returns `true` if the notification was delivered.
+/// (macOS 10.14+). Returns `true` if the notification was successfully
+/// scheduled (completion handler reported no error); returns `false` on any
+/// failure so the caller can fall back to `osascript`.
 #[cfg(target_os = "macos")]
 unsafe fn try_modern_notification(
     title_ns: *mut objc::runtime::Object,
@@ -226,12 +228,15 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             invoke: noop_auth,
             descriptor: &AUTH_DESC,
         };
+        // Copy the stack block to the heap so the async API can safely
+        // invoke it after this stack frame returns.
+        let auth_heap = _Block_copy(&auth_block as *const _ as *const std::ffi::c_void);
         // UNAuthorizationOptionAlert (1<<2) | Sound (1<<1)
         let opts: usize = 4 | 2;
         let _: () = msg_send![center_ptr,
             requestAuthorizationWithOptions:opts
-            completionHandler:&auth_block
-                as *const _ as *const std::ffi::c_void];
+            completionHandler:auth_heap];
+        _Block_release(auth_heap);
     });
 }
 
