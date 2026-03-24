@@ -387,8 +387,9 @@ impl DirigentApp {
         section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
         load_more_archived: &mut bool,
+        filtered_archived_count: usize,
     ) {
-        let header = build_section_header(status, section_cues.len(), self.archived_cue_count);
+        let header = build_section_header(status, section_cues.len(), filtered_archived_count);
         let header_rt = egui::RichText::new(header)
             .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
             .strong();
