@@ -1060,31 +1060,23 @@ fn build_diagnostic_messages(
 fn render_code_line(
     ui: &mut egui::Ui,
     app: &mut DirigentApp,
-    active_idx: usize,
     line_idx: usize,
-    sel_start: Option<usize>,
-    sel_end: Option<usize>,
-    lines_with_cues: &HashMap<usize, bool>,
-    diag_lines: &HashMap<usize, Severity>,
-    diag_messages: &HashMap<usize, Vec<String>>,
-    ext: &str,
-    symbol_lines: &HashMap<usize, (String, String)>,
-    cmd_held: bool,
+    ctx: &CodeLineContext,
     actions: &mut CodeLineActions,
 ) {
     let line_num = line_idx + 1;
-    let line_text = app.viewer.tabs[active_idx]
+    let line_text = app.viewer.tabs[ctx.active_idx]
         .content
         .get(line_idx)
         .map(|s| s.as_str())
         .unwrap_or("");
 
     let is_in_selection = matches!(
-        (sel_start, sel_end),
+        (ctx.sel_start, ctx.sel_end),
         (Some(s), Some(e)) if line_num >= s && line_num <= e
     );
-    let is_selection_end = sel_end == Some(line_num);
-    let cue_state = lines_with_cues.get(&line_num);
+    let is_selection_end = ctx.sel_end == Some(line_num);
+    let cue_state = ctx.lines_with_cues.get(&line_num);
     let is_search_match = app.search.in_file_matches.contains(&line_num);
     let is_current_search_match = app
         .search
@@ -1098,8 +1090,8 @@ fn render_code_line(
             app,
             cue_state,
             line_num,
-            diag_lines,
-            diag_messages,
+            ctx.diag_lines,
+            ctx.diag_messages,
             actions,
         );
 
@@ -1116,7 +1108,7 @@ fn render_code_line(
             ui.style(),
             &app.viewer.syntax_theme,
             line_text,
-            ext,
+            ctx.ext,
         );
         let code_resp = ui.label(layout_job);
 
@@ -1129,7 +1121,7 @@ fn render_code_line(
 
         render_cmd_hover_underline(
             ui,
-            cmd_held,
+            ctx.cmd_held,
             &line_response,
             &code_resp,
             app.semantic.accent,
@@ -1157,14 +1149,14 @@ fn render_code_line(
             line_num,
             line_text,
             &code_resp,
-            sel_start,
-            symbol_lines,
+            ctx.sel_start,
+            ctx.symbol_lines,
             actions,
         );
     }
 
     if is_selection_end {
-        render_cue_input(ui, app, active_idx, sel_start, sel_end, actions);
+        render_cue_input(ui, app, ctx.active_idx, ctx.sel_start, ctx.sel_end, actions);
     }
 }
 
