@@ -1,3 +1,19 @@
+/// Outcome of attempting to send a notification via the modern
+/// `UNUserNotificationCenter` API.
+#[cfg(target_os = "macos")]
+enum NotificationOutcome {
+    /// Notification was successfully scheduled for delivery.
+    Delivered,
+    /// The modern notification API is not available (no bundle identifier,
+    /// framework not present, or required classes missing). The caller should
+    /// fall back to `osascript`.
+    Unavailable,
+    /// The user has not authorized notifications for this app.
+    NotAuthorized,
+    /// Delivery failed for another reason (timeout, scheduling error, etc.).
+    Failed(String),
+}
+
 /// Send a macOS notification via `UNUserNotificationCenter` (modern API).
 /// Registers a delegate on first call so notifications are shown even when the
 /// app is in the foreground (macOS suppresses them by default).
@@ -27,12 +43,19 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
         let sub_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
         let body_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
 
-        let delivered = try_modern_notification(title_ns, sub_ns, body_ns);
-
-        // Fallback: osascript `display notification`.
-        // Used when running without a bundle identifier (e.g. `cargo run`).
-        if !delivered {
-            fallback_osascript_notification(&title_safe, &subtitle_safe, &body_safe);
+        match try_modern_notification(title_ns, sub_ns, body_ns) {
+            NotificationOutcome::Unavailable => {
+                // Fallback: osascript `display notification`.
+                // Used when running without a bundle identifier (e.g. `cargo run`).
+                fallback_osascript_notification(&title_safe, &subtitle_safe, &body_safe);
+            }
+            NotificationOutcome::Delivered => {}
+            NotificationOutcome::NotAuthorized => {
+                eprintln!("macOS notifications not authorized for this app");
+            }
+            NotificationOutcome::Failed(e) => {
+                eprintln!("notification delivery failed: {e}");
+            }
         }
 
         let _: () = msg_send![pool, drain];
@@ -40,15 +63,15 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
 }
 
 /// Try to send a notification via the modern `UNUserNotificationCenter` API
-/// (macOS 10.14+). Returns `true` if the notification was successfully
-/// scheduled (completion handler reported no error); returns `false` on any
-/// failure so the caller can fall back to `osascript`.
+/// (macOS 10.14+). Returns a [`NotificationOutcome`] indicating whether the
+/// notification was delivered, the API is unavailable, the user has not
+/// authorized notifications, or delivery failed.
 #[cfg(target_os = "macos")]
 unsafe fn try_modern_notification(
     title_ns: *mut objc::runtime::Object,
     sub_ns: *mut objc::runtime::Object,
     body_ns: *mut objc::runtime::Object,
-) -> bool {
+) -> NotificationOutcome {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
@@ -64,21 +87,21 @@ unsafe fn try_modern_notification(
     let bundle_id: *mut Object = msg_send![main_bundle, bundleIdentifier];
 
     if fw_bundle.is_null() || bundle_id.is_null() {
-        return false;
+        return NotificationOutcome::Unavailable;
     }
 
     let loaded: bool = msg_send![fw_bundle, load];
     if !loaded {
-        return false;
+        return NotificationOutcome::Unavailable;
     }
 
     let center_cls = match Class::get("UNUserNotificationCenter") {
         Some(cls) => cls,
-        None => return false,
+        None => return NotificationOutcome::Unavailable,
     };
     let center: *mut Object = msg_send![center_cls, currentNotificationCenter];
     if center.is_null() {
-        return false;
+        return NotificationOutcome::Unavailable;
     }
 
     setup_notification_delegate_and_auth(center);
@@ -242,16 +265,15 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
 
 /// Build `UNMutableNotificationContent`, create a `UNNotificationRequest`,
 /// and deliver it via the given `UNUserNotificationCenter`.
-/// Returns `true` only if the completion handler reports no error within a
-/// 2-second timeout; returns `false` on scheduling failure or timeout so the
-/// caller can fall back to `osascript`.
+/// Returns a [`NotificationOutcome`] based on the completion handler result
+/// or timeout.
 #[cfg(target_os = "macos")]
 unsafe fn deliver_notification(
     center: *mut objc::runtime::Object,
     title_ns: *mut objc::runtime::Object,
     sub_ns: *mut objc::runtime::Object,
     body_ns: *mut objc::runtime::Object,
-) -> bool {
+) -> NotificationOutcome {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
@@ -281,7 +303,7 @@ unsafe fn deliver_notification(
         reserved: i32,
         invoke: unsafe extern "C" fn(*mut CompletionBlock, *mut Object),
         descriptor: *const CompletionBlockDesc,
-        success: *mut bool,
+        outcome: *mut u8,
         semaphore: *const std::ffi::c_void,
     }
 
@@ -290,14 +312,32 @@ unsafe fn deliver_notification(
         size: std::mem::size_of::<CompletionBlock>(),
     };
 
+    // Outcome codes written by the completion handler:
+    // 0 = delivered, 1 = failed, 2 = not authorized.
+    const OUTCOME_DELIVERED: u8 = 0;
+    const OUTCOME_FAILED: u8 = 1;
+    const OUTCOME_NOT_AUTHORIZED: u8 = 2;
+
     unsafe extern "C" fn completion_invoke(block: *mut CompletionBlock, error: *mut Object) {
-        *(*block).success = error.is_null();
+        use objc::{msg_send, sel, sel_impl};
+
+        if error.is_null() {
+            *(*block).outcome = OUTCOME_DELIVERED;
+        } else {
+            let code: isize = msg_send![error, code];
+            // UNErrorCodeNotificationsNotAllowed == 1
+            *(*block).outcome = if code == 1 {
+                OUTCOME_NOT_AUTHORIZED
+            } else {
+                OUTCOME_FAILED
+            };
+        }
         dispatch_semaphore_signal((*block).semaphore);
     }
 
     let content_cls = match Class::get("UNMutableNotificationContent") {
         Some(cls) => cls,
-        None => return false,
+        None => return NotificationOutcome::Unavailable,
     };
     let content: *mut Object = msg_send![content_cls, new];
     // Autorelease so the caller's NSAutoreleasePool handles cleanup,
@@ -309,7 +349,7 @@ unsafe fn deliver_notification(
 
     let request_cls = match Class::get("UNNotificationRequest") {
         Some(cls) => cls,
-        None => return false,
+        None => return NotificationOutcome::Unavailable,
     };
     let nsuuid_cls = Class::get("NSUUID").unwrap();
     let uuid: *mut Object = msg_send![nsuuid_cls, UUID];
@@ -320,9 +360,9 @@ unsafe fn deliver_notification(
         content:content
         trigger:trigger];
 
-    // Heap-allocate `success` so that a late-firing completion handler
+    // Heap-allocate `outcome` so that a late-firing completion handler
     // (after timeout) does not write to a dead stack slot.
-    let success = Box::into_raw(Box::new(false));
+    let outcome_ptr = Box::into_raw(Box::new(OUTCOME_FAILED));
     let semaphore = dispatch_semaphore_create(0);
 
     let stack_block = CompletionBlock {
@@ -331,7 +371,7 @@ unsafe fn deliver_notification(
         reserved: 0,
         invoke: completion_invoke,
         descriptor: &COMPLETION_DESC,
-        success,
+        outcome: outcome_ptr,
         semaphore,
     };
 
@@ -348,21 +388,25 @@ unsafe fn deliver_notification(
     let wait_result = dispatch_semaphore_wait(semaphore, timeout);
 
     if wait_result != 0 {
-        // Timed out — intentionally leak `success`, `heap_block`, and
+        // Timed out — intentionally leak `outcome_ptr`, `heap_block`, and
         // `semaphore` so a late-firing completion handler can still safely
         // dereference the block's captured pointers and signal the semaphore.
-        // The leak is tiny (one bool + one ObjC block + one semaphore) and
+        // The leak is tiny (one u8 + one ObjC block + one semaphore) and
         // only occurs when the notification system fails to respond in time.
-        return false;
+        return NotificationOutcome::Failed("timed out waiting for notification completion".into());
     }
 
     // Completion handler ran within the timeout — safe to read and free.
-    let result = *success;
-    drop(Box::from_raw(success));
+    let outcome_code = *outcome_ptr;
+    drop(Box::from_raw(outcome_ptr));
     _Block_release(heap_block);
     dispatch_release(semaphore);
 
-    result
+    match outcome_code {
+        OUTCOME_DELIVERED => NotificationOutcome::Delivered,
+        OUTCOME_NOT_AUTHORIZED => NotificationOutcome::NotAuthorized,
+        _ => NotificationOutcome::Failed("notification scheduling error".into()),
+    }
 }
 
 /// Fallback notification via `osascript display notification`.
