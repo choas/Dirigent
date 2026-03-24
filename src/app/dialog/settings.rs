@@ -493,11 +493,6 @@ impl DirigentApp {
                 if self.settings.sources[i].kind != prev_kind {
                     self.settings.sources[i].label =
                         self.settings.sources[i].kind.default_label().to_string();
-                    if self.settings.sources[i].kind == SourceKind::SonarQube
-                        && self.settings.sources[i].host_url.is_empty()
-                    {
-                        self.settings.sources[i].host_url = "http://localhost:9000".to_string();
-                    }
                 }
                 ui.end_row();
 

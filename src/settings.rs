@@ -878,7 +878,7 @@ impl Default for SourceConfig {
         SourceConfig {
             name: "New Source".to_string(),
             kind: SourceKind::GitHubIssues,
-            label: "github".to_string(),
+            label: SourceKind::GitHubIssues.default_label().to_string(),
             poll_interval_secs: 300,
             enabled: true,
             filter: String::new(),
