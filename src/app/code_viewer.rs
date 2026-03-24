@@ -414,44 +414,58 @@ impl DirigentApp {
                 ui.label(egui::RichText::new("\u{25CF}").color(self.semantic.warning));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .small_button(icon("\u{2715}", self.settings.font_size))
-                    .on_hover_text("Close tab (\u{2318}W)")
-                    .clicked()
-                {
-                    bc_action = BreadcrumbAction::CloseFile;
-                }
-                self.render_breadcrumb_diagnostics(ui, rel_path);
-                ui.label(format!(
-                    "{} lines",
-                    self.viewer.tabs[active_idx].content.len()
-                ));
-                if is_markdown {
-                    let label = if self.viewer.tabs[active_idx].markdown_rendered {
-                        "Raw"
-                    } else {
-                        "Rendered"
-                    };
-                    if ui
-                        .small_button(label)
-                        .on_hover_text("Toggle between raw Markdown and rendered view")
-                        .clicked()
-                    {
-                        bc_action = BreadcrumbAction::ToggleMarkdown;
-                    }
-                }
-                if is_dirty
-                    && ui
-                        .small_button("Show Diff")
-                        .on_hover_text("Show uncommitted changes for this file")
-                        .clicked()
-                {
-                    bc_action = BreadcrumbAction::ShowFileDiff;
-                }
+                bc_action =
+                    self.render_breadcrumb_right_controls(ui, active_idx, rel_path, is_dirty, is_markdown);
             });
         });
 
         bc_action
+    }
+
+    /// Render the right-aligned controls in the breadcrumb bar (close, diagnostics, markdown toggle, diff).
+    fn render_breadcrumb_right_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        active_idx: usize,
+        rel_path: &str,
+        is_dirty: bool,
+        is_markdown: bool,
+    ) -> BreadcrumbAction {
+        if ui
+            .small_button(icon("\u{2715}", self.settings.font_size))
+            .on_hover_text("Close tab (\u{2318}W)")
+            .clicked()
+        {
+            return BreadcrumbAction::CloseFile;
+        }
+        self.render_breadcrumb_diagnostics(ui, rel_path);
+        ui.label(format!(
+            "{} lines",
+            self.viewer.tabs[active_idx].content.len()
+        ));
+        if is_markdown {
+            let label = if self.viewer.tabs[active_idx].markdown_rendered {
+                "Raw"
+            } else {
+                "Rendered"
+            };
+            if ui
+                .small_button(label)
+                .on_hover_text("Toggle between raw Markdown and rendered view")
+                .clicked()
+            {
+                return BreadcrumbAction::ToggleMarkdown;
+            }
+        }
+        if is_dirty
+            && ui
+                .small_button("Show Diff")
+                .on_hover_text("Show uncommitted changes for this file")
+                .clicked()
+        {
+            return BreadcrumbAction::ShowFileDiff;
+        }
+        BreadcrumbAction::None
     }
 
     /// Render path segments and the current symbol in the breadcrumb bar.
