@@ -13,16 +13,13 @@ impl DirigentApp {
             .and_then(|t| t.markdown_blocks.as_ref());
         if let Some(blocks) = blocks_ref {
             let mut heading_counter = 0usize;
-            render_blocks(
-                ui,
-                blocks,
-                self.settings.font_size,
-                &self.viewer.syntax_theme,
-                &self.semantic,
-                0,
-                scroll_target,
-                &mut heading_counter,
-            );
+            let ctx = RenderCtx {
+                font_size: self.settings.font_size,
+                syntax_theme: &self.viewer.syntax_theme,
+                semantic: &self.semantic,
+                indent_level: 0,
+            };
+            render_blocks(ui, blocks, &ctx, scroll_target, &mut heading_counter);
         }
     }
 }
@@ -53,19 +50,10 @@ impl<'a> RenderCtx<'a> {
 fn render_blocks(
     ui: &mut egui::Ui,
     blocks: &[MarkdownBlock],
-    font_size: f32,
-    syntax_theme: &egui_extras::syntax_highlighting::CodeTheme,
-    semantic: &crate::settings::SemanticColors,
-    indent_level: usize,
+    ctx: &RenderCtx,
     scroll_to_heading: Option<usize>,
     heading_counter: &mut usize,
 ) {
-    let ctx = RenderCtx {
-        font_size,
-        syntax_theme,
-        semantic,
-        indent_level,
-    };
     let indent = ctx.indent();
 
     for (block_idx, block) in blocks.iter().enumerate() {
@@ -540,16 +528,7 @@ fn render_blocks_with_ctx(
     ctx: &RenderCtx,
     heading_counter: &mut usize,
 ) {
-    render_blocks(
-        ui,
-        blocks,
-        ctx.font_size,
-        ctx.syntax_theme,
-        ctx.semantic,
-        ctx.indent_level,
-        None,
-        heading_counter,
-    );
+    render_blocks(ui, blocks, ctx, None, heading_counter);
 }
 
 // ---------------------------------------------------------------------------
