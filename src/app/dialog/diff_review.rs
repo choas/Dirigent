@@ -7,6 +7,13 @@ use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
 use crate::settings::SemanticColors;
 
+/// Read-only search state shared across diff rendering functions.
+struct SearchState<'a> {
+    active: bool,
+    matches: &'a [(usize, usize, usize)],
+    current: Option<usize>,
+}
+
 /// Actions collected during UI rendering, applied after the closure ends.
 struct DiffReviewActions {
     close: bool,
@@ -75,16 +82,12 @@ impl DirigentApp {
 
             Self::render_diff_view_mode_toolbar(ui, fs, &sem, view_mode, read_only, &mut actions);
             Self::render_diff_reply_field(ui, fs, read_only, reply_text, &mut actions);
-            Self::render_diff_search_bar(
-                ui,
-                fs,
-                &sem,
-                search_active,
-                search_query,
-                search_matches,
-                search_current,
-                &mut actions,
-            );
+            let search = SearchState {
+                active: search_active,
+                matches: search_matches,
+                current: search_current,
+            };
+            Self::render_diff_search_bar(ui, fs, &sem, search_query, &search, &mut actions);
             ui.separator();
 
             Self::render_diff_content(
@@ -92,10 +95,8 @@ impl DirigentApp {
                 &sem,
                 &parsed,
                 view_mode,
-                search_active,
                 search_query,
-                search_current,
-                search_matches,
+                &search,
                 collapsed_files,
             );
         });
@@ -252,13 +253,11 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         fs: f32,
         sem: &SemanticColors,
-        search_active: bool,
         search_query: &mut String,
-        search_matches: &[(usize, usize, usize)],
-        search_current: Option<usize>,
+        search: &SearchState<'_>,
         actions: &mut DiffReviewActions,
     ) {
-        if !search_active {
+        if !search.active {
             return;
         }
         ui.horizontal(|ui| {
@@ -284,7 +283,7 @@ impl DirigentApp {
                 response.request_focus();
             }
 
-            Self::render_search_match_count(ui, sem, search_query, search_matches, search_current);
+            Self::render_search_match_count(ui, sem, search_query, search);
             Self::render_search_nav_buttons(ui, fs, actions);
 
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -297,15 +296,14 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         sem: &SemanticColors,
         search_query: &str,
-        search_matches: &[(usize, usize, usize)],
-        search_current: Option<usize>,
+        search: &SearchState<'_>,
     ) {
-        let match_count = search_matches.len();
+        let match_count = search.matches.len();
         if !search_query.is_empty() {
             let label = if match_count == 0 {
                 "No matches".to_string()
             } else {
-                let current = search_current.map(|i| i + 1).unwrap_or(0);
+                let current = search.current.map(|i| i + 1).unwrap_or(0);
                 format!("{}/{}", current, match_count)
             };
             ui.label(
@@ -345,21 +343,18 @@ impl DirigentApp {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_diff_content(
         ui: &mut egui::Ui,
         sem: &SemanticColors,
         parsed: &crate::diff_view::ParsedDiff,
         view_mode: DiffViewMode,
-        search_active: bool,
         search_query: &str,
-        search_current: Option<usize>,
-        search_matches: &[(usize, usize, usize)],
+        search: &SearchState<'_>,
         collapsed_files: &mut std::collections::HashSet<usize>,
     ) {
         let query_lower_owned = search_query.to_lowercase();
-        let search_highlight = if search_active && !search_query.is_empty() {
-            let current = search_current.map(|idx| search_matches[idx]);
+        let search_highlight = if search.active && !search_query.is_empty() {
+            let current = search.current.map(|idx| search.matches[idx]);
             Some(DiffSearchHighlight {
                 query_lower: &query_lower_owned,
                 current,
