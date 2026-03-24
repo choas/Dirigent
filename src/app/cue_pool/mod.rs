@@ -283,15 +283,10 @@ impl DirigentApp {
 
     fn render_prompt_history_search_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let search_icon = if self.prompt_history_active {
-                "\u{2715}"
+            let (search_icon, hover) = if self.prompt_history_active {
+                ("\u{2715}", "Close search")
             } else {
-                "\u{1F50D}"
-            };
-            let hover = if self.prompt_history_active {
-                "Close search"
-            } else {
-                "Search past prompts"
+                ("\u{1F50D}", "Search past prompts")
             };
             if ui.small_button(search_icon).on_hover_text(hover).clicked() {
                 self.prompt_history_active = !self.prompt_history_active;
