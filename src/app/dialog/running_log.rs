@@ -117,13 +117,7 @@ impl DirigentApp {
 
         for (idx, exec) in past_execs.iter().enumerate() {
             let is_current_running = current_exec_id == Some(exec.id);
-            self.render_conversation_entry(
-                ui,
-                exec,
-                idx,
-                is_current_running,
-                current_running_log,
-            );
+            self.render_conversation_entry(ui, exec, idx, is_current_running, current_running_log);
 
             if idx < past_execs.len() - 1 {
                 ui.separator();

@@ -65,8 +65,9 @@ impl DirigentApp {
                     cancel |= ui.button("Cancel").clicked();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let name_valid = validate_filename(&self.rename_buffer);
-                        confirm |=
-                            ui.add_enabled(name_valid, egui::Button::new("Rename")).clicked();
+                        confirm |= ui
+                            .add_enabled(name_valid, egui::Button::new("Rename"))
+                            .clicked();
                     });
                 });
             });
