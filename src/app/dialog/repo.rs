@@ -210,27 +210,7 @@ impl DirigentApp {
             .max_height(200.0)
             .show(ui, |ui| {
                 for wt in &self.git.worktrees {
-                    ui.horizontal(|ui| {
-                        let label = worktree_label(wt);
-                        ui.label(icon(&label, fs).strong());
-                        ui.label(
-                            egui::RichText::new(wt.path.to_string_lossy().as_ref())
-                                .small()
-                                .color(self.semantic.secondary_text),
-                        );
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if !wt.is_current
-                                && !wt.is_locked
-                                && ui.small_button("Remove").clicked()
-                            {
-                                actions.remove_path = Some(wt.path.clone());
-                            }
-                            if !wt.is_current && ui.small_button("Switch").clicked() {
-                                actions.switch_to = Some(wt.path.clone());
-                            }
-                        });
-                    });
+                    self.render_worktree_row(ui, wt, fs, actions);
                     ui.separator();
                 }
 
@@ -242,6 +222,34 @@ impl DirigentApp {
                     );
                 }
             });
+    }
+
+    /// Single worktree row with label and action buttons.
+    fn render_worktree_row(
+        &self,
+        ui: &mut egui::Ui,
+        wt: &git::WorktreeInfo,
+        fs: f32,
+        actions: &mut WorktreeActions,
+    ) {
+        ui.horizontal(|ui| {
+            let label = worktree_label(wt);
+            ui.label(icon(&label, fs).strong());
+            ui.label(
+                egui::RichText::new(wt.path.to_string_lossy().as_ref())
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !wt.is_current && !wt.is_locked && ui.small_button("Remove").clicked() {
+                    actions.remove_path = Some(wt.path.clone());
+                }
+                if !wt.is_current && ui.small_button("Switch").clicked() {
+                    actions.switch_to = Some(wt.path.clone());
+                }
+            });
+        });
     }
 
     /// Input field and Create button for new worktrees.
@@ -285,25 +293,27 @@ impl DirigentApp {
             self.git.show_archived_dbs = !self.git.show_archived_dbs;
         }
 
-        if self.git.show_archived_dbs {
-            for db in &self.git.archived_dbs {
-                ui.horizontal(|ui| {
-                    ui.label(&db.name);
-                    ui.label(
-                        egui::RichText::new(format_size(db.size_bytes))
-                            .small()
-                            .color(self.semantic.secondary_text),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Delete").clicked() {
-                            actions.delete_archive_pending = Some(db.path.clone());
-                        }
-                        if ui.small_button("Reveal").clicked() {
-                            actions.reveal_path = Some(db.path.clone());
-                        }
-                    });
+        if !self.git.show_archived_dbs {
+            return;
+        }
+
+        for db in &self.git.archived_dbs {
+            ui.horizontal(|ui| {
+                ui.label(&db.name);
+                ui.label(
+                    egui::RichText::new(format_size(db.size_bytes))
+                        .small()
+                        .color(self.semantic.secondary_text),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("Delete").clicked() {
+                        actions.delete_archive_pending = Some(db.path.clone());
+                    }
+                    if ui.small_button("Reveal").clicked() {
+                        actions.reveal_path = Some(db.path.clone());
+                    }
                 });
-            }
+            });
         }
     }
 
