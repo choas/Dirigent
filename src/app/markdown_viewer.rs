@@ -169,7 +169,7 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx:
         .corner_radius(4.0)
         .inner_margin(SPACE_SM)
         .outer_margin(egui::Margin {
-            left: indent as i8,
+            left: indent.round().min(i8::MAX as f32) as i8,
             ..Default::default()
         })
         .show(ui, |ui| {
@@ -274,7 +274,7 @@ fn render_list_item_inline_first(
             });
         }
         MarkdownBlock::Checkbox { checked, segments } => {
-            render_checkbox_in_list(ui, *checked, segments, prefix, ctx);
+            render_checkbox_in_list(ui, *checked, segments, ctx);
         }
         _ => {}
     }
@@ -284,7 +284,6 @@ fn render_checkbox_in_list(
     ui: &mut egui::Ui,
     checked: bool,
     segments: &[TextSegment],
-    _prefix: &str,
     ctx: &RenderCtx,
 ) {
     let indent = ctx.indent();
