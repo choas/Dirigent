@@ -122,14 +122,25 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
         size: std::mem::size_of::<AuthBlock>(),
     };
 
-    /// Minimal layout of an ObjC block received as a callback parameter —
-    /// just enough to read and call the `invoke` function pointer.
+    /// Block layout for `willPresentNotification:withCompletionHandler:`.
+    /// Apple signature: `void (^)(UNNotificationPresentationOptions)` where
+    /// `UNNotificationPresentationOptions` is `NSUInteger` (`usize`).
     #[repr(C)]
-    struct ReceivedBlock {
+    struct PresentCompletionBlock {
         _isa: usize,
         _flags: i32,
         _reserved: i32,
         invoke: unsafe extern "C" fn(*const std::ffi::c_void, usize),
+    }
+
+    /// Block layout for `didReceiveNotificationResponse:withCompletionHandler:`.
+    /// Apple signature: `void (^)(void)` — no arguments beyond the block pointer.
+    #[repr(C)]
+    struct ResponseCompletionBlock {
+        _isa: usize,
+        _flags: i32,
+        _reserved: i32,
+        invoke: unsafe extern "C" fn(*const std::ffi::c_void),
     }
 
     static SETUP_ONCE: Once = Once::new();
@@ -151,7 +162,7 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             handler: *const std::ffi::c_void,
         ) {
             unsafe {
-                let bh = handler as *const ReceivedBlock;
+                let bh = handler as *const PresentCompletionBlock;
                 // UNNotificationPresentationOptionBanner  (1 << 4)
                 // UNNotificationPresentationOptionList    (1 << 3)
                 // UNNotificationPresentationOptionSound   (1 << 1)
@@ -240,6 +251,9 @@ unsafe fn deliver_notification(
         None => return false,
     };
     let content: *mut Object = msg_send![content_cls, new];
+    // Autorelease so the caller's NSAutoreleasePool handles cleanup,
+    // covering both early-return and normal exit paths.
+    let content: *mut Object = msg_send![content, autorelease];
     let _: () = msg_send![content, setTitle: title_ns];
     let _: () = msg_send![content, setSubtitle: sub_ns];
     let _: () = msg_send![content, setBody: body_ns];
@@ -276,13 +290,22 @@ fn fallback_osascript_notification(title: &str, subtitle: &str, body: &str) {
         "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
         body_esc, title_esc, sub_esc
     );
-    let _ = std::process::Command::new("/usr/bin/osascript")
+    match std::process::Command::new("/usr/bin/osascript")
         .arg("-e")
         .arg(&script)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
-    // Best-effort fallback — errors are intentionally ignored.
+        .spawn()
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => {
+            eprintln!("fallback notification failed to spawn osascript: {e}");
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
