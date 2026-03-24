@@ -123,57 +123,61 @@ impl DirigentApp {
     fn render_settings_model_row(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
         ui.label("Model:");
         match self.settings.cli_provider {
-            CliProvider::Claude => {
-                egui::ComboBox::from_id_salt("model_combo")
-                    .selected_text(&self.settings.claude_model)
-                    .show_ui(ui, |ui| {
-                        for model in &["claude-opus-4-6", "claude-sonnet-4-6"] {
-                            ui.selectable_value(
-                                &mut self.settings.claude_model,
-                                model.to_string(),
-                                *model,
-                            );
-                        }
-                    });
-            }
-            CliProvider::OpenCode => {
-                let models = if self.opencode_models.is_empty() {
-                    vec![
-                        "openai/o1".to_string(),
-                        "openai/o1-mini".to_string(),
-                        "openai/o3".to_string(),
-                        "openai/o3-mini".to_string(),
-                        "openai/o4-mini".to_string(),
-                        "openai/gpt-4.1".to_string(),
-                        "anthropic/claude-sonnet-4-6".to_string(),
-                        "anthropic/claude-opus-4-6".to_string(),
-                    ]
-                } else {
-                    self.opencode_models.clone()
-                };
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("model_combo")
-                        .selected_text(&self.settings.opencode_model)
-                        .show_ui(ui, |ui| {
-                            for model in &models {
-                                ui.selectable_value(
-                                    &mut self.settings.opencode_model,
-                                    model.clone(),
-                                    model.as_str(),
-                                );
-                            }
-                        });
-                    if ui
-                        .small_button("\u{21BB}")
-                        .on_hover_text("Refresh available models from OpenCode")
-                        .clicked()
-                    {
-                        *refresh_models = true;
-                    }
-                });
-            }
+            CliProvider::Claude => self.render_claude_model_combo(ui),
+            CliProvider::OpenCode => self.render_opencode_model_combo(ui, refresh_models),
         }
         ui.end_row();
+    }
+
+    fn render_claude_model_combo(&mut self, ui: &mut egui::Ui) {
+        egui::ComboBox::from_id_salt("model_combo")
+            .selected_text(&self.settings.claude_model)
+            .show_ui(ui, |ui| {
+                for model in &["claude-opus-4-6", "claude-sonnet-4-6"] {
+                    ui.selectable_value(
+                        &mut self.settings.claude_model,
+                        model.to_string(),
+                        *model,
+                    );
+                }
+            });
+    }
+
+    fn render_opencode_model_combo(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
+        let models = if self.opencode_models.is_empty() {
+            vec![
+                "openai/o1".to_string(),
+                "openai/o1-mini".to_string(),
+                "openai/o3".to_string(),
+                "openai/o3-mini".to_string(),
+                "openai/o4-mini".to_string(),
+                "openai/gpt-4.1".to_string(),
+                "anthropic/claude-sonnet-4-6".to_string(),
+                "anthropic/claude-opus-4-6".to_string(),
+            ]
+        } else {
+            self.opencode_models.clone()
+        };
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("model_combo")
+                .selected_text(&self.settings.opencode_model)
+                .show_ui(ui, |ui| {
+                    for model in &models {
+                        ui.selectable_value(
+                            &mut self.settings.opencode_model,
+                            model.clone(),
+                            model.as_str(),
+                        );
+                    }
+                });
+            if ui
+                .small_button("\u{21BB}")
+                .on_hover_text("Refresh available models from OpenCode")
+                .clicked()
+            {
+                *refresh_models = true;
+            }
+        });
     }
 
     fn render_settings_cli_paths_row(&mut self, ui: &mut egui::Ui) {
@@ -819,25 +823,29 @@ impl DirigentApp {
                     }
                 });
             if selected_idx != current_idx {
-                self.settings.agents[i].trigger = match selected_idx {
-                    0 => AgentTrigger::AfterRun,
-                    1 => AgentTrigger::AfterCommit,
-                    2 => {
-                        let own_kind = self.settings.agents[i].kind;
-                        self.settings
-                            .agents
-                            .iter()
-                            .find(|a| a.kind != own_kind)
-                            .map(|a| AgentTrigger::AfterAgent(a.kind))
-                            .unwrap_or(AgentTrigger::AfterRun)
-                    }
-                    3 => AgentTrigger::OnFileChange,
-                    _ => AgentTrigger::Manual,
-                };
+                self.settings.agents[i].trigger =
+                    Self::trigger_from_index(&self.settings.agents, i, selected_idx);
             }
             self.render_settings_agent_trigger_kind_selector(ui, i);
         });
         ui.end_row();
+    }
+
+    fn trigger_from_index(agents: &[AgentConfig], i: usize, idx: usize) -> AgentTrigger {
+        match idx {
+            0 => AgentTrigger::AfterRun,
+            1 => AgentTrigger::AfterCommit,
+            2 => {
+                let own_kind = agents[i].kind;
+                agents
+                    .iter()
+                    .find(|a| a.kind != own_kind)
+                    .map(|a| AgentTrigger::AfterAgent(a.kind))
+                    .unwrap_or(AgentTrigger::AfterRun)
+            }
+            3 => AgentTrigger::OnFileChange,
+            _ => AgentTrigger::Manual,
+        }
     }
 
     fn render_settings_agent_trigger_kind_selector(&mut self, ui: &mut egui::Ui, i: usize) {
@@ -1010,25 +1018,29 @@ impl DirigentApp {
                     .color(self.semantic.secondary_text),
             );
             if self.commands_expanded {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("+ Add Command").clicked() {
-                        self.settings.commands.push(settings::CueCommand {
-                            name: "new".to_string(),
-                            prompt: "{task}".to_string(),
-                            pre_agent: String::new(),
-                            post_agent: String::new(),
-                        });
-                    }
-                    if ui.small_button("Reset Defaults").clicked() {
-                        self.settings.commands = settings::default_commands();
-                    }
-                });
+                self.render_commands_header_buttons(ui);
             }
         });
 
         if self.commands_expanded {
             self.render_settings_commands_list(ui, fs);
         }
+    }
+
+    fn render_commands_header_buttons(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+ Add Command").clicked() {
+                self.settings.commands.push(settings::CueCommand {
+                    name: "new".to_string(),
+                    prompt: "{task}".to_string(),
+                    pre_agent: String::new(),
+                    post_agent: String::new(),
+                });
+            }
+            if ui.small_button("Reset Defaults").clicked() {
+                self.settings.commands = settings::default_commands();
+            }
+        });
     }
 
     fn render_settings_commands_list(&mut self, ui: &mut egui::Ui, fs: f32) {
@@ -1142,23 +1154,27 @@ impl DirigentApp {
                     .color(self.semantic.secondary_text),
             );
             if self.playbook_expanded {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("+ Add Play").clicked() {
-                        self.settings.playbook.push(settings::Play {
-                            name: "New Play".to_string(),
-                            prompt: String::new(),
-                        });
-                    }
-                    if ui.small_button("Reset Defaults").clicked() {
-                        self.settings.playbook = default_playbook();
-                    }
-                });
+                self.render_settings_playbook_actions(ui);
             }
         });
 
         if self.playbook_expanded {
             self.render_settings_playbook_list(ui, fs);
         }
+    }
+
+    fn render_settings_playbook_actions(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+ Add Play").clicked() {
+                self.settings.playbook.push(settings::Play {
+                    name: "New Play".to_string(),
+                    prompt: String::new(),
+                });
+            }
+            if ui.small_button("Reset Defaults").clicked() {
+                self.settings.playbook = default_playbook();
+            }
+        });
     }
 
     fn render_settings_playbook_list(&mut self, ui: &mut egui::Ui, fs: f32) {
