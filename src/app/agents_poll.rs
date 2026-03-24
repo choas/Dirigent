@@ -16,7 +16,17 @@ impl DirigentApp {
     /// Process a single agent result: persist to DB, update state, set status
     /// messages, log activity, and trigger chained agents.
     fn process_single_agent_result(&mut self, result: AgentResult) {
-        self.persist_agent_result(&result);
+        if let Err(e) = self.persist_agent_result(&result) {
+            eprintln!(
+                "Failed to persist agent result for {:?}: {e:#}",
+                result.kind
+            );
+            self.set_status_message(format!(
+                "{} DB error: {e}",
+                self.agent_display_label(result.kind)
+            ));
+            return;
+        }
         self.update_agent_runtime_state(&result);
 
         let label = self.agent_display_label(result.kind);
@@ -30,7 +40,7 @@ impl DirigentApp {
     }
 
     /// Store an agent result in the database.
-    fn persist_agent_result(&self, result: &AgentResult) {
+    fn persist_agent_result(&self, result: &AgentResult) -> anyhow::Result<()> {
         let diagnostics_json = if result.diagnostics.is_empty() {
             None
         } else {
@@ -44,7 +54,7 @@ impl DirigentApp {
             .find(|a| a.kind == result.kind)
             .map(|a| a.command.as_str())
             .unwrap_or("");
-        let _ = self.db.insert_agent_run(&AgentRunRecord {
+        self.db.insert_agent_run(&AgentRunRecord {
             agent_kind: &kind_key,
             cue_id: result.cue_id,
             command,
@@ -52,7 +62,8 @@ impl DirigentApp {
             output: &result.output,
             diagnostics_json: diagnostics_json.as_deref(),
             duration_ms: result.duration_ms,
-        });
+        })?;
+        Ok(())
     }
 
     /// Update in-memory agent runtime state from a completed result.
