@@ -16,7 +16,7 @@ mod theme;
 pub(crate) mod util;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -634,7 +634,7 @@ fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -
 }
 
 fn start_fs_watcher(
-    root: &PathBuf,
+    root: &Path,
     changed: &Arc<AtomicBool>,
     egui_ctx: &Arc<OnceLock<egui::Context>>,
 ) -> Option<RecommendedWatcher> {
@@ -656,9 +656,7 @@ fn start_fs_watcher(
             }
         })
         .ok()?;
-    watcher
-        .watch(root.as_path(), RecursiveMode::Recursive)
-        .ok()?;
+    watcher.watch(root, RecursiveMode::Recursive).ok()?;
     Some(watcher)
 }
 
@@ -1039,7 +1037,7 @@ impl DirigentApp {
         let base = git::get_default_branch(&self.project_root);
         let body = git::build_pr_body(&self.project_root, &base);
         // Use branch name as default title (replace hyphens/underscores with spaces)
-        let title = branch.replace('-', " ").replace('_', " ");
+        let title = branch.replace(['-', '_'], " ");
         self.git.pr_title = title;
         self.git.pr_body = body;
         self.git.pr_base = base;
@@ -1638,9 +1636,9 @@ impl DirigentApp {
         }
     }
 
-    fn relative_path(&self, path: &PathBuf) -> String {
+    fn relative_path(&self, path: &Path) -> String {
         path.strip_prefix(&self.project_root)
-            .unwrap_or(path.as_path())
+            .unwrap_or(path)
             .to_string_lossy()
             .to_string()
     }

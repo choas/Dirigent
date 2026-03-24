@@ -303,10 +303,8 @@ impl DirigentApp {
         fs: f32,
     ) {
         let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
-        if !is_editing {
-            if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
-                actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
-            }
+        if !is_editing && ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
+            actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
         }
         if ui
             .small_button(icon("\u{25B6} Run", fs))
@@ -418,14 +416,13 @@ impl DirigentApp {
         {
             actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
         }
-        if !self.settings.agents.is_empty() {
-            if ui
+        if !self.settings.agents.is_empty()
+            && ui
                 .small_button(icon("Agents", fs))
                 .on_hover_text("View agent run logs (format, lint, build, test)")
                 .clicked()
-            {
-                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
-            }
+        {
+            actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
         }
         if ui
             .small_button(icon("\u{21A9} Reply", fs))
@@ -497,7 +494,7 @@ impl DirigentApp {
             .get(&cue.id)
             .map(|(log, _)| log.to_lowercase().contains("push"))
             .unwrap_or(false);
-        if self.git.ahead_of_remote <= 0 || self.git.pushing || !log_mentions_push {
+        if self.git.ahead_of_remote == 0 || self.git.pushing || !log_mentions_push {
             return;
         }
         let push_btn = egui::Button::new(icon("\u{2191} Push", fs).color(self.semantic.badge_text))
@@ -533,14 +530,13 @@ impl DirigentApp {
         {
             actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
         }
-        if !self.settings.agents.is_empty() {
-            if ui
+        if !self.settings.agents.is_empty()
+            && ui
                 .small_button(icon("Agents", fs))
                 .on_hover_text("View agent run logs (format, lint, build, test)")
                 .clicked()
-            {
-                actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
-            }
+        {
+            actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
         }
     }
 
@@ -607,10 +603,8 @@ impl DirigentApp {
     ) {
         let fs = self.settings.font_size;
         let is_editing = self.editing_cue.as_ref().map(|e| e.id) == Some(cue.id);
-        if !is_editing {
-            if ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
-                actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
-            }
+        if !is_editing && ui.small_button("Edit").on_hover_text("Edit cue").clicked() {
+            actions.push((cue.id, CueAction::StartEdit(cue.text.clone())));
         }
         if ui
             .small_button(icon("\u{2191} Inbox", fs))
@@ -681,10 +675,8 @@ impl DirigentApp {
             let current = cue.tag.clone().unwrap_or_default();
             self.tag_inputs.insert(cue.id, current);
         }
-        if cue.tag.is_some() {
-            if ui.button("\u{2715} Remove Tag").clicked() {
-                actions.push((cue.id, CueAction::SetTag(None)));
-            }
+        if cue.tag.is_some() && ui.button("\u{2715} Remove Tag").clicked() {
+            actions.push((cue.id, CueAction::SetTag(None)));
         }
     }
 
@@ -700,10 +692,8 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch == "main" || i.branch == "master")
             .unwrap_or(true);
-        if !is_default_branch && !self.git.creating_pr {
-            if ui.button("Create PR").clicked() {
-                actions.push((cue.id, CueAction::CreatePR));
-            }
+        if !is_default_branch && !self.git.creating_pr && ui.button("Create PR").clicked() {
+            actions.push((cue.id, CueAction::CreatePR));
         }
     }
 
@@ -982,10 +972,10 @@ fn format_queue_label(is_queued: bool, scheduled_when: Option<Instant>) -> Strin
 
 /// Toggle reply input visibility for a cue.
 fn toggle_reply_input(reply_inputs: &mut std::collections::HashMap<i64, String>, cue_id: i64) {
-    if reply_inputs.contains_key(&cue_id) {
-        reply_inputs.remove(&cue_id);
+    if let std::collections::hash_map::Entry::Vacant(e) = reply_inputs.entry(cue_id) {
+        e.insert(String::new());
     } else {
-        reply_inputs.insert(cue_id, String::new());
+        reply_inputs.remove(&cue_id);
     }
 }
 

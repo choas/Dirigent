@@ -451,10 +451,7 @@ fn handle_script_output(
     let msg = format!("{} script failed (exit {})", label, output.status);
     on_log(&format!("\u{2717} {}\n", msg));
     if fail_on_error {
-        return Err(ClaudeError::SpawnFailed(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            msg,
-        )));
+        return Err(ClaudeError::SpawnFailed(std::io::Error::other(msg)));
     }
     Ok(())
 }

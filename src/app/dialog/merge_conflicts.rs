@@ -209,7 +209,7 @@ impl DirigentApp {
     }
 
     fn handle_stage_file(&mut self, file: String) {
-        match git::stage_files(&self.project_root, &[file.clone()]) {
+        match git::stage_files(&self.project_root, std::slice::from_ref(&file)) {
             Ok(()) => {
                 self.set_status_message(format!("Staged: {}", file));
                 self.git.conflict_files = git::get_conflicted_files(&self.project_root);

@@ -36,6 +36,7 @@ enum FileTreeAction {
 }
 
 /// Actions deferred from the menu bar closures.
+#[derive(Default)]
 struct MenuBarActions {
     push_clicked: bool,
     pull_clicked: bool,
@@ -44,20 +45,6 @@ struct MenuBarActions {
     run_all_agents: bool,
     agent_to_trigger: Option<AgentKind>,
     agent_to_cancel: Option<AgentKind>,
-}
-
-impl Default for MenuBarActions {
-    fn default() -> Self {
-        Self {
-            push_clicked: false,
-            pull_clicked: false,
-            create_pr_clicked: false,
-            import_pr_clicked: false,
-            run_all_agents: false,
-            agent_to_trigger: None,
-            agent_to_cancel: None,
-        }
-    }
 }
 
 impl DirigentApp {
@@ -410,9 +397,7 @@ impl DirigentApp {
 
                 let file_tree_height = Self::compute_file_tree_height(
                     ui.available_height(),
-                    self.viewer
-                        .active()
-                        .map_or(false, |t| !t.symbols.is_empty()),
+                    self.viewer.active().is_some_and(|t| !t.symbols.is_empty()),
                     self.git.show_log,
                 );
                 let tree_action = egui::ScrollArea::vertical()

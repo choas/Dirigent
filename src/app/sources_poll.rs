@@ -45,7 +45,7 @@ impl DirigentApp {
             .filter(|s| {
                 s.enabled
                     && s.poll_interval_secs > 0
-                    && self.sources.last_poll.get(&s.name).map_or(true, |last| {
+                    && self.sources.last_poll.get(&s.name).is_none_or(|last| {
                         last.elapsed() >= std::time::Duration::from_secs(s.poll_interval_secs)
                     })
             })

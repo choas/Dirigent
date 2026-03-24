@@ -904,10 +904,9 @@ impl DirigentApp {
             let agent_kind = self.settings.agents[i].kind;
             if self.agent_state.statuses.get(&agent_kind)
                 == Some(&crate::agents::AgentStatus::Running)
+                && ui.small_button("\u{2715} Cancel").clicked()
             {
-                if ui.small_button("\u{2715} Cancel").clicked() {
-                    self.cancel_agent(agent_kind);
-                }
+                self.cancel_agent(agent_kind);
             }
         });
         ui.end_row();

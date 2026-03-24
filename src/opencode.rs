@@ -89,10 +89,7 @@ fn run_hook_script(
                 let msg = format!("{} script failed (exit {})", label, output.status);
                 on_log(&format!("\u{2717} {}\n", msg));
                 if fail_on_error {
-                    return Err(OpenCodeError::SpawnFailed(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        msg,
-                    )));
+                    return Err(OpenCodeError::SpawnFailed(std::io::Error::other(msg)));
                 }
             }
         }
@@ -142,7 +139,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
         if new_edited_file.is_none() {
             // Log bash commands when no file path is found
             if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-                if name.to_ascii_lowercase() == "bash" {
+                if name.eq_ignore_ascii_case("bash") {
                     on_log(&format!(
                         "\u{2192} {} {}\n",
                         name,

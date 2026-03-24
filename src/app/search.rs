@@ -34,7 +34,7 @@ const BINARY_EXTENSIONS: &[&str] = &[
 
 pub(super) fn is_binary_ext(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    BINARY_EXTENSIONS.iter().any(|&b| b == ext)
+    BINARY_EXTENSIONS.contains(&ext)
 }
 
 /// Search a single file for matching lines, appending results to `out`.
@@ -92,7 +92,7 @@ pub(super) fn search_files_parallel(
         .map(|n| n.get())
         .unwrap_or(4)
         .min(8);
-    let chunk_size = (files.len() + num_threads - 1) / num_threads;
+    let chunk_size = files.len().div_ceil(num_threads);
     let found_count = AtomicUsize::new(0);
 
     std::thread::scope(|s| {
@@ -101,7 +101,6 @@ pub(super) fn search_files_parallel(
             .map(|chunk| {
                 let query_lower = &query_lower;
                 let found_count = &found_count;
-                let root = root;
                 s.spawn(move || {
                     let mut local_results = Vec::new();
                     for file_path in chunk {

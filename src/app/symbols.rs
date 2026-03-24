@@ -462,7 +462,7 @@ fn parse_markdown_headings(content: &[String]) -> Vec<FileSymbol> {
 
         // Match # through #### headings
         let level = trimmed.bytes().take_while(|&b| b == b'#').count();
-        if level >= 1 && level <= 4 && trimmed.as_bytes().get(level) == Some(&b' ') {
+        if (1..=4).contains(&level) && trimmed.as_bytes().get(level) == Some(&b' ') {
             let name = trimmed[level..].trim().to_string();
             if !name.is_empty() {
                 symbols.push(FileSymbol {

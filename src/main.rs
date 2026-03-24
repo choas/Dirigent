@@ -106,13 +106,13 @@ fn setup_macos_about_panel() {
                     let ns_string = Class::get("NSString").unwrap();
 
                     let key: *mut Object = msg_send![ns_string,
-                        stringWithUTF8String: b"ApplicationName\0".as_ptr()];
+                        stringWithUTF8String: c"ApplicationName".as_ptr()];
                     let val: *mut Object = msg_send![ns_string,
-                        stringWithUTF8String: b"Dirigent\0".as_ptr()];
+                        stringWithUTF8String: c"Dirigent".as_ptr()];
                     let _: () = msg_send![dict, setObject:val forKey:key];
 
                     let key: *mut Object = msg_send![ns_string,
-                        stringWithUTF8String: b"ApplicationVersion\0".as_ptr()];
+                        stringWithUTF8String: c"ApplicationVersion".as_ptr()];
                     let val: *mut Object = msg_send![ns_string,
                         stringWithUTF8String: concat!(env!("BUILD_VERSION"), "\0").as_ptr()];
                     let _: () = msg_send![dict, setObject:val forKey:key];
@@ -127,7 +127,7 @@ fn setup_macos_about_panel() {
                     let icon: *mut Object = msg_send![ns_image_cls, alloc];
                     let icon: *mut Object = msg_send![icon, initWithData:icon_data];
                     let key: *mut Object = msg_send![ns_string,
-                        stringWithUTF8String: b"ApplicationIcon\0".as_ptr()];
+                        stringWithUTF8String: c"ApplicationIcon".as_ptr()];
                     let _: () = msg_send![dict, setObject:icon forKey:key];
 
                     let _: () = msg_send![app, orderFrontStandardAboutPanelWithOptions:dict];

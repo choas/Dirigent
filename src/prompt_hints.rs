@@ -2,7 +2,6 @@
 ///
 /// Analyzes user prompt text and returns actionable suggestions to improve
 /// clarity before sending to Claude. All checks are client-side (no API call).
-
 /// A single suggestion with a short label and explanation.
 #[derive(Debug, Clone)]
 pub(crate) struct PromptHint {

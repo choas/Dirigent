@@ -131,21 +131,21 @@ fn parse_hunk_lines(
 /// Classify a single line within a hunk, updating line counters.
 /// Returns `None` if the line doesn't match any expected prefix.
 fn classify_hunk_line(line: &str, old_line: &mut usize, new_line: &mut usize) -> Option<DiffLine> {
-    if line.starts_with('+') {
+    if let Some(content) = line.strip_prefix('+') {
         let dl = DiffLine {
             kind: DiffLineKind::Addition,
             old_lineno: None,
             new_lineno: Some(*new_line),
-            content: line[1..].to_string(),
+            content: content.to_string(),
         };
         *new_line += 1;
         Some(dl)
-    } else if line.starts_with('-') {
+    } else if let Some(content) = line.strip_prefix('-') {
         let dl = DiffLine {
             kind: DiffLineKind::Deletion,
             old_lineno: Some(*old_line),
             new_lineno: None,
-            content: line[1..].to_string(),
+            content: content.to_string(),
         };
         *old_line += 1;
         Some(dl)

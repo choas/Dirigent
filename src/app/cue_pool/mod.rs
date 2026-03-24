@@ -814,12 +814,12 @@ impl DirigentApp {
 
     fn process_show_running_log(&mut self, cue_id: i64) {
         if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            if !self.claude.running_logs.contains_key(&cue_id) {
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                self.claude.running_logs.entry(cue_id)
+            {
                 if let Some(last) = execs.last() {
                     if let Some(ref log_text) = last.log {
-                        self.claude
-                            .running_logs
-                            .insert(cue_id, (log_text.clone(), CliProvider::Claude));
+                        e.insert((log_text.clone(), CliProvider::Claude));
                     }
                 }
             }
@@ -1135,12 +1135,12 @@ fn parse_schedule_duration(input: &str) -> Option<std::time::Duration> {
     if input.is_empty() {
         return None;
     }
-    let (num_str, suffix) = if input.ends_with('m') {
-        (&input[..input.len() - 1], 'm')
-    } else if input.ends_with('h') {
-        (&input[..input.len() - 1], 'h')
-    } else if input.ends_with('s') {
-        (&input[..input.len() - 1], 's')
+    let (num_str, suffix) = if let Some(s) = input.strip_suffix('m') {
+        (s, 'm')
+    } else if let Some(s) = input.strip_suffix('h') {
+        (s, 'h')
+    } else if let Some(s) = input.strip_suffix('s') {
+        (s, 's')
     } else {
         // Default to minutes if no suffix
         (input, 'm')

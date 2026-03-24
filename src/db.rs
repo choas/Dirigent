@@ -483,14 +483,14 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status != 'archived' ORDER BY id",
         )?;
-        let rows = stmt.query_map([], |row| row_to_cue(row))?;
+        let rows = stmt.query_map([], row_to_cue)?;
         for row in rows {
             cues.push(row?);
         }
         let mut stmt = self.conn.prepare(
             "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![archived_limit as i64], |row| row_to_cue(row))?;
+        let rows = stmt.query_map(params![archived_limit as i64], row_to_cue)?;
         for row in rows {
             cues.push(row?);
         }
@@ -650,7 +650,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
-        let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
+        let rows = stmt.query_map(params![cue_id], row_to_execution)?;
         let mut execs = Vec::new();
         for row in rows {
             execs.push(row?);
