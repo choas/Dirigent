@@ -25,6 +25,7 @@ impl DirigentApp {
                 "{} DB error: {e}",
                 self.agent_display_label(result.kind)
             ));
+            self.update_agent_runtime_state(&result);
             return;
         }
         self.update_agent_runtime_state(&result);
