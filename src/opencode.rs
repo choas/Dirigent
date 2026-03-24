@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,9 @@ const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 pub(crate) enum OpenCodeError {
     NotFound,
     SpawnFailed(std::io::Error),
+    StreamReadError(std::io::Error),
     Cancelled,
+    NonZeroExit(std::process::ExitStatus),
 }
 
 impl std::error::Error for OpenCodeError {}
@@ -22,7 +24,13 @@ impl std::fmt::Display for OpenCodeError {
         match self {
             OpenCodeError::NotFound => write!(f, "opencode CLI not found on PATH"),
             OpenCodeError::SpawnFailed(e) => write!(f, "failed to spawn opencode: {e}"),
+            OpenCodeError::StreamReadError(e) => {
+                write!(f, "failed to read opencode stdout: {e}")
+            }
             OpenCodeError::Cancelled => write!(f, "cancelled"),
+            OpenCodeError::NonZeroExit(status) => {
+                write!(f, "opencode exited with {status}")
+            }
         }
     }
 }
@@ -259,20 +267,18 @@ pub(crate) struct OpenCodeRunConfig<'a> {
 }
 
 /// Resolve the opencode binary name and verify it exists on PATH.
-fn resolve_opencode_bin(cli_path: &str) -> Result<String, OpenCodeError> {
+fn resolve_opencode_bin(cli_path: &str) -> Result<PathBuf, OpenCodeError> {
     let bin = if cli_path.is_empty() {
         "opencode"
     } else {
         cli_path
     };
-    which::which(bin)
-        .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|_| OpenCodeError::NotFound)
+    which::which(bin).map_err(|_| OpenCodeError::NotFound)
 }
 
 /// Build the opencode Command with arguments and environment variables.
 fn build_opencode_command(
-    opencode_bin: &str,
+    opencode_bin: &Path,
     prompt: &str,
     project_root: &Path,
     config: &OpenCodeRunConfig<'_>,
@@ -284,12 +290,20 @@ fn build_opencode_command(
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
-    for arg in config
-        .extra_args
-        .split_whitespace()
-        .filter(|a| !a.is_empty())
-    {
-        cmd.arg(arg);
+    if !config.extra_args.trim().is_empty() {
+        match shlex::split(config.extra_args) {
+            Some(args) => {
+                for arg in args {
+                    cmd.arg(arg);
+                }
+            }
+            None => {
+                eprintln!(
+                    "Warning: failed to parse extra_args (unmatched quote?): {:?}",
+                    config.extra_args
+                );
+            }
+        }
     }
     apply_env_vars(&mut cmd, config.env_vars);
     cmd.current_dir(project_root)
@@ -340,7 +354,7 @@ fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
     on_log: &mut impl FnMut(&str),
-) -> (String, Vec<String>) {
+) -> Result<(String, Vec<String>), std::io::Error> {
     use std::io::BufRead;
 
     let reader = std::io::BufReader::new(stdout_handle);
@@ -351,7 +365,7 @@ fn process_event_stream(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let Ok(line) = line_result else { break };
+        let line = line_result?;
         let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
             on_log(&line);
             on_log("\n");
@@ -360,7 +374,7 @@ fn process_event_stream(
         dispatch_event(&event, on_log, &mut final_result, &mut edited_files);
     }
 
-    (final_result, edited_files)
+    Ok((final_result, edited_files))
 }
 
 /// Dispatch a single parsed JSON event to the appropriate handler.
@@ -393,14 +407,11 @@ fn dispatch_event(
 }
 
 /// Wait for the child process to exit (handles poisoned mutex).
-fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) {
+/// Returns the exit status, or `None` if waiting failed.
+fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) -> Option<std::process::ExitStatus> {
     match child.lock() {
-        Ok(mut c) => {
-            let _ = c.wait();
-        }
-        Err(poisoned) => {
-            let _ = poisoned.into_inner().wait();
-        }
+        Ok(mut c) => c.wait().ok(),
+        Err(poisoned) => poisoned.into_inner().wait().ok(),
     }
 }
 
@@ -442,15 +453,26 @@ pub(crate) fn invoke_opencode_streaming(
         s
     });
 
-    let (final_result, edited_files) = process_event_stream(stdout_handle, &cancel, &mut on_log);
+    let stream_result = process_event_stream(stdout_handle, &cancel, &mut on_log);
 
     done.store(true, Ordering::Relaxed);
     let _ = watchdog.join();
-    wait_for_child(&child);
+    let exit_status = wait_for_child(&child);
+
+    let (final_result, edited_files) = stream_result.map_err(OpenCodeError::StreamReadError)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
         return Err(OpenCodeError::Cancelled);
+    }
+
+    if let Some(status) = exit_status {
+        if !status.success() {
+            if !stderr.is_empty() {
+                on_log(&format!("\nError: {}\n", stderr));
+            }
+            return Err(OpenCodeError::NonZeroExit(status));
+        }
     }
 
     if final_result.is_empty() && !stderr.is_empty() {
