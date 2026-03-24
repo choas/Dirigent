@@ -12,6 +12,7 @@ impl DirigentApp {
             .active()
             .and_then(|t| t.markdown_blocks.as_ref());
         if let Some(blocks) = blocks_ref {
+            let mut heading_counter = 0usize;
             render_blocks(
                 ui,
                 blocks,
@@ -20,6 +21,7 @@ impl DirigentApp {
                 &self.semantic,
                 0,
                 scroll_target,
+                &mut heading_counter,
             );
         }
     }
@@ -56,6 +58,7 @@ fn render_blocks(
     semantic: &crate::settings::SemanticColors,
     indent_level: usize,
     scroll_to_heading: Option<usize>,
+    heading_counter: &mut usize,
 ) {
     let ctx = RenderCtx {
         font_size,
@@ -64,7 +67,6 @@ fn render_blocks(
         indent_level,
     };
     let indent = ctx.indent();
-    let mut heading_counter = 0usize;
 
     for (block_idx, block) in blocks.iter().enumerate() {
         if indent > 0.0 {
@@ -72,8 +74,8 @@ fn render_blocks(
         }
         match block {
             MarkdownBlock::Heading { level, segments } => {
-                let should_scroll = scroll_to_heading == Some(heading_counter);
-                heading_counter += 1;
+                let should_scroll = scroll_to_heading == Some(*heading_counter);
+                *heading_counter += 1;
                 render_heading(ui, segments, *level, should_scroll, &ctx);
             }
             MarkdownBlock::Paragraph { segments } => {
@@ -87,16 +89,16 @@ fn render_blocks(
                 start,
                 items,
             } => {
-                render_list(ui, *ordered, *start, items, &ctx);
+                render_list(ui, *ordered, *start, items, &ctx, heading_counter);
             }
             MarkdownBlock::BlockQuote { blocks } => {
-                render_block_quote(ui, blocks, &ctx);
+                render_block_quote(ui, blocks, &ctx, heading_counter);
             }
             MarkdownBlock::Table { headers, rows } => {
                 render_table(ui, headers, rows, block_idx, &ctx);
             }
             MarkdownBlock::ThematicBreak => {
-                render_thematic_break(ui);
+                render_thematic_break(ui, &ctx);
             }
             MarkdownBlock::Checkbox { checked, segments } => {
                 render_checkbox(ui, *checked, segments, &ctx);
@@ -210,11 +212,12 @@ fn render_list(
     start: Option<u64>,
     items: &[Vec<MarkdownBlock>],
     ctx: &RenderCtx,
+    heading_counter: &mut usize,
 ) {
     let base_num = start.unwrap_or(1);
     for (idx, item_blocks) in items.iter().enumerate() {
         let prefix = list_prefix(ordered, base_num, idx);
-        render_list_item(ui, &prefix, item_blocks, ctx);
+        render_list_item(ui, &prefix, item_blocks, ctx, heading_counter);
     }
     ui.add_space(SPACE_XS);
 }
@@ -274,7 +277,7 @@ fn render_list_item_inline_first(
             });
         }
         MarkdownBlock::Checkbox { checked, segments } => {
-            render_checkbox_in_list(ui, *checked, segments, ctx);
+            render_checkbox_in_list(ui, prefix, *checked, segments, ctx);
         }
         _ => {}
     }
@@ -282,6 +285,7 @@ fn render_list_item_inline_first(
 
 fn render_checkbox_in_list(
     ui: &mut egui::Ui,
+    prefix: &str,
     checked: bool,
     segments: &[TextSegment],
     ctx: &RenderCtx,
@@ -289,6 +293,11 @@ fn render_checkbox_in_list(
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
         ui.add_space(indent + SPACE_MD);
+        ui.label(
+            egui::RichText::new(prefix)
+                .size(ctx.font_size)
+                .color(ctx.semantic.secondary_text),
+        );
         let icon = checkbox_icon(checked);
         let color = checkbox_color(checked, ctx.semantic);
         ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
@@ -466,9 +475,19 @@ fn render_table_body(
         });
 }
 
-fn render_thematic_break(ui: &mut egui::Ui) {
+fn render_thematic_break(ui: &mut egui::Ui, ctx: &RenderCtx) {
+    let indent = ctx.indent();
     ui.add_space(SPACE_SM);
-    ui.separator();
+    if indent > 0.0 {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.separator();
+            });
+        });
+    } else {
+        ui.separator();
+    }
     ui.add_space(SPACE_SM);
 }
 
@@ -569,6 +588,31 @@ fn render_segment(
         }
         TextSegment::Strikethrough(t) => {
             ui.label(egui::RichText::new(t).size(font_size).strikethrough());
+        }
+        TextSegment::StrikethroughBold(t) => {
+            ui.label(
+                egui::RichText::new(t)
+                    .size(font_size)
+                    .strong()
+                    .strikethrough(),
+            );
+        }
+        TextSegment::StrikethroughItalic(t) => {
+            ui.label(
+                egui::RichText::new(t)
+                    .size(font_size)
+                    .italics()
+                    .strikethrough(),
+            );
+        }
+        TextSegment::StrikethroughBoldItalic(t) => {
+            ui.label(
+                egui::RichText::new(t)
+                    .size(font_size)
+                    .strong()
+                    .italics()
+                    .strikethrough(),
+            );
         }
         TextSegment::SoftBreak => {
             ui.label(" ");
