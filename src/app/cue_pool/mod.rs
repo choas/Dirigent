@@ -215,21 +215,28 @@ impl DirigentApp {
         for section in sections {
             let source_ref = format!("{}#{}", path.display(), section.number);
             let text = format!("{}\n\n{}", section.title, section.body);
-            if self
-                .db
-                .cue_exists_by_source_ref(&source_ref)
-                .unwrap_or(false)
-            {
-                if self
-                    .db
-                    .update_cue_text_by_source_ref(&source_ref, &text)
-                    .is_ok()
-                {
-                    updated_count += 1;
+            match self.db.cue_exists_by_source_ref(&source_ref) {
+                Ok(true) => {
+                    if self
+                        .db
+                        .update_cue_text_by_source_ref(&source_ref, &text)
+                        .is_ok()
+                    {
+                        updated_count += 1;
+                    }
                 }
-            } else {
-                let _ = self.db.insert_cue_from_source(&text, stem, &source_ref);
-                new_count += 1;
+                Ok(false) => {
+                    if self
+                        .db
+                        .insert_cue_from_source(&text, stem, &source_ref)
+                        .is_ok()
+                    {
+                        new_count += 1;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to check source ref {}: {}", source_ref, e);
+                }
             }
         }
         (new_count, updated_count)
@@ -411,8 +418,8 @@ impl DirigentApp {
             for cue in section_cues {
                 self.render_cue_card(ui, cue, actions, status);
             }
-            if status == CueStatus::Archived && self.archived_cue_count > section_cues.len() {
-                let remaining = self.archived_cue_count - section_cues.len();
+            if status == CueStatus::Archived && filtered_archived_count > section_cues.len() {
+                let remaining = filtered_archived_count - section_cues.len();
                 let label = format!("Load more ({} remaining)", remaining);
                 if ui.small_button(label).clicked() {
                     *load_more_archived = true;
@@ -798,16 +805,7 @@ impl DirigentApp {
         if reverted {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             let _ = self.db.log_activity(cue_id, "Reverted");
-            for tab in &mut self.viewer.tabs {
-                if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                    tab.content = content.lines().map(String::from).collect();
-                    let ext = std::path::Path::new(&tab.file_path)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
-                    tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
-                }
-            }
+            self.reload_open_tabs();
             self.reload_git_info();
         }
     }
