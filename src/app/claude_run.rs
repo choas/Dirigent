@@ -140,57 +140,42 @@ fn build_provider_config(
     }
 }
 
-/// Run the CLI provider on a background thread and produce a `ClaudeResult`.
-fn run_provider(
+/// Bundles the parameters needed by a single CLI provider invocation.
+struct RunRequest<'a> {
     provider: CliProvider,
-    prompt: &str,
-    project_root: &Path,
-    config: &ProviderConfig,
-    on_log: impl FnMut(&str) + Send,
-    cancel: Arc<AtomicBool>,
+    prompt: &'a str,
+    project_root: &'a Path,
+    config: &'a ProviderConfig,
     cue_id: i64,
     exec_id: i64,
+}
+
+/// Run the CLI provider on a background thread and produce a `ClaudeResult`.
+fn run_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send,
+    cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    match provider {
-        CliProvider::Claude => run_claude_provider(
-            prompt,
-            project_root,
-            config,
-            on_log,
-            cancel,
-            cue_id,
-            exec_id,
-        ),
-        CliProvider::OpenCode => run_opencode_provider(
-            prompt,
-            project_root,
-            config,
-            on_log,
-            cancel,
-            cue_id,
-            exec_id,
-        ),
+    match req.provider {
+        CliProvider::Claude => run_claude_provider(req, on_log, cancel),
+        CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
     }
 }
 
 fn run_claude_provider(
-    prompt: &str,
-    project_root: &Path,
-    config: &ProviderConfig,
+    req: &RunRequest,
     on_log: impl FnMut(&str) + Send,
     cancel: Arc<AtomicBool>,
-    cue_id: i64,
-    exec_id: i64,
 ) -> ClaudeResult {
     let res = claude::invoke_claude_streaming(
-        prompt,
-        project_root,
-        &config.model,
-        &config.cli_path,
-        &config.extra_args,
-        &config.env_vars,
-        &config.pre_run_script,
-        &config.post_run_script,
+        req.prompt,
+        req.project_root,
+        &req.config.model,
+        &req.config.cli_path,
+        &req.config.extra_args,
+        &req.config.env_vars,
+        &req.config.pre_run_script,
+        &req.config.post_run_script,
         on_log,
         cancel,
     );
@@ -199,11 +184,11 @@ fn run_claude_provider(
             let diff = if response.edited_files.is_empty() {
                 claude::parse_diff_from_response(&response.stdout)
             } else {
-                git::get_working_diff(project_root, &response.edited_files)
+                git::get_working_diff(req.project_root, &response.edited_files)
             };
             ClaudeResult {
-                cue_id,
-                exec_id,
+                cue_id: req.cue_id,
+                exec_id: req.exec_id,
                 diff,
                 response: response.stdout,
                 error: None,
@@ -211,8 +196,8 @@ fn run_claude_provider(
             }
         }
         Err(e) => ClaudeResult {
-            cue_id,
-            exec_id,
+            cue_id: req.cue_id,
+            exec_id: req.exec_id,
             diff: None,
             response: String::new(),
             error: Some(e.to_string()),
@@ -222,35 +207,36 @@ fn run_claude_provider(
 }
 
 fn run_opencode_provider(
-    prompt: &str,
-    project_root: &Path,
-    config: &ProviderConfig,
+    req: &RunRequest,
     on_log: impl FnMut(&str) + Send,
     cancel: Arc<AtomicBool>,
-    cue_id: i64,
-    exec_id: i64,
 ) -> ClaudeResult {
     let opencode_config = opencode::OpenCodeRunConfig {
-        model: &config.model,
-        cli_path: &config.cli_path,
-        extra_args: &config.extra_args,
-        env_vars: &config.env_vars,
-        pre_run_script: &config.pre_run_script,
-        post_run_script: &config.post_run_script,
+        model: &req.config.model,
+        cli_path: &req.config.cli_path,
+        extra_args: &req.config.extra_args,
+        env_vars: &req.config.env_vars,
+        pre_run_script: &req.config.pre_run_script,
+        post_run_script: &req.config.post_run_script,
     };
-    let res =
-        opencode::invoke_opencode_streaming(prompt, project_root, &opencode_config, on_log, cancel);
+    let res = opencode::invoke_opencode_streaming(
+        req.prompt,
+        req.project_root,
+        &opencode_config,
+        on_log,
+        cancel,
+    );
     match res {
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
             } else {
-                git::get_working_diff(project_root, &response.edited_files)
+                git::get_working_diff(req.project_root, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
             };
             ClaudeResult {
-                cue_id,
-                exec_id,
+                cue_id: req.cue_id,
+                exec_id: req.exec_id,
                 diff,
                 response: response.stdout,
                 error: None,
@@ -258,8 +244,8 @@ fn run_opencode_provider(
             }
         }
         Err(e) => ClaudeResult {
-            cue_id,
-            exec_id,
+            cue_id: req.cue_id,
+            exec_id: req.exec_id,
             diff: None,
             response: String::new(),
             error: Some(e.to_string()),
@@ -342,16 +328,15 @@ impl DirigentApp {
                     provider: provider_for_log.clone(),
                 });
             };
-            let result = run_provider(
+            let req = RunRequest {
                 provider,
-                &prompt,
-                &project_root,
-                &config,
-                on_log,
-                cancel_thread,
+                prompt: &prompt,
+                project_root: &project_root,
+                config: &config,
                 cue_id,
                 exec_id,
-            );
+            };
+            let result = run_provider(&req, on_log, cancel_thread);
             let _ = claude_tx.send(result);
         });
 
