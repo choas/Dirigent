@@ -231,76 +231,88 @@ impl DirigentApp {
         let mut action = TabBarAction::None;
 
         ui.horizontal(|ui| {
-            for (i, tab) in self.viewer.tabs.iter().enumerate() {
-                let is_active = i == active_idx;
-                let filename = tab
-                    .file_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "untitled".to_string());
-
-                let text = tab_label_text(
-                    &filename,
-                    is_active,
-                    self.semantic.accent,
-                    self.semantic.secondary_text,
-                );
-
-                let frame = if is_active {
-                    egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(6, 3))
-                        .fill(self.semantic.selection_bg())
-                        .corner_radius(3)
-                } else {
-                    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(6, 3))
-                };
-
-                let tab_resp = frame.show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let rel = tab
-                            .file_path
-                            .strip_prefix(&self.project_root)
-                            .unwrap_or(&tab.file_path)
-                            .to_string_lossy()
-                            .to_string();
-                        if ui
-                            .add(egui::Label::new(text).sense(egui::Sense::click()))
-                            .on_hover_text(&rel)
-                            .clicked()
-                        {
-                            action = TabBarAction::Activate(i);
-                        }
-                        if ui
-                            .add(
-                                egui::Label::new(
-                                    egui::RichText::new("\u{00D7}")
-                                        .small()
-                                        .color(self.semantic.tertiary_text),
-                                )
-                                .sense(egui::Sense::click()),
-                            )
-                            .on_hover_text("Close tab")
-                            .clicked()
-                        {
-                            action = TabBarAction::CloseOne(i);
-                        }
-                    });
-                });
-
-                let ctx_resp = ui.interact(
-                    tab_resp.response.rect,
-                    ui.id().with(("tab_ctx", i)),
-                    egui::Sense::click(),
-                );
-                if ctx_resp.clicked() {
-                    action = TabBarAction::Activate(i);
-                }
-                self.render_tab_context_menu(&ctx_resp, i, &mut action);
+            for i in 0..self.viewer.tabs.len() {
+                self.render_single_tab(ui, i, i == active_idx, &mut action);
             }
         });
 
         ui.separator();
         action
+    }
+
+    /// Render one tab in the tab bar.
+    fn render_single_tab(
+        &self,
+        ui: &mut egui::Ui,
+        i: usize,
+        is_active: bool,
+        action: &mut TabBarAction,
+    ) {
+        let tab = &self.viewer.tabs[i];
+        let filename = tab
+            .file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
+
+        let text = tab_label_text(
+            &filename,
+            is_active,
+            self.semantic.accent,
+            self.semantic.secondary_text,
+        );
+
+        let frame = if is_active {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(6, 3))
+                .fill(self.semantic.selection_bg())
+                .corner_radius(3)
+        } else {
+            egui::Frame::NONE.inner_margin(egui::Margin::symmetric(6, 3))
+        };
+
+        let rel = tab
+            .file_path
+            .strip_prefix(&self.project_root)
+            .unwrap_or(&tab.file_path)
+            .to_string_lossy()
+            .to_string();
+
+        let tab_resp = frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Label::new(text).sense(egui::Sense::click()))
+                    .on_hover_text(&rel)
+                    .clicked()
+                {
+                    *action = TabBarAction::Activate(i);
+                }
+                if ui
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new("\u{00D7}")
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Close tab")
+                    .clicked()
+                {
+                    *action = TabBarAction::CloseOne(i);
+                }
+            });
+        });
+
+        let ctx_resp = ui.interact(
+            tab_resp.response.rect,
+            ui.id().with(("tab_ctx", i)),
+            egui::Sense::click(),
+        );
+        if ctx_resp.clicked() {
+            *action = TabBarAction::Activate(i);
+        }
+        self.render_tab_context_menu(&ctx_resp, i, action);
     }
 
     /// Show the right-click context menu on a tab.
@@ -469,12 +481,7 @@ impl DirigentApp {
                 .on_hover_text(hover)
                 .clicked()
             {
-                if is_last {
-                    self.viewer.scroll_to_line = Some(1);
-                } else {
-                    let dir_path = self.project_root.join(segments[..=i].join("/"));
-                    self.expanded_dirs.insert(dir_path);
-                }
+                self.handle_breadcrumb_segment_click(is_last, &segments[..=i]);
             }
         }
 
@@ -497,6 +504,15 @@ impl DirigentApp {
                     .small()
                     .color(self.semantic.accent),
             );
+        }
+    }
+
+    fn handle_breadcrumb_segment_click(&mut self, is_last: bool, path_segments: &[&str]) {
+        if is_last {
+            self.viewer.scroll_to_line = Some(1);
+        } else {
+            let dir_path = self.project_root.join(path_segments.join("/"));
+            self.expanded_dirs.insert(dir_path);
         }
     }
 
