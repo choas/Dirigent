@@ -497,40 +497,60 @@ impl DirigentApp {
             if i > 0 {
                 ui.label(egui::RichText::new("\u{203A}").color(self.semantic.tertiary_text));
             }
-            let is_last = i == segments.len() - 1;
-            let text = if is_last {
-                egui::RichText::new(*segment)
-                    .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
-                    .strong()
-            } else {
-                egui::RichText::new(*segment)
-                    .size(self.settings.font_size * FONT_SCALE_SMALL)
-                    .color(self.semantic.secondary_text)
-            };
-            let hover = if is_last {
-                "Scroll to top".to_string()
-            } else {
-                format!("Expand directory {}", segments[..=i].join("/"))
-            };
-            if ui
-                .add(egui::Label::new(text).sense(egui::Sense::click()))
-                .on_hover_text(hover)
-                .clicked()
-            {
-                self.handle_breadcrumb_segment_click(is_last, &segments[..=i]);
-            }
+            self.render_breadcrumb_segment(ui, *segment, i, &segments);
         }
 
-        let current_line = self.viewer.tabs[active_idx]
-            .selection_start
-            .unwrap_or_else(|| {
-                let offset = self.viewer.tabs[active_idx].scroll_offset;
-                if offset > 0.0 {
-                    (offset / 16.0) as usize + 1
-                } else {
-                    1
-                }
-            });
+        let current_line = self.estimate_current_line(active_idx);
+        self.render_breadcrumb_symbol(ui, active_idx, current_line);
+    }
+
+    /// Render a single breadcrumb path segment with click behavior.
+    fn render_breadcrumb_segment(
+        &mut self,
+        ui: &mut egui::Ui,
+        segment: &str,
+        i: usize,
+        segments: &[&str],
+    ) {
+        let is_last = i == segments.len() - 1;
+        let text = if is_last {
+            egui::RichText::new(segment)
+                .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                .strong()
+        } else {
+            egui::RichText::new(segment)
+                .size(self.settings.font_size * FONT_SCALE_SMALL)
+                .color(self.semantic.secondary_text)
+        };
+        let hover = if is_last {
+            "Scroll to top".to_string()
+        } else {
+            format!("Expand directory {}", segments[..=i].join("/"))
+        };
+        if ui
+            .add(egui::Label::new(text).sense(egui::Sense::click()))
+            .on_hover_text(hover)
+            .clicked()
+        {
+            self.handle_breadcrumb_segment_click(is_last, &segments[..=i]);
+        }
+    }
+
+    /// Estimate the currently visible line from selection or scroll offset.
+    fn estimate_current_line(&self, active_idx: usize) -> usize {
+        if let Some(line) = self.viewer.tabs[active_idx].selection_start {
+            return line;
+        }
+        let offset = self.viewer.tabs[active_idx].scroll_offset;
+        if offset > 0.0 {
+            (offset / 16.0) as usize + 1
+        } else {
+            1
+        }
+    }
+
+    /// Render the current symbol indicator in the breadcrumb bar.
+    fn render_breadcrumb_symbol(&self, ui: &mut egui::Ui, active_idx: usize, current_line: usize) {
         if let Some(sym) =
             symbols::enclosing_symbol(&self.viewer.tabs[active_idx].symbols, current_line)
         {
