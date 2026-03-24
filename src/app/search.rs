@@ -184,8 +184,7 @@ impl DirigentApp {
 
     /// Handle Enter/Shift+Enter navigation in the search-in-file bar.
     fn handle_search_in_file_enter(&mut self, ui: &egui::Ui, response: &egui::Response) {
-        let enter_pressed =
-            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if !enter_pressed {
             return;
         }
@@ -345,52 +344,7 @@ impl DirigentApp {
         egui::ScrollArea::vertical()
             .id_salt("search_files_scroll")
             .show(ui, |ui| {
-                if self.search.in_files_searching {
-                    ui.label(
-                        egui::RichText::new("Searching...")
-                            .italics()
-                            .color(self.semantic.tertiary_text),
-                    );
-                    ui.ctx()
-                        .request_repaint_after(std::time::Duration::from_millis(100));
-                } else if self.search.in_files_results.is_empty()
-                    && !self.search.in_files_query.is_empty()
-                {
-                    ui.label(
-                        egui::RichText::new("No results found.")
-                            .italics()
-                            .color(self.semantic.tertiary_text),
-                    );
-                }
-
-                let mut current_file: Option<&str> = None;
-                for result in &self.search.in_files_results {
-                    if current_file != Some(&result.rel_path) {
-                        current_file = Some(&result.rel_path);
-                        ui.add_space(SPACE_SM);
-                        ui.label(
-                            egui::RichText::new(&result.rel_path)
-                                .strong()
-                                .small()
-                                .color(self.semantic.accent),
-                        );
-                    }
-
-                    let line_label = format!("{:>4}:", result.line_number);
-                    let content_preview = if result.line_content.len() > 80 {
-                        format!("{}...", super::truncate_str(&result.line_content, 77))
-                    } else {
-                        result.line_content.clone()
-                    };
-                    let text = format!("{} {}", line_label, content_preview.trim());
-
-                    if ui
-                        .selectable_label(false, egui::RichText::new(&text).monospace().small())
-                        .clicked()
-                    {
-                        navigate_to = Some((result.file_path.clone(), result.line_number));
-                    }
-                }
+                navigate_to = self.render_search_results_list(ui);
             });
 
         if let Some((path, line)) = navigate_to {
@@ -398,6 +352,76 @@ impl DirigentApp {
             self.load_file(path);
             self.viewer.scroll_to_line = Some(line);
         }
+    }
+
+    /// Spawn a background thread to search files for the current query.
+    fn start_file_search(&mut self) {
+        let Some(ref tree) = self.file_tree else {
+            return;
+        };
+        self.search.in_files_searching = true;
+        self.search.in_files_results.clear();
+        let root = self.project_root.clone();
+        let query = self.search.in_files_query.clone();
+        let mut files = Vec::new();
+        collect_files(&tree.entries, &mut files);
+        let tx = self.search.search_result_tx.clone();
+        std::thread::spawn(move || {
+            let results = search_files_parallel(&root, &files, &query, 500);
+            let _ = tx.send(results);
+        });
+    }
+
+    /// Render the list of search results inside a scroll area.
+    fn render_search_results_list(&self, ui: &mut egui::Ui) -> Option<(PathBuf, usize)> {
+        if self.search.in_files_searching {
+            ui.label(
+                egui::RichText::new("Searching...")
+                    .italics()
+                    .color(self.semantic.tertiary_text),
+            );
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        } else if self.search.in_files_results.is_empty() && !self.search.in_files_query.is_empty()
+        {
+            ui.label(
+                egui::RichText::new("No results found.")
+                    .italics()
+                    .color(self.semantic.tertiary_text),
+            );
+        }
+
+        let mut navigate_to = None;
+        let mut current_file: Option<&str> = None;
+        for result in &self.search.in_files_results {
+            if current_file != Some(&result.rel_path) {
+                current_file = Some(&result.rel_path);
+                ui.add_space(SPACE_SM);
+                ui.label(
+                    egui::RichText::new(&result.rel_path)
+                        .strong()
+                        .small()
+                        .color(self.semantic.accent),
+                );
+            }
+
+            let line_label = format!("{:>4}:", result.line_number);
+            let content_preview = if result.line_content.len() > 80 {
+                format!("{}...", super::truncate_str(&result.line_content, 77))
+            } else {
+                result.line_content.clone()
+            };
+            let text = format!("{} {}", line_label, content_preview.trim());
+
+            if ui
+                .selectable_label(false, egui::RichText::new(&text).monospace().small())
+                .clicked()
+            {
+                navigate_to = Some((result.file_path.clone(), result.line_number));
+            }
+        }
+
+        navigate_to
     }
 
     /// Handle global keyboard shortcuts for search (called from update loop).
