@@ -25,6 +25,7 @@ struct FileTreeCtx<'a> {
     semantic: &'a SemanticColors,
     depth: usize,
     font_size: f32,
+    status_msg: &'a mut Option<String>,
 }
 
 /// Actions triggered from the file tree context menu.
@@ -484,7 +485,14 @@ impl DirigentApp {
         } else {
             rel.clone()
         };
-        let current = std::fs::read_to_string(&gitignore).unwrap_or_default();
+        let current = match std::fs::read_to_string(&gitignore) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                self.set_status_message(format!("Failed to read .gitignore: {}", e));
+                return;
+            }
+        };
         let separator = if current.ends_with('\n') || current.is_empty() {
             ""
         } else {
@@ -1129,15 +1137,27 @@ impl DirigentApp {
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        if let Ok(id) = self.db.insert_cue(&text, "", 0, None, &images) {
-            self.global_prompt_images.clear();
-            self.global_prompt_input.clear();
-            if run_immediately {
-                let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                self.claude.expand_running = true;
-                self.trigger_claude(id);
+        match self.db.insert_cue(&text, "", 0, None, &images) {
+            Ok(id) => {
+                self.global_prompt_images.clear();
+                self.global_prompt_input.clear();
+                if run_immediately {
+                    match self.db.update_cue_status(id, CueStatus::Ready) {
+                        Ok(()) => {
+                            self.claude.expand_running = true;
+                            self.trigger_claude(id);
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Failed to update cue status: {e}"));
+                        }
+                    }
+                }
+                self.reload_cues();
             }
-            self.reload_cues();
+            Err(e) => {
+                self.set_status_message(format!("Failed to create cue: {e}"));
+                self.reload_cues();
+            }
         }
     }
 
@@ -1363,12 +1383,20 @@ fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, term
     };
 
     if ui.button(reveal_label).clicked() {
-        let _ = spawn_reveal(reveal_path);
-        ui.close();
+        match spawn_reveal(reveal_path) {
+            Ok(_) => ui.close(),
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Failed to reveal: {e}"));
+            }
+        }
     }
     if ui.button("Open in Terminal").clicked() {
-        let _ = spawn_terminal(terminal_path);
-        ui.close();
+        match spawn_terminal(terminal_path) {
+            Ok(_) => ui.close(),
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Failed to open terminal: {e}"));
+            }
+        }
     }
 }
 
