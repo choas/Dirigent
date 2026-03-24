@@ -7,12 +7,16 @@ use crate::git;
 
 /// Expand a leading `~` to the user's home directory.
 fn expand_tilde(raw: &str) -> PathBuf {
-    if raw == "~" || raw.starts_with("~/") {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        if raw == "~" {
-            home
-        } else {
-            home.join(&raw[2..])
+    if raw == "~" || raw.starts_with("~/") || raw.starts_with("~\\") {
+        match dirs::home_dir() {
+            Some(home) => {
+                if raw == "~" {
+                    home
+                } else {
+                    home.join(&raw[2..])
+                }
+            }
+            None => PathBuf::from(raw),
         }
     } else {
         PathBuf::from(raw)
@@ -30,22 +34,18 @@ fn format_size(size_bytes: u64) -> String {
 }
 
 /// Reveal a file or directory in the platform's file manager.
-fn reveal_in_file_manager(path: &std::path::Path) {
+fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), std::io::Error> {
     #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open")
-            .arg("-R")
-            .arg(path)
-            .spawn();
-    }
+    let mut child = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()?;
     #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path.display()))
-            .spawn();
-    }
+    let mut child = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()?;
     #[cfg(target_os = "linux")]
-    {
+    let mut child = {
         let dir = if path.is_dir() {
             path.to_path_buf()
         } else {
@@ -53,8 +53,13 @@ fn reveal_in_file_manager(path: &std::path::Path) {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| path.to_path_buf())
         };
-        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
-    }
+        std::process::Command::new("xdg-open").arg(&dir).spawn()?
+    };
+
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Worktree label based on its current/locked state.
@@ -334,7 +339,9 @@ impl DirigentApp {
         }
 
         if let Some(path) = actions.reveal_path {
-            reveal_in_file_manager(&path);
+            if let Err(e) = reveal_in_file_manager(&path) {
+                self.set_status_message(format!("Failed to reveal in file manager: {}", e));
+            }
         }
     }
 
