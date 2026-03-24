@@ -320,7 +320,9 @@ unsafe fn deliver_notification(
         content:content
         trigger:trigger];
 
-    let mut success = false;
+    // Heap-allocate `success` so that a late-firing completion handler
+    // (after timeout) does not write to a dead stack slot.
+    let success = Box::into_raw(Box::new(false));
     let semaphore = dispatch_semaphore_create(0);
 
     let stack_block = CompletionBlock {
@@ -329,7 +331,7 @@ unsafe fn deliver_notification(
         reserved: 0,
         invoke: completion_invoke,
         descriptor: &COMPLETION_DESC,
-        success: &mut success,
+        success,
         semaphore,
     };
 
@@ -345,15 +347,21 @@ unsafe fn deliver_notification(
     let timeout = dispatch_time(0, 2_000_000_000);
     let wait_result = dispatch_semaphore_wait(semaphore, timeout);
 
-    _Block_release(heap_block);
-    dispatch_release(semaphore);
-
     if wait_result != 0 {
-        // Timed out — treat as scheduling failure.
+        // Timed out — intentionally leak the heap-allocated `success`
+        // so a late-firing completion handler still writes to valid memory.
+        _Block_release(heap_block);
+        dispatch_release(semaphore);
         return false;
     }
 
-    success
+    // Completion handler ran within the timeout — safe to read and free.
+    let result = *success;
+    drop(Box::from_raw(success));
+    _Block_release(heap_block);
+    dispatch_release(semaphore);
+
+    result
 }
 
 /// Fallback notification via `osascript display notification`.
