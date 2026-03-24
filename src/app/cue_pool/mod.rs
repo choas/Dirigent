@@ -257,35 +257,43 @@ impl DirigentApp {
 
     fn render_prompt_history_search_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let (search_icon, hover) = if self.prompt_history_active {
-                ("\u{2715}", "Close search")
-            } else {
-                ("\u{1F50D}", "Search past prompts")
-            };
-            if ui.small_button(search_icon).on_hover_text(hover).clicked() {
-                self.prompt_history_active = !self.prompt_history_active;
-                if !self.prompt_history_active {
-                    self.prompt_history_query.clear();
-                    self.prompt_history_results.clear();
-                }
-            }
+            self.render_prompt_history_toggle(ui);
             if self.prompt_history_active {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.prompt_history_query)
-                        .desired_width(ui.available_width())
-                        .hint_text("Search past cues...")
-                        .font(egui::TextStyle::Small),
-                );
-                if response.changed() && self.prompt_history_query.len() >= 2 {
-                    self.prompt_history_results = self
-                        .db
-                        .search_cue_history(&self.prompt_history_query, 10)
-                        .unwrap_or_default();
-                } else if self.prompt_history_query.len() < 2 {
-                    self.prompt_history_results.clear();
-                }
+                self.render_prompt_history_input(ui);
             }
         });
+    }
+
+    fn render_prompt_history_toggle(&mut self, ui: &mut egui::Ui) {
+        let (search_icon, hover) = if self.prompt_history_active {
+            ("\u{2715}", "Close search")
+        } else {
+            ("\u{1F50D}", "Search past prompts")
+        };
+        if ui.small_button(search_icon).on_hover_text(hover).clicked() {
+            self.prompt_history_active = !self.prompt_history_active;
+            if !self.prompt_history_active {
+                self.prompt_history_query.clear();
+                self.prompt_history_results.clear();
+            }
+        }
+    }
+
+    fn render_prompt_history_input(&mut self, ui: &mut egui::Ui) {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut self.prompt_history_query)
+                .desired_width(ui.available_width())
+                .hint_text("Search past cues...")
+                .font(egui::TextStyle::Small),
+        );
+        if response.changed() && self.prompt_history_query.len() >= 2 {
+            self.prompt_history_results = self
+                .db
+                .search_cue_history(&self.prompt_history_query, 10)
+                .unwrap_or_default();
+        } else if self.prompt_history_query.len() < 2 {
+            self.prompt_history_results.clear();
+        }
     }
 
     fn render_prompt_history_results(
