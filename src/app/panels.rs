@@ -401,11 +401,12 @@ impl DirigentApp {
                     self.viewer.active().is_some_and(|t| !t.symbols.is_empty()),
                     self.git.show_log,
                 );
-                let tree_action = egui::ScrollArea::vertical()
+                let (tree_action, tree_status_msg) = egui::ScrollArea::vertical()
                     .id_salt("file_tree_scroll")
                     .max_height(file_tree_height)
                     .show(ui, |ui| {
                         let mut action = None;
+                        let mut status_msg = None;
                         if let Some(ref tree) = self.file_tree {
                             let current_file = self.viewer.current_file().cloned();
                             let mut ctx = FileTreeCtx {
@@ -417,14 +418,18 @@ impl DirigentApp {
                                 semantic: &self.semantic,
                                 depth: 0,
                                 font_size: self.settings.font_size,
+                                status_msg: &mut status_msg,
                             };
                             for entry in &tree.entries {
                                 Self::render_file_entry(ui, entry, &mut ctx);
                             }
                         }
-                        action
+                        (action, status_msg)
                     })
                     .inner;
+                if let Some(msg) = tree_status_msg {
+                    self.set_status_message(msg);
+                }
                 self.handle_file_tree_action(tree_action);
 
                 ui.separator();
@@ -743,7 +748,14 @@ impl DirigentApp {
             }
         }
 
-        render_dir_context_menu(&response, entry, ctx.project_root, ctx.semantic, ctx.action);
+        render_dir_context_menu(
+            &response,
+            entry,
+            ctx.project_root,
+            ctx.semantic,
+            ctx.action,
+            ctx.status_msg,
+        );
 
         if is_expanded {
             let child_depth = ctx.depth + 1;
@@ -803,6 +815,7 @@ impl DirigentApp {
             ctx.project_root,
             ctx.semantic,
             ctx.action,
+            ctx.status_msg,
         );
     }
 
@@ -1291,6 +1304,7 @@ fn render_dir_context_menu(
     project_root: &Path,
     semantic: &SemanticColors,
     action: &mut Option<FileTreeAction>,
+    status_msg: &mut Option<String>,
 ) {
     let entry_path = entry.path.clone();
     let rel_path = entry_path
@@ -1303,7 +1317,7 @@ fn render_dir_context_menu(
     response.context_menu(|ui| {
         render_copy_path_items(ui, &entry_path, &rel_path);
         ui.separator();
-        render_reveal_open_terminal_items(ui, &entry_path, &entry_path);
+        render_reveal_open_terminal_items(ui, &entry_path, &entry_path, status_msg);
         ui.separator();
         if !is_ignored && ui.button("Add to .gitignore").clicked() {
             *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
@@ -1331,6 +1345,7 @@ fn render_file_context_menu(
     _project_root: &Path,
     semantic: &SemanticColors,
     action: &mut Option<FileTreeAction>,
+    status_msg: &mut Option<String>,
 ) {
     let entry_path = entry.path.clone();
     let rel_clone = rel.to_string();
@@ -1340,7 +1355,7 @@ fn render_file_context_menu(
     response.context_menu(|ui| {
         render_copy_path_items(ui, &entry_path, &rel_clone);
         ui.separator();
-        render_reveal_open_terminal_items(ui, &entry_path, &parent_dir);
+        render_reveal_open_terminal_items(ui, &entry_path, &parent_dir, status_msg);
         ui.separator();
         if !is_ignored && ui.button("Add to .gitignore").clicked() {
             *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
@@ -1373,7 +1388,12 @@ fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
 }
 
 /// Render "Reveal in File Manager" and "Open in Terminal" context menu items.
-fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, terminal_path: &Path) {
+fn render_reveal_open_terminal_items(
+    ui: &mut egui::Ui,
+    reveal_path: &Path,
+    terminal_path: &Path,
+    status_msg: &mut Option<String>,
+) {
     let reveal_label = if cfg!(target_os = "macos") {
         "Reveal in Finder"
     } else if cfg!(target_os = "windows") {
@@ -1386,7 +1406,7 @@ fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, term
         match spawn_reveal(reveal_path) {
             Ok(_) => ui.close(),
             Err(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Failed to reveal: {e}"));
+                *status_msg = Some(format!("Failed to reveal: {e}"));
             }
         }
     }
@@ -1394,7 +1414,7 @@ fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, term
         match spawn_terminal(terminal_path) {
             Ok(_) => ui.close(),
             Err(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Failed to open terminal: {e}"));
+                *status_msg = Some(format!("Failed to open terminal: {e}"));
             }
         }
     }
