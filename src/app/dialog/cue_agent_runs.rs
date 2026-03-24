@@ -17,6 +17,8 @@ impl DirigentApp {
             close = self.render_agent_runs_header(ui, &cue_text);
             ui.separator();
 
+            self.render_agent_trigger_buttons(ui);
+
             if runs.is_empty() {
                 ui.label(
                     egui::RichText::new("No agent runs recorded for this cue.")
@@ -25,8 +27,6 @@ impl DirigentApp {
                 );
                 return;
             }
-
-            self.render_agent_trigger_buttons(ui);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
