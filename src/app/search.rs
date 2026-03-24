@@ -69,8 +69,8 @@ fn search_single_file(
             line_number: idx + 1,
             line_content: line.to_string(),
         });
-        found_count.fetch_add(1, Ordering::Relaxed);
-        if found_count.load(Ordering::Relaxed) >= max_results {
+        let previous = found_count.fetch_add(1, Ordering::Relaxed);
+        if previous + 1 >= max_results {
             return;
         }
     }
