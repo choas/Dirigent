@@ -292,6 +292,17 @@ struct InlineLineColors {
     gutter_color: egui::Color32,
 }
 
+/// Shared context for rendering an inline row, bundling position, search,
+/// and color state so individual render functions need fewer parameters.
+struct InlineRowContext<'a> {
+    file_idx: usize,
+    hunk_idx: usize,
+    current_match: Option<(usize, usize, usize)>,
+    query_lower: &'a str,
+    colors: &'a SemanticColors,
+    lc: &'a InlineLineColors,
+}
+
 /// Determine prefix, text color, and background color for a diff line kind.
 fn line_style(
     kind: DiffLineKind,
@@ -344,8 +355,16 @@ fn render_inline_file_hunks(
     };
 
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+        let ctx = InlineRowContext {
+            file_idx,
+            hunk_idx,
+            current_match: search.as_ref().and_then(|s| s.current),
+            query_lower: search.as_ref().map(|s| s.query_lower).unwrap_or(""),
+            colors,
+            lc: &lc,
+        };
         for (line_idx, line) in hunk.lines.iter().enumerate() {
-            render_inline_line(ui, line, file_idx, hunk_idx, line_idx, search, colors, &lc);
+            render_inline_line(ui, line, line_idx, &ctx);
         }
         ui.add_space(SPACE_SM);
     }
@@ -355,12 +374,8 @@ fn render_inline_file_hunks(
 fn render_inline_line(
     ui: &mut egui::Ui,
     line: &DiffLine,
-    file_idx: usize,
-    hunk_idx: usize,
     line_idx: usize,
-    search: Option<&DiffSearchHighlight<'_>>,
-    colors: &SemanticColors,
-    lc: &InlineLineColors,
+    ctx: &InlineRowContext<'_>,
 ) {
     let old_num = line
         .old_lineno
@@ -370,25 +385,20 @@ fn render_inline_line(
         .new_lineno
         .map(|n| format!("{:>4}", n))
         .unwrap_or_else(|| "    ".to_string());
-    let (prefix, text_color, bg_color) = line_style(line.kind, lc);
+    let (prefix, text_color, bg_color) = line_style(line.kind, ctx.lc);
 
-    let is_search = is_line_search_match(line, search);
-    let is_current = is_line_current_match(search, file_idx, hunk_idx, line_idx);
+    let is_search =
+        !ctx.query_lower.is_empty() && line.content.to_lowercase().contains(ctx.query_lower);
+    let is_current = ctx.current_match == Some((ctx.file_idx, ctx.hunk_idx, line_idx));
 
     let response = ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
                 .monospace()
-                .color(lc.gutter_color),
+                .color(ctx.lc.gutter_color),
         );
         if is_search {
-            render_highlighted_text(
-                ui,
-                &line.content,
-                search.unwrap().query_lower,
-                text_color,
-                colors,
-            );
+            render_highlighted_text(ui, &line.content, ctx.query_lower, text_color, ctx.colors);
         } else {
             ui.label(
                 egui::RichText::new(&line.content)
@@ -402,7 +412,7 @@ fn render_inline_line(
         response.response.scroll_to_me(Some(egui::Align::Center));
     }
 
-    if let Some(bg) = effective_background(is_current, is_search, bg_color, colors) {
+    if let Some(bg) = effective_background(is_current, is_search, bg_color, ctx.colors) {
         ui.painter().rect_filled(response.response.rect, 0, bg);
     }
 }
@@ -510,6 +520,17 @@ pub(crate) fn render_side_by_side_diff(
     }
 }
 
+/// Shared context for rendering a side-by-side row, bundling position, search,
+/// and color state so individual render functions need fewer parameters.
+struct SbsRowContext<'a> {
+    file_idx: usize,
+    hunk_idx: usize,
+    current_match: Option<(usize, usize, usize)>,
+    query_lower: &'a str,
+    colors: &'a SemanticColors,
+    sc: &'a SbsColors,
+}
+
 /// Render all hunks for a single file in side-by-side mode.
 fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
@@ -530,21 +551,17 @@ fn render_sbs_file_hunks(
         .spacing([SPACE_XS, 0.0])
         .min_col_width(0.0)
         .show(ui, |ui| {
-            let current_match = search.as_ref().and_then(|s| s.current);
-            let query_lower = search.as_ref().map(|s| s.query_lower).unwrap_or("");
+            let ctx = SbsRowContext {
+                file_idx,
+                hunk_idx,
+                current_match: search.as_ref().and_then(|s| s.current),
+                query_lower: search.as_ref().map(|s| s.query_lower).unwrap_or(""),
+                colors,
+                sc,
+            };
 
             for (left, right) in &pairs {
-                render_sbs_row(
-                    ui,
-                    left,
-                    right,
-                    file_idx,
-                    hunk_idx,
-                    current_match,
-                    query_lower,
-                    colors,
-                    sc,
-                );
+                render_sbs_row(ui, left, right, &ctx);
                 ui.end_row();
             }
         });
@@ -573,16 +590,21 @@ fn render_sbs_line_number(ui: &mut egui::Ui, lineno: Option<usize>, gutter_color
     ui.label(egui::RichText::new(text).monospace().color(gutter_color));
 }
 
+/// Style parameters for one side of a side-by-side content cell.
+struct SbsCellStyle {
+    highlight_kind: DiffLineKind,
+    highlight_text: egui::Color32,
+    highlight_bg: egui::Color32,
+    context_text: egui::Color32,
+}
+
 /// Render a content cell on one side of the side-by-side view.
 fn render_sbs_content_cell(
     ui: &mut egui::Ui,
     side: &Option<(usize, DiffLine)>,
     side_is_current: bool,
     query_lower: &str,
-    highlight_kind: DiffLineKind,
-    highlight_text: egui::Color32,
-    highlight_bg: egui::Color32,
-    context_text: egui::Color32,
+    style: &SbsCellStyle,
     colors: &SemanticColors,
 ) {
     let Some((_, ref line)) = side else {
@@ -590,10 +612,10 @@ fn render_sbs_content_cell(
         return;
     };
 
-    let (color, bg) = if line.kind == highlight_kind {
-        (highlight_text, Some(highlight_bg))
+    let (color, bg) = if line.kind == style.highlight_kind {
+        (style.highlight_text, Some(style.highlight_bg))
     } else {
-        (context_text, None)
+        (style.context_text, None)
     };
     let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
     let resp = ui.label(egui::RichText::new(&line.content).monospace().color(color));
@@ -608,39 +630,37 @@ fn render_sbs_row(
     ui: &mut egui::Ui,
     left: &Option<(usize, DiffLine)>,
     right: &Option<(usize, DiffLine)>,
-    file_idx: usize,
-    hunk_idx: usize,
-    current_match: Option<(usize, usize, usize)>,
-    query_lower: &str,
-    colors: &SemanticColors,
-    sc: &SbsColors,
+    ctx: &SbsRowContext<'_>,
 ) {
-    let left_is_current = is_side_current(left, current_match, file_idx, hunk_idx);
-    let right_is_current = is_side_current(right, current_match, file_idx, hunk_idx);
+    let left_is_current = is_side_current(left, ctx.current_match, ctx.file_idx, ctx.hunk_idx);
+    let right_is_current = is_side_current(right, ctx.current_match, ctx.file_idx, ctx.hunk_idx);
     let row_is_current = left_is_current || right_is_current;
 
     // Old line number
     let old_lineno = left.as_ref().and_then(|(_, l)| l.old_lineno);
-    render_sbs_line_number(ui, old_lineno, sc.gutter_color);
+    render_sbs_line_number(ui, old_lineno, ctx.sc.gutter_color);
 
     // Old content
+    let left_style = SbsCellStyle {
+        highlight_kind: DiffLineKind::Deletion,
+        highlight_text: ctx.sc.red_text,
+        highlight_bg: ctx.sc.red_bg,
+        context_text: ctx.sc.context_text,
+    };
     render_sbs_content_cell(
         ui,
         left,
         left_is_current,
-        query_lower,
-        DiffLineKind::Deletion,
-        sc.red_text,
-        sc.red_bg,
-        sc.context_text,
-        colors,
+        ctx.query_lower,
+        &left_style,
+        ctx.colors,
     );
 
     // Separator
     let sep_resp = ui.label(
         egui::RichText::new("\u{2502}")
             .monospace()
-            .color(sc.sep_color),
+            .color(ctx.sc.sep_color),
     );
     if row_is_current {
         sep_resp.scroll_to_me(Some(egui::Align::Center));
@@ -648,19 +668,22 @@ fn render_sbs_row(
 
     // New line number
     let new_lineno = right.as_ref().and_then(|(_, l)| l.new_lineno);
-    render_sbs_line_number(ui, new_lineno, sc.gutter_color);
+    render_sbs_line_number(ui, new_lineno, ctx.sc.gutter_color);
 
     // New content
+    let right_style = SbsCellStyle {
+        highlight_kind: DiffLineKind::Addition,
+        highlight_text: ctx.sc.green_text,
+        highlight_bg: ctx.sc.green_bg,
+        context_text: ctx.sc.context_text,
+    };
     render_sbs_content_cell(
         ui,
         right,
         right_is_current,
-        query_lower,
-        DiffLineKind::Addition,
-        sc.green_text,
-        sc.green_bg,
-        sc.context_text,
-        colors,
+        ctx.query_lower,
+        &right_style,
+        ctx.colors,
     );
 }
 
