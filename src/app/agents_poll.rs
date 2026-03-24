@@ -20,7 +20,7 @@ impl DirigentApp {
         self.update_agent_runtime_state(&result);
 
         let label = self.agent_display_label(result.kind);
-        let dur = format_duration_ms(result.duration_ms);
+        let dur = super::util::format_duration_ms(result.duration_ms);
 
         self.set_agent_status_message(&result, &label, &dur);
         self.log_agent_activity(&result, &label, &dur);
@@ -204,14 +204,5 @@ impl DirigentApp {
         if let Some(flag) = self.agent_state.cancel_flags.get(&kind) {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
-    }
-}
-
-/// Format a duration in milliseconds to a human-readable string.
-fn format_duration_ms(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else {
-        format!("{:.1}s", ms as f64 / 1000.0)
     }
 }

@@ -13,6 +13,7 @@ mod sources_poll;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
+pub(crate) mod util;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

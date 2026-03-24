@@ -126,7 +126,7 @@ impl DirigentApp {
         idx: usize,
         analyze_run_idx: &mut Option<usize>,
     ) {
-        let dur = format_duration_ms(run.duration_ms);
+        let dur = crate::app::util::format_duration_ms(run.duration_ms);
         let (status_icon, status_color) = status_icon_and_color(run, &self.semantic);
 
         ui.horizontal(|ui| {
@@ -226,15 +226,6 @@ impl DirigentApp {
             self.reload_settings_from_disk();
             self.show_settings = true;
         }
-    }
-}
-
-/// Format a duration in milliseconds to a human-readable string.
-fn format_duration_ms(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else {
-        format!("{:.1}s", ms as f64 / 1000.0)
     }
 }
 

@@ -157,7 +157,7 @@ impl DirigentApp {
 
     /// Render a single agent run entry (status, command, output block).
     fn render_agent_run_entry(&self, ui: &mut egui::Ui, run: &AgentRunEntry, idx: usize) {
-        let dur = format_duration(run.duration_ms);
+        let dur = crate::app::util::format_duration_ms(run.duration_ms);
         let (status_icon, status_color) = self.status_icon_and_color(&run.status);
 
         // Run header
@@ -235,14 +235,5 @@ impl DirigentApp {
             "error" => ("!", self.semantic.danger),
             _ => ("\u{25CF}", self.semantic.secondary_text),
         }
-    }
-}
-
-/// Format a duration in milliseconds to a human-readable string.
-fn format_duration(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else {
-        format!("{:.1}s", ms as f64 / 1000.0)
     }
 }
