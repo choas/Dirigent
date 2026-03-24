@@ -625,30 +625,34 @@ impl DirigentApp {
                 .color(self.semantic.secondary_text),
             );
             if self.agents_expanded {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Reset Defaults").clicked() {
-                        self.settings.agents = default_agents();
-                    }
-                    if ui.small_button("+ Add Agent").clicked() {
-                        let id = next_custom_id(&self.settings.agents);
-                        self.settings.agents.push(AgentConfig {
-                            kind: AgentKind::Custom(id),
-                            name: format!("Agent {}", id),
-                            enabled: true,
-                            command: String::new(),
-                            trigger: AgentTrigger::Manual,
-                            timeout_secs: 120,
-                            working_dir: String::new(),
-                            before_run: String::new(),
-                        });
-                    }
-                });
+                self.render_settings_agents_header_actions(ui);
             }
         });
 
         if self.agents_expanded {
             self.render_settings_agents_list(ui, fs, close);
         }
+    }
+
+    fn render_settings_agents_header_actions(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Reset Defaults").clicked() {
+                self.settings.agents = default_agents();
+            }
+            if ui.small_button("+ Add Agent").clicked() {
+                let id = next_custom_id(&self.settings.agents);
+                self.settings.agents.push(AgentConfig {
+                    kind: AgentKind::Custom(id),
+                    name: format!("Agent {}", id),
+                    enabled: true,
+                    command: String::new(),
+                    trigger: AgentTrigger::Manual,
+                    timeout_secs: 120,
+                    working_dir: String::new(),
+                    before_run: String::new(),
+                });
+            }
+        });
     }
 
     fn render_settings_agents_list(&mut self, ui: &mut egui::Ui, fs: f32, close: &mut bool) {
