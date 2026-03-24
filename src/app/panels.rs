@@ -1401,7 +1401,7 @@ fn spawn_reveal(path: &Path) -> std::io::Result<std::process::Child> {
     } else if cfg!(target_os = "windows") {
         if path.is_file() {
             std::process::Command::new("explorer")
-                .arg(format!("/select,{}", path.display()))
+                .arg(format!("/select,\"{}\"", path.display()))
                 .spawn()
         } else {
             std::process::Command::new("explorer").arg(path).spawn()
