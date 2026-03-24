@@ -777,7 +777,7 @@ impl DirigentApp {
             .strip_prefix(ctx.project_root)
             .unwrap_or(&entry.path)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
         let status_letter = ctx.dirty_files.get(&rel).copied();
 
         let (row_rect, response) = allocate_tree_row(ui);
@@ -831,7 +831,7 @@ impl DirigentApp {
                 .strip_prefix(project_root)
                 .unwrap_or(&entry.path)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             return dirty_files.contains_key(&rel);
         }
         entry
