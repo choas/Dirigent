@@ -259,22 +259,15 @@ pub(crate) struct OpenCodeRunConfig<'a> {
 }
 
 /// Resolve the opencode binary name and verify it exists on PATH.
-fn resolve_opencode_bin(cli_path: &str) -> Result<&str, OpenCodeError> {
+fn resolve_opencode_bin(cli_path: &str) -> Result<String, OpenCodeError> {
     let bin = if cli_path.is_empty() {
         "opencode"
     } else {
         cli_path
     };
-    let found = Command::new("which")
-        .arg(bin)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if found {
-        Ok(bin)
-    } else {
-        Err(OpenCodeError::NotFound)
-    }
+    which::which(bin)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|_| OpenCodeError::NotFound)
 }
 
 /// Build the opencode Command with arguments and environment variables.
@@ -291,7 +284,11 @@ fn build_opencode_command(
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
-    for arg in config.extra_args.split_whitespace().filter(|a| !a.is_empty()) {
+    for arg in config
+        .extra_args
+        .split_whitespace()
+        .filter(|a| !a.is_empty())
+    {
         cmd.arg(arg);
     }
     apply_env_vars(&mut cmd, config.env_vars);
@@ -418,9 +415,15 @@ pub(crate) fn invoke_opencode_streaming(
 
     let opencode_bin = resolve_opencode_bin(config.cli_path)?;
 
-    run_hook_script("pre-run", config.pre_run_script, project_root, &mut on_log, true)?;
+    run_hook_script(
+        "pre-run",
+        config.pre_run_script,
+        project_root,
+        &mut on_log,
+        true,
+    )?;
 
-    let mut child = build_opencode_command(opencode_bin, prompt, project_root, config)
+    let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)
         .spawn()
         .map_err(OpenCodeError::SpawnFailed)?;
 
@@ -433,7 +436,9 @@ pub(crate) fn invoke_opencode_streaming(
 
     let stderr_thread = std::thread::spawn(move || {
         let mut s = String::new();
-        std::io::BufReader::new(stderr_handle).read_to_string(&mut s).ok();
+        std::io::BufReader::new(stderr_handle)
+            .read_to_string(&mut s)
+            .ok();
         s
     });
 
@@ -452,7 +457,13 @@ pub(crate) fn invoke_opencode_streaming(
         on_log(&format!("\nError: {}\n", stderr));
     }
 
-    run_hook_script("post-run", config.post_run_script, project_root, &mut on_log, false)?;
+    run_hook_script(
+        "post-run",
+        config.post_run_script,
+        project_root,
+        &mut on_log,
+        false,
+    )?;
 
     Ok(OpenCodeResponse {
         stdout: final_result,

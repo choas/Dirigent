@@ -19,6 +19,7 @@ rfd = "0.17"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 regex = "1"
+which = "8.0.2"
 pulldown-cmark = "0.12"
 libc = "0.2"
 
