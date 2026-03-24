@@ -348,10 +348,11 @@ unsafe fn deliver_notification(
     let wait_result = dispatch_semaphore_wait(semaphore, timeout);
 
     if wait_result != 0 {
-        // Timed out — intentionally leak the heap-allocated `success`
-        // so a late-firing completion handler still writes to valid memory.
-        _Block_release(heap_block);
-        dispatch_release(semaphore);
+        // Timed out — intentionally leak `success`, `heap_block`, and
+        // `semaphore` so a late-firing completion handler can still safely
+        // dereference the block's captured pointers and signal the semaphore.
+        // The leak is tiny (one bool + one ObjC block + one semaphore) and
+        // only occurs when the notification system fails to respond in time.
         return false;
     }
 
