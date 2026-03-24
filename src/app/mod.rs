@@ -26,7 +26,6 @@ const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
 const LOG_SYNC_INTERVAL: Duration = Duration::from_secs(3);
 const REPAINT_FAST: Duration = Duration::from_millis(100);
 const REPAINT_SLOW: Duration = Duration::from_millis(500);
-const SOURCE_POLL_REPAINT: Duration = Duration::from_secs(30);
 const ELAPSED_REPAINT: Duration = Duration::from_secs(1);
 
 // -- Spacing scale (4/8/16/24 point grid) --
@@ -1249,7 +1248,7 @@ impl DirigentApp {
         existing_id: i64,
         existing_text: &str,
         existing_status: &str,
-    ) -> Result<Option<&'static str>, rusqlite::Error> {
+    ) -> anyhow::Result<Option<&'static str>> {
         let text_changed = existing_text.trim() != finding.text.trim();
         let is_completed = existing_status == "Done" || existing_status == "Archived";
         if text_changed {
@@ -1907,13 +1906,25 @@ impl DirigentApp {
         if has_async_git {
             ctx.request_repaint_after(REPAINT_SLOW);
         }
-        let has_source_polling = self
-            .settings
-            .sources
-            .iter()
-            .any(|s| s.enabled && s.poll_interval_secs > 0);
-        if has_source_polling {
-            ctx.request_repaint_after(SOURCE_POLL_REPAINT);
+        // Compute the earliest next source poll and schedule repaint accordingly.
+        let mut min_source_delay = None::<Duration>;
+        for s in &self.settings.sources {
+            if !s.enabled || s.poll_interval_secs == 0 {
+                continue;
+            }
+            let interval = Duration::from_secs(s.poll_interval_secs);
+            let remaining = match self.sources.last_poll.get(&s.name) {
+                Some(last) => interval.saturating_sub(last.elapsed()),
+                None => Duration::ZERO, // Never polled yet — poll immediately.
+            };
+            let clamped = remaining.max(Duration::from_secs(1));
+            min_source_delay = Some(match min_source_delay {
+                Some(cur) => cur.min(clamped),
+                None => clamped,
+            });
+        }
+        if let Some(delay) = min_source_delay {
+            ctx.request_repaint_after(delay);
         }
     }
 
