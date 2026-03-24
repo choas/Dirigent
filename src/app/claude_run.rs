@@ -238,18 +238,12 @@ fn run_opencode_provider(
         pre_run_script: &config.pre_run_script,
         post_run_script: &config.post_run_script,
     };
-    let res = opencode::invoke_opencode_streaming(
-        prompt,
-        project_root,
-        &opencode_config,
-        on_log,
-        cancel,
-    );
+    let res =
+        opencode::invoke_opencode_streaming(prompt, project_root, &opencode_config, on_log, cancel);
     match res {
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| git::get_working_diff(project_root, &[]))
             } else {
                 git::get_working_diff(project_root, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
