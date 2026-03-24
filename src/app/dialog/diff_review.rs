@@ -115,6 +115,16 @@ impl DirigentApp {
         actions: &mut DiffReviewActions,
     ) {
         let prefix = if read_only { "Commit" } else { "Cue" };
+        let arrow = if prompt_expanded {
+            "\u{25BC}"
+        } else {
+            "\u{25B6}"
+        };
+        let hover = if prompt_expanded {
+            "Hide prompt"
+        } else {
+            "Show prompt"
+        };
         ui.horizontal(|ui| {
             if ui.button(icon("\u{2190} Back", fs)).clicked() {
                 actions.close = true;
@@ -122,31 +132,32 @@ impl DirigentApp {
             ui.separator();
             ui.strong("Diff Review");
             ui.separator();
-            let arrow = if prompt_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
             if ui
                 .button(icon(&format!("{} {}", arrow, prefix), fs))
-                .on_hover_text(if prompt_expanded {
-                    "Hide prompt"
-                } else {
-                    "Show prompt"
-                })
+                .on_hover_text(hover)
                 .clicked()
             {
                 actions.toggle_prompt = true;
             }
-            if !prompt_expanded {
-                let truncated = if cue_text.len() > 80 {
-                    format!("{}...", crate::app::truncate_str(cue_text, 77))
-                } else {
-                    cue_text.to_string()
-                };
-                ui.label(egui::RichText::new(truncated).color(sem.secondary_text));
-            }
+            Self::render_collapsed_cue_text(ui, sem, prompt_expanded, cue_text);
         });
+    }
+
+    fn render_collapsed_cue_text(
+        ui: &mut egui::Ui,
+        sem: &SemanticColors,
+        prompt_expanded: bool,
+        cue_text: &str,
+    ) {
+        if prompt_expanded {
+            return;
+        }
+        let truncated = if cue_text.len() > 80 {
+            format!("{}...", crate::app::truncate_str(cue_text, 77))
+        } else {
+            cue_text.to_string()
+        };
+        ui.label(egui::RichText::new(truncated).color(sem.secondary_text));
     }
 
     fn render_diff_prompt_section(
