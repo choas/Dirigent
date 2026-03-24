@@ -122,23 +122,25 @@ impl DirigentApp {
     /// Updates open tabs after a rename: replaces the tab for a single file,
     /// or updates paths for all tabs inside a renamed directory.
     fn update_tabs_after_rename(&mut self, old_path: &Path, new_path: &PathBuf, is_dir: bool) {
-        if !is_dir {
-            if let Some(idx) = self.viewer.find_tab(&old_path.to_path_buf()) {
-                if let Some(new_tab) = super::super::create_tab_state(new_path) {
-                    self.viewer.tabs[idx] = new_tab;
-                } else {
-                    eprintln!(
-                        "Warning: failed to create tab state for renamed file: {}",
-                        new_path.display()
-                    );
-                    self.viewer.close_tab(idx);
+        if is_dir {
+            for tab in &mut self.viewer.tabs {
+                if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
+                    tab.file_path = new_path.join(rel);
                 }
             }
             return;
         }
-        for tab in &mut self.viewer.tabs {
-            if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
-                tab.file_path = new_path.join(rel);
+        let Some(idx) = self.viewer.find_tab(&old_path.to_path_buf()) else {
+            return;
+        };
+        match super::super::create_tab_state(new_path) {
+            Some(new_tab) => self.viewer.tabs[idx] = new_tab,
+            None => {
+                eprintln!(
+                    "Warning: failed to create tab state for renamed file: {}",
+                    new_path.display()
+                );
+                self.viewer.close_tab(idx);
             }
         }
     }

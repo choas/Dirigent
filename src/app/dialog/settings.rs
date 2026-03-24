@@ -134,11 +134,7 @@ impl DirigentApp {
             .selected_text(&self.settings.claude_model)
             .show_ui(ui, |ui| {
                 for model in &["claude-opus-4-6", "claude-sonnet-4-6"] {
-                    ui.selectable_value(
-                        &mut self.settings.claude_model,
-                        model.to_string(),
-                        *model,
-                    );
+                    ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
                 }
             });
     }
