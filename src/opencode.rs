@@ -258,101 +258,93 @@ pub(crate) struct OpenCodeRunConfig<'a> {
     pub post_run_script: &'a str,
 }
 
-pub(crate) fn invoke_opencode_streaming(
+/// Resolve the opencode binary name and verify it exists on PATH.
+fn resolve_opencode_bin(cli_path: &str) -> Result<&str, OpenCodeError> {
+    let bin = if cli_path.is_empty() {
+        "opencode"
+    } else {
+        cli_path
+    };
+    let found = Command::new("which")
+        .arg(bin)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if found {
+        Ok(bin)
+    } else {
+        Err(OpenCodeError::NotFound)
+    }
+}
+
+/// Build the opencode Command with arguments and environment variables.
+fn build_opencode_command(
+    opencode_bin: &str,
     prompt: &str,
     project_root: &Path,
     config: &OpenCodeRunConfig<'_>,
-    mut on_log: impl FnMut(&str),
-    cancel: Arc<AtomicBool>,
-) -> Result<OpenCodeResponse, OpenCodeError> {
-    use std::io::{BufRead, Read};
+) -> Command {
     use std::process::Stdio;
-
-    let opencode_bin = if config.cli_path.is_empty() {
-        "opencode"
-    } else {
-        config.cli_path
-    };
-
-    let which_result = Command::new("which").arg(opencode_bin).output();
-    match which_result {
-        Ok(output) if !output.status.success() => return Err(OpenCodeError::NotFound),
-        Err(_) => return Err(OpenCodeError::NotFound),
-        _ => {}
-    }
 
     let mut cmd = Command::new(opencode_bin);
     cmd.arg("run").arg(prompt).arg("--format").arg("json");
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
-    for arg in config.extra_args.split_whitespace() {
-        if !arg.is_empty() {
-            cmd.arg(arg);
-        }
+    for arg in config.extra_args.split_whitespace().filter(|a| !a.is_empty()) {
+        cmd.arg(arg);
     }
+    apply_env_vars(&mut cmd, config.env_vars);
+    cmd.current_dir(project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
+}
 
-    // Apply user-supplied environment variables (KEY=VALUE per line)
-    for line in config.env_vars.lines() {
+/// Parse KEY=VALUE lines and apply them as environment variables.
+fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
+    for line in env_vars.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            if !key.is_empty() {
-                cmd.env(key, value);
-            }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.is_empty() {
+            cmd.env(key, value.trim());
         }
     }
+}
 
-    // Run pre-run script
-    run_hook_script(
-        "pre-run",
-        config.pre_run_script,
-        project_root,
-        &mut on_log,
-        true,
-    )?;
-
-    let mut child = cmd
-        .current_dir(project_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(OpenCodeError::SpawnFailed)?;
-
-    let stderr_handle = child.stderr.take().expect("stderr must be piped");
-    let stdout_handle = child.stdout.take().expect("stdout must be piped");
-
-    let child = Arc::new(Mutex::new(child));
-
-    let done = Arc::new(AtomicBool::new(false));
-    let watchdog = {
-        let child = Arc::clone(&child);
-        let cancel = Arc::clone(&cancel);
-        let done = Arc::clone(&done);
-        std::thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
-                if cancel.load(Ordering::Relaxed) {
-                    if let Ok(mut c) = child.lock() {
-                        let _ = c.kill();
-                    }
-                    return;
-                }
-                std::thread::sleep(WATCHDOG_POLL_INTERVAL);
+/// Spawn a watchdog thread that kills the child process on cancellation.
+fn spawn_watchdog(
+    child: &Arc<Mutex<std::process::Child>>,
+    cancel: &Arc<AtomicBool>,
+    done: &Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    let child = Arc::clone(child);
+    let cancel = Arc::clone(cancel);
+    let done = Arc::clone(done);
+    std::thread::spawn(move || {
+        while !done.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
+                let _ = child.lock().map(|mut c| c.kill());
+                return;
             }
-        })
-    };
+            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
+        }
+    })
+}
 
-    let stderr_thread = std::thread::spawn(move || {
-        let mut s = String::new();
-        std::io::BufReader::new(stderr_handle)
-            .read_to_string(&mut s)
-            .ok();
-        s
-    });
+/// Process the JSON event stream from stdout, collecting results and edited files.
+fn process_event_stream(
+    stdout_handle: impl std::io::Read,
+    cancel: &AtomicBool,
+    on_log: &mut impl FnMut(&str),
+) -> (String, Vec<String>) {
+    use std::io::BufRead;
 
     let reader = std::io::BufReader::new(stdout_handle);
     let mut final_result = String::new();
@@ -362,45 +354,49 @@ pub(crate) fn invoke_opencode_streaming(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
+        let Ok(line) = line_result else { break };
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+            on_log(&line);
+            on_log("\n");
+            continue;
         };
-        let event: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => {
-                on_log(&line);
-                on_log("\n");
-                continue;
-            }
-        };
-
-        let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-        match event_type {
-            "text" => process_text_event(&event, &mut on_log),
-            "tool_use" | "tool" => {
-                if let Some(path) = process_tool_event(&event, &mut on_log) {
-                    if !edited_files.contains(&path) {
-                        edited_files.push(path);
-                    }
-                }
-            }
-            "step_finish" => {
-                if let Some(text) = process_step_finish_event(&event, &mut on_log) {
-                    if !text.is_empty() {
-                        final_result = text;
-                    }
-                }
-            }
-            "error" => process_error_event(&event, &mut on_log),
-            _ => {}
-        }
+        dispatch_event(&event, on_log, &mut final_result, &mut edited_files);
     }
 
-    done.store(true, Ordering::Relaxed);
-    let _ = watchdog.join();
+    (final_result, edited_files)
+}
 
+/// Dispatch a single parsed JSON event to the appropriate handler.
+fn dispatch_event(
+    event: &serde_json::Value,
+    on_log: &mut impl FnMut(&str),
+    final_result: &mut String,
+    edited_files: &mut Vec<String>,
+) {
+    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match event_type {
+        "text" => process_text_event(event, on_log),
+        "tool_use" | "tool" => {
+            if let Some(path) = process_tool_event(event, on_log) {
+                if !edited_files.contains(&path) {
+                    edited_files.push(path);
+                }
+            }
+        }
+        "step_finish" => {
+            if let Some(text) = process_step_finish_event(event, on_log) {
+                if !text.is_empty() {
+                    *final_result = text;
+                }
+            }
+        }
+        "error" => process_error_event(event, on_log),
+        _ => {}
+    }
+}
+
+/// Wait for the child process to exit (handles poisoned mutex).
+fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) {
     match child.lock() {
         Ok(mut c) => {
             let _ = c.wait();
@@ -409,6 +405,43 @@ pub(crate) fn invoke_opencode_streaming(
             let _ = poisoned.into_inner().wait();
         }
     }
+}
+
+pub(crate) fn invoke_opencode_streaming(
+    prompt: &str,
+    project_root: &Path,
+    config: &OpenCodeRunConfig<'_>,
+    mut on_log: impl FnMut(&str),
+    cancel: Arc<AtomicBool>,
+) -> Result<OpenCodeResponse, OpenCodeError> {
+    use std::io::Read;
+
+    let opencode_bin = resolve_opencode_bin(config.cli_path)?;
+
+    run_hook_script("pre-run", config.pre_run_script, project_root, &mut on_log, true)?;
+
+    let mut child = build_opencode_command(opencode_bin, prompt, project_root, config)
+        .spawn()
+        .map_err(OpenCodeError::SpawnFailed)?;
+
+    let stderr_handle = child.stderr.take().expect("stderr must be piped");
+    let stdout_handle = child.stdout.take().expect("stdout must be piped");
+
+    let child = Arc::new(Mutex::new(child));
+    let done = Arc::new(AtomicBool::new(false));
+    let watchdog = spawn_watchdog(&child, &cancel, &done);
+
+    let stderr_thread = std::thread::spawn(move || {
+        let mut s = String::new();
+        std::io::BufReader::new(stderr_handle).read_to_string(&mut s).ok();
+        s
+    });
+
+    let (final_result, edited_files) = process_event_stream(stdout_handle, &cancel, &mut on_log);
+
+    done.store(true, Ordering::Relaxed);
+    let _ = watchdog.join();
+    wait_for_child(&child);
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
@@ -419,14 +452,7 @@ pub(crate) fn invoke_opencode_streaming(
         on_log(&format!("\nError: {}\n", stderr));
     }
 
-    // Run post-run script
-    run_hook_script(
-        "post-run",
-        config.post_run_script,
-        project_root,
-        &mut on_log,
-        false,
-    )?;
+    run_hook_script("post-run", config.post_run_script, project_root, &mut on_log, false)?;
 
     Ok(OpenCodeResponse {
         stdout: final_result,
