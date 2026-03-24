@@ -146,49 +146,68 @@ impl DirigentApp {
                 // Show attached files above the input line
                 self.render_attached_files(ui);
 
-                ui.horizontal(|ui| {
-                    ui.label(icon("\u{21A9}", fs).color(self.semantic.accent));
-                    if ui
-                        .button(icon("+", fs))
-                        .on_hover_text("Attach files (or drag & drop)")
-                        .clicked()
-                    {
-                        self.open_file_picker();
-                    }
-                    let reply_text = &mut self.conversation_reply;
-                    let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
-                    let desired_rows = line_count.clamp(1, 8);
-                    let input_response = ui.add(
-                        egui::TextEdit::multiline(reply_text)
-                            .desired_width(ui.available_width() - SEND_BUTTON_RESERVED_WIDTH)
-                            .desired_rows(desired_rows)
-                            .hint_text("Reply with feedback...")
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    ui.vertical_centered(|ui| {
-                        let input_h = input_response.rect.height();
-                        let btn_size = fs + 12.0;
-                        ui.add_space((input_h - btn_size) / 2.0);
-                        let send_btn = egui::Button::new(
-                            icon("\u{2191}", fs).color(self.semantic.accent_text()),
-                        )
-                        .fill(self.semantic.accent)
-                        .corner_radius(btn_size as u8 / 2)
-                        .min_size(egui::vec2(btn_size, btn_size));
-                        let btn_clicked = ui
-                            .add(send_btn)
-                            .on_hover_text("Send feedback (\u{2318}Enter)")
-                            .clicked();
-                        let keyboard_submit =
-                            Self::is_submit_shortcut(ui, input_response.has_focus());
-                        if (btn_clicked || keyboard_submit) && !reply_text.trim().is_empty() {
-                            reply_send = Some(reply_text.trim().to_string());
-                        }
-                    });
-                });
+                reply_send = self.render_reply_input_row(ui, fs);
             });
 
         reply_send
+    }
+
+    /// Render the horizontal row with attach button, text input, and send button.
+    /// Returns `Some(reply_text)` if the user submitted a reply.
+    fn render_reply_input_row(&mut self, ui: &mut egui::Ui, fs: f32) -> Option<String> {
+        let mut reply_send: Option<String> = None;
+        ui.horizontal(|ui| {
+            ui.label(icon("\u{21A9}", fs).color(self.semantic.accent));
+            if ui
+                .button(icon("+", fs))
+                .on_hover_text("Attach files (or drag & drop)")
+                .clicked()
+            {
+                self.open_file_picker();
+            }
+            let reply_text = &mut self.conversation_reply;
+            let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
+            let desired_rows = line_count.clamp(1, 8);
+            let input_response = ui.add(
+                egui::TextEdit::multiline(reply_text)
+                    .desired_width(ui.available_width() - SEND_BUTTON_RESERVED_WIDTH)
+                    .desired_rows(desired_rows)
+                    .hint_text("Reply with feedback...")
+                    .font(egui::TextStyle::Monospace),
+            );
+            let submitted = Self::render_send_button(ui, fs, &input_response, &self.semantic);
+            if submitted && !reply_text.trim().is_empty() {
+                reply_send = Some(reply_text.trim().to_string());
+            }
+        });
+        reply_send
+    }
+
+    /// Render the send button and check for submit shortcuts.
+    /// Returns `true` if the user triggered a send action.
+    fn render_send_button(
+        ui: &mut egui::Ui,
+        fs: f32,
+        input_response: &egui::Response,
+        semantic: &crate::app::SemanticColors,
+    ) -> bool {
+        let mut submitted = false;
+        ui.vertical_centered(|ui| {
+            let input_h = input_response.rect.height();
+            let btn_size = fs + 12.0;
+            ui.add_space((input_h - btn_size) / 2.0);
+            let send_btn = egui::Button::new(icon("\u{2191}", fs).color(semantic.accent_text()))
+                .fill(semantic.accent)
+                .corner_radius(btn_size as u8 / 2)
+                .min_size(egui::vec2(btn_size, btn_size));
+            let btn_clicked = ui
+                .add(send_btn)
+                .on_hover_text("Send feedback (\u{2318}Enter)")
+                .clicked();
+            let keyboard_submit = Self::is_submit_shortcut(ui, input_response.has_focus());
+            submitted = btn_clicked || keyboard_submit;
+        });
+        submitted
     }
 
     /// Render the list of attached files above the reply input, with remove buttons.
