@@ -414,8 +414,13 @@ impl DirigentApp {
                 ui.label(egui::RichText::new("\u{25CF}").color(self.semantic.warning));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                bc_action =
-                    self.render_breadcrumb_right_controls(ui, active_idx, rel_path, is_dirty, is_markdown);
+                bc_action = self.render_breadcrumb_right_controls(
+                    ui,
+                    active_idx,
+                    rel_path,
+                    is_dirty,
+                    is_markdown,
+                );
             });
         });
 
