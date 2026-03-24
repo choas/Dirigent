@@ -1177,10 +1177,7 @@ impl DirigentApp {
         if has_changes {
             self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
-            self.set_status_message(format!(
-                "PR #{}: {} (tag: {})",
-                pr_number, summary, tag
-            ));
+            self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
         } else {
             self.set_status_message(format!(
                 "PR #{}: all {} findings still in progress",
@@ -1481,14 +1478,11 @@ impl DirigentApp {
         let is_conflict = e.contains("CONFLICT")
             || e.contains("Automatic merge failed")
             || e.contains("could not apply");
-        let is_unmerged =
-            e.contains("unmerged files") || e.contains("unresolved conflict");
+        let is_unmerged = e.contains("unmerged files") || e.contains("unresolved conflict");
 
         if is_diverged {
             self.git.show_pull_diverged = true;
-            self.set_status_message(
-                "Pull: branches have diverged — choose a strategy".to_string(),
-            );
+            self.set_status_message("Pull: branches have diverged — choose a strategy".to_string());
         } else if is_conflict || is_unmerged {
             self.open_merge_conflict_dialog();
         } else {
@@ -1936,16 +1930,13 @@ impl DirigentApp {
     /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
     fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         self.handle_search_shortcuts(ctx);
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N))
-        {
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
             crate::spawn_new_instance();
         }
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W))
-        {
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
             self.viewer.close_active_tab();
         }
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P))
-        {
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
             self.viewer.quick_open_active = !self.viewer.quick_open_active;
             self.viewer.quick_open_query.clear();
             self.viewer.quick_open_selected = 0;

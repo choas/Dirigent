@@ -37,6 +37,45 @@ pub(super) fn is_binary_ext(path: &Path) -> bool {
     BINARY_EXTENSIONS.iter().any(|&b| b == ext)
 }
 
+/// Search a single file for matching lines, appending results to `out`.
+/// Returns early if the global `found_count` reaches `max_results`.
+fn search_single_file(
+    file_path: &Path,
+    root: &Path,
+    query_lower: &str,
+    max_results: usize,
+    found_count: &AtomicUsize,
+    out: &mut Vec<SearchResult>,
+) {
+    if found_count.load(Ordering::Relaxed) >= max_results {
+        return;
+    }
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let rel_path = file_path
+        .strip_prefix(root)
+        .unwrap_or(file_path)
+        .to_string_lossy()
+        .to_string();
+    for (idx, line) in content.lines().enumerate() {
+        if !line.to_lowercase().contains(query_lower) {
+            continue;
+        }
+        out.push(SearchResult {
+            file_path: file_path.to_path_buf(),
+            rel_path: rel_path.clone(),
+            line_number: idx + 1,
+            line_content: line.to_string(),
+        });
+        found_count.fetch_add(1, Ordering::Relaxed);
+        if found_count.load(Ordering::Relaxed) >= max_results {
+            return;
+        }
+    }
+}
+
 /// Search files in parallel across multiple threads, returning up to `max_results` matches.
 pub(super) fn search_files_parallel(
     root: &Path,
@@ -66,35 +105,17 @@ pub(super) fn search_files_parallel(
                 s.spawn(move || {
                     let mut local_results = Vec::new();
                     for file_path in chunk {
-                        if found_count.load(Ordering::Relaxed) >= max_results {
-                            break;
-                        }
                         if is_binary_ext(file_path) {
                             continue;
                         }
-                        let content = match std::fs::read_to_string(file_path) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
-                        let rel_path = file_path
-                            .strip_prefix(root)
-                            .unwrap_or(file_path)
-                            .to_string_lossy()
-                            .to_string();
-                        for (idx, line) in content.lines().enumerate() {
-                            if line.to_lowercase().contains(query_lower.as_str()) {
-                                local_results.push(SearchResult {
-                                    file_path: file_path.clone(),
-                                    rel_path: rel_path.clone(),
-                                    line_number: idx + 1,
-                                    line_content: line.to_string(),
-                                });
-                                found_count.fetch_add(1, Ordering::Relaxed);
-                                if found_count.load(Ordering::Relaxed) >= max_results {
-                                    break;
-                                }
-                            }
-                        }
+                        search_single_file(
+                            file_path,
+                            root,
+                            query_lower,
+                            max_results,
+                            found_count,
+                            &mut local_results,
+                        );
                     }
                     local_results
                 })

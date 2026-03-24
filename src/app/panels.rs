@@ -23,238 +23,288 @@ enum FileTreeAction {
     RenameStart(PathBuf),
 }
 
+/// Actions deferred from the menu bar closures.
+struct MenuBarActions {
+    push_clicked: bool,
+    pull_clicked: bool,
+    create_pr_clicked: bool,
+    import_pr_clicked: bool,
+    run_all_agents: bool,
+    agent_to_trigger: Option<AgentKind>,
+    agent_to_cancel: Option<AgentKind>,
+}
+
+impl Default for MenuBarActions {
+    fn default() -> Self {
+        Self {
+            push_clicked: false,
+            pull_clicked: false,
+            create_pr_clicked: false,
+            import_pr_clicked: false,
+            run_all_agents: false,
+            agent_to_trigger: None,
+            agent_to_cancel: None,
+        }
+    }
+}
+
 impl DirigentApp {
     pub(super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
-        let mut push_clicked = false;
-        let mut pull_clicked = false;
-        let mut create_pr_clicked = false;
-        let mut import_pr_clicked = false;
-        let mut run_all_agents = false;
-        let mut agent_to_trigger: Option<AgentKind> = None;
-        let mut agent_to_cancel: Option<AgentKind> = None;
+        let mut actions = MenuBarActions::default();
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("Dirigent", |ui| {
-                    if ui.button("About Dirigent").clicked() {
-                        self.show_about = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("New Window  \u{2318}N").clicked() {
-                        crate::spawn_new_instance();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Settings...").clicked() {
-                        self.dismiss_central_overlays();
-                        self.reload_settings_from_disk();
-                        self.show_settings = true;
-                        ui.close();
-                    }
-                });
-
-                // Git menu
-                ui.menu_button("Git", |ui| {
-                    let has_repo = self.git.info.is_some();
-                    if !has_repo {
-                        ui.label(
-                            egui::RichText::new("No git repository")
-                                .italics()
-                                .color(self.semantic.tertiary_text),
-                        );
-                        return;
-                    }
-
-                    // Show branch info
-                    if let Some(ref info) = self.git.info {
-                        ui.label(egui::RichText::new(format!("\u{25CF} {}", info.branch)).strong());
-                        ui.separator();
-                    }
-
-                    // Pull
-                    let pull_label = if self.git.pulling {
-                        "Pulling..."
-                    } else {
-                        "Pull"
-                    };
-                    if ui
-                        .add_enabled(!self.git.pulling, egui::Button::new(pull_label))
-                        .clicked()
-                    {
-                        pull_clicked = true;
-                        ui.close();
-                    }
-
-                    // Push
-                    if self.git.ahead_of_remote == 0 && !self.git.pushing {
-                        ui.add_enabled(false, egui::Button::new("  Nothing to push  "));
-                    } else {
-                        let push_label = if self.git.pushing {
-                            "Pushing..."
-                        } else {
-                            "Push"
-                        };
-                        if ui
-                            .add_enabled(!self.git.pushing, egui::Button::new(push_label))
-                            .clicked()
-                        {
-                            push_clicked = true;
-                            ui.close();
-                        }
-                    }
-
-                    ui.separator();
-
-                    // Create PR (disabled on default branch)
-                    let is_default_branch = self
-                        .git
-                        .info
-                        .as_ref()
-                        .map(|i| i.branch == "main" || i.branch == "master")
-                        .unwrap_or(true);
-                    let pr_label = if self.git.creating_pr {
-                        "Creating PR..."
-                    } else {
-                        "Create Pull Request"
-                    };
-                    let pr_enabled = !self.git.creating_pr && !is_default_branch;
-                    if ui
-                        .add_enabled(pr_enabled, egui::Button::new(pr_label))
-                        .clicked()
-                    {
-                        create_pr_clicked = true;
-                        ui.close();
-                    }
-
-                    // Import PR Findings
-                    let import_label = if self.git.importing_pr {
-                        "Importing PR..."
-                    } else {
-                        "Import PR Findings"
-                    };
-                    if ui
-                        .add_enabled(!self.git.importing_pr, egui::Button::new(import_label))
-                        .clicked()
-                    {
-                        import_pr_clicked = true;
-                        ui.close();
-                    }
-                });
-
-                // Agents menu
-                ui.menu_button("Agents", |ui| {
-                    let enabled_agents: Vec<_> = self
-                        .settings
-                        .agents
-                        .iter()
-                        .filter(|a| a.enabled && !a.command.is_empty())
-                        .map(|a| {
-                            let status = self
-                                .agent_state
-                                .statuses
-                                .get(&a.kind)
-                                .copied()
-                                .unwrap_or(AgentStatus::Idle);
-                            (
-                                a.kind,
-                                a.display_name().to_string(),
-                                a.command.clone(),
-                                status,
-                            )
-                        })
-                        .collect();
-
-                    if enabled_agents.is_empty() {
-                        ui.label(
-                            egui::RichText::new("No agents configured")
-                                .italics()
-                                .color(self.semantic.tertiary_text),
-                        );
-                        ui.separator();
-                        if ui.button("Open Settings...").clicked() {
-                            self.dismiss_central_overlays();
-                            self.reload_settings_from_disk();
-                            self.show_settings = true;
-                            self.agents_expanded = true;
-                            ui.close();
-                        }
-                        return;
-                    }
-
-                    // Run All button
-                    let any_idle = enabled_agents
-                        .iter()
-                        .any(|(_, _, _, s)| *s != AgentStatus::Running);
-                    if ui
-                        .add_enabled(any_idle, egui::Button::new("Run All"))
-                        .clicked()
-                    {
-                        run_all_agents = true;
-                        ui.close();
-                    }
-                    ui.separator();
-
-                    for (kind, name, command, status) in &enabled_agents {
-                        let (status_icon, status_color) = match status {
-                            AgentStatus::Idle => ("", self.semantic.secondary_text),
-                            AgentStatus::Running => ("\u{21BB} ", self.semantic.accent),
-                            AgentStatus::Passed => ("\u{2713} ", self.semantic.success),
-                            AgentStatus::Failed => ("\u{2717} ", self.semantic.danger),
-                            AgentStatus::Error => ("! ", self.semantic.danger),
-                        };
-
-                        let is_running = *status == AgentStatus::Running;
-                        let label = format!("{}{}", status_icon, name);
-
-                        if is_running {
-                            if ui
-                                .button(egui::RichText::new(&label).color(status_color))
-                                .on_hover_text(format!("Cancel {}", name))
-                                .clicked()
-                            {
-                                agent_to_cancel = Some(*kind);
-                                ui.close();
-                            }
-                        } else {
-                            if ui.button(&label).on_hover_text(command).clicked() {
-                                agent_to_trigger = Some(*kind);
-                                ui.close();
-                            }
-                        }
-                    }
-
-                    ui.separator();
-                    if ui.button("Settings...").clicked() {
-                        self.dismiss_central_overlays();
-                        self.reload_settings_from_disk();
-                        self.show_settings = true;
-                        self.agents_expanded = true;
-                        ui.close();
-                    }
-                });
+                self.render_dirigent_menu(ui);
+                self.render_git_menu(ui, &mut actions);
+                self.render_agents_menu(ui, &mut actions);
             });
         });
 
-        // Handle deferred actions outside the UI closure
-        if pull_clicked {
+        self.apply_menu_bar_actions(actions);
+    }
+
+    fn render_dirigent_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Dirigent", |ui| {
+            if ui.button("About Dirigent").clicked() {
+                self.show_about = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("New Window  \u{2318}N").clicked() {
+                crate::spawn_new_instance();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Settings...").clicked() {
+                self.dismiss_central_overlays();
+                self.reload_settings_from_disk();
+                self.show_settings = true;
+                ui.close();
+            }
+        });
+    }
+
+    fn render_git_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        ui.menu_button("Git", |ui| {
+            if self.git.info.is_none() {
+                ui.label(
+                    egui::RichText::new("No git repository")
+                        .italics()
+                        .color(self.semantic.tertiary_text),
+                );
+                return;
+            }
+
+            if let Some(ref info) = self.git.info {
+                ui.label(egui::RichText::new(format!("\u{25CF} {}", info.branch)).strong());
+                ui.separator();
+            }
+
+            self.render_git_menu_pull_push(ui, actions);
+
+            ui.separator();
+
+            self.render_git_menu_pr(ui, actions);
+        });
+    }
+
+    fn render_git_menu_pull_push(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let pull_label = if self.git.pulling {
+            "Pulling..."
+        } else {
+            "Pull"
+        };
+        if ui
+            .add_enabled(!self.git.pulling, egui::Button::new(pull_label))
+            .clicked()
+        {
+            actions.pull_clicked = true;
+            ui.close();
+        }
+
+        if self.git.ahead_of_remote == 0 && !self.git.pushing {
+            ui.add_enabled(false, egui::Button::new("  Nothing to push  "));
+        } else {
+            let push_label = if self.git.pushing {
+                "Pushing..."
+            } else {
+                "Push"
+            };
+            if ui
+                .add_enabled(!self.git.pushing, egui::Button::new(push_label))
+                .clicked()
+            {
+                actions.push_clicked = true;
+                ui.close();
+            }
+        }
+    }
+
+    fn render_git_menu_pr(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let is_default_branch = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch == "main" || i.branch == "master")
+            .unwrap_or(true);
+        let pr_label = if self.git.creating_pr {
+            "Creating PR..."
+        } else {
+            "Create Pull Request"
+        };
+        let pr_enabled = !self.git.creating_pr && !is_default_branch;
+        if ui
+            .add_enabled(pr_enabled, egui::Button::new(pr_label))
+            .clicked()
+        {
+            actions.create_pr_clicked = true;
+            ui.close();
+        }
+
+        let import_label = if self.git.importing_pr {
+            "Importing PR..."
+        } else {
+            "Import PR Findings"
+        };
+        if ui
+            .add_enabled(!self.git.importing_pr, egui::Button::new(import_label))
+            .clicked()
+        {
+            actions.import_pr_clicked = true;
+            ui.close();
+        }
+    }
+
+    fn render_agents_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        ui.menu_button("Agents", |ui| {
+            let enabled_agents: Vec<_> = self
+                .settings
+                .agents
+                .iter()
+                .filter(|a| a.enabled && !a.command.is_empty())
+                .map(|a| {
+                    let status = self
+                        .agent_state
+                        .statuses
+                        .get(&a.kind)
+                        .copied()
+                        .unwrap_or(AgentStatus::Idle);
+                    (
+                        a.kind,
+                        a.display_name().to_string(),
+                        a.command.clone(),
+                        status,
+                    )
+                })
+                .collect();
+
+            if enabled_agents.is_empty() {
+                self.render_agents_menu_empty(ui);
+                return;
+            }
+
+            self.render_agents_menu_run_all(ui, &enabled_agents, actions);
+            ui.separator();
+            Self::render_agents_menu_items(ui, &enabled_agents, &self.semantic, actions);
+
+            ui.separator();
+            if ui.button("Settings...").clicked() {
+                self.dismiss_central_overlays();
+                self.reload_settings_from_disk();
+                self.show_settings = true;
+                self.agents_expanded = true;
+                ui.close();
+            }
+        });
+    }
+
+    fn render_agents_menu_empty(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("No agents configured")
+                .italics()
+                .color(self.semantic.tertiary_text),
+        );
+        ui.separator();
+        if ui.button("Open Settings...").clicked() {
+            self.dismiss_central_overlays();
+            self.reload_settings_from_disk();
+            self.show_settings = true;
+            self.agents_expanded = true;
+            ui.close();
+        }
+    }
+
+    fn render_agents_menu_run_all(
+        &self,
+        ui: &mut egui::Ui,
+        enabled_agents: &[(AgentKind, String, String, AgentStatus)],
+        actions: &mut MenuBarActions,
+    ) {
+        let any_idle = enabled_agents
+            .iter()
+            .any(|(_, _, _, s)| *s != AgentStatus::Running);
+        if ui
+            .add_enabled(any_idle, egui::Button::new("Run All"))
+            .clicked()
+        {
+            actions.run_all_agents = true;
+            ui.close();
+        }
+    }
+
+    fn render_agents_menu_items(
+        ui: &mut egui::Ui,
+        enabled_agents: &[(AgentKind, String, String, AgentStatus)],
+        semantic: &SemanticColors,
+        actions: &mut MenuBarActions,
+    ) {
+        for (kind, name, command, status) in enabled_agents {
+            let (status_icon, status_color) = match status {
+                AgentStatus::Idle => ("", semantic.secondary_text),
+                AgentStatus::Running => ("\u{21BB} ", semantic.accent),
+                AgentStatus::Passed => ("\u{2713} ", semantic.success),
+                AgentStatus::Failed => ("\u{2717} ", semantic.danger),
+                AgentStatus::Error => ("! ", semantic.danger),
+            };
+
+            let is_running = *status == AgentStatus::Running;
+            let label = format!("{}{}", status_icon, name);
+
+            if is_running {
+                if ui
+                    .button(egui::RichText::new(&label).color(status_color))
+                    .on_hover_text(format!("Cancel {}", name))
+                    .clicked()
+                {
+                    actions.agent_to_cancel = Some(*kind);
+                    ui.close();
+                }
+            } else if ui.button(&label).on_hover_text(command).clicked() {
+                actions.agent_to_trigger = Some(*kind);
+                ui.close();
+            }
+        }
+    }
+
+    fn apply_menu_bar_actions(&mut self, actions: MenuBarActions) {
+        if actions.pull_clicked {
             self.start_git_pull();
         }
-        if push_clicked {
+        if actions.push_clicked {
             self.start_git_push();
         }
-        if create_pr_clicked {
+        if actions.create_pr_clicked {
             self.open_create_pr_dialog();
         }
-        if import_pr_clicked {
+        if actions.import_pr_clicked {
             self.open_import_pr_dialog();
         }
-        if let Some(kind) = agent_to_cancel {
+        if let Some(kind) = actions.agent_to_cancel {
             self.cancel_agent(kind);
         }
-        if run_all_agents {
+        if actions.run_all_agents {
             self.run_all_agents();
-        } else if let Some(kind) = agent_to_trigger {
+        } else if let Some(kind) = actions.agent_to_trigger {
             self.trigger_agent_manual(kind);
         }
     }

@@ -834,6 +834,17 @@ impl SourceKind {
         }
     }
 
+    pub fn default_label(&self) -> &'static str {
+        match self {
+            SourceKind::GitHubIssues => "github",
+            SourceKind::Slack => "slack",
+            SourceKind::SonarQube => "sonar",
+            SourceKind::Notion => "notion",
+            SourceKind::Mcp => "mcp",
+            SourceKind::Custom => "custom",
+        }
+    }
+
     pub fn all() -> &'static [SourceKind] {
         &[
             SourceKind::GitHubIssues,

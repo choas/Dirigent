@@ -279,7 +279,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "cargo build --message-format=json 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 120,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -289,7 +289,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "cargo test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -321,7 +321,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "npx tsc --noEmit 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 120,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -331,7 +331,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "npx jest 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -363,7 +363,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "python -m py_compile *.py 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -373,7 +373,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "pytest 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -405,7 +405,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "go build ./... 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 120,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -415,7 +415,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "go test ./... 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -447,7 +447,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "mvn compile 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 180,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -457,7 +457,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "mvn test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -489,7 +489,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "dotnet build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 180,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -499,7 +499,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "dotnet test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -531,7 +531,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "ruby -c **/*.rb 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -541,7 +541,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "bundle exec rspec 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -573,7 +573,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "swift build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 180,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -583,7 +583,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "swift test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -615,7 +615,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "./gradlew compileKotlin 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 180,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -625,7 +625,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "./gradlew test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -657,7 +657,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "cmake --build build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 180,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -667,7 +667,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "ctest --test-dir build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -699,7 +699,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "mix compile 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 120,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -709,7 +709,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "mix test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -741,7 +741,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "zig build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 120,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -751,7 +751,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "zig build test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -783,7 +783,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "luac -p *.lua 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Test),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
                 timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -793,7 +793,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 name: String::new(),
                 enabled: true,
                 command: "busted 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
+                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
                 working_dir: String::new(),
                 before_run: String::new(),
@@ -946,9 +946,7 @@ pub(crate) fn run_agent(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let agent_result = match result {
-        WaitResult::Completed(output) => {
-            build_completed_result(kind, cue_id, &output, duration_ms)
-        }
+        WaitResult::Completed(output) => build_completed_result(kind, cue_id, &output, duration_ms),
         WaitResult::TimedOut => {
             kill_process_tree(&child);
             let _ = child.wait();
@@ -992,7 +990,10 @@ fn prepend_shell_init(shell_init: &str, command: &str) -> String {
 
 /// Resolve and validate the working directory for an agent.
 /// Returns `Err(message)` if the path escapes the project root.
-fn resolve_working_dir(project_root: &Path, working_dir: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_working_dir(
+    project_root: &Path,
+    working_dir: &str,
+) -> Result<std::path::PathBuf, String> {
     if working_dir.trim().is_empty() {
         return Ok(project_root.to_path_buf());
     }
@@ -1002,7 +1003,10 @@ fn resolve_working_dir(project_root: &Path, working_dir: &str) -> Result<std::pa
         .canonicalize()
         .unwrap_or(project_root.to_path_buf());
     if !resolved.starts_with(&root_resolved) {
-        return Err(format!("working_dir '{}' escapes project root", working_dir));
+        return Err(format!(
+            "working_dir '{}' escapes project root",
+            working_dir
+        ));
     }
     Ok(candidate)
 }
@@ -1033,7 +1037,10 @@ fn run_before_hook(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let combined = if stderr.is_empty() { stdout } else { stderr };
-            Err(format!("before_run failed (exit {}):\n{}", output.status, combined))
+            Err(format!(
+                "before_run failed (exit {}):\n{}",
+                output.status, combined
+            ))
         }
         Err(e) => Err(format!("before_run failed to execute: {}", e)),
         _ => Ok(()),
@@ -1262,10 +1269,7 @@ fn parse_cargo_diagnostics(output: &str) -> Vec<Diagnostic> {
 }
 
 /// Extract diagnostics from a single parsed cargo JSON message.
-fn extract_cargo_message_diagnostics(
-    value: &serde_json::Value,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn extract_cargo_message_diagnostics(value: &serde_json::Value, diagnostics: &mut Vec<Diagnostic>) {
     // Cargo wraps compiler messages in {"reason":"compiler-message","message":{...}}
     let msg = if value.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
         match value.get("message") {

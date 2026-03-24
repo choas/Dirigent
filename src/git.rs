@@ -17,67 +17,9 @@ pub(crate) struct GitInfo {
 
 pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
     let repo = Repository::discover(path).ok()?;
-
-    let branch = {
-        if let Ok(head) = repo.head() {
-            if head.is_branch() {
-                head.shorthand().unwrap_or("HEAD").to_string()
-            } else {
-                "HEAD detached".to_string()
-            }
-        } else {
-            "no commits".to_string()
-        }
-    };
-
-    let (hash, message) = {
-        if let Ok(head) = repo.head() {
-            if let Ok(commit) = head.peel_to_commit() {
-                let h = format!("{}", commit.id());
-                let short = h.chars().take(7).collect::<String>();
-                let msg = commit
-                    .message()
-                    .unwrap_or("")
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                (short, msg)
-            } else {
-                (String::new(), String::new())
-            }
-        } else {
-            (String::new(), String::new())
-        }
-    };
-
-    let (modified, added, deleted) = {
-        let mut opts = StatusOptions::new();
-        opts.include_untracked(true).recurse_untracked_dirs(true);
-        if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
-            let mut m = 0;
-            let mut a = 0;
-            let mut d = 0;
-            for entry in statuses.iter() {
-                let s = entry.status();
-                if s.intersects(
-                    git2::Status::WT_MODIFIED
-                        | git2::Status::INDEX_MODIFIED
-                        | git2::Status::WT_RENAMED
-                        | git2::Status::INDEX_RENAMED,
-                ) {
-                    m += 1;
-                } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
-                    a += 1;
-                } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
-                    d += 1;
-                }
-            }
-            (m, a, d)
-        } else {
-            (0, 0, 0)
-        }
-    };
+    let branch = resolve_branch_name(&repo);
+    let (hash, message) = resolve_last_commit(&repo);
+    let (modified, added, deleted) = count_status_entries(&repo);
 
     Some(GitInfo {
         branch,
@@ -87,6 +29,64 @@ pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
         added_count: added,
         deleted_count: deleted,
     })
+}
+
+fn resolve_branch_name(repo: &Repository) -> String {
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return "no commits".to_string(),
+    };
+    if head.is_branch() {
+        head.shorthand().unwrap_or("HEAD").to_string()
+    } else {
+        "HEAD detached".to_string()
+    }
+}
+
+fn resolve_last_commit(repo: &Repository) -> (String, String) {
+    let commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let commit = match commit {
+        Some(c) => c,
+        None => return (String::new(), String::new()),
+    };
+    let h = format!("{}", commit.id());
+    let short = h.chars().take(7).collect::<String>();
+    let msg = commit
+        .message()
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    (short, msg)
+}
+
+fn count_status_entries(repo: &Repository) -> (usize, usize, usize) {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    let statuses = match repo.statuses(Some(&mut opts)) {
+        Ok(s) => s,
+        Err(_) => return (0, 0, 0),
+    };
+    let mut m = 0;
+    let mut a = 0;
+    let mut d = 0;
+    for entry in statuses.iter() {
+        let s = entry.status();
+        if s.intersects(
+            git2::Status::WT_MODIFIED
+                | git2::Status::INDEX_MODIFIED
+                | git2::Status::WT_RENAMED
+                | git2::Status::INDEX_RENAMED,
+        ) {
+            m += 1;
+        } else if s.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
+            a += 1;
+        } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+            d += 1;
+        }
+    }
+    (m, a, d)
 }
 
 /// Returns relative paths of all files with uncommitted changes, mapped to their
@@ -284,25 +284,10 @@ pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> 
 pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
     use std::process::Command;
 
-    // Helper: make a path relative to repo root
-    let make_relative = |f: &str| -> String {
-        let path = Path::new(f);
-        if path.is_absolute() {
-            path.strip_prefix(repo_path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string()
-        } else {
-            f.to_string()
-        }
-    };
-
-    // Collect relative paths
-    let rel_files: Vec<String> = if files.is_empty() {
-        Vec::new()
-    } else {
-        files.iter().map(|f| make_relative(f)).collect()
-    };
+    let rel_files: Vec<String> = files
+        .iter()
+        .map(|f| make_path_relative(repo_path, f))
+        .collect();
 
     // Get diff for tracked/modified files
     let mut cmd = Command::new("git");
@@ -324,10 +309,8 @@ pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<Str
     // Find untracked files and generate new-file diffs for them
     let untracked = find_untracked_files(repo_path);
     let check_files: Vec<&String> = if rel_files.is_empty() {
-        // All untracked files
         untracked.iter().collect()
     } else {
-        // Only untracked files that are in our file list
         rel_files
             .iter()
             .filter(|f| untracked.contains(f.as_str()))
@@ -335,30 +318,47 @@ pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<Str
     };
 
     for rel_path in check_files {
-        let full_path = repo_path.join(rel_path);
-        if let Ok(contents) = std::fs::read_to_string(&full_path) {
-            let line_count = contents.lines().count().max(1);
-            diff.push_str(&format!("diff --git a/{rel_path} b/{rel_path}\n"));
-            diff.push_str("new file mode 100644\n");
-            diff.push_str("--- /dev/null\n");
-            diff.push_str(&format!("+++ b/{rel_path}\n"));
-            diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
-            for line in contents.lines() {
-                diff.push('+');
-                diff.push_str(line);
-                diff.push('\n');
-            }
-            // Ensure trailing newline marker if file doesn't end with one
-            if !contents.ends_with('\n') {
-                diff.push_str("\\ No newline at end of file\n");
-            }
-        }
+        append_new_file_diff(&mut diff, repo_path, rel_path);
     }
 
     if diff.trim().is_empty() {
         None
     } else {
         Some(diff)
+    }
+}
+
+fn make_path_relative(repo_path: &Path, f: &str) -> String {
+    let path = Path::new(f);
+    if path.is_absolute() {
+        path.strip_prefix(repo_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        f.to_string()
+    }
+}
+
+fn append_new_file_diff(diff: &mut String, repo_path: &Path, rel_path: &str) {
+    let full_path = repo_path.join(rel_path);
+    let contents = match std::fs::read_to_string(&full_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let line_count = contents.lines().count().max(1);
+    diff.push_str(&format!("diff --git a/{rel_path} b/{rel_path}\n"));
+    diff.push_str("new file mode 100644\n");
+    diff.push_str("--- /dev/null\n");
+    diff.push_str(&format!("+++ b/{rel_path}\n"));
+    diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
+    for line in contents.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    if !contents.ends_with('\n') {
+        diff.push_str("\\ No newline at end of file\n");
     }
 }
 
@@ -420,38 +420,7 @@ pub(crate) fn commit_diff(
     diff_text: &str,
     commit_message: &str,
 ) -> crate::error::Result<String> {
-    use std::process::Command;
-
-    // Parse all file paths from the diff (both source and destination) to handle
-    // additions, modifications, and deletions.
-    let dir_name = repo_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir_prefix = if dir_name.is_empty() {
-        String::new()
-    } else {
-        format!("{}/", dir_name)
-    };
-
-    let mut file_paths = Vec::new();
-    for line in diff_text.lines() {
-        let rest = if let Some(r) = line.strip_prefix("+++ b/") {
-            Some(r)
-        } else if let Some(r) = line.strip_prefix("--- a/") {
-            Some(r)
-        } else {
-            None
-        };
-        if let Some(rest) = rest {
-            let path = rest.trim();
-            let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
-            let path = path.to_string();
-            if !path.is_empty() && !file_paths.contains(&path) {
-                file_paths.push(path);
-            }
-        }
-    }
+    let file_paths = parse_diff_paths(repo_path, diff_text);
 
     if file_paths.is_empty() {
         return Err(DirigentError::GitCommand(
@@ -460,19 +429,7 @@ pub(crate) fn commit_diff(
     }
 
     // Stage the working-tree state of the affected files.
-    let output = Command::new("git")
-        .arg("add")
-        .arg("-A")
-        .arg("--")
-        .args(&file_paths)
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "staging files failed: {stderr}"
-        )));
-    }
+    stage_files(repo_path, &file_paths)?;
 
     // Now commit whatever is staged
     let repo = Repository::discover(repo_path)?;
@@ -505,6 +462,37 @@ pub(crate) fn commit_diff(
     repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
 
     Ok(format!("{}", oid))
+}
+
+/// Parse file paths from diff text, stripping the repo directory prefix if present.
+fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String> {
+    let dir_name = repo_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dir_prefix = if dir_name.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dir_name)
+    };
+
+    let mut file_paths = Vec::new();
+    for line in diff_text.lines() {
+        let rest = line
+            .strip_prefix("+++ b/")
+            .or_else(|| line.strip_prefix("--- a/"));
+        let rest = match rest {
+            Some(r) => r,
+            None => continue,
+        };
+        let path = rest.trim();
+        let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
+        let path = path.to_string();
+        if !path.is_empty() && !file_paths.contains(&path) {
+            file_paths.push(path);
+        }
+    }
+    file_paths
 }
 
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {

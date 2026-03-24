@@ -43,12 +43,11 @@ impl DirigentApp {
                     let cues_snapshot = self.cues.clone();
                     let source_filter = self.sources.filter.clone();
                     for &status in CueStatus::all() {
-                        let section_cues: Vec<&Cue> =
-                            filter_cues_by_status_and_source(
-                                &cues_snapshot,
-                                status,
-                                &source_filter,
-                            );
+                        let section_cues: Vec<&Cue> = filter_cues_by_status_and_source(
+                            &cues_snapshot,
+                            status,
+                            &source_filter,
+                        );
                         self.render_cue_section(
                             ui,
                             status,
@@ -74,10 +73,7 @@ impl DirigentApp {
             });
     }
 
-    fn render_cue_pool_header(
-        &mut self,
-        ui: &mut egui::Ui,
-    ) -> (Option<String>, bool, bool) {
+    fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool) {
         let mut selected_play_prompt: Option<String> = None;
         let mut custom_cue_requested = false;
         let mut import_requested = false;
@@ -88,54 +84,39 @@ impl DirigentApp {
                     .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
                     .strong(),
             );
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    let plus_btn = ui.button("+").on_hover_text("Playbook");
-                    if ui
-                        .button("\u{2193}")
-                        .on_hover_text("Import from document")
-                        .clicked()
-                    {
-                        import_requested = true;
-                    }
-                    egui::Popup::menu(&plus_btn)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-                        .show(|ui| {
-                            ui.set_min_width(200.0);
-                            ui.label(
-                                egui::RichText::new("Playbook").strong(),
-                            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let plus_btn = ui.button("+").on_hover_text("Playbook");
+                if ui
+                    .button("\u{2193}")
+                    .on_hover_text("Import from document")
+                    .clicked()
+                {
+                    import_requested = true;
+                }
+                egui::Popup::menu(&plus_btn)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                    .show(|ui| {
+                        ui.set_min_width(200.0);
+                        ui.label(egui::RichText::new("Playbook").strong());
+                        ui.separator();
+                        for play in &self.settings.playbook {
+                            if ui.selectable_label(false, &play.name).clicked() {
+                                selected_play_prompt = Some(play.prompt.clone());
+                            }
+                        }
+                        if !self.settings.playbook.is_empty() {
                             ui.separator();
-                            for play in &self.settings.playbook {
-                                if ui
-                                    .selectable_label(false, &play.name)
-                                    .clicked()
-                                {
-                                    selected_play_prompt =
-                                        Some(play.prompt.clone());
-                                }
-                            }
-                            if !self.settings.playbook.is_empty() {
-                                ui.separator();
-                            }
-                            if ui
-                                .selectable_label(false, "+ Custom cue...")
-                                .clicked()
-                            {
-                                custom_cue_requested = true;
-                            }
-                        });
-                },
-            );
+                        }
+                        if ui.selectable_label(false, "+ Custom cue...").clicked() {
+                            custom_cue_requested = true;
+                        }
+                    });
+            });
         });
         (selected_play_prompt, custom_cue_requested, import_requested)
     }
 
-    fn handle_playbook_selection(
-        &mut self,
-        selected_play_prompt: Option<String>,
-    ) {
+    fn handle_playbook_selection(&mut self, selected_play_prompt: Option<String>) {
         let Some(prompt) = selected_play_prompt else {
             return;
         };
@@ -160,8 +141,7 @@ impl DirigentApp {
                 .iter()
                 .any(|f| self.project_root.join(f).exists());
                 if has_license {
-                    auto_resolved
-                        .insert(i, "already present".to_string());
+                    auto_resolved.insert(i, "already present".to_string());
                 }
             }
             selected.push(0);
@@ -171,14 +151,10 @@ impl DirigentApp {
             let resolved: Vec<(String, String)> = vars
                 .iter()
                 .enumerate()
-                .map(|(i, v)| {
-                    (v.token.clone(), auto_resolved[&i].clone())
-                })
+                .map(|(i, v)| (v.token.clone(), auto_resolved[&i].clone()))
                 .collect();
-            let final_prompt =
-                settings::substitute_play_variables(&prompt, &resolved);
-            let _ =
-                self.db.insert_cue(&final_prompt, "", 0, None, &[]);
+            let final_prompt = settings::substitute_play_variables(&prompt, &resolved);
+            let _ = self.db.insert_cue(&final_prompt, "", 0, None, &[]);
             self.reload_cues();
         } else {
             self.pending_play = Some(PendingPlay {
@@ -213,15 +189,13 @@ impl DirigentApp {
             .unwrap_or("import")
             .to_string();
         let sections = parse_markdown_sections(&content);
-        let (new_count, updated_count) =
-            self.import_sections(&sections, &path, &stem);
+        let (new_count, updated_count) = self.import_sections(&sections, &path, &stem);
         self.reload_cues();
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("document");
-        let msg =
-            format_import_message(new_count, updated_count, filename);
+        let msg = format_import_message(new_count, updated_count, filename);
         self.set_status_message(msg);
     }
 
@@ -234,10 +208,8 @@ impl DirigentApp {
         let mut new_count = 0usize;
         let mut updated_count = 0usize;
         for section in sections {
-            let source_ref =
-                format!("{}#{}", path.display(), section.number);
-            let text =
-                format!("{}\n\n{}", section.title, section.body);
+            let source_ref = format!("{}#{}", path.display(), section.number);
+            let text = format!("{}\n\n{}", section.title, section.body);
             if self
                 .db
                 .cue_exists_by_source_ref(&source_ref)
@@ -251,9 +223,7 @@ impl DirigentApp {
                     updated_count += 1;
                 }
             } else {
-                let _ = self
-                    .db
-                    .insert_cue_from_source(&text, stem, &source_ref);
+                let _ = self.db.insert_cue_from_source(&text, stem, &source_ref);
                 new_count += 1;
             }
         }
@@ -261,14 +231,12 @@ impl DirigentApp {
     }
 
     fn render_source_filter(&mut self, ui: &mut egui::Ui) {
-        let unique_labels =
-            collect_unique_labels(&self.cues, &self.settings.sources);
+        let unique_labels = collect_unique_labels(&self.cues, &self.settings.sources);
         if unique_labels.is_empty() {
             return;
         }
         ui.horizontal(|ui| {
-            let current =
-                self.sources.filter.as_deref().unwrap_or("All");
+            let current = self.sources.filter.as_deref().unwrap_or("All");
             egui::ComboBox::from_id_salt("source_filter")
                 .selected_text(current)
                 .width(ui.available_width() - 8.0)
@@ -281,24 +249,12 @@ impl DirigentApp {
                         let count = self
                             .cues
                             .iter()
-                            .filter(|c| {
-                                c.source_label.as_deref()
-                                    == Some(label.as_str())
-                            })
+                            .filter(|c| c.source_label.as_deref() == Some(label.as_str()))
                             .count();
-                        let display =
-                            format!("{} ({})", label, count);
-                        let selected = self
-                            .sources
-                            .filter
-                            .as_deref()
-                            == Some(label.as_str());
-                        if ui
-                            .selectable_label(selected, &display)
-                            .clicked()
-                        {
-                            self.sources.filter =
-                                Some(label.clone());
+                        let display = format!("{} ({})", label, count);
+                        let selected = self.sources.filter.as_deref() == Some(label.as_str());
+                        if ui.selectable_label(selected, &display).clicked() {
+                            self.sources.filter = Some(label.clone());
                         }
                     }
                 });
@@ -308,8 +264,7 @@ impl DirigentApp {
     fn render_prompt_history(
         &mut self,
         ui: &mut egui::Ui,
-    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)>
-    {
+    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)> {
         self.render_prompt_history_search_bar(ui);
         self.render_prompt_history_results(ui)
     }
@@ -326,13 +281,8 @@ impl DirigentApp {
             } else {
                 "Search past prompts"
             };
-            if ui
-                .small_button(search_icon)
-                .on_hover_text(hover)
-                .clicked()
-            {
-                self.prompt_history_active =
-                    !self.prompt_history_active;
+            if ui.small_button(search_icon).on_hover_text(hover).clicked() {
+                self.prompt_history_active = !self.prompt_history_active;
                 if !self.prompt_history_active {
                     self.prompt_history_query.clear();
                     self.prompt_history_results.clear();
@@ -340,22 +290,15 @@ impl DirigentApp {
             }
             if self.prompt_history_active {
                 let response = ui.add(
-                    egui::TextEdit::singleline(
-                        &mut self.prompt_history_query,
-                    )
-                    .desired_width(ui.available_width())
-                    .hint_text("Search past cues...")
-                    .font(egui::TextStyle::Small),
+                    egui::TextEdit::singleline(&mut self.prompt_history_query)
+                        .desired_width(ui.available_width())
+                        .hint_text("Search past cues...")
+                        .font(egui::TextStyle::Small),
                 );
-                if response.changed()
-                    && self.prompt_history_query.len() >= 2
-                {
+                if response.changed() && self.prompt_history_query.len() >= 2 {
                     self.prompt_history_results = self
                         .db
-                        .search_cue_history(
-                            &self.prompt_history_query,
-                            10,
-                        )
+                        .search_cue_history(&self.prompt_history_query, 10)
                         .unwrap_or_default();
                 } else if self.prompt_history_query.len() < 2 {
                     self.prompt_history_results.clear();
@@ -367,67 +310,38 @@ impl DirigentApp {
     fn render_prompt_history_results(
         &mut self,
         ui: &mut egui::Ui,
-    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)>
-    {
-        if !self.prompt_history_active
-            || self.prompt_history_results.is_empty()
-        {
+    ) -> Option<(String, String, usize, Option<usize>, Vec<String>)> {
+        if !self.prompt_history_active || self.prompt_history_results.is_empty() {
             return None;
         }
-        let mut reuse_cue: Option<(
-            String,
-            String,
-            usize,
-            Option<usize>,
-            Vec<String>,
-        )> = None;
+        let mut reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)> = None;
         egui::Frame::NONE
             .inner_margin(egui::Margin::same(4))
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
-                for (
-                    _id,
-                    text,
-                    file_path,
-                    line_number,
-                    line_number_end,
-                    images,
-                ) in &self.prompt_history_results
+                for (_id, text, file_path, line_number, line_number_end, images) in
+                    &self.prompt_history_results
                 {
                     ui.horizontal(|ui| {
-                        let preview: String = text
-                            .lines()
-                            .next()
-                            .unwrap_or("")
-                            .chars()
-                            .take(60)
-                            .collect();
+                        let preview: String =
+                            text.lines().next().unwrap_or("").chars().take(60).collect();
                         let location = if file_path.is_empty() {
                             "Global".to_string()
                         } else {
                             file_path.clone()
                         };
                         ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new(&preview).small(),
-                            );
+                            ui.label(egui::RichText::new(&preview).small());
                             ui.label(
                                 egui::RichText::new(&location)
                                     .small()
-                                    .color(
-                                        self.semantic.muted_text(),
-                                    ),
+                                    .color(self.semantic.muted_text()),
                             );
                         });
                         if ui
-                            .small_button(icon(
-                                "\u{21A9} Reuse",
-                                self.settings.font_size,
-                            ))
-                            .on_hover_text(
-                                "Create a new cue with this text",
-                            )
+                            .small_button(icon("\u{21A9} Reuse", self.settings.font_size))
+                            .on_hover_text("Create a new cue with this text")
                             .clicked()
                         {
                             reuse_cue = Some((
@@ -447,26 +361,14 @@ impl DirigentApp {
 
     fn handle_reuse_cue(
         &mut self,
-        reuse_cue: Option<(
-            String,
-            String,
-            usize,
-            Option<usize>,
-            Vec<String>,
-        )>,
+        reuse_cue: Option<(String, String, usize, Option<usize>, Vec<String>)>,
     ) {
-        let Some((text, file_path, line_number, line_number_end, images)) =
-            reuse_cue
-        else {
+        let Some((text, file_path, line_number, line_number_end, images)) = reuse_cue else {
             return;
         };
-        let _ = self.db.insert_cue(
-            &text,
-            &file_path,
-            line_number,
-            line_number_end,
-            &images,
-        );
+        let _ = self
+            .db
+            .insert_cue(&text, &file_path, line_number, line_number_end, &images);
         self.reload_cues();
         self.prompt_history_active = false;
         self.prompt_history_query.clear();
@@ -481,20 +383,13 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
         load_more_archived: &mut bool,
     ) {
-        let header = build_section_header(
-            status,
-            section_cues.len(),
-            self.archived_cue_count,
-        );
+        let header = build_section_header(status, section_cues.len(), self.archived_cue_count);
         let header_rt = egui::RichText::new(header)
             .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
             .strong();
         let mut collapsing = egui::CollapsingHeader::new(header_rt)
             .id_salt(status.label())
-            .default_open(
-                status == CueStatus::Inbox
-                    || status == CueStatus::Review,
-            );
+            .default_open(status == CueStatus::Inbox || status == CueStatus::Review);
         if status == CueStatus::Ready && self.claude.expand_running {
             collapsing = collapsing.open(Some(true));
         }
@@ -506,22 +401,13 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             }
-            self.render_section_bulk_actions(
-                ui,
-                status,
-                section_cues,
-                actions,
-            );
+            self.render_section_bulk_actions(ui, status, section_cues, actions);
             for cue in section_cues {
                 self.render_cue_card(ui, cue, actions, status);
             }
-            if status == CueStatus::Archived
-                && self.archived_cue_count > section_cues.len()
-            {
-                let remaining =
-                    self.archived_cue_count - section_cues.len();
-                let label =
-                    format!("Load more ({} remaining)", remaining);
+            if status == CueStatus::Archived && self.archived_cue_count > section_cues.len() {
+                let remaining = self.archived_cue_count - section_cues.len();
+                let label = format!("Load more ({} remaining)", remaining);
                 if ui.small_button(label).clicked() {
                     *load_more_archived = true;
                 }
@@ -551,20 +437,14 @@ impl DirigentApp {
     ) {
         ui.horizontal(|ui| {
             if ui
-                .small_button(icon(
-                    "\u{2713} Commit All",
-                    self.settings.font_size,
-                ))
+                .small_button(icon("\u{2713} Commit All", self.settings.font_size))
                 .on_hover_text("Commit all uncommitted changes and move all Review cues to Done")
                 .clicked()
             {
                 actions.push((0, CueAction::CommitAll));
             }
             if ui
-                .small_button(icon(
-                    "\u{1F3F7} Tag All",
-                    self.settings.font_size,
-                ))
+                .small_button(icon("\u{1F3F7} Tag All", self.settings.font_size))
                 .on_hover_text("Add a tag to all Review cues")
                 .clicked()
             {
@@ -583,33 +463,19 @@ impl DirigentApp {
         let mut cancel_tag_all = false;
         if let Some(ref mut tag_text) = self.tag_all_review_input {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("\u{1F3F7}")
-                        .color(self.semantic.accent),
-                );
+                ui.label(egui::RichText::new("\u{1F3F7}").color(self.semantic.accent));
                 let response = ui.add(
                     egui::TextEdit::singleline(tag_text)
                         .desired_width(100.0)
                         .hint_text("Tag for all"),
                 );
                 let submit = ui
-                    .small_button(icon(
-                        "\u{2713} Set",
-                        self.settings.font_size,
-                    ))
+                    .small_button(icon("\u{2713} Set", self.settings.font_size))
                     .on_hover_text("Apply tag to all Review cues")
                     .clicked()
-                    || (response.has_focus()
-                        && ui.input(|i| {
-                            i.key_pressed(egui::Key::Enter)
-                        }));
+                    || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submit && !tag_text.trim().is_empty() {
-                    actions.push((
-                        0,
-                        CueAction::TagAllReview(
-                            tag_text.trim().to_string(),
-                        ),
-                    ));
+                    actions.push((0, CueAction::TagAllReview(tag_text.trim().to_string())));
                 }
                 if ui
                     .small_button("\u{2715}")
@@ -654,11 +520,8 @@ impl DirigentApp {
     ) {
         if !self.git.notifying_pr && !self.git.pushing {
             let btn = egui::Button::new(
-                icon(
-                    "\u{2191} Push & Notify PR",
-                    self.settings.font_size,
-                )
-                .color(self.semantic.badge_text),
+                icon("\u{2191} Push & Notify PR", self.settings.font_size)
+                    .color(self.semantic.badge_text),
             )
             .fill(self.semantic.accent);
             if ui
@@ -677,11 +540,7 @@ impl DirigentApp {
         }
     }
 
-    fn render_refresh_pr_button(
-        &self,
-        ui: &mut egui::Ui,
-        actions: &mut Vec<(i64, CueAction)>,
-    ) {
+    fn render_refresh_pr_button(&self, ui: &mut egui::Ui, actions: &mut Vec<(i64, CueAction)>) {
         if self.git.importing_pr {
             ui.label(
                 egui::RichText::new("Refreshing PR\u{2026}")
@@ -689,10 +548,7 @@ impl DirigentApp {
                     .color(self.semantic.accent),
             );
         } else if ui
-            .small_button(icon(
-                "\u{21BB} Refresh PR",
-                self.settings.font_size,
-            ))
+            .small_button(icon("\u{21BB} Refresh PR", self.settings.font_size))
             .on_hover_text("Re-import findings from the PR (check for new review comments)")
             .clicked()
         {
@@ -737,13 +593,8 @@ impl DirigentApp {
             }
             CueAction::ReplyReview(cue_id, reply_text) => {
                 self.reply_inputs.remove(&cue_id);
-                let _ =
-                    self.db.log_activity(cue_id, "Reply sent");
-                self.trigger_claude_reply(
-                    cue_id,
-                    &reply_text,
-                    &[],
-                );
+                let _ = self.db.log_activity(cue_id, "Reply sent");
+                self.trigger_claude_reply(cue_id, &reply_text, &[]);
             }
             CueAction::ShowRunningLog(cue_id) => {
                 self.process_show_running_log(cue_id);
@@ -765,23 +616,15 @@ impl DirigentApp {
                 self.run_queue.retain(|&cid| cid != id);
                 self.scheduled_runs.remove(&id);
                 self.schedule_inputs.remove(&id);
-                let _ = self.db.log_activity(
-                    id,
-                    "Queue/schedule cancelled",
-                );
+                let _ = self.db.log_activity(id, "Queue/schedule cancelled");
             }
             CueAction::SetTag(tag) => {
-                let _ =
-                    self.db.update_cue_tag(id, tag.as_deref());
+                let _ = self.db.update_cue_tag(id, tag.as_deref());
                 self.tag_inputs.remove(&id);
                 if let Some(ref t) = tag {
-                    let _ = self.db.log_activity(
-                        id,
-                        &format!("Tagged: {}", t),
-                    );
+                    let _ = self.db.log_activity(id, &format!("Tagged: {}", t));
                 } else {
-                    let _ =
-                        self.db.log_activity(id, "Tag removed");
+                    let _ = self.db.log_activity(id, "Tag removed");
                 }
             }
             CueAction::Push => {
@@ -814,10 +657,9 @@ impl DirigentApp {
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
         let _ = self.db.update_cue_status(id, new_status);
-        let _ = self.db.log_activity(
-            id,
-            &format!("Moved to {}", new_status.label()),
-        );
+        let _ = self
+            .db
+            .log_activity(id, &format!("Moved to {}", new_status.label()));
         self.cue_move_flash.insert(id, Instant::now());
         if new_status == CueStatus::Ready {
             self.claude.expand_running = true;
@@ -834,12 +676,7 @@ impl DirigentApp {
         let _ = self.db.delete_cue(id);
     }
 
-    fn process_navigate(
-        &mut self,
-        file_path: &str,
-        line: usize,
-        line_end: Option<usize>,
-    ) {
+    fn process_navigate(&mut self, file_path: &str, line: usize, line_end: Option<usize>) {
         self.push_nav_history();
         let full_path = self.project_root.join(file_path);
         if self.viewer.current_file() != Some(&full_path) {
@@ -855,17 +692,13 @@ impl DirigentApp {
     }
 
     fn process_show_diff(&mut self, cue_id: i64) {
-        let Ok(Some(exec)) = self.db.get_latest_execution(cue_id)
-        else {
+        let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) else {
             return;
         };
         let Some(diff) = exec.diff else { return };
         let cue = self.cues.iter().find(|c| c.id == cue_id);
-        let text =
-            cue.map(|c| c.text.clone()).unwrap_or_default();
-        let read_only = cue
-            .map(|c| c.status != CueStatus::Review)
-            .unwrap_or(true);
+        let text = cue.map(|c| c.text.clone()).unwrap_or_default();
+        let read_only = cue.map(|c| c.status != CueStatus::Review).unwrap_or(true);
         let parsed = diff_view::parse_unified_diff(&diff);
         self.dismiss_central_overlays();
         self.diff_review = Some(super::DiffReview {
@@ -886,9 +719,7 @@ impl DirigentApp {
     }
 
     fn process_commit_review(&mut self, cue_id: i64) {
-        if let Ok(Some(exec)) =
-            self.db.get_latest_execution(cue_id)
-        {
+        if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
             if let Some(ref diff) = exec.diff {
                 let cue_text = self
                     .cues
@@ -896,15 +727,10 @@ impl DirigentApp {
                     .find(|c| c.id == cue_id)
                     .map(|c| c.text.clone())
                     .unwrap_or_default();
-                let commit_msg =
-                    git::generate_commit_message(&cue_text);
+                let commit_msg = git::generate_commit_message(&cue_text);
                 self.apply_commit_result(
                     cue_id,
-                    git::commit_diff(
-                        &self.project_root,
-                        diff,
-                        &commit_msg,
-                    ),
+                    git::commit_diff(&self.project_root, diff, &commit_msg),
                 );
             }
         }
@@ -912,89 +738,50 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
-    fn apply_commit_result(
-        &mut self,
-        cue_id: i64,
-        result: crate::error::Result<String>,
-    ) {
+    fn apply_commit_result(&mut self, cue_id: i64, result: crate::error::Result<String>) {
         match result {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
-                self.set_status_message(format!(
-                    "Committed: {}",
-                    short
-                ));
+                self.set_status_message(format!("Committed: {}", short));
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
                 let _ = self
                     .db
-                    .update_cue_status(cue_id, CueStatus::Done);
-                let _ = self.db.log_activity(
-                    cue_id,
-                    &format!("Committed ({})", short),
-                );
+                    .log_activity(cue_id, &format!("Committed ({})", short));
             }
             Err(e) => {
                 let msg = format!("{}", e);
                 if msg.contains("nothing to commit") {
-                    self.set_status_message(
-                        "Nothing to commit \u{2014} moved to Done"
-                            .into(),
-                    );
+                    self.set_status_message("Nothing to commit \u{2014} moved to Done".into());
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
                     let _ = self
                         .db
-                        .update_cue_status(cue_id, CueStatus::Done);
-                    let _ = self.db.log_activity(
-                        cue_id,
-                        "Moved to Done (already committed)",
-                    );
+                        .log_activity(cue_id, "Moved to Done (already committed)");
                 } else {
-                    self.set_status_message(format!(
-                        "Commit failed: {}",
-                        e
-                    ));
+                    self.set_status_message(format!("Commit failed: {}", e));
                 }
             }
         }
     }
 
     fn process_revert_review(&mut self, cue_id: i64) {
-        if let Ok(Some(exec)) =
-            self.db.get_latest_execution(cue_id)
-        {
+        if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
             if let Some(ref diff) = exec.diff {
-                let file_paths =
-                    git::parse_diff_file_paths_for_repo(
-                        &self.project_root,
-                        diff,
-                    );
-                if let Err(e) = git::revert_files(
-                    &self.project_root,
-                    &file_paths,
-                ) {
-                    self.set_status_message(format!(
-                        "Revert failed: {}",
-                        e
-                    ));
+                let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
+                if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
+                    self.set_status_message(format!("Revert failed: {}", e));
                 }
             }
         }
-        let _ = self
-            .db
-            .update_cue_status(cue_id, CueStatus::Inbox);
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
         let _ = self.db.log_activity(cue_id, "Reverted");
         for tab in &mut self.viewer.tabs {
-            if let Ok(content) =
-                std::fs::read_to_string(&tab.file_path)
-            {
-                tab.content =
-                    content.lines().map(String::from).collect();
+            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                tab.content = content.lines().map(String::from).collect();
                 let ext = std::path::Path::new(&tab.file_path)
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("");
-                tab.symbols = super::symbols::parse_symbols(
-                    &tab.content,
-                    ext,
-                );
+                tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
             }
         }
         self.reload_git_info();
@@ -1002,20 +789,12 @@ impl DirigentApp {
 
     fn process_show_running_log(&mut self, cue_id: i64) {
         if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            if !self
-                .claude
-                .running_logs
-                .contains_key(&cue_id)
-            {
+            if !self.claude.running_logs.contains_key(&cue_id) {
                 if let Some(last) = execs.last() {
                     if let Some(ref log_text) = last.log {
-                        self.claude.running_logs.insert(
-                            cue_id,
-                            (
-                                log_text.clone(),
-                                CliProvider::Claude,
-                            ),
-                        );
+                        self.claude
+                            .running_logs
+                            .insert(cue_id, (log_text.clone(), CliProvider::Claude));
                     }
                 }
             }
@@ -1040,21 +819,12 @@ impl DirigentApp {
             .iter()
             .map(|c| format!("- {}", c.text.trim()))
             .collect();
-        let commit_msg = format!(
-            "{}\n\n{}",
-            subject,
-            cue_details.join("\n\n"),
-        );
-        let review_ids: Vec<i64> =
-            review_cues.iter().map(|c| c.id).collect();
+        let commit_msg = format!("{}\n\n{}", subject, cue_details.join("\n\n"),);
+        let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
         match git::commit_all(&self.project_root, &commit_msg) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
-                let plural = if review_ids.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                };
+                let plural = if review_ids.len() == 1 { "" } else { "s" };
                 self.set_status_message(format!(
                     "Committed all: {} ({} cue{})",
                     short,
@@ -1062,21 +832,14 @@ impl DirigentApp {
                     plural,
                 ));
                 for cue_id in &review_ids {
-                    let _ = self.db.update_cue_status(
-                        *cue_id,
-                        CueStatus::Done,
-                    );
-                    let _ = self.db.log_activity(
-                        *cue_id,
-                        &format!("Committed ({})", short),
-                    );
+                    let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
+                    let _ = self
+                        .db
+                        .log_activity(*cue_id, &format!("Committed ({})", short));
                 }
             }
             Err(e) => {
-                self.set_status_message(format!(
-                    "Commit all failed: {}",
-                    e
-                ));
+                self.set_status_message(format!("Commit all failed: {}", e));
             }
         }
         self.reload_git_info();
@@ -1101,15 +864,9 @@ impl DirigentApp {
             let when = Instant::now() + duration;
             self.scheduled_runs.insert(id, when);
             self.schedule_inputs.remove(&id);
-            let _ = self.db.log_activity(
-                id,
-                &format!("Scheduled ({})", input),
-            );
+            let _ = self.db.log_activity(id, &format!("Scheduled ({})", input));
             let preview = self.cue_preview(id);
-            self.set_status_message(format!(
-                "\"{}\" scheduled to run in {}",
-                preview, input
-            ));
+            self.set_status_message(format!("\"{}\" scheduled to run in {}", preview, input));
         } else {
             self.set_status_message(format!(
                 "Invalid schedule format: \"{}\" \u{2014} use e.g. 5m, 2h, 30s",
@@ -1142,12 +899,8 @@ impl DirigentApp {
             .map(|c| c.id)
             .collect();
         for cue_id in &review_ids {
-            let _ =
-                self.db.update_cue_tag(*cue_id, Some(tag));
-            let _ = self.db.log_activity(
-                *cue_id,
-                &format!("Tagged: {}", tag),
-            );
+            let _ = self.db.update_cue_tag(*cue_id, Some(tag));
+            let _ = self.db.log_activity(*cue_id, &format!("Tagged: {}", tag));
         }
         self.tag_all_review_input = None;
         let plural = if review_ids.len() == 1 { "" } else { "s" };
@@ -1159,19 +912,11 @@ impl DirigentApp {
         ));
     }
 
-    fn render_lava_lamp(
-        &mut self,
-        ui: &mut egui::Ui,
-        panel_rect: egui::Rect,
-    ) {
+    fn render_lava_lamp(&mut self, ui: &mut egui::Ui, panel_rect: egui::Rect) {
         if !self.settings.lava_lamp_enabled {
             return;
         }
-        if !self
-            .cues
-            .iter()
-            .any(|c| c.status == CueStatus::Ready)
-        {
+        if !self.cues.iter().any(|c| c.status == CueStatus::Ready) {
             return;
         }
         let margin = 8.0;
@@ -1181,12 +926,8 @@ impl DirigentApp {
             panel_rect.right() - lamp_w - margin,
             panel_rect.bottom() - lamp_h - margin,
         );
-        let lamp_rect = egui::Rect::from_min_size(
-            origin,
-            egui::vec2(lamp_w, lamp_h),
-        );
-        let resp =
-            ui.allocate_rect(lamp_rect, egui::Sense::click());
+        let lamp_rect = egui::Rect::from_min_size(origin, egui::vec2(lamp_w, lamp_h));
+        let resp = ui.allocate_rect(lamp_rect, egui::Sense::click());
         if resp.clicked() {
             self.lava_lamp_big = !self.lava_lamp_big;
         }
@@ -1203,10 +944,7 @@ impl DirigentApp {
 
 /// Build the heading text showing cue counts.
 fn build_heading_text(cues: &[Cue]) -> String {
-    let inbox = cues
-        .iter()
-        .filter(|c| c.status == CueStatus::Inbox)
-        .count();
+    let inbox = cues.iter().filter(|c| c.status == CueStatus::Inbox).count();
     let review = cues
         .iter()
         .filter(|c| c.status == CueStatus::Review)
@@ -1234,10 +972,7 @@ fn build_heading_text(cues: &[Cue]) -> String {
 }
 
 /// Collect unique source labels from cues and settings.
-fn collect_unique_labels(
-    cues: &[Cue],
-    sources: &[crate::settings::SourceConfig],
-) -> Vec<String> {
+fn collect_unique_labels(cues: &[Cue], sources: &[crate::settings::SourceConfig]) -> Vec<String> {
     let mut labels = BTreeSet::new();
     for c in cues {
         if let Some(ref label) = c.source_label {
@@ -1263,8 +998,7 @@ fn filter_cues_by_status_and_source<'a>(
         .filter(|c| c.status == status)
         .filter(|c| {
             if let Some(ref filter) = source_filter {
-                c.source_label.as_deref()
-                    == Some(filter.as_str())
+                c.source_label.as_deref() == Some(filter.as_str())
             } else {
                 true
             }
@@ -1273,35 +1007,19 @@ fn filter_cues_by_status_and_source<'a>(
 }
 
 /// Build section header text for a cue status column.
-fn build_section_header(
-    status: CueStatus,
-    count: usize,
-    archived_total: usize,
-) -> String {
+fn build_section_header(status: CueStatus, count: usize, archived_total: usize) -> String {
     if status == CueStatus::Archived && archived_total > count {
-        format!(
-            "{} ({}/{})",
-            status.label(),
-            count,
-            archived_total
-        )
+        format!("{} ({}/{})", status.label(), count, archived_total)
     } else {
         format!("{} ({})", status.label(), count)
     }
 }
 
 /// Format the import message.
-fn format_import_message(
-    new_count: usize,
-    updated_count: usize,
-    filename: &str,
-) -> String {
+fn format_import_message(new_count: usize, updated_count: usize, filename: &str) -> String {
     match (new_count, updated_count) {
         (0, 0) => format!("No changes from \"{}\"", filename),
-        (n, 0) => format!(
-            "Imported {} new cue(s) from \"{}\"",
-            n, filename
-        ),
+        (n, 0) => format!("Imported {} new cue(s) from \"{}\"", n, filename),
         (0, u) => {
             format!("Updated {} cue(s) from \"{}\"", u, filename)
         }
@@ -1326,13 +1044,15 @@ fn build_single_cue_subject(cue: &Cue) -> String {
         .text
         .lines()
         .find(|l| !l.trim().is_empty())
-        .unwrap_or_else(|| {
-            cue.text.lines().next().unwrap_or(&cue.text)
-        });
+        .unwrap_or_else(|| cue.text.lines().next().unwrap_or(&cue.text));
     let trimmed = first_line.trim();
     let trimmed = if trimmed.is_empty() {
         let fallback = cue.text.trim();
-        if fallback.is_empty() { "" } else { fallback }
+        if fallback.is_empty() {
+            ""
+        } else {
+            fallback
+        }
     } else {
         trimmed
     };
@@ -1360,9 +1080,7 @@ fn build_multi_cue_subject(review_cues: &[&Cue]) -> String {
                 .text
                 .lines()
                 .find(|l| !l.trim().is_empty())
-                .unwrap_or_else(|| {
-                    c.text.lines().next().unwrap_or(&c.text)
-                });
+                .unwrap_or_else(|| c.text.lines().next().unwrap_or(&c.text));
             let trimmed = first.trim();
             if trimmed.is_empty() {
                 None
@@ -1372,17 +1090,13 @@ fn build_multi_cue_subject(review_cues: &[&Cue]) -> String {
         })
         .collect();
     if short_names.is_empty() {
-        return format!(
-            "Dirigent: {} cues",
-            review_cues.len()
-        );
+        return format!("Dirigent: {} cues", review_cues.len());
     }
     let combined = short_names.join(", ");
     if combined.len() <= 62 {
         return format!("Dirigent: {}", combined);
     }
-    let truncated =
-        crate::app::truncate_str(&combined, 59);
+    let truncated = crate::app::truncate_str(&combined, 59);
     if truncated.is_empty() {
         format!("Dirigent: {} cues", review_cues.len())
     } else {
@@ -1391,9 +1105,7 @@ fn build_multi_cue_subject(review_cues: &[&Cue]) -> String {
 }
 
 /// Parse a schedule duration string like "5m", "2h", "30s" into a `Duration`.
-fn parse_schedule_duration(
-    input: &str,
-) -> Option<std::time::Duration> {
+fn parse_schedule_duration(input: &str) -> Option<std::time::Duration> {
     let input = input.trim();
     if input.is_empty() {
         return None;

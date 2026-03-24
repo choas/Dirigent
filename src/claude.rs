@@ -213,10 +213,7 @@ fn truncate_to_byte_limit(text: &mut String) {
 }
 
 /// Build the git-diff section for auto-context.
-fn gather_git_diff_section(
-    project_root: &std::path::Path,
-    file_path: &str,
-) -> Option<String> {
+fn gather_git_diff_section(project_root: &std::path::Path, file_path: &str) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["diff", "--", file_path])
         .current_dir(project_root)
@@ -272,7 +269,9 @@ pub(crate) fn gather_auto_context(
     let mut sections = Vec::new();
 
     if include_file {
-        if let Some(snippet) = gather_file_snippet(project_root, file_path, line_number, line_number_end) {
+        if let Some(snippet) =
+            gather_file_snippet(project_root, file_path, line_number, line_number_end)
+        {
             sections.push(snippet);
         }
     }
@@ -344,7 +343,11 @@ pub(crate) fn build_reply_prompt(
 
 /// Resolve the Claude binary path and verify it exists on PATH.
 fn resolve_claude_binary(cli_path: &str) -> Result<&str, ClaudeError> {
-    let claude_bin = if cli_path.is_empty() { "claude" } else { cli_path };
+    let claude_bin = if cli_path.is_empty() {
+        "claude"
+    } else {
+        cli_path
+    };
     let which_result = Command::new("which").arg(claude_bin).output();
     match which_result {
         Ok(output) if !output.status.success() => Err(ClaudeError::NotFound),
@@ -418,7 +421,12 @@ fn run_lifecycle_script(
         return Ok(());
     }
     on_log(&format!("\u{25B6} {}: {}\n", label, trimmed));
-    match Command::new("sh").arg("-c").arg(trimmed).current_dir(project_root).output() {
+    match Command::new("sh")
+        .arg("-c")
+        .arg(trimmed)
+        .current_dir(project_root)
+        .output()
+    {
         Ok(output) => handle_script_output(&output, label, on_log, fail_on_error),
         Err(e) => handle_script_error(e, label, on_log, fail_on_error),
     }
@@ -492,7 +500,9 @@ fn spawn_watchdog(
 }
 
 /// Spawn a thread that collects stderr into a String.
-fn spawn_stderr_reader(stderr_handle: std::process::ChildStderr) -> std::thread::JoinHandle<String> {
+fn spawn_stderr_reader(
+    stderr_handle: std::process::ChildStderr,
+) -> std::thread::JoinHandle<String> {
     use std::io::Read;
     std::thread::spawn(move || {
         let mut s = String::new();
@@ -664,8 +674,14 @@ fn handle_result_event(
 /// Extract run metrics from a result event.
 fn extract_metrics(event: &serde_json::Value) -> RunMetrics {
     RunMetrics {
-        cost_usd: event.get("cost_usd").and_then(|c| c.as_f64()).unwrap_or(0.0),
-        duration_ms: event.get("duration_ms").and_then(|d| d.as_u64()).unwrap_or(0),
+        cost_usd: event
+            .get("cost_usd")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0),
+        duration_ms: event
+            .get("duration_ms")
+            .and_then(|d| d.as_u64())
+            .unwrap_or(0),
         num_turns: event.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0),
         input_tokens: event
             .get("total_input_tokens")
@@ -687,15 +703,22 @@ fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&st
         .and_then(|v| v.as_f64())
         .filter(|&s| s > 0.0)
     {
-        on_log(&format!("\u{23f3} Rate limited, retrying in {:.0}s\n", seconds));
+        on_log(&format!(
+            "\u{23f3} Rate limited, retrying in {:.0}s\n",
+            seconds
+        ));
     }
 }
 
 /// Reap the child process (works whether it exited naturally or was killed).
 fn reap_child(child: &Arc<Mutex<std::process::Child>>) {
     match child.lock() {
-        Ok(mut c) => { let _ = c.wait(); }
-        Err(poisoned) => { let _ = poisoned.into_inner().wait(); }
+        Ok(mut c) => {
+            let _ = c.wait();
+        }
+        Err(poisoned) => {
+            let _ = poisoned.into_inner().wait();
+        }
     }
 }
 
@@ -751,7 +774,13 @@ pub(crate) fn invoke_claude_streaming(
         on_log(&format!("\nError: {}\n", stderr));
     }
 
-    run_lifecycle_script(post_run_script, "post-run", project_root, &mut on_log, false)?;
+    run_lifecycle_script(
+        post_run_script,
+        "post-run",
+        project_root,
+        &mut on_log,
+        false,
+    )?;
 
     Ok(ClaudeResponse {
         stdout: state.final_result,

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -70,49 +71,7 @@ impl DirigentApp {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            let items = match source.kind {
-                SourceKind::GitHubIssues => {
-                    let label_filter = if source.filter.is_empty() {
-                        None
-                    } else {
-                        Some(source.filter.as_str())
-                    };
-                    sources::fetch_github_issues(&project_root, label_filter, None, &source.label)
-                        .unwrap_or_else(|e| {
-                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                            Vec::new()
-                        })
-                }
-                SourceKind::Slack => {
-                    sources::fetch_slack_messages(&source.token, &source.channel, &source.label)
-                        .unwrap_or_else(|e| {
-                            let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                            Vec::new()
-                        })
-                }
-                SourceKind::SonarQube => sources::fetch_sonarqube_issues(
-                    &project_root,
-                    &source.host_url,
-                    &source.project_key,
-                    &source.token,
-                    &source.label,
-                )
-                .unwrap_or_else(|e| {
-                    let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                    Vec::new()
-                }),
-                SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
-                    if source.command.is_empty() {
-                        Vec::new()
-                    } else {
-                        sources::fetch_custom_command(&project_root, &source.command, &source.label)
-                            .unwrap_or_else(|e| {
-                                let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-                                Vec::new()
-                            })
-                    }
-                }
-            };
+            let items = fetch_source_items(&source, &project_root, &error_tx);
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
@@ -171,6 +130,55 @@ impl DirigentApp {
         if new_count > 0 {
             self.reload_cues();
             self.set_status_message(format!("{} new cue(s) from sources", new_count));
+        }
+    }
+}
+
+fn fetch_source_items(
+    source: &settings::SourceConfig,
+    project_root: &Path,
+    error_tx: &mpsc::Sender<String>,
+) -> Vec<SourceItem> {
+    let err = |e: crate::error::DirigentError| {
+        let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
+        Vec::new()
+    };
+    match source.kind {
+        SourceKind::GitHubIssues => {
+            let label_filter = if source.filter.is_empty() {
+                None
+            } else {
+                Some(source.filter.as_str())
+            };
+            sources::fetch_github_issues(project_root, label_filter, None, &source.label)
+                .unwrap_or_else(err)
+        }
+        SourceKind::Slack => {
+            sources::fetch_slack_messages(&source.token, &source.channel, &source.label)
+                .unwrap_or_else(err)
+        }
+        SourceKind::SonarQube => {
+            let host = if source.host_url.is_empty() {
+                "http://localhost:9000"
+            } else {
+                &source.host_url
+            };
+            sources::fetch_sonarqube_issues(
+                project_root,
+                host,
+                &source.project_key,
+                &source.token,
+                &source.label,
+            )
+            .unwrap_or_else(err)
+        }
+        SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
+            if source.command.is_empty() {
+                Vec::new()
+            } else {
+                sources::fetch_custom_command(project_root, &source.command, &source.label)
+                    .unwrap_or_else(err)
+            }
         }
     }
 }

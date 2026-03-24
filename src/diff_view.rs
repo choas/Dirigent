@@ -53,9 +53,8 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
     let mut i = 0;
 
     while i < lines.len() {
-        let is_file_header = lines[i].starts_with("--- ")
-            && i + 1 < lines.len()
-            && lines[i + 1].starts_with("+++ ");
+        let is_file_header =
+            lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ");
         if !is_file_header {
             i += 1;
             continue;
@@ -638,7 +637,11 @@ fn render_sbs_row(
     );
 
     // Separator
-    let sep_resp = ui.label(egui::RichText::new("\u{2502}").monospace().color(sc.sep_color));
+    let sep_resp = ui.label(
+        egui::RichText::new("\u{2502}")
+            .monospace()
+            .color(sc.sep_color),
+    );
     if row_is_current {
         sep_resp.scroll_to_me(Some(egui::Align::Center));
     }

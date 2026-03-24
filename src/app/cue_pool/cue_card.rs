@@ -166,13 +166,9 @@ impl DirigentApp {
                     "s"
                 };
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} image{}",
-                        cue.attached_images.len(),
-                        plural
-                    ))
-                    .small()
-                    .color(self.semantic.accent),
+                    egui::RichText::new(format!("{} image{}", cue.attached_images.len(), plural))
+                        .small()
+                        .color(self.semantic.accent),
                 );
             }
         });
@@ -204,11 +200,7 @@ impl DirigentApp {
         {
             actions.push((
                 cue.id,
-                CueAction::Navigate(
-                    cue.file_path.clone(),
-                    cue.line_number,
-                    cue.line_number_end,
-                ),
+                CueAction::Navigate(cue.file_path.clone(), cue.line_number, cue.line_number_end),
             ));
         }
     }
@@ -508,10 +500,8 @@ impl DirigentApp {
         if self.git.ahead_of_remote <= 0 || self.git.pushing || !log_mentions_push {
             return;
         }
-        let push_btn = egui::Button::new(
-            icon("\u{2191} Push", fs).color(self.semantic.badge_text),
-        )
-        .fill(self.semantic.accent);
+        let push_btn = egui::Button::new(icon("\u{2191} Push", fs).color(self.semantic.badge_text))
+            .fill(self.semantic.accent);
         let plural = if self.git.ahead_of_remote == 1 {
             ""
         } else {
@@ -738,13 +728,9 @@ impl DirigentApp {
                     .small_button(icon("\u{2713} Go", fs))
                     .on_hover_text("Schedule this run")
                     .clicked()
-                    || (response.has_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submit && !schedule_text.trim().is_empty() {
-                    actions.push((
-                        cue.id,
-                        CueAction::ScheduleRun(schedule_text.clone()),
-                    ));
+                    actions.push((cue.id, CueAction::ScheduleRun(schedule_text.clone())));
                 }
                 if ui
                     .small_button("\u{2715}")
@@ -780,14 +766,9 @@ impl DirigentApp {
                 .on_hover_text("Send feedback to Claude (also Cmd+Enter)")
                 .clicked()
                 || (response.has_focus()
-                    && ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter) && i.modifiers.command
-                    }));
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
             if submit && !reply_text.trim().is_empty() {
-                actions.push((
-                    cue.id,
-                    CueAction::ReplyReview(cue.id, reply_text.clone()),
-                ));
+                actions.push((cue.id, CueAction::ReplyReview(cue.id, reply_text.clone())));
             }
         }
     }
@@ -803,9 +784,7 @@ impl DirigentApp {
         if let Some(tag_text) = self.tag_inputs.get_mut(&cue.id) {
             ui.add_space(SPACE_XS);
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("\u{1F3F7}").color(self.semantic.accent),
-                );
+                ui.label(egui::RichText::new("\u{1F3F7}").color(self.semantic.accent));
                 let response = ui.add(
                     egui::TextEdit::singleline(tag_text)
                         .desired_width(100.0)
@@ -815,8 +794,7 @@ impl DirigentApp {
                     .small_button(icon("\u{2713} Set", fs))
                     .on_hover_text("Set tag")
                     .clicked()
-                    || (response.has_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                 if submit {
                     let tag_val = if tag_text.trim().is_empty() {
                         None
@@ -855,10 +833,7 @@ impl DirigentApp {
             );
             return;
         }
-        let agent_runs = self
-            .db
-            .get_agent_runs_for_cue(cue.id)
-            .unwrap_or_default();
+        let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
         for entry in &entries {
             let agent_kind = detect_agent_kind(&entry.event);
             ui.horizontal(|ui| {
@@ -875,13 +850,7 @@ impl DirigentApp {
             });
 
             if let Some(ref kind_label) = agent_kind {
-                self.render_agent_output_block(
-                    ui,
-                    cue,
-                    entry,
-                    kind_label,
-                    &agent_runs,
-                );
+                self.render_agent_output_block(ui, cue, entry, kind_label, &agent_runs);
             }
         }
     }
@@ -894,16 +863,11 @@ impl DirigentApp {
     ) {
         let key = (cue.id, entry.timestamp.clone());
         let is_expanded = self.agent_output_expanded.contains(&key);
-        let arrow = if is_expanded {
-            "\u{25BE}"
-        } else {
-            "\u{25B8}"
-        };
+        let arrow = if is_expanded { "\u{25BE}" } else { "\u{25B8}" };
         let clicked = ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new(format!("{} {}", arrow, &entry.event))
-                        .small(),
+                    egui::RichText::new(format!("{} {}", arrow, &entry.event)).small(),
                 )
                 .sense(egui::Sense::click()),
             )
@@ -932,12 +896,8 @@ impl DirigentApp {
         let kind_str = kind_label.to_lowercase();
         let run = agent_runs
             .iter()
-            .find(|r| {
-                r.agent_kind == kind_str && r.started_at == entry.timestamp
-            })
-            .or_else(|| {
-                agent_runs.iter().find(|r| r.agent_kind == kind_str)
-            });
+            .find(|r| r.agent_kind == kind_str && r.started_at == entry.timestamp)
+            .or_else(|| agent_runs.iter().find(|r| r.agent_kind == kind_str));
         let Some(run) = run else { return };
         let output = format_agent_output(&run.output);
         egui::Frame::NONE
@@ -989,8 +949,7 @@ fn compute_display_text(cue: &Cue, is_expanded: bool) -> String {
     let is_long = line_count > 10 || word_count > 50;
 
     if is_long && !is_expanded {
-        let truncated: String =
-            cue.text.lines().take(5).collect::<Vec<_>>().join("\n");
+        let truncated: String = cue.text.lines().take(5).collect::<Vec<_>>().join("\n");
         let words: Vec<&str> = truncated.split_whitespace().collect();
         if words.len() > 50 {
             format!("{}\u{2026}", words[..50].join(" "))
@@ -1003,10 +962,7 @@ fn compute_display_text(cue: &Cue, is_expanded: bool) -> String {
 }
 
 /// Format queue/schedule label for display.
-fn format_queue_label(
-    is_queued: bool,
-    scheduled_when: Option<Instant>,
-) -> String {
+fn format_queue_label(is_queued: bool, scheduled_when: Option<Instant>) -> String {
     if is_queued {
         return "\u{23F3} Queued".to_string();
     }
@@ -1019,20 +975,13 @@ fn format_queue_label(
         if secs < 3600 {
             return format!("\u{23F2} {}:{:02}", secs / 60, secs % 60);
         }
-        return format!(
-            "\u{23F2} {}h{}m",
-            secs / 3600,
-            (secs % 3600) / 60
-        );
+        return format!("\u{23F2} {}h{}m", secs / 3600, (secs % 3600) / 60);
     }
     "\u{23F3} Pending".to_string()
 }
 
 /// Toggle reply input visibility for a cue.
-fn toggle_reply_input(
-    reply_inputs: &mut std::collections::HashMap<i64, String>,
-    cue_id: i64,
-) {
+fn toggle_reply_input(reply_inputs: &mut std::collections::HashMap<i64, String>, cue_id: i64) {
     if reply_inputs.contains_key(&cue_id) {
         reply_inputs.remove(&cue_id);
     } else {
@@ -1042,9 +991,8 @@ fn toggle_reply_input(
 
 /// Detect if an activity event is an agent event and return its kind label.
 fn detect_agent_kind(event: &str) -> Option<String> {
-    let is_agent_event = event.contains("passed")
-        || event.contains("failed")
-        || event.contains("error");
+    let is_agent_event =
+        event.contains("passed") || event.contains("failed") || event.contains("error");
     if !is_agent_event {
         return None;
     }
@@ -1075,14 +1023,14 @@ fn tag_badge_color(tag: &str) -> egui::Color32 {
         acc.wrapping_mul(33).wrapping_add(b as u32)
     });
     let colors = [
-        egui::Color32::from_rgb(38, 154, 108),  // emerald
-        egui::Color32::from_rgb(163, 68, 168),  // vivid purple
-        egui::Color32::from_rgb(206, 120, 36),  // tangerine
-        egui::Color32::from_rgb(44, 138, 186),  // cerulean
-        egui::Color32::from_rgb(210, 60, 78),   // coral
-        egui::Color32::from_rgb(108, 72, 190),  // violet
-        egui::Color32::from_rgb(60, 120, 216),  // royal blue
-        egui::Color32::from_rgb(188, 82, 148),  // magenta
+        egui::Color32::from_rgb(38, 154, 108), // emerald
+        egui::Color32::from_rgb(163, 68, 168), // vivid purple
+        egui::Color32::from_rgb(206, 120, 36), // tangerine
+        egui::Color32::from_rgb(44, 138, 186), // cerulean
+        egui::Color32::from_rgb(210, 60, 78),  // coral
+        egui::Color32::from_rgb(108, 72, 190), // violet
+        egui::Color32::from_rgb(60, 120, 216), // royal blue
+        egui::Color32::from_rgb(188, 82, 148), // magenta
     ];
     colors[(hash as usize) % colors.len()]
 }
@@ -1093,14 +1041,14 @@ fn source_label_color(label: &str) -> egui::Color32 {
         .bytes()
         .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     let colors = [
-        egui::Color32::from_rgb(60, 120, 216),  // royal blue
-        egui::Color32::from_rgb(163, 68, 168),  // vivid purple
-        egui::Color32::from_rgb(206, 120, 36),  // tangerine
-        egui::Color32::from_rgb(38, 154, 108),  // emerald
-        egui::Color32::from_rgb(210, 60, 78),   // coral
-        egui::Color32::from_rgb(44, 138, 186),  // cerulean
-        egui::Color32::from_rgb(188, 82, 148),  // magenta
-        egui::Color32::from_rgb(108, 72, 190),  // violet
+        egui::Color32::from_rgb(60, 120, 216), // royal blue
+        egui::Color32::from_rgb(163, 68, 168), // vivid purple
+        egui::Color32::from_rgb(206, 120, 36), // tangerine
+        egui::Color32::from_rgb(38, 154, 108), // emerald
+        egui::Color32::from_rgb(210, 60, 78),  // coral
+        egui::Color32::from_rgb(44, 138, 186), // cerulean
+        egui::Color32::from_rgb(188, 82, 148), // magenta
+        egui::Color32::from_rgb(108, 72, 190), // violet
     ];
     colors[(hash as usize) % colors.len()]
 }

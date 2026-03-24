@@ -140,8 +140,7 @@ impl DirigentApp {
         let lines_with_cues = self.lines_with_cues();
         let num_lines = self.viewer.tabs[active_idx].content.len();
         let line_height = 16.0;
-        let diag_lines =
-            build_diagnostic_lookup(&self.agent_state.latest_diagnostics, rel_path);
+        let diag_lines = build_diagnostic_lookup(&self.agent_state.latest_diagnostics, rel_path);
         let diag_messages =
             build_diagnostic_messages(&self.agent_state.latest_diagnostics, rel_path);
         let ext = file_path
@@ -175,26 +174,25 @@ impl DirigentApp {
 
         let scroll_area =
             build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset);
-        let output =
-            scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
-                for line_idx in row_range {
-                    render_code_line(
-                        ui,
-                        self,
-                        active_idx,
-                        line_idx,
-                        sel_start,
-                        sel_end,
-                        &lines_with_cues,
-                        &diag_lines,
-                        &diag_messages,
-                        &ext,
-                        &symbol_lines,
-                        cmd_held,
-                        &mut actions,
-                    );
-                }
-            });
+        let output = scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
+            for line_idx in row_range {
+                render_code_line(
+                    ui,
+                    self,
+                    active_idx,
+                    line_idx,
+                    sel_start,
+                    sel_end,
+                    &lines_with_cues,
+                    &diag_lines,
+                    &diag_messages,
+                    &ext,
+                    &symbol_lines,
+                    cmd_held,
+                    &mut actions,
+                );
+            }
+        });
         self.viewer.tabs[active_idx].scroll_offset = output.state.offset.y;
 
         self.apply_code_line_actions(
@@ -385,74 +383,55 @@ impl DirigentApp {
                 ui.ctx().copy_text(rel_path.to_string());
             }
             if is_dirty {
-                ui.label(
-                    egui::RichText::new("\u{25CF}")
-                        .color(self.semantic.warning),
-                );
+                ui.label(egui::RichText::new("\u{25CF}").color(self.semantic.warning));
             }
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(icon("\u{2715}", self.settings.font_size))
+                    .on_hover_text("Close tab (\u{2318}W)")
+                    .clicked()
+                {
+                    bc_action = BreadcrumbAction::CloseFile;
+                }
+                self.render_breadcrumb_diagnostics(ui, rel_path);
+                ui.label(format!(
+                    "{} lines",
+                    self.viewer.tabs[active_idx].content.len()
+                ));
+                if is_markdown {
+                    let label = if self.viewer.tabs[active_idx].markdown_rendered {
+                        "Raw"
+                    } else {
+                        "Rendered"
+                    };
                     if ui
-                        .small_button(icon("\u{2715}", self.settings.font_size))
-                        .on_hover_text("Close tab (\u{2318}W)")
+                        .small_button(label)
+                        .on_hover_text("Toggle between raw Markdown and rendered view")
                         .clicked()
                     {
-                        bc_action = BreadcrumbAction::CloseFile;
+                        bc_action = BreadcrumbAction::ToggleMarkdown;
                     }
-                    self.render_breadcrumb_diagnostics(ui, rel_path);
-                    ui.label(format!(
-                        "{} lines",
-                        self.viewer.tabs[active_idx].content.len()
-                    ));
-                    if is_markdown {
-                        let label =
-                            if self.viewer.tabs[active_idx].markdown_rendered {
-                                "Raw"
-                            } else {
-                                "Rendered"
-                            };
-                        if ui
-                            .small_button(label)
-                            .on_hover_text(
-                                "Toggle between raw Markdown and rendered view",
-                            )
-                            .clicked()
-                        {
-                            bc_action = BreadcrumbAction::ToggleMarkdown;
-                        }
-                    }
-                    if is_dirty
-                        && ui
-                            .small_button("Show Diff")
-                            .on_hover_text(
-                                "Show uncommitted changes for this file",
-                            )
-                            .clicked()
-                    {
-                        bc_action = BreadcrumbAction::ShowFileDiff;
-                    }
-                },
-            );
+                }
+                if is_dirty
+                    && ui
+                        .small_button("Show Diff")
+                        .on_hover_text("Show uncommitted changes for this file")
+                        .clicked()
+                {
+                    bc_action = BreadcrumbAction::ShowFileDiff;
+                }
+            });
         });
 
         bc_action
     }
 
     /// Render path segments and the current symbol in the breadcrumb bar.
-    fn render_breadcrumb_segments(
-        &mut self,
-        ui: &mut egui::Ui,
-        active_idx: usize,
-        rel_path: &str,
-    ) {
+    fn render_breadcrumb_segments(&mut self, ui: &mut egui::Ui, active_idx: usize, rel_path: &str) {
         let segments: Vec<&str> = rel_path.split('/').collect();
         for (i, segment) in segments.iter().enumerate() {
             if i > 0 {
-                ui.label(
-                    egui::RichText::new("\u{203A}")
-                        .color(self.semantic.tertiary_text),
-                );
+                ui.label(egui::RichText::new("\u{203A}").color(self.semantic.tertiary_text));
             }
             let is_last = i == segments.len() - 1;
             let text = if is_last {
@@ -477,8 +456,7 @@ impl DirigentApp {
                 if is_last {
                     self.viewer.scroll_to_line = Some(1);
                 } else {
-                    let dir_path =
-                        self.project_root.join(segments[..=i].join("/"));
+                    let dir_path = self.project_root.join(segments[..=i].join("/"));
                     self.expanded_dirs.insert(dir_path);
                 }
             }
@@ -494,14 +472,10 @@ impl DirigentApp {
                     1
                 }
             });
-        if let Some(sym) = symbols::enclosing_symbol(
-            &self.viewer.tabs[active_idx].symbols,
-            current_line,
-        ) {
-            ui.label(
-                egui::RichText::new("\u{203A}")
-                    .color(self.semantic.tertiary_text),
-            );
+        if let Some(sym) =
+            symbols::enclosing_symbol(&self.viewer.tabs[active_idx].symbols, current_line)
+        {
+            ui.label(egui::RichText::new("\u{203A}").color(self.semantic.tertiary_text));
             ui.label(
                 egui::RichText::new(format!("{} {}", sym.kind.label(), sym.name))
                     .small()
@@ -673,9 +647,7 @@ impl DirigentApp {
     /// Submit the inline cue from the code viewer selection.
     fn submit_inline_cue(&mut self, active_idx: usize, rel_path: &str) {
         if let Some(start) = self.viewer.tabs[active_idx].selection_start {
-            let end = self.viewer.tabs[active_idx]
-                .selection_end
-                .unwrap_or(start);
+            let end = self.viewer.tabs[active_idx].selection_end.unwrap_or(start);
             let line_end = if end > start { Some(end) } else { None };
             let text = self.viewer.tabs[active_idx].cue_input.clone();
             let images: Vec<String> = self.viewer.tabs[active_idx]
@@ -683,9 +655,9 @@ impl DirigentApp {
                 .drain(..)
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
-            let _ =
-                self.db
-                    .insert_cue(&text, rel_path, start, line_end, &images);
+            let _ = self
+                .db
+                .insert_cue(&text, rel_path, start, line_end, &images);
             self.viewer.tabs[active_idx].cue_input.clear();
             self.reload_cues();
         }
@@ -736,17 +708,14 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             ui.add_space(SPACE_MD);
             ui.label(egui::RichText::new("Open File").strong());
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    ui.add_space(SPACE_MD);
-                    if ui.small_button(icon("\u{2715}", fs)).clicked()
-                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
-                    {
-                        self.viewer.quick_open_active = false;
-                    }
-                },
-            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(SPACE_MD);
+                if ui.small_button(icon("\u{2715}", fs)).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    self.viewer.quick_open_active = false;
+                }
+            });
         });
     }
 
@@ -795,8 +764,7 @@ impl DirigentApp {
     /// Clamp the quick-open selection to the current match count.
     fn clamp_quick_open_selection(&mut self, count: usize) {
         if count > 0 {
-            self.viewer.quick_open_selected =
-                self.viewer.quick_open_selected.min(count - 1);
+            self.viewer.quick_open_selected = self.viewer.quick_open_selected.min(count - 1);
         } else {
             self.viewer.quick_open_selected = 0;
         }
@@ -844,10 +812,7 @@ impl DirigentApp {
                 for (i, (rel, abs)) in matches.iter().enumerate() {
                     let is_selected = i == sel;
                     let clicked = ui
-                        .selectable_label(
-                            is_selected,
-                            egui::RichText::new(rel).monospace().small(),
-                        )
+                        .selectable_label(is_selected, egui::RichText::new(rel).monospace().small())
                         .clicked();
                     if clicked || (is_selected && enter_pressed) {
                         navigate_to = Some(abs.clone());
@@ -885,11 +850,7 @@ impl DirigentApp {
     }
 
     /// Search for a definition in the current file. Returns true if found.
-    fn search_definition_in_current_file(
-        &mut self,
-        word: &str,
-        patterns: &[regex::Regex],
-    ) -> bool {
+    fn search_definition_in_current_file(&mut self, word: &str, patterns: &[regex::Regex]) -> bool {
         let tab = match self.viewer.active() {
             Some(t) => t,
             None => return false,
@@ -904,11 +865,7 @@ impl DirigentApp {
             if found {
                 self.push_nav_history();
                 self.viewer.scroll_to_line = Some(idx + 1);
-                self.set_status_message(format!(
-                    "Definition: `{}` at line {}",
-                    word,
-                    idx + 1
-                ));
+                self.set_status_message(format!("Definition: `{}` at line {}", word, idx + 1));
                 return true;
             }
         }
@@ -924,8 +881,7 @@ impl DirigentApp {
 
         self.goto_def_cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.goto_def_cancel =
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.goto_def_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.goto_def_gen = self.goto_def_gen.wrapping_add(1);
         let gen = self.goto_def_gen;
 
@@ -967,10 +923,7 @@ fn tab_label_text(
     secondary: egui::Color32,
 ) -> egui::RichText {
     if is_active {
-        egui::RichText::new(filename)
-            .small()
-            .strong()
-            .color(accent)
+        egui::RichText::new(filename).small().strong().color(accent)
     } else {
         egui::RichText::new(filename).small().color(secondary)
     }
@@ -983,10 +936,7 @@ fn path_matches_diagnostic(rel_path: &str, diag_file: &str) -> bool {
 }
 
 /// Build a scroll area with the correct vertical offset.
-fn build_scroll_area(
-    scroll_offset: Option<f32>,
-    tab_offset: f32,
-) -> egui::ScrollArea {
+fn build_scroll_area(scroll_offset: Option<f32>, tab_offset: f32) -> egui::ScrollArea {
     let mut scroll_area = egui::ScrollArea::both().auto_shrink([false; 2]);
     if let Some(offset) = scroll_offset {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
@@ -1009,9 +959,7 @@ fn build_diagnostic_lookup(
             }
             let entry = map.entry(d.line).or_insert(Severity::Info);
             match (&*entry, &d.severity) {
-                (Severity::Info, Severity::Warning | Severity::Error) => {
-                    *entry = d.severity
-                }
+                (Severity::Info, Severity::Warning | Severity::Error) => *entry = d.severity,
                 (Severity::Warning, Severity::Error) => *entry = d.severity,
                 _ => {}
             }
@@ -1158,26 +1106,13 @@ fn render_gutter_indicator(
 ) {
     match cue_state {
         Some(&true) => {
-            ui.label(
-                icon("\u{25CF}", app.settings.font_size)
-                    .color(app.semantic.secondary_text),
-            );
+            ui.label(icon("\u{25CF}", app.settings.font_size).color(app.semantic.secondary_text));
         }
         Some(&false) => {
-            ui.label(
-                icon("\u{25CF}", app.settings.font_size)
-                    .color(app.semantic.warning),
-            );
+            ui.label(icon("\u{25CF}", app.settings.font_size).color(app.semantic.warning));
         }
         None => {
-            render_diagnostic_gutter(
-                ui,
-                app,
-                line_num,
-                diag_lines,
-                diag_messages,
-                actions,
-            );
+            render_diagnostic_gutter(ui, app, line_num, diag_lines, diag_messages, actions);
         }
     }
 }
@@ -1324,11 +1259,7 @@ fn handle_goto_def_click(
 }
 
 /// Compute the byte offset from a pixel x-offset within a line of text.
-fn compute_byte_offset(
-    line_text: &str,
-    x_offset: f32,
-    approx_char_width: f32,
-) -> usize {
+fn compute_byte_offset(line_text: &str, x_offset: f32, approx_char_width: f32) -> usize {
     let mut accumulated = 0.0_f32;
     for (idx, ch) in line_text.char_indices() {
         let ch_width = if ch == '\t' {
@@ -1345,11 +1276,7 @@ fn compute_byte_offset(
 }
 
 /// Handle Shift+click to extend selection.
-fn handle_shift_click(
-    line_num: usize,
-    sel_start: Option<usize>,
-    actions: &mut CodeLineActions,
-) {
+fn handle_shift_click(line_num: usize, sel_start: Option<usize>, actions: &mut CodeLineActions) {
     if let Some(anchor) = sel_start {
         let lo = anchor.min(line_num);
         let hi = anchor.max(line_num);
@@ -1373,11 +1300,7 @@ fn render_cue_input(
     let range_label = if sel_start == sel_end {
         format!("L{}", sel_start.unwrap_or(0))
     } else {
-        format!(
-            "L{}-{}",
-            sel_start.unwrap_or(0),
-            sel_end.unwrap_or(0)
-        )
+        format!("L{}-{}", sel_start.unwrap_or(0), sel_end.unwrap_or(0))
     };
 
     render_cue_images_row(ui, app, active_idx);
@@ -1385,11 +1308,7 @@ fn render_cue_input(
 }
 
 /// Render attached cue images row (if any).
-fn render_cue_images_row(
-    ui: &mut egui::Ui,
-    app: &mut DirigentApp,
-    active_idx: usize,
-) {
+fn render_cue_images_row(ui: &mut egui::Ui, app: &mut DirigentApp, active_idx: usize) {
     if app.viewer.tabs[active_idx].cue_images.is_empty() {
         return;
     }
@@ -1401,11 +1320,7 @@ fn render_cue_images_row(
                 .color(app.semantic.accent),
         );
         let mut remove_idx = None;
-        for (i, path) in app.viewer.tabs[active_idx]
-            .cue_images
-            .iter()
-            .enumerate()
-        {
+        for (i, path) in app.viewer.tabs[active_idx].cue_images.iter().enumerate() {
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -1436,31 +1351,21 @@ fn render_cue_text_input(
                 .monospace()
                 .color(app.semantic.success),
         );
-        if ui
-            .button("+")
-            .on_hover_text("Attach images")
-            .clicked()
-        {
+        if ui.button("+").on_hover_text("Attach images").clicked() {
             if let Some(paths) = rfd::FileDialog::new()
-                .add_filter(
-                    "Images",
-                    &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
-                )
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
                 .pick_files()
             {
                 app.viewer.tabs[active_idx].cue_images.extend(paths);
             }
         }
         let input_response = ui.add(
-            egui::TextEdit::singleline(
-                &mut app.viewer.tabs[active_idx].cue_input,
-            )
-            .desired_width(ui.available_width() - 80.0)
-            .hint_text("Add a cue...")
-            .font(egui::TextStyle::Monospace),
+            egui::TextEdit::singleline(&mut app.viewer.tabs[active_idx].cue_input)
+                .desired_width(ui.available_width() - 80.0)
+                .hint_text("Add a cue...")
+                .font(egui::TextStyle::Monospace),
         );
-        let enter = input_response.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Add").clicked() || enter {
             actions.submit_cue = true;
         }

@@ -497,21 +497,14 @@ pub(crate) struct PrFinding {
     pub external_id: String,
 }
 
-/// Fetch PR review comments using `gh` CLI and parse actionable findings.
-/// Returns findings from inline review comments (e.g. CodeRabbit).
-pub(crate) fn fetch_pr_findings(
+/// Run a `gh api` command with pagination and return parsed JSON values.
+fn gh_api_paginated(
     project_root: &Path,
-    pr_number: u32,
-) -> crate::error::Result<Vec<PrFinding>> {
-    let mut findings = Vec::new();
-
-    // Fetch inline review comments (code-level comments, e.g. from CodeRabbit)
+    endpoint: &str,
+) -> crate::error::Result<Vec<serde_json::Value>> {
     let mut cmd = Command::new("gh");
     cmd.arg("api")
-        .arg(format!(
-            "repos/{{owner}}/{{repo}}/pulls/{}/comments",
-            pr_number
-        ))
+        .arg(endpoint)
         .arg("--paginate")
         .current_dir(project_root);
 
@@ -524,17 +517,42 @@ pub(crate) fn fetch_pr_findings(
 
     if !output.status.success() {
         return Err(DirigentError::Source(format!(
-            "gh api pulls/{}/comments failed: {}",
-            pr_number,
+            "gh api {} failed: {}",
+            endpoint,
             String::from_utf8_lossy(&output.stderr)
         )));
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let comments = parse_paginated_json(&json_str);
+    Ok(parse_paginated_json(&json_str))
+}
 
-    for comment in &comments {
+/// Determine whether a comment body should be skipped (empty, confirmation, or summary).
+fn should_skip_comment(body: &str) -> bool {
+    body.trim().is_empty() || is_confirmation_comment(body) || is_auto_summary_comment(body)
+}
+
+/// Extract finding text from a comment body, preferring agent prompts.
+fn finding_text_from_body(body: &str) -> Option<String> {
+    let text = extract_agent_prompt(body).unwrap_or_else(|| extract_finding_text(body));
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Process inline review comments into findings.
+fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Vec<PrFinding> {
+    let mut findings = Vec::new();
+    for comment in comments {
+        if comment.get("in_reply_to_id").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
         let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
+        if should_skip_comment(body) {
+            continue;
+        }
         let path = comment.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let line = comment
             .get("line")
@@ -542,119 +560,64 @@ pub(crate) fn fetch_pr_findings(
             .and_then(|l| l.as_u64())
             .unwrap_or(0) as usize;
         let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-
-        // Skip reply comments (thread replies are not new findings).
-        // Note: GitHub API always includes `in_reply_to_id` — it's `null` for
-        // top-level comments, so we must check that the value is non-null.
-        if comment.get("in_reply_to_id").is_some_and(|v| !v.is_null()) {
-            continue;
-        }
-
-        // Skip empty or non-actionable comments
-        if body.trim().is_empty() || is_confirmation_comment(body) || is_auto_summary_comment(body)
-        {
-            continue;
-        }
-
-        // Extract the agent prompt from the comment if present
-        let finding_text = extract_agent_prompt(body).unwrap_or_else(|| {
-            // Fall back to extracting the core finding (skip HTML/diff blocks)
-            extract_finding_text(body)
-        });
-
-        if !finding_text.is_empty() {
+        if let Some(finding_text) = finding_text_from_body(body) {
+            let text = if path.is_empty() {
+                finding_text
+            } else {
+                format!("In `{}` (line {}): {}", path, line, finding_text)
+            };
             findings.push(PrFinding {
                 file_path: path.to_string(),
                 line_number: line,
-                text: if path.is_empty() {
-                    finding_text
-                } else {
-                    format!("In `{}` (line {}): {}", path, line, finding_text)
-                },
+                text,
                 external_id: format!("pr{}:comment:{}", pr_number, comment_id),
             });
         }
     }
+    findings
+}
 
-    // Also fetch issue-level comments (general PR comments, e.g. CodeRabbit summary)
-    let mut cmd2 = Command::new("gh");
-    cmd2.arg("api")
-        .arg(format!(
-            "repos/{{owner}}/{{repo}}/issues/{}/comments",
-            pr_number
-        ))
-        .arg("--paginate")
-        .current_dir(project_root);
+/// Process issue-level comments into findings.
+fn process_issue_comments(comments: &[serde_json::Value], pr_number: u32) -> Vec<PrFinding> {
+    let mut findings = Vec::new();
+    for comment in comments {
+        let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
+        if should_skip_comment(body) {
+            continue;
+        }
+        let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+        if let Some(finding_text) = finding_text_from_body(body) {
+            findings.push(PrFinding {
+                file_path: String::new(),
+                line_number: 0,
+                text: finding_text,
+                external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
+            });
+        }
+    }
+    findings
+}
 
-    let child2 = cmd2
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let output2 = output_with_timeout(child2, timeout)?;
-
-    if output2.status.success() {
-        let json_str2 = String::from_utf8_lossy(&output2.stdout);
-        let issue_comments = parse_paginated_json(&json_str2);
-
-        for comment in &issue_comments {
-            let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
-            let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-
-            if body.trim().is_empty()
-                || is_confirmation_comment(body)
-                || is_auto_summary_comment(body)
-            {
-                continue;
-            }
-
-            // Try agent prompt first, then fall back to extracting findings
-            let finding_text =
-                extract_agent_prompt(body).unwrap_or_else(|| extract_finding_text(body));
-
-            if !finding_text.is_empty() {
+/// Process PR review bodies into findings.
+fn process_reviews(reviews: &[serde_json::Value], pr_number: u32) -> Vec<PrFinding> {
+    let mut findings = Vec::new();
+    for review in reviews {
+        let body = review.get("body").and_then(|b| b.as_str()).unwrap_or("");
+        if should_skip_comment(body) {
+            continue;
+        }
+        let review_id = review.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+        let prompts = extract_all_agent_prompts(body);
+        if prompts.is_empty() {
+            if let Some(finding_text) = finding_text_from_body(body) {
                 findings.push(PrFinding {
                     file_path: String::new(),
                     line_number: 0,
                     text: finding_text,
-                    external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
+                    external_id: format!("pr{}:review:{}", pr_number, review_id),
                 });
             }
-        }
-    }
-
-    // Also fetch PR reviews (e.g. CodeRabbit re-reviews with nitpick findings in the body)
-    let mut cmd3 = Command::new("gh");
-    cmd3.arg("api")
-        .arg(format!(
-            "repos/{{owner}}/{{repo}}/pulls/{}/reviews",
-            pr_number
-        ))
-        .arg("--paginate")
-        .current_dir(project_root);
-
-    let child3 = cmd3
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let output3 = output_with_timeout(child3, timeout)?;
-
-    if output3.status.success() {
-        let json_str3 = String::from_utf8_lossy(&output3.stdout);
-        let reviews = parse_paginated_json(&json_str3);
-
-        for review in &reviews {
-            let body = review.get("body").and_then(|b| b.as_str()).unwrap_or("");
-            let review_id = review.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-
-            if body.trim().is_empty()
-                || is_confirmation_comment(body)
-                || is_auto_summary_comment(body)
-            {
-                continue;
-            }
-
-            // Extract individual agent prompts from review bodies (e.g. nitpick findings)
-            let prompts = extract_all_agent_prompts(body);
+        } else {
             for (i, prompt) in prompts.iter().enumerate() {
                 findings.push(PrFinding {
                     file_path: String::new(),
@@ -663,20 +626,40 @@ pub(crate) fn fetch_pr_findings(
                     external_id: format!("pr{}:review:{}_{}", pr_number, review_id, i),
                 });
             }
-
-            // If no agent prompts found, fall back to generic text extraction
-            if prompts.is_empty() {
-                let finding_text = extract_finding_text(body);
-                if !finding_text.is_empty() {
-                    findings.push(PrFinding {
-                        file_path: String::new(),
-                        line_number: 0,
-                        text: finding_text,
-                        external_id: format!("pr{}:review:{}", pr_number, review_id),
-                    });
-                }
-            }
         }
+    }
+    findings
+}
+
+/// Fetch PR review comments using `gh` CLI and parse actionable findings.
+/// Returns findings from inline review comments (e.g. CodeRabbit).
+pub(crate) fn fetch_pr_findings(
+    project_root: &Path,
+    pr_number: u32,
+) -> crate::error::Result<Vec<PrFinding>> {
+    let mut findings = Vec::new();
+
+    // Fetch inline review comments (code-level comments, e.g. from CodeRabbit)
+    let comments = gh_api_paginated(
+        project_root,
+        &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", pr_number),
+    )?;
+    findings.extend(process_inline_comments(&comments, pr_number));
+
+    // Also fetch issue-level comments (general PR comments, e.g. CodeRabbit summary)
+    if let Ok(issue_comments) = gh_api_paginated(
+        project_root,
+        &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
+    ) {
+        findings.extend(process_issue_comments(&issue_comments, pr_number));
+    }
+
+    // Also fetch PR reviews (e.g. CodeRabbit re-reviews with nitpick findings in the body)
+    if let Ok(reviews) = gh_api_paginated(
+        project_root,
+        &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number),
+    ) {
+        findings.extend(process_reviews(&reviews, pr_number));
     }
 
     Ok(findings)
@@ -719,6 +702,33 @@ fn extract_agent_prompt(body: &str) -> Option<String> {
     extract_all_agent_prompts(body).into_iter().next()
 }
 
+/// Check if a marker occurrence is part of the combined "all review comments" block.
+fn is_combined_prompt_block(body: &str, abs_pos: usize) -> bool {
+    let mut context_start = abs_pos.saturating_sub(60);
+    // Ensure we land on a valid UTF-8 char boundary (emojis are multi-byte)
+    while context_start > 0 && !body.is_char_boundary(context_start) {
+        context_start -= 1;
+    }
+    body[context_start..abs_pos].contains("all review comments")
+}
+
+/// Extract the code-fenced prompt text that follows a marker position.
+fn extract_code_block_after(text: &str) -> Option<String> {
+    let code_start = text.find("```")?;
+    let code_content = &text[code_start + 3..];
+    // Skip the language identifier line if present
+    let code_content = code_content
+        .find('\n')
+        .map_or(code_content, |nl| &code_content[nl + 1..]);
+    let code_end = code_content.find("```")?;
+    let prompt = code_content[..code_end].trim().to_string();
+    if prompt.is_empty() {
+        None
+    } else {
+        Some(prompt)
+    }
+}
+
 /// Extract ALL individual "Prompt for AI Agents" blocks from a body.
 /// Skips the combined "Prompt for all review comments" block.
 fn extract_all_agent_prompts(body: &str) -> Vec<String> {
@@ -728,40 +738,48 @@ fn extract_all_agent_prompts(body: &str) -> Vec<String> {
     let mut search_from = 0;
     while let Some(rel_pos) = body[search_from..].find(marker) {
         let abs_pos = search_from + rel_pos;
+        search_from = abs_pos + marker.len();
 
-        // Skip the combined "Prompt for all review comments with AI agents" block
-        let mut context_start = abs_pos.saturating_sub(60);
-        // Ensure we land on a valid UTF-8 char boundary (emojis are multi-byte)
-        while context_start > 0 && !body.is_char_boundary(context_start) {
-            context_start -= 1;
-        }
-        if body[context_start..abs_pos].contains("all review comments") {
-            search_from = abs_pos + marker.len();
+        if is_combined_prompt_block(body, abs_pos) {
             continue;
         }
 
         let after_marker = &body[abs_pos + marker.len()..];
-
-        if let Some(code_start) = after_marker.find("```") {
-            let code_content = &after_marker[code_start + 3..];
-            // Skip the language identifier line if present
-            let code_content = if let Some(nl) = code_content.find('\n') {
-                &code_content[nl + 1..]
-            } else {
-                code_content
-            };
-            if let Some(code_end) = code_content.find("```") {
-                let prompt = code_content[..code_end].trim().to_string();
-                if !prompt.is_empty() {
-                    prompts.push(prompt);
-                }
-            }
+        if let Some(prompt) = extract_code_block_after(after_marker) {
+            prompts.push(prompt);
         }
-
-        search_from = abs_pos + marker.len();
     }
 
     prompts
+}
+
+/// Check whether a trimmed line is HTML markup that should be skipped.
+fn is_skippable_markup(trimmed: &str) -> bool {
+    trimmed.starts_with("<!--")
+        || trimmed.starts_with("<sub")
+        || trimmed.starts_with("</sub")
+        || trimmed.starts_with("<blockquote")
+        || trimmed.starts_with("</blockquote")
+        || trimmed.starts_with("![")
+}
+
+/// Check whether a trimmed line is a severity/category label to skip.
+fn is_severity_label(trimmed: &str) -> bool {
+    trimmed.starts_with("_\u{26a0}") || trimmed.starts_with("_\u{1f41b}")
+}
+
+/// Truncate a string to at most `max_len` bytes on a valid UTF-8 boundary,
+/// appending "..." if truncated.
+fn truncate_with_ellipsis(s: &mut String, max_len: usize) {
+    if s.len() <= max_len {
+        return;
+    }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s.push_str("...");
 }
 
 /// Extract a clean finding text from a review comment body.
@@ -774,7 +792,6 @@ fn extract_finding_text(body: &str) -> String {
     for line in body.lines() {
         let trimmed = line.trim();
 
-        // Track code blocks
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
             continue;
@@ -783,7 +800,6 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
-        // Skip HTML blocks
         if trimmed.starts_with("<details") || trimmed.starts_with("<summary") {
             in_details = true;
             continue;
@@ -796,39 +812,17 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
-        // Skip HTML comments, image tags, and other markup
-        if trimmed.starts_with("<!--")
-            || trimmed.starts_with("<sub")
-            || trimmed.starts_with("</sub")
-            || trimmed.starts_with("<blockquote")
-            || trimmed.starts_with("</blockquote")
-            || trimmed.starts_with("![")
-        {
+        if is_skippable_markup(trimmed) || is_severity_label(trimmed) || trimmed.is_empty() {
             continue;
         }
 
-        // Skip severity/category labels
-        if trimmed.starts_with("_\u{26a0}") || trimmed.starts_with("_\u{1f41b}") {
-            continue;
+        if !result.is_empty() {
+            result.push('\n');
         }
-
-        if !trimmed.is_empty() {
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str(trimmed);
-        }
+        result.push_str(trimmed);
     }
 
-    // Limit the length to avoid overly large cue texts
-    if result.len() > 2000 {
-        let mut end = 2000;
-        while end > 0 && !result.is_char_boundary(end) {
-            end -= 1;
-        }
-        result.truncate(end);
-        result.push_str("...");
-    }
+    truncate_with_ellipsis(&mut result, 2000);
     result
 }
 
