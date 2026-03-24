@@ -521,9 +521,11 @@ fn extract_symbol_name(caps: &regex::Captures<'_>, kind: SymbolKind) -> Option<S
     if kind == SymbolKind::Impl {
         // For impl blocks: "Trait for Type" or just "Type"
         match (caps.get(1), caps.get(2)) {
-            (Some(trait_or_type), Some(target)) => {
-                Some(format!("{} for {}", trait_or_type.as_str(), target.as_str()))
-            }
+            (Some(trait_or_type), Some(target)) => Some(format!(
+                "{} for {}",
+                trait_or_type.as_str(),
+                target.as_str()
+            )),
             (Some(m), None) => Some(m.as_str().to_string()),
             _ => None,
         }

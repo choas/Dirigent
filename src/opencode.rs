@@ -311,7 +311,13 @@ pub(crate) fn invoke_opencode_streaming(
     }
 
     // Run pre-run script
-    run_hook_script("pre-run", config.pre_run_script, project_root, &mut on_log, true)?;
+    run_hook_script(
+        "pre-run",
+        config.pre_run_script,
+        project_root,
+        &mut on_log,
+        true,
+    )?;
 
     let mut child = cmd
         .current_dir(project_root)

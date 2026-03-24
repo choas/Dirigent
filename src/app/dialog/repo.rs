@@ -8,9 +8,7 @@ use crate::git;
 /// Expand a leading `~` to the user's home directory.
 fn expand_tilde(raw: &str) -> PathBuf {
     if raw == "~" || raw.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/"));
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         if raw == "~" {
             home
         } else {
@@ -161,11 +159,7 @@ impl DirigentApp {
     }
 
     /// Apply the result of the repo picker dialog.
-    fn apply_repo_picker_result(
-        &mut self,
-        switch_to: Option<PathBuf>,
-        error_msg: Option<String>,
-    ) {
+    fn apply_repo_picker_result(&mut self, switch_to: Option<PathBuf>, error_msg: Option<String>) {
         if let Some(msg) = error_msg {
             self.set_status_message(msg);
         }
@@ -220,20 +214,17 @@ impl DirigentApp {
                                 .color(self.semantic.secondary_text),
                         );
 
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if !wt.is_current
-                                    && !wt.is_locked
-                                    && ui.small_button("Remove").clicked()
-                                {
-                                    actions.remove_path = Some(wt.path.clone());
-                                }
-                                if !wt.is_current && ui.small_button("Switch").clicked() {
-                                    actions.switch_to = Some(wt.path.clone());
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if !wt.is_current
+                                && !wt.is_locked
+                                && ui.small_button("Remove").clicked()
+                            {
+                                actions.remove_path = Some(wt.path.clone());
+                            }
+                            if !wt.is_current && ui.small_button("Switch").clicked() {
+                                actions.switch_to = Some(wt.path.clone());
+                            }
+                        });
                     });
                     ui.separator();
                 }
@@ -298,17 +289,14 @@ impl DirigentApp {
                             .small()
                             .color(self.semantic.secondary_text),
                     );
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui.small_button("Delete").clicked() {
-                                actions.delete_archive_pending = Some(db.path.clone());
-                            }
-                            if ui.small_button("Reveal").clicked() {
-                                actions.reveal_path = Some(db.path.clone());
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Delete").clicked() {
+                            actions.delete_archive_pending = Some(db.path.clone());
+                        }
+                        if ui.small_button("Reveal").clicked() {
+                            actions.reveal_path = Some(db.path.clone());
+                        }
+                    });
                 });
             }
         }

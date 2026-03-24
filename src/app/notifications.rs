@@ -113,6 +113,8 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
 
     extern "C" {
         static _NSConcreteStackBlock: std::ffi::c_void;
+        fn _Block_copy(block: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn _Block_release(block: *const std::ffi::c_void);
     }
 
     unsafe extern "C" fn noop_auth(_b: *mut AuthBlock, _granted: u8, _err: *mut Object) {}
@@ -181,8 +183,8 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             handler: *const std::ffi::c_void,
         ) {
             unsafe {
-                let bh = handler as *const ReceivedBlock;
-                ((*bh).invoke)(handler, 0);
+                let bh = handler as *const ResponseCompletionBlock;
+                ((*bh).invoke)(handler);
             }
         }
 

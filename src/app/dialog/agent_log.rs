@@ -152,21 +152,18 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             }
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    if ui
-                        .button(
-                            egui::RichText::new("\u{1F50D} Analyze")
-                                .small()
-                                .color(self.semantic.accent),
-                        )
-                        .clicked()
-                    {
-                        *analyze_run_idx = Some(idx);
-                    }
-                },
-            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(
+                        egui::RichText::new("\u{1F50D} Analyze")
+                            .small()
+                            .color(self.semantic.accent),
+                    )
+                    .clicked()
+                {
+                    *analyze_run_idx = Some(idx);
+                }
+            });
         });
 
         // Output block

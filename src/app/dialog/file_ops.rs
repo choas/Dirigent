@@ -4,6 +4,25 @@ use eframe::egui;
 
 use crate::app::DirigentApp;
 
+/// Returns `true` if `name` is a valid filename for rename operations.
+/// Rejects empty names, ".", "..", any path separators, and parent-traversal components.
+fn validate_filename(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return false;
+    }
+    if trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(std::path::MAIN_SEPARATOR)
+    {
+        return false;
+    }
+    // Reject if any path component is a parent traversal
+    Path::new(trimmed)
+        .components()
+        .all(|c| !matches!(c, std::path::Component::ParentDir))
+}
+
 impl DirigentApp {
     /// Renders the rename dialog for a file or directory.
     pub(in crate::app) fn render_rename_dialog(&mut self, ctx: &egui::Context) {
@@ -36,7 +55,10 @@ impl DirigentApp {
                     resp.request_focus();
                     self.rename_focus_requested = true;
                 }
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && validate_filename(&self.rename_buffer)
+                {
                     confirm = true;
                 }
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -48,8 +70,7 @@ impl DirigentApp {
                         cancel = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let name_valid =
-                            !self.rename_buffer.is_empty() && !self.rename_buffer.contains('/');
+                        let name_valid = validate_filename(&self.rename_buffer);
                         if ui
                             .add_enabled(name_valid, egui::Button::new("Rename"))
                             .clicked()
@@ -71,7 +92,12 @@ impl DirigentApp {
 
     /// Performs the actual file/directory rename, updates open tabs, and sets a status message.
     fn execute_rename(&mut self, target: &Path, new_name: &str, is_dir: bool) {
-        let new_path = target.parent().unwrap_or(target).join(new_name);
+        if !validate_filename(new_name) {
+            self.set_status_message("Rename failed: invalid filename".to_string());
+            return;
+        }
+        let sanitized = new_name.trim();
+        let new_path = target.parent().unwrap_or(target).join(sanitized);
         if new_path == target {
             return;
         }
@@ -100,6 +126,12 @@ impl DirigentApp {
             if let Some(idx) = self.viewer.find_tab(&old_path.to_path_buf()) {
                 if let Some(new_tab) = super::super::create_tab_state(new_path) {
                     self.viewer.tabs[idx] = new_tab;
+                } else {
+                    eprintln!(
+                        "Warning: failed to create tab state for renamed file: {}",
+                        new_path.display()
+                    );
+                    self.viewer.close_tab(idx);
                 }
             }
         } else {

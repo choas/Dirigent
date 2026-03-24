@@ -107,6 +107,9 @@ impl DirigentApp {
     fn reload_tabs_after_format(&mut self) {
         for tab in &mut self.viewer.tabs {
             if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                if tab.markdown_blocks.is_some() {
+                    tab.markdown_blocks = Some(super::markdown_parser::parse_markdown(&content));
+                }
                 tab.content = content.lines().map(String::from).collect();
                 let ext = tab
                     .file_path

@@ -1416,8 +1416,14 @@ impl DirigentApp {
             None => return,
         };
         let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.notifying_pr = false;
+                self.git.pr_notify_rx = None;
+                self.set_status_message("PR notify failed unexpectedly".into());
+                return;
+            }
             Ok(r) => r,
-            Err(_) => return,
         };
         self.git.notifying_pr = false;
         self.git.pr_notify_rx = None;
@@ -1455,8 +1461,14 @@ impl DirigentApp {
             None => return,
         };
         let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.pulling = false;
+                self.git.pull_rx = None;
+                self.set_status_message("Git pull failed unexpectedly".into());
+                return;
+            }
             Ok(r) => r,
-            Err(_) => return,
         };
         self.git.pulling = false;
         self.git.pull_rx = None;

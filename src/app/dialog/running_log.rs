@@ -123,11 +123,7 @@ impl DirigentApp {
 
     /// Render the reply input panel at the bottom of the conversation view.
     /// Returns `Some(reply_text)` if the user submitted a reply.
-    fn render_reply_panel(
-        &mut self,
-        ctx: &egui::Context,
-        fs: f32,
-    ) -> Option<String> {
+    fn render_reply_panel(&mut self, ctx: &egui::Context, fs: f32) -> Option<String> {
         let mut reply_send: Option<String> = None;
 
         let reply_frame = egui::Frame::NONE
@@ -187,8 +183,7 @@ impl DirigentApp {
                             .clicked();
                         let (enter_submitted, cmd_enter) = if input_response.has_focus() {
                             ui.input(|i| {
-                                let pressed =
-                                    i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
+                                let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
                                 (
                                     pressed && !i.modifiers.command,
                                     pressed && i.modifiers.command,
@@ -353,11 +348,7 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             } else {
-                ui.label(
-                    egui::RichText::new(current_running_log)
-                        .monospace()
-                        .small(),
-                );
+                ui.label(egui::RichText::new(current_running_log).monospace().small());
             }
         });
     }
@@ -379,11 +370,7 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             } else {
-                ui.label(
-                    egui::RichText::new(current_running_log)
-                        .monospace()
-                        .small(),
-                );
+                ui.label(egui::RichText::new(current_running_log).monospace().small());
             }
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {

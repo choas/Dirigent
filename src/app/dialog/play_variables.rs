@@ -45,10 +45,7 @@ impl DirigentApp {
     }
 
     /// Render input widgets for all non-auto-resolved variables.
-    fn render_play_variable_inputs(
-        ui: &mut egui::Ui,
-        pending: &mut super::super::PendingPlay,
-    ) {
+    fn render_play_variable_inputs(ui: &mut egui::Ui, pending: &mut super::super::PendingPlay) {
         let var_count = pending.variables.len();
         for i in 0..var_count {
             if pending.auto_resolved.contains_key(&i) {
@@ -79,11 +76,7 @@ impl DirigentApp {
     }
 
     /// Render a combo box with predefined options plus an "Other" free-text fallback.
-    fn render_combo_input(
-        ui: &mut egui::Ui,
-        pending: &mut super::super::PendingPlay,
-        i: usize,
-    ) {
+    fn render_combo_input(ui: &mut egui::Ui, pending: &mut super::super::PendingPlay, i: usize) {
         let var = &pending.variables[i];
         let sel = &mut pending.selected[i];
         let other_idx = var.options.len();
@@ -130,8 +123,13 @@ impl DirigentApp {
             })
             .collect();
         let final_prompt = settings::substitute_play_variables(&pending.prompt, &resolved);
-        let _ = self.db.insert_cue(&final_prompt, "", 0, None, &[]);
-        self.reload_cues();
+        match self.db.insert_cue(&final_prompt, "", 0, None, &[]) {
+            Ok(_) => self.reload_cues(),
+            Err(e) => {
+                eprintln!("Failed to insert cue: {e}");
+                self.pending_play = Some(pending);
+            }
+        }
     }
 }
 

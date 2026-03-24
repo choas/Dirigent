@@ -112,8 +112,13 @@ impl DirigentApp {
                     .color(self.semantic.secondary_text),
             );
             for (kind, name, command, is_running) in &agent_buttons {
-                trigger_kind =
-                    trigger_kind.or(self.render_agent_button(ui, *kind, name, command, *is_running));
+                trigger_kind = trigger_kind.or(self.render_agent_button(
+                    ui,
+                    *kind,
+                    name,
+                    command,
+                    *is_running,
+                ));
             }
         });
         if let Some(kind) = trigger_kind {
@@ -216,9 +221,7 @@ impl DirigentApp {
                         .id_salt(("agent_run_output", idx))
                         .max_height(300.0)
                         .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(&run.output).monospace().small(),
-                            );
+                            ui.label(egui::RichText::new(&run.output).monospace().small());
                         });
                 }
             });

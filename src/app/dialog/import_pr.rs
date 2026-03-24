@@ -112,10 +112,8 @@ impl DirigentApp {
             } else {
                 "\u{2193} Import Findings"
             };
-            let import_btn = egui::Button::new(
-                icon(btn_label, fs).color(self.semantic.badge_text),
-            )
-            .fill(self.semantic.accent);
+            let import_btn = egui::Button::new(icon(btn_label, fs).color(self.semantic.badge_text))
+                .fill(self.semantic.accent);
             if ui
                 .add_enabled(can_import, import_btn)
                 .on_hover_text("Fetch PR review comments and create cues from findings")

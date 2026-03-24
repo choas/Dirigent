@@ -62,24 +62,41 @@ impl DirigentApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             Self::render_diff_header_bar(
-                ui, fs, &sem, read_only, prompt_expanded, &cue_text, &mut actions,
+                ui,
+                fs,
+                &sem,
+                read_only,
+                prompt_expanded,
+                &cue_text,
+                &mut actions,
             );
             Self::render_diff_prompt_section(ui, &sem, prompt_expanded, &cue_text);
             ui.separator();
 
-            Self::render_diff_view_mode_toolbar(
-                ui, fs, &sem, view_mode, read_only, &mut actions,
-            );
+            Self::render_diff_view_mode_toolbar(ui, fs, &sem, view_mode, read_only, &mut actions);
             Self::render_diff_reply_field(ui, fs, read_only, reply_text, &mut actions);
             Self::render_diff_search_bar(
-                ui, fs, &sem, search_active, search_query, search_matches, search_current,
+                ui,
+                fs,
+                &sem,
+                search_active,
+                search_query,
+                search_matches,
+                search_current,
                 &mut actions,
             );
             ui.separator();
 
             Self::render_diff_content(
-                ui, &sem, &parsed, view_mode, search_active, search_query, search_current,
-                search_matches, collapsed_files,
+                ui,
+                &sem,
+                &parsed,
+                view_mode,
+                search_active,
+                search_query,
+                search_current,
+                search_matches,
+                collapsed_files,
             );
         });
 
@@ -144,9 +161,7 @@ impl DirigentApp {
                     .id_salt("prompt_scroll")
                     .max_height(150.0)
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(cue_text).color(sem.secondary_text),
-                        );
+                        ui.label(egui::RichText::new(cue_text).color(sem.secondary_text));
                     });
             });
         }
@@ -214,8 +229,7 @@ impl DirigentApp {
                     .on_hover_text("Send feedback to Claude for another iteration")
                     .clicked()
                     || (te.has_focus()
-                        && ui
-                            .input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command));
                 if send && !reply_text.trim().is_empty() {
                     actions.reply_send = Some(reply_text.clone());
                 }
@@ -283,21 +297,20 @@ impl DirigentApp {
                 let current = search_current.map(|i| i + 1).unwrap_or(0);
                 format!("{}/{}", current, match_count)
             };
-            ui.label(egui::RichText::new(label).monospace().small().color(
-                if match_count == 0 {
-                    sem.danger
-                } else {
-                    sem.secondary_text
-                },
-            ));
+            ui.label(
+                egui::RichText::new(label)
+                    .monospace()
+                    .small()
+                    .color(if match_count == 0 {
+                        sem.danger
+                    } else {
+                        sem.secondary_text
+                    }),
+            );
         }
     }
 
-    fn render_search_nav_buttons(
-        ui: &mut egui::Ui,
-        fs: f32,
-        actions: &mut DiffReviewActions,
-    ) {
+    fn render_search_nav_buttons(ui: &mut egui::Ui, fs: f32, actions: &mut DiffReviewActions) {
         if ui
             .small_button(icon("\u{2191}", fs))
             .on_hover_text("Previous (Shift+Enter)")
@@ -479,37 +492,41 @@ impl DirigentApp {
                     .map(|c| c.text.clone())
                     .unwrap_or_default();
                 self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id), &cue_prompt);
+                self.reload_cues();
+                self.reload_git_info();
+                self.reload_commit_history();
+                self.diff_review = None;
             }
             Err(e) => {
                 self.set_status_message(format!("Commit failed: {}", e));
             }
         }
-        self.reload_cues();
-        self.reload_git_info();
-        self.reload_commit_history();
-        self.diff_review = None;
     }
 
     fn handle_diff_reject(&mut self, cue_id: i64, diff_text: &str) {
         let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff_text);
-        if let Err(e) = git::revert_files(&self.project_root, &file_paths) {
-            self.set_status_message(format!("Revert failed: {}", e));
-        }
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-        // Reload all open tabs after revert
-        for tab in &mut self.viewer.tabs {
-            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                tab.content = content.lines().map(String::from).collect();
-                let ext = tab
-                    .file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
-                tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
+        match git::revert_files(&self.project_root, &file_paths) {
+            Ok(()) => {
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                // Reload all open tabs after revert
+                for tab in &mut self.viewer.tabs {
+                    if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
+                        tab.content = content.lines().map(String::from).collect();
+                        let ext = tab
+                            .file_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("");
+                        tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
+                    }
+                }
+                self.reload_cues();
+                self.reload_git_info();
+                self.diff_review = None;
+            }
+            Err(e) => {
+                self.set_status_message(format!("Revert failed: {}", e));
             }
         }
-        self.reload_cues();
-        self.reload_git_info();
-        self.diff_review = None;
     }
 }

@@ -42,6 +42,10 @@ impl DirigentApp {
 
                     let cues_snapshot = self.cues.clone();
                     let source_filter = self.sources.filter.clone();
+                    let filtered_archived_count = match &source_filter {
+                        Some(label) => self.db.archived_cue_count_by_source(label).unwrap_or(0),
+                        None => self.archived_cue_count,
+                    };
                     for &status in CueStatus::all() {
                         let section_cues: Vec<&Cue> = filter_cues_by_status_and_source(
                             &cues_snapshot,
@@ -54,6 +58,7 @@ impl DirigentApp {
                             &section_cues,
                             &mut actions,
                             &mut load_more_archived,
+                            filtered_archived_count,
                         );
                     }
 

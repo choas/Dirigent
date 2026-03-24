@@ -508,6 +508,16 @@ impl Database {
         Ok(count as usize)
     }
 
+    /// Count archived cues matching a specific source label.
+    pub fn archived_cue_count_by_source(&self, source_label: &str) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cues WHERE status = 'archived' AND source_label = ?1",
+            [source_label],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     // -- Execution CRUD --
 
     pub fn insert_execution(

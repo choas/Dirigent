@@ -67,22 +67,22 @@ fn parse_blocks(events: &[Event]) -> Vec<MarkdownBlock> {
     while i < events.len() {
         match &events[i] {
             Event::Start(Tag::Heading { level, .. }) => {
-                i += 1 + parse_heading(&events[i..], *level, &mut blocks);
+                i += 1 + parse_heading(&events[i + 1..], *level, &mut blocks);
             }
             Event::Start(Tag::Paragraph) => {
-                i += 1 + parse_paragraph(&events[i..], &mut blocks);
+                i += 1 + parse_paragraph(&events[i + 1..], &mut blocks);
             }
             Event::Start(Tag::CodeBlock(kind)) => {
-                i += 1 + parse_code_block(&events[i..], kind, &mut blocks);
+                i += 1 + parse_code_block(&events[i + 1..], kind, &mut blocks);
             }
             Event::Start(Tag::List(start_num)) => {
-                i += 1 + parse_list(&events[i..], *start_num, &mut blocks);
+                i += 1 + parse_list(&events[i + 1..], *start_num, &mut blocks);
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                i += 1 + parse_block_quote(&events[i..], &mut blocks);
+                i += 1 + parse_block_quote(&events[i + 1..], &mut blocks);
             }
             Event::Start(Tag::Table(..)) => {
-                i += 1 + parse_table(&events[i..], &mut blocks);
+                i += 1 + parse_table(&events[i + 1..], &mut blocks);
             }
             Event::Rule => {
                 blocks.push(MarkdownBlock::ThematicBreak);

@@ -822,7 +822,19 @@ impl DirigentApp {
                 self.settings.agents[i].trigger = match selected_idx {
                     0 => AgentTrigger::AfterRun,
                     1 => AgentTrigger::AfterCommit,
-                    2 => AgentTrigger::AfterAgent(AgentKind::Format),
+                    2 => {
+                        let own_kind = self.settings.agents[i].kind;
+                        let default_kind = self
+                            .settings
+                            .agents
+                            .iter()
+                            .find(|a| a.kind != own_kind)
+                            .map(|a| a.kind);
+                        match default_kind {
+                            Some(k) => AgentTrigger::AfterAgent(k),
+                            None => AgentTrigger::AfterRun,
+                        }
+                    }
                     3 => AgentTrigger::OnFileChange,
                     _ => AgentTrigger::Manual,
                 };
@@ -835,6 +847,21 @@ impl DirigentApp {
     fn render_settings_agent_trigger_kind_selector(&mut self, ui: &mut egui::Ui, i: usize) {
         if let AgentTrigger::AfterAgent(current_kind) = self.settings.agents[i].trigger {
             let own_kind = self.settings.agents[i].kind;
+            // Guard against self-retrigger: if current_kind matches the agent's
+            // own kind, reassign to a different agent or fall back to AfterRun.
+            if current_kind == own_kind {
+                let alt = self
+                    .settings
+                    .agents
+                    .iter()
+                    .find(|a| a.kind != own_kind)
+                    .map(|a| a.kind);
+                self.settings.agents[i].trigger = match alt {
+                    Some(k) => AgentTrigger::AfterAgent(k),
+                    None => AgentTrigger::AfterRun,
+                };
+                return;
+            }
             let mut selected = current_kind;
             // Build list of other agents for the selector
             let other_agents: Vec<(AgentKind, String)> = self
