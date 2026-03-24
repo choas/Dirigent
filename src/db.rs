@@ -6,6 +6,9 @@ use std::path::Path;
 
 use crate::settings::CliProvider;
 
+/// (cue_id, text, file_path, line_number, line_number_end, attached_images)
+pub(crate) type CueHistoryRow = (i64, String, String, usize, Option<usize>, Vec<String>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CueStatus {
     Inbox,
@@ -483,14 +486,14 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status != 'archived' ORDER BY id",
         )?;
-        let rows = stmt.query_map([], |row| row_to_cue(row))?;
+        let rows = stmt.query_map([], row_to_cue)?;
         for row in rows {
             cues.push(row?);
         }
         let mut stmt = self.conn.prepare(
             "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![archived_limit as i64], |row| row_to_cue(row))?;
+        let rows = stmt.query_map(params![archived_limit as i64], row_to_cue)?;
         for row in rows {
             cues.push(row?);
         }
@@ -503,6 +506,16 @@ impl Database {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM cues WHERE status = 'archived'",
             [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Count archived cues matching a specific source label.
+    pub fn archived_cue_count_by_source(&self, source_label: &str) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cues WHERE status = 'archived' AND source_label = ?1",
+            [source_label],
             |row| row.get(0),
         )?;
         Ok(count as usize)
@@ -640,7 +653,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
-        let rows = stmt.query_map(params![cue_id], |row| row_to_execution(row))?;
+        let rows = stmt.query_map(params![cue_id], row_to_execution)?;
         let mut execs = Vec::new();
         for row in rows {
             execs.push(row?);
@@ -667,11 +680,7 @@ impl Database {
     /// Search past cue texts matching a query string (case-insensitive LIKE).
     /// Returns up to `limit` results, most recent first, as
     /// (cue_id, text, file_path, line_number, line_number_end, attached_images).
-    pub fn search_cue_history(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>> {
+    pub fn search_cue_history(&self, query: &str, limit: usize) -> Result<Vec<CueHistoryRow>> {
         let escaped = query
             .replace('\\', "\\\\")
             .replace('%', "\\%")
@@ -792,21 +801,12 @@ impl Database {
     // -- Agent runs --
 
     /// Record a completed agent run.
-    pub fn insert_agent_run(
-        &self,
-        agent_kind: &str,
-        cue_id: Option<i64>,
-        command: &str,
-        status: &str,
-        output: &str,
-        diagnostics_json: Option<&str>,
-        duration_ms: u64,
-    ) -> Result<i64> {
+    pub fn insert_agent_run(&self, record: &AgentRunRecord<'_>) -> Result<i64> {
         let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
             "INSERT INTO agent_runs (agent_kind, cue_id, command, status, output, diagnostics, duration_ms, started_at, finished_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-            params![agent_kind, cue_id, command, status, output, diagnostics_json, duration_ms as i64, now],
+            params![record.agent_kind, record.cue_id, record.command, record.status, record.output, record.diagnostics_json, record.duration_ms as i64, now],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -891,6 +891,17 @@ impl Database {
 
         Ok(total_deleted)
     }
+}
+
+/// Parameters for inserting a new agent run via [`Database::insert_agent_run`].
+pub struct AgentRunRecord<'a> {
+    pub agent_kind: &'a str,
+    pub cue_id: Option<i64>,
+    pub command: &'a str,
+    pub status: &'a str,
+    pub output: &'a str,
+    pub diagnostics_json: Option<&'a str>,
+    pub duration_ms: u64,
 }
 
 /// An agent run entry returned by [`Database::get_agent_runs_for_cue`].

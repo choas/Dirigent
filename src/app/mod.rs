@@ -13,9 +13,10 @@ mod sources_poll;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
+pub(crate) mod util;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -25,7 +26,6 @@ const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
 const LOG_SYNC_INTERVAL: Duration = Duration::from_secs(3);
 const REPAINT_FAST: Duration = Duration::from_millis(100);
 const REPAINT_SLOW: Duration = Duration::from_millis(500);
-const SOURCE_POLL_REPAINT: Duration = Duration::from_secs(30);
 const ELAPSED_REPAINT: Duration = Duration::from_secs(1);
 
 // -- Spacing scale (4/8/16/24 point grid) --
@@ -599,7 +599,7 @@ pub struct DirigentApp {
 
     // Prompt history search
     prompt_history_query: String,
-    prompt_history_results: Vec<(i64, String, String, usize, Option<usize>, Vec<String>)>,
+    prompt_history_results: Vec<crate::db::CueHistoryRow>,
     prompt_history_active: bool,
 
     // Cached total cost (refreshed when executions complete, avoids SQL aggregate per frame)
@@ -633,7 +633,7 @@ fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -
 }
 
 fn start_fs_watcher(
-    root: &PathBuf,
+    root: &Path,
     changed: &Arc<AtomicBool>,
     egui_ctx: &Arc<OnceLock<egui::Context>>,
 ) -> Option<RecommendedWatcher> {
@@ -655,9 +655,7 @@ fn start_fs_watcher(
             }
         })
         .ok()?;
-    watcher
-        .watch(root.as_path(), RecursiveMode::Recursive)
-        .ok()?;
+    watcher.watch(root, RecursiveMode::Recursive).ok()?;
     Some(watcher)
 }
 
@@ -1038,7 +1036,7 @@ impl DirigentApp {
         let base = git::get_default_branch(&self.project_root);
         let body = git::build_pr_body(&self.project_root, &base);
         // Use branch name as default title (replace hyphens/underscores with spaces)
-        let title = branch.replace('-', " ").replace('_', " ");
+        let title = branch.replace(['-', '_'], " ");
         self.git.pr_title = title;
         self.git.pr_body = body;
         self.git.pr_base = base;
@@ -1131,122 +1129,189 @@ impl DirigentApp {
     }
 
     fn process_import_pr_result(&mut self) {
-        if let Some(ref rx) = self.git.import_pr_rx {
-            match rx.try_recv() {
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // Update status with elapsed time so user knows it's still running
-                    if let Some(start) = self.git.importing_pr_start {
-                        let secs = start.elapsed().as_secs();
-                        let pr = self.git.import_pr_number.trim();
-                        self.set_status_message(format!("Refreshing PR #{}… ({}s)", pr, secs));
-                    }
-                    return;
+        let rx = match self.git.import_pr_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Update status with elapsed time so user knows it's still running
+                if let Some(start) = self.git.importing_pr_start {
+                    let secs = start.elapsed().as_secs();
+                    let pr = self.git.import_pr_number.trim();
+                    self.set_status_message(format!("Refreshing PR #{}… ({}s)", pr, secs));
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // Thread panicked or was dropped
-                    self.git.importing_pr = false;
-                    self.git.importing_pr_start = None;
-                    self.git.import_pr_rx = None;
-                    self.set_status_message("PR import failed unexpectedly".into());
-                    return;
-                }
-                Ok(result) => {
-                    self.git.importing_pr = false;
-                    self.git.importing_pr_start = None;
-                    self.git.import_pr_rx = None;
-                    match result {
-                        Ok(findings) => {
-                            if findings.is_empty() {
-                                self.set_status_message(
-                                    "No actionable findings found in PR".to_string(),
-                                );
-                                return;
-                            }
-                            let pr_number = self.git.import_pr_number.trim().to_string();
-                            let tag = format!("PR{}", pr_number);
-                            let mut new_count = 0;
-                            let mut updated_count = 0;
-                            let mut refreshed_count = 0;
-                            for finding in &findings {
-                                // Check if this finding already exists
-                                match self.db.get_cue_by_source_ref(&finding.external_id) {
-                                    Ok(Some((existing_id, existing_text, existing_status))) => {
-                                        if existing_text.trim() != finding.text.trim() {
-                                            // Text changed: update and reset to Inbox
-                                            let _ = self.db.update_cue_text_by_source_ref(
-                                                &finding.external_id,
-                                                &finding.text,
-                                            );
-                                            let _ = self
-                                                .db
-                                                .update_cue_status(existing_id, CueStatus::Inbox);
-                                            let _ = self.db.log_activity(
-                                                existing_id,
-                                                "PR comment updated, reset to Inbox",
-                                            );
-                                            updated_count += 1;
-                                        } else if existing_status == "Done"
-                                            || existing_status == "Archived"
-                                        {
-                                            // Same text but Done/Archived: reset to Inbox for re-check
-                                            let _ = self
-                                                .db
-                                                .update_cue_status(existing_id, CueStatus::Inbox);
-                                            let _ = self.db.log_activity(
-                                                existing_id,
-                                                "PR refreshed, reset to Inbox",
-                                            );
-                                            refreshed_count += 1;
-                                        }
-                                        // If still in Inbox/Ready/Review, leave as-is
-                                        continue;
-                                    }
-                                    Ok(None) => {} // New finding
-                                    Err(_) => continue,
-                                }
-                                let cue_id = self.db.insert_cue_from_source(
-                                    &finding.text,
-                                    "PR Review",
-                                    &finding.external_id,
-                                );
-                                if let Ok(id) = cue_id {
-                                    let _ = self.db.update_cue_tag(id, Some(&tag));
-                                    new_count += 1;
-                                }
-                            }
-                            if new_count > 0 || updated_count > 0 || refreshed_count > 0 {
-                                self.reload_cues();
-                                let mut parts = Vec::new();
-                                if new_count > 0 {
-                                    parts.push(format!("{} new", new_count));
-                                }
-                                if updated_count > 0 {
-                                    parts.push(format!("{} updated", updated_count));
-                                }
-                                if refreshed_count > 0 {
-                                    parts.push(format!("{} reset to Inbox", refreshed_count));
-                                }
-                                self.set_status_message(format!(
-                                    "PR #{}: {} finding(s) (tag: {})",
-                                    pr_number,
-                                    parts.join(", "),
-                                    tag
-                                ));
-                            } else {
-                                self.set_status_message(format!(
-                                    "PR #{}: all {} findings still in progress",
-                                    pr_number,
-                                    findings.len()
-                                ));
-                            }
-                        }
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Thread panicked or was dropped
+                self.git.importing_pr = false;
+                self.git.importing_pr_start = None;
+                self.git.import_pr_rx = None;
+                self.set_status_message("PR import failed unexpectedly".into());
+                return;
+            }
+            Ok(result) => result,
+        };
+        self.git.importing_pr = false;
+        self.git.importing_pr_start = None;
+        self.git.import_pr_rx = None;
+        match result {
+            Ok(findings) => self.handle_pr_findings(findings),
+            Err(e) => self.set_status_message(format!("PR import failed: {}", e)),
+        }
+    }
+
+    /// Process successfully fetched PR findings: upsert cues and report results.
+    fn handle_pr_findings(&mut self, findings: Vec<crate::sources::PrFinding>) {
+        if findings.is_empty() {
+            self.set_status_message("No actionable findings found in PR".to_string());
+            return;
+        }
+        let pr_number = self.git.import_pr_number.trim().to_string();
+        let tag = format!("PR{}", pr_number);
+        let (new_count, updated_count, refreshed_count, error_count) =
+            self.upsert_pr_findings(&findings, &tag);
+        let has_changes = new_count > 0 || updated_count > 0 || refreshed_count > 0;
+        if error_count > 0 && !has_changes {
+            self.set_status_message(format!(
+                "PR #{}: import failed ({} DB errors across {} findings)",
+                pr_number,
+                error_count,
+                findings.len()
+            ));
+        } else if error_count > 0 {
+            self.reload_cues();
+            let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
+            self.set_status_message(format!(
+                "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
+                pr_number, summary, tag, error_count
+            ));
+        } else if has_changes {
+            self.reload_cues();
+            let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
+            self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
+        } else {
+            self.set_status_message(format!(
+                "PR #{}: all {} findings still in progress",
+                pr_number,
+                findings.len()
+            ));
+        }
+    }
+
+    /// Upsert each PR finding: update existing cues or insert new ones.
+    /// Returns (new_count, updated_count, refreshed_count, error_count).
+    fn upsert_pr_findings(
+        &mut self,
+        findings: &[crate::sources::PrFinding],
+        tag: &str,
+    ) -> (usize, usize, usize, usize) {
+        let mut new_count = 0;
+        let mut updated_count = 0;
+        let mut refreshed_count = 0;
+        let mut error_count = 0;
+        for finding in findings {
+            match self.db.get_cue_by_source_ref(&finding.external_id) {
+                Ok(Some((existing_id, existing_text, existing_status))) => {
+                    match self.update_existing_finding(
+                        finding,
+                        existing_id,
+                        &existing_text,
+                        &existing_status,
+                    ) {
+                        Ok(Some("updated")) => updated_count += 1,
+                        Ok(Some("refreshed")) => refreshed_count += 1,
+                        Ok(_) => {}
                         Err(e) => {
-                            self.set_status_message(format!("PR import failed: {}", e));
+                            eprintln!("DB error updating finding {}: {e}", finding.external_id);
+                            error_count += 1;
                         }
                     }
-                } // Ok(result)
+                    continue;
+                }
+                Ok(None) => {} // New finding — fall through to insert
+                Err(e) => {
+                    eprintln!(
+                        "DB error looking up source ref {}: {e}",
+                        finding.external_id
+                    );
+                    error_count += 1;
+                    continue;
+                }
+            }
+            match self
+                .db
+                .insert_cue_from_source(&finding.text, "PR Review", &finding.external_id)
+            {
+                Ok(id) => {
+                    if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
+                        eprintln!("DB error tagging new cue {id}: {e}");
+                        error_count += 1;
+                    } else {
+                        new_count += 1;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("DB error inserting finding {}: {e}", finding.external_id);
+                    error_count += 1;
+                }
             }
         }
+        (new_count, updated_count, refreshed_count, error_count)
+    }
+
+    /// Handle a single existing finding: update text or reset status as needed.
+    /// Returns `Ok(Some("updated"))` or `Ok(Some("refreshed"))` on success,
+    /// `Ok(None)` when no change was needed, or `Err` if a DB write failed.
+    fn update_existing_finding(
+        &mut self,
+        finding: &crate::sources::PrFinding,
+        existing_id: i64,
+        existing_text: &str,
+        existing_status: &str,
+    ) -> anyhow::Result<Option<&'static str>> {
+        let text_changed = existing_text.trim() != finding.text.trim();
+        let is_completed = existing_status == "Done" || existing_status == "Archived";
+        if text_changed {
+            // Text changed: update and reset to Inbox
+            self.db
+                .update_cue_text_by_source_ref(&finding.external_id, &finding.text)?;
+            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
+            let _ = self
+                .db
+                .log_activity(existing_id, "PR comment updated, reset to Inbox");
+            Ok(Some("updated"))
+        } else if is_completed {
+            // Same text but Done/Archived: reset to Inbox for re-check
+            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
+            let _ = self
+                .db
+                .log_activity(existing_id, "PR refreshed, reset to Inbox");
+            Ok(Some("refreshed"))
+        } else {
+            // If still in Inbox/Ready/Review, leave as-is
+            Ok(None)
+        }
+    }
+
+    /// Build a human-readable summary of finding counts.
+    fn build_findings_summary(
+        new_count: usize,
+        updated_count: usize,
+        refreshed_count: usize,
+    ) -> String {
+        let mut parts = Vec::new();
+        if new_count > 0 {
+            parts.push(format!("{} new", new_count));
+        }
+        if updated_count > 0 {
+            parts.push(format!("{} updated", updated_count));
+        }
+        if refreshed_count > 0 {
+            parts.push(format!("{} reset to Inbox", refreshed_count));
+        }
+        format!("{} finding(s)", parts.join(", "))
     }
 
     /// Notify a single PR comment that a finding was fixed.
@@ -1384,71 +1449,94 @@ impl DirigentApp {
     }
 
     fn process_pr_notify_result(&mut self) {
-        if let Some(ref rx) = self.git.pr_notify_rx {
-            if let Ok(result) = rx.try_recv() {
+        let rx = match self.git.pr_notify_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.notifying_pr = false;
                 self.git.pr_notify_rx = None;
-                match result {
-                    Ok(msg) => {
-                        // Parse "message|id1,id2,..." format
-                        let parts: Vec<&str> = msg.splitn(2, '|').collect();
-                        let display_msg = parts[0].to_string();
-                        if parts.len() == 2 {
-                            for id_str in parts[1].split(',') {
-                                if let Ok(cue_id) = id_str.parse::<i64>() {
-                                    let _ = self.db.log_activity(cue_id, "Notified PR");
-                                }
-                            }
-                        }
-                        self.set_status_message(display_msg);
-                        self.reload_git_info();
-                        self.reload_commit_history();
-                    }
-                    Err(e) => {
-                        self.set_status_message(format!("PR notify failed: {}", e));
-                    }
+                self.set_status_message("PR notify failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.notifying_pr = false;
+        self.git.pr_notify_rx = None;
+        match result {
+            Ok(msg) => {
+                // Parse "message|id1,id2,..." format
+                let parts: Vec<&str> = msg.splitn(2, '|').collect();
+                let display_msg = parts[0].to_string();
+                if parts.len() == 2 {
+                    self.log_activity_for_ids(parts[1]);
                 }
+                self.set_status_message(display_msg);
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => {
+                self.set_status_message(format!("PR notify failed: {}", e));
+            }
+        }
+    }
+
+    /// Log "Notified PR" activity for a comma-separated list of cue IDs.
+    fn log_activity_for_ids(&mut self, ids_csv: &str) {
+        for id_str in ids_csv.split(',') {
+            if let Ok(cue_id) = id_str.parse::<i64>() {
+                let _ = self.db.log_activity(cue_id, "Notified PR");
             }
         }
     }
 
     /// Check for completed git pull.
     fn process_pull_result(&mut self) {
-        if let Some(ref rx) = self.git.pull_rx {
-            if let Ok(result) = rx.try_recv() {
+        let rx = match self.git.pull_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.pulling = false;
                 self.git.pull_rx = None;
-                match result {
-                    Ok(msg) => {
-                        self.set_status_message(msg);
-                        self.reload_git_info();
-                        self.reload_commit_history();
-                    }
-                    Err(e) => {
-                        if e.contains("Not possible to fast-forward")
-                            || e.contains("Diverging branches")
-                            || e.contains("not possible to fast-forward")
-                        {
-                            self.git.show_pull_diverged = true;
-                            self.set_status_message(
-                                "Pull: branches have diverged — choose a strategy".to_string(),
-                            );
-                        } else if e.contains("CONFLICT")
-                            || e.contains("Automatic merge failed")
-                            || e.contains("could not apply")
-                        {
-                            // Merge or rebase left conflicts — show resolution dialog
-                            self.open_merge_conflict_dialog();
-                        } else if e.contains("unmerged files") || e.contains("unresolved conflict")
-                        {
-                            // Pre-existing conflicts — check if we can show the resolution dialog
-                            self.open_merge_conflict_dialog();
-                        } else {
-                            self.set_status_message(format!("Pull failed: {}", e));
-                        }
-                    }
-                }
+                self.set_status_message("Git pull failed unexpectedly".into());
+                return;
             }
+            Ok(r) => r,
+        };
+        self.git.pulling = false;
+        self.git.pull_rx = None;
+        match result {
+            Ok(msg) => {
+                self.set_status_message(msg);
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => self.handle_pull_error(&e),
+        }
+    }
+
+    /// Classify a pull error and show the appropriate dialog or message.
+    fn handle_pull_error(&mut self, e: &str) {
+        let is_diverged = e.contains("Not possible to fast-forward")
+            || e.contains("Diverging branches")
+            || e.contains("not possible to fast-forward");
+        let is_conflict = e.contains("CONFLICT")
+            || e.contains("Automatic merge failed")
+            || e.contains("could not apply");
+        let is_unmerged = e.contains("unmerged files") || e.contains("unresolved conflict");
+
+        if is_diverged {
+            self.git.show_pull_diverged = true;
+            self.set_status_message("Pull: branches have diverged — choose a strategy".to_string());
+        } else if is_conflict || is_unmerged {
+            self.open_merge_conflict_dialog();
+        } else {
+            self.set_status_message(format!("Pull failed: {}", e));
         }
     }
 
@@ -1587,9 +1675,9 @@ impl DirigentApp {
         }
     }
 
-    fn relative_path(&self, path: &PathBuf) -> String {
+    fn relative_path(&self, path: &Path) -> String {
         path.strip_prefix(&self.project_root)
-            .unwrap_or(path.as_path())
+            .unwrap_or(path)
             .to_string_lossy()
             .to_string()
     }
@@ -1732,6 +1820,287 @@ impl DirigentApp {
         self.needs_theme_apply = true;
     }
 
+    /// Handle filesystem changes: rescan file tree, reload tabs, trigger agents.
+    fn handle_fs_changes(&mut self) {
+        let fs_ready = self.fs_changed.load(Ordering::Relaxed)
+            && self.last_fs_rescan.elapsed() >= FS_RESCAN_DEBOUNCE;
+        if !fs_ready {
+            return;
+        }
+        self.fs_changed.store(false, Ordering::Relaxed);
+        self.last_fs_rescan = Instant::now();
+        self.reload_file_tree();
+        self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        self.reload_open_tabs();
+        self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
+    }
+
+    /// Reload content of all open tabs from disk.
+    fn reload_open_tabs(&mut self) {
+        for tab in &mut self.viewer.tabs {
+            let content = match std::fs::read_to_string(&tab.file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if tab.markdown_blocks.is_some() {
+                tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
+            }
+            tab.content = content.lines().map(String::from).collect();
+            let ext = tab
+                .file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            tab.symbols = symbols::parse_symbols(&tab.content, ext);
+        }
+    }
+
+    /// Poll background receivers for file tree, search, and go-to-definition results.
+    fn poll_background_results(&mut self) {
+        if let Ok(tree) = self.file_tree_rx.try_recv() {
+            self.file_tree = Some(tree);
+            self.file_tree_scanning = false;
+        }
+        if let Ok(results) = self.search.search_result_rx.try_recv() {
+            self.search.in_files_results = results;
+            self.search.in_files_searching = false;
+        }
+        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
+            self.apply_goto_def_result(gen, file_path, target_line, msg);
+        }
+    }
+
+    /// Apply a go-to-definition result if it matches the current generation.
+    fn apply_goto_def_result(
+        &mut self,
+        gen: u64,
+        file_path: PathBuf,
+        target_line: usize,
+        msg: String,
+    ) {
+        if gen != self.goto_def_gen {
+            return;
+        }
+        if target_line > 0 {
+            self.push_nav_history();
+            self.load_file(file_path);
+            self.viewer.scroll_to_line = Some(target_line);
+        }
+        self.set_status_message(msg);
+    }
+
+    /// Periodically sync running logs and clean up agent history.
+    fn sync_logs_and_cleanup(&mut self) {
+        let has_active_logs = !self.claude.exec_ids.is_empty() || self.claude.show_log.is_some();
+        if has_active_logs && self.claude.last_log_flush.elapsed() >= LOG_SYNC_INTERVAL {
+            self.sync_running_logs();
+        }
+        if self.last_agent_cleanup.elapsed() >= Duration::from_secs(3600) {
+            self.last_agent_cleanup = Instant::now();
+            let _ = self.db.cleanup_agent_runs(200, 65536);
+        }
+    }
+
+    /// Schedule repaint intervals based on current application state.
+    fn schedule_repaints(&self, ctx: &egui::Context) {
+        let has_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
+        if has_running {
+            let interval = if self.claude.show_log.is_some() {
+                REPAINT_FAST
+            } else {
+                REPAINT_SLOW
+            };
+            ctx.request_repaint_after(interval);
+        } else if !self.run_queue.is_empty() {
+            ctx.request_repaint_after(REPAINT_SLOW);
+        } else if self.fs_changed.load(Ordering::Relaxed) {
+            ctx.request_repaint_after(FS_RESCAN_DEBOUNCE);
+        }
+        if !self.scheduled_runs.is_empty() {
+            ctx.request_repaint_after(ELAPSED_REPAINT);
+        }
+        let has_async_git = self.git.importing_pr
+            || self.git.pushing
+            || self.git.pulling
+            || self.git.creating_pr
+            || self.git.notifying_pr;
+        if has_async_git {
+            ctx.request_repaint_after(REPAINT_SLOW);
+        }
+        if let Some(delay) = self.next_source_poll_delay() {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
+    /// Compute the earliest next source poll delay.
+    fn next_source_poll_delay(&self) -> Option<Duration> {
+        let mut min_delay = None::<Duration>;
+        for s in &self.settings.sources {
+            if !s.enabled || s.poll_interval_secs == 0 {
+                continue;
+            }
+            let interval = Duration::from_secs(s.poll_interval_secs);
+            let remaining = match self.sources.last_poll.get(&s.name) {
+                Some(last) => interval.saturating_sub(last.elapsed()),
+                None => Duration::ZERO,
+            };
+            let clamped = remaining.max(Duration::from_secs(1));
+            min_delay = Some(match min_delay {
+                Some(cur) => cur.min(clamped),
+                None => clamped,
+            });
+        }
+        min_delay
+    }
+
+    /// Handle drag-and-drop of files onto the window.
+    fn handle_drag_and_drop(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            if self.claude.show_log.is_some() {
+                self.conversation_reply_images.extend(dropped);
+            } else {
+                self.global_prompt_images.extend(dropped);
+            }
+        }
+        self.render_drop_overlay(ctx);
+    }
+
+    /// Show overlay when files are being dragged over the window.
+    fn render_drop_overlay(&self, ctx: &egui::Context) {
+        if ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            return;
+        }
+        let screen = ctx.content_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("drop_overlay"),
+        ));
+        painter.rect_filled(screen, 0, egui::Color32::from_black_alpha(160));
+        painter.text(
+            screen.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop files to attach",
+            egui::FontId::proportional(24.0),
+            egui::Color32::WHITE,
+        );
+    }
+
+    /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
+    fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
+        self.handle_search_shortcuts(ctx);
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
+            crate::spawn_new_instance();
+        }
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
+            self.viewer.close_active_tab();
+        }
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
+            self.viewer.quick_open_active = !self.viewer.quick_open_active;
+            self.viewer.quick_open_query.clear();
+            self.viewer.quick_open_selected = 0;
+        }
+        if ctx.input(|i| {
+            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
+        }) {
+            self.push_nav_history();
+            self.nav_back();
+        }
+        if ctx.input(|i| {
+            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
+        }) {
+            self.nav_forward();
+        }
+    }
+
+    /// Render main layout panels and all floating dialogs.
+    fn render_panels_and_dialogs(&mut self, ctx: &egui::Context) {
+        self.render_menu_bar(ctx);
+        self.render_repo_bar(ctx);
+        self.render_status_bar(ctx);
+        self.render_prompt_field(ctx);
+        if self.search.in_files_active {
+            self.render_search_in_files_panel_wrapper(ctx);
+        } else {
+            self.render_file_tree_panel(ctx);
+        }
+        self.render_cue_pool(ctx);
+        self.render_code_viewer(ctx);
+        self.render_modal_overlay(ctx);
+        self.render_floating_dialogs(ctx);
+    }
+
+    /// Render modal overlay dimming behind floating windows.
+    fn render_modal_overlay(&mut self, ctx: &egui::Context) {
+        let has_modal = self.show_repo_picker
+            || self.git.show_worktree_panel
+            || self.show_about
+            || self.pending_play.is_some()
+            || self.git.show_create_pr;
+        if !has_modal {
+            return;
+        }
+        let screen = ctx.content_rect();
+        egui::Area::new(egui::Id::new("modal_dim"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+                ui.painter()
+                    .rect_filled(rect, 0.0, self.semantic.modal_overlay());
+                if resp.clicked() {
+                    self.dismiss_topmost_modal(true);
+                }
+            });
+    }
+
+    /// Dismiss the topmost modal dialog (priority order).
+    /// When `keep_pending_play` is true, `pending_play` is left intact
+    /// (used for backdrop/overlay clicks so selections are not lost).
+    fn dismiss_topmost_modal(&mut self, keep_pending_play: bool) {
+        if self.pending_play.is_some() {
+            if !keep_pending_play {
+                self.pending_play = None;
+            }
+            // pending_play is the topmost modal; don't fall through.
+            return;
+        }
+        if self.git.show_create_pr {
+            self.git.show_create_pr = false;
+        } else if self.show_about {
+            self.show_about = false;
+        } else if self.git.show_worktree_panel {
+            self.git.show_worktree_panel = false;
+        } else if self.show_repo_picker {
+            self.show_repo_picker = false;
+        }
+    }
+
+    /// Render all floating dialog windows.
+    fn render_floating_dialogs(&mut self, ctx: &egui::Context) {
+        self.render_repo_picker(ctx);
+        self.render_worktree_panel(ctx);
+        self.render_force_remove_dialog(ctx);
+        self.render_delete_archive_dialog(ctx);
+        self.render_file_delete_dialog(ctx);
+        self.render_rename_dialog(ctx);
+        self.render_about_dialog(ctx);
+        self.render_play_variables_dialog(ctx);
+        self.render_git_init_dialog(ctx);
+        self.render_create_pr_dialog(ctx);
+        self.render_pull_diverged_dialog(ctx);
+        self.render_pull_unmerged_dialog(ctx);
+        self.render_merge_conflicts_dialog(ctx);
+        self.render_import_pr_dialog(ctx);
+    }
+
     /// Render project-wide search panel as a left side panel (replaces file tree).
     fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("search_files_panel")
@@ -1752,59 +2121,13 @@ impl eframe::App for DirigentApp {
         self.apply_theme(ctx);
 
         // Check for filesystem changes and rescan file tree (debounced)
-        if self.fs_changed.load(Ordering::Relaxed)
-            && self.last_fs_rescan.elapsed() >= FS_RESCAN_DEBOUNCE
-        {
-            self.fs_changed.store(false, Ordering::Relaxed);
-            self.last_fs_rescan = Instant::now();
-            self.reload_file_tree();
-            self.git.dirty_files = git::get_dirty_files(&self.project_root);
-            self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
-            // Reload all open tabs so the code viewer shows fresh content
-            for tab in &mut self.viewer.tabs {
-                if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                    if tab.markdown_blocks.is_some() {
-                        tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
-                    }
-                    tab.content = content.lines().map(String::from).collect();
-                    let ext = tab
-                        .file_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
-                    tab.symbols = symbols::parse_symbols(&tab.content, ext);
-                }
-            }
-            // Trigger agents configured with OnFileChange
-            self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
-        }
+        self.handle_fs_changes();
 
         // Reap finished/panicked worker threads
         self.reap_tasks();
 
-        // Check for completed background file tree scan
-        if let Ok(tree) = self.file_tree_rx.try_recv() {
-            self.file_tree = Some(tree);
-            self.file_tree_scanning = false;
-        }
-
-        // Check for completed background search
-        if let Ok(results) = self.search.search_result_rx.try_recv() {
-            self.search.in_files_results = results;
-            self.search.in_files_searching = false;
-        }
-
-        // Check for completed background go-to-definition
-        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
-            if gen == self.goto_def_gen {
-                if target_line > 0 {
-                    self.push_nav_history();
-                    self.load_file(file_path);
-                    self.viewer.scroll_to_line = Some(target_line);
-                }
-                self.set_status_message(msg);
-            }
-        }
+        // Poll background results (file tree, search, go-to-definition)
+        self.poll_background_results();
 
         // Poll for Claude results
         self.process_claude_results();
@@ -1825,189 +2148,24 @@ impl eframe::App for DirigentApp {
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
 
-        // Periodic agent run history cleanup (every hour, keep 200 runs per kind, 64KB output max)
-        if self.last_agent_cleanup.elapsed() >= Duration::from_secs(3600) {
-            self.last_agent_cleanup = Instant::now();
-            let _ = self.db.cleanup_agent_runs(200, 65536);
-        }
-
         // Poll external sources for new cues
         self.poll_sources();
         self.process_source_results();
 
-        // Periodically sync running logs to/from DB (every 3s)
-        if !self.claude.exec_ids.is_empty() || self.claude.show_log.is_some() {
-            if self.claude.last_log_flush.elapsed() >= LOG_SYNC_INTERVAL {
-                self.sync_running_logs();
-            }
-        }
+        // Sync logs and periodic cleanup
+        self.sync_logs_and_cleanup();
 
-        // Request repaint while Claude tasks are running
-        if self.cues.iter().any(|c| c.status == CueStatus::Ready) {
-            // Repaint faster when log window is open for live streaming
-            let interval = if self.claude.show_log.is_some() {
-                REPAINT_FAST
-            } else {
-                REPAINT_SLOW
-            };
-            ctx.request_repaint_after(interval);
-        } else if !self.run_queue.is_empty() {
-            // Repaint to check if queued cues can start (no more running)
-            ctx.request_repaint_after(REPAINT_SLOW);
-        } else if self.fs_changed.load(Ordering::Relaxed) {
-            // Ensure we repaint to pick up filesystem changes after debounce
-            ctx.request_repaint_after(FS_RESCAN_DEBOUNCE);
-        }
-        // Repaint for scheduled runs (countdown display + trigger check)
-        if !self.scheduled_runs.is_empty() {
-            ctx.request_repaint_after(ELAPSED_REPAINT);
-        }
-        // Repaint while async git operations are in progress (push, pull, PR import, etc.)
-        if self.git.importing_pr
-            || self.git.pushing
-            || self.git.pulling
-            || self.git.creating_pr
-            || self.git.notifying_pr
-        {
-            ctx.request_repaint_after(REPAINT_SLOW);
-        }
-        // Ensure periodic repaint for source polling
-        if self
-            .settings
-            .sources
-            .iter()
-            .any(|s| s.enabled && s.poll_interval_secs > 0)
-        {
-            ctx.request_repaint_after(SOURCE_POLL_REPAINT);
-        }
+        // Schedule repaint intervals
+        self.schedule_repaints(ctx);
 
         // Handle drag & drop of files onto the window
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .filter_map(|f| f.path.clone())
-                .collect()
-        });
-        if !dropped.is_empty() {
-            if self.claude.show_log.is_some() {
-                self.conversation_reply_images.extend(dropped);
-            } else {
-                self.global_prompt_images.extend(dropped);
-            }
-        }
+        self.handle_drag_and_drop(ctx);
 
-        // Show overlay when files are being dragged over the window
-        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            let screen = ctx.content_rect();
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("drop_overlay"),
-            ));
-            painter.rect_filled(screen, 0, egui::Color32::from_black_alpha(160));
-            painter.text(
-                screen.center(),
-                egui::Align2::CENTER_CENTER,
-                "Drop files to attach",
-                egui::FontId::proportional(24.0),
-                egui::Color32::WHITE,
-            );
-        }
+        // Handle keyboard shortcuts
+        self.handle_global_shortcuts(ctx);
 
-        // Handle keyboard shortcuts for search (Cmd+F, Cmd+Shift+F)
-        self.handle_search_shortcuts(ctx);
-
-        // Cmd+N = open a new Dirigent window
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
-            crate::spawn_new_instance();
-        }
-
-        // Cmd+W = close active tab
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
-            self.viewer.close_active_tab();
-        }
-
-        // Cmd+P = quick file open
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
-            self.viewer.quick_open_active = !self.viewer.quick_open_active;
-            self.viewer.quick_open_query.clear();
-            self.viewer.quick_open_selected = 0;
-        }
-
-        // Cmd+[ = navigate back
-        if ctx.input(|i| {
-            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
-        }) {
-            self.push_nav_history();
-            self.nav_back();
-        }
-
-        // Cmd+] = navigate forward
-        if ctx.input(|i| {
-            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
-        }) {
-            self.nav_forward();
-        }
-
-        // Render all panels (order matters for layout)
-        self.render_menu_bar(ctx); // macOS-style menu bar
-        self.render_repo_bar(ctx); // top
-        self.render_status_bar(ctx); // bottom-most
-        self.render_prompt_field(ctx); // above status bar
-        if self.search.in_files_active {
-            self.render_search_in_files_panel_wrapper(ctx); // replaces file tree
-        } else {
-            self.render_file_tree_panel(ctx); // left side
-        }
-        self.render_cue_pool(ctx); // right side
-        self.render_code_viewer(ctx); // center (code / diff review / claude progress / settings)
-
-        // Modal overlay dimming behind floating windows — blocks interaction
-        if self.show_repo_picker
-            || self.git.show_worktree_panel
-            || self.show_about
-            || self.pending_play.is_some()
-            || self.git.show_create_pr
-        {
-            let screen = ctx.content_rect();
-            egui::Area::new(egui::Id::new("modal_dim"))
-                .order(egui::Order::Middle)
-                .fixed_pos(screen.min)
-                .show(ctx, |ui| {
-                    let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
-                    ui.painter()
-                        .rect_filled(rect, 0.0, self.semantic.modal_overlay());
-                    // Click on overlay dismisses the topmost modal
-                    if resp.clicked() {
-                        if self.pending_play.is_some() {
-                            self.pending_play = None;
-                        } else if self.git.show_create_pr {
-                            self.git.show_create_pr = false;
-                        } else if self.show_about {
-                            self.show_about = false;
-                        } else if self.git.show_worktree_panel {
-                            self.git.show_worktree_panel = false;
-                        } else if self.show_repo_picker {
-                            self.show_repo_picker = false;
-                        }
-                    }
-                });
-        }
-
-        self.render_repo_picker(ctx); // floating
-        self.render_worktree_panel(ctx); // floating
-        self.render_force_remove_dialog(ctx); // floating
-        self.render_delete_archive_dialog(ctx); // floating
-        self.render_file_delete_dialog(ctx); // floating
-        self.render_rename_dialog(ctx); // floating
-        self.render_about_dialog(ctx); // floating
-        self.render_play_variables_dialog(ctx); // floating
-        self.render_git_init_dialog(ctx); // floating
-        self.render_create_pr_dialog(ctx); // floating
-        self.render_pull_diverged_dialog(ctx); // floating
-        self.render_pull_unmerged_dialog(ctx); // floating
-        self.render_merge_conflicts_dialog(ctx); // floating
-        self.render_import_pr_dialog(ctx); // floating
+        // Render all panels and dialogs
+        self.render_panels_and_dialogs(ctx);
     }
 }
 

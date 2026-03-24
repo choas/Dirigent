@@ -1,6 +1,27 @@
+use std::path::{Path, PathBuf};
+
 use eframe::egui;
 
 use crate::app::DirigentApp;
+
+/// Returns `true` if `name` is a valid filename for rename operations.
+/// Rejects empty names, ".", "..", any path separators, and parent-traversal components.
+fn validate_filename(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return false;
+    }
+    if trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(std::path::MAIN_SEPARATOR)
+    {
+        return false;
+    }
+    // Reject if any path component is a parent traversal
+    Path::new(trimmed)
+        .components()
+        .all(|c| !matches!(c, std::path::Component::ParentDir))
+}
 
 impl DirigentApp {
     /// Renders the rename dialog for a file or directory.
@@ -34,7 +55,10 @@ impl DirigentApp {
                     resp.request_focus();
                     self.rename_focus_requested = true;
                 }
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && validate_filename(&self.rename_buffer)
+                {
                     confirm = true;
                 }
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -46,8 +70,7 @@ impl DirigentApp {
                         cancel = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let name_valid =
-                            !self.rename_buffer.is_empty() && !self.rename_buffer.contains('/');
+                        let name_valid = validate_filename(&self.rename_buffer);
                         if ui
                             .add_enabled(name_valid, egui::Button::new("Rename"))
                             .clicked()
@@ -62,43 +85,62 @@ impl DirigentApp {
             self.rename_target = None;
         } else if confirm {
             let new_name = self.rename_buffer.trim().to_string();
-            let new_path = target.parent().unwrap_or(&target).join(&new_name);
             self.rename_target = None;
-            if new_path == target {
-                return;
+            self.execute_rename(&target, &new_name, is_dir);
+        }
+    }
+
+    /// Performs the actual file/directory rename, updates open tabs, and sets a status message.
+    fn execute_rename(&mut self, target: &Path, new_name: &str, is_dir: bool) {
+        if !validate_filename(new_name) {
+            self.set_status_message("Rename failed: invalid filename".to_string());
+            return;
+        }
+        let sanitized = new_name.trim();
+        let new_path = target.parent().unwrap_or(target).join(sanitized);
+        if new_path == target {
+            return;
+        }
+        match std::fs::rename(target, &new_path) {
+            Ok(()) => {
+                self.update_tabs_after_rename(target, &new_path, is_dir);
+                let display = new_path
+                    .strip_prefix(&self.project_root)
+                    .unwrap_or(&new_path)
+                    .to_string_lossy()
+                    .to_string();
+                self.set_status_message(format!("Renamed to: {}", display));
+                self.reload_file_tree();
+                self.reload_git_info();
             }
-            match std::fs::rename(&target, &new_path) {
-                Ok(()) => {
-                    // Update any open tab that referenced the old path
-                    if !is_dir {
-                        if let Some(idx) = self.viewer.find_tab(&target) {
-                            if let Some(new_tab) = super::super::create_tab_state(&new_path) {
-                                self.viewer.tabs[idx] = new_tab;
-                            }
-                        }
-                    } else {
-                        // Update tabs whose files were inside the renamed directory
-                        for tab in &mut self.viewer.tabs {
-                            if tab.file_path.starts_with(&target) {
-                                if let Ok(rel) = tab.file_path.strip_prefix(&target) {
-                                    let updated = new_path.join(rel);
-                                    tab.file_path = updated;
-                                }
-                            }
-                        }
-                    }
-                    let display = new_path
-                        .strip_prefix(&self.project_root)
-                        .unwrap_or(&new_path)
-                        .to_string_lossy()
-                        .to_string();
-                    self.set_status_message(format!("Renamed to: {}", display));
-                    self.reload_file_tree();
-                    self.reload_git_info();
+            Err(e) => {
+                self.set_status_message(format!("Rename failed: {}", e));
+            }
+        }
+    }
+
+    /// Updates open tabs after a rename: replaces the tab for a single file,
+    /// or updates paths for all tabs inside a renamed directory.
+    fn update_tabs_after_rename(&mut self, old_path: &Path, new_path: &PathBuf, is_dir: bool) {
+        if is_dir {
+            for tab in &mut self.viewer.tabs {
+                if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
+                    tab.file_path = new_path.join(rel);
                 }
-                Err(e) => {
-                    self.set_status_message(format!("Rename failed: {}", e));
-                }
+            }
+            return;
+        }
+        let Some(idx) = self.viewer.find_tab(&old_path.to_path_buf()) else {
+            return;
+        };
+        match super::super::create_tab_state(new_path) {
+            Some(new_tab) => self.viewer.tabs[idx] = new_tab,
+            None => {
+                eprintln!(
+                    "Warning: failed to create tab state for renamed file: {}",
+                    new_path.display()
+                );
+                self.viewer.close_tab(idx);
             }
         }
     }
@@ -158,45 +200,53 @@ impl DirigentApp {
             self.pending_file_delete = None;
         } else if confirm {
             self.pending_file_delete = None;
-            let result = if is_dir {
-                std::fs::remove_dir_all(&path)
-            } else {
-                std::fs::remove_file(&path)
-            };
-            match result {
-                Ok(()) => {
-                    // Close the tab if the deleted file was open
-                    if !is_dir {
-                        if let Some(idx) = self.viewer.find_tab(&path) {
-                            self.viewer.close_tab(idx);
-                        }
-                    } else {
-                        // Close any tabs whose files were inside this directory
-                        let indices: Vec<usize> = self
-                            .viewer
-                            .tabs
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, t)| t.file_path.starts_with(&path))
-                            .map(|(i, _)| i)
-                            .rev()
-                            .collect();
-                        for idx in indices {
-                            self.viewer.close_tab(idx);
-                        }
-                    }
-                    let display = path
-                        .strip_prefix(&self.project_root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .to_string();
-                    self.set_status_message(format!("Deleted: {}", display));
-                    self.reload_file_tree();
-                    self.reload_git_info();
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Delete failed: {}", e));
-                }
+            self.execute_file_delete(&path, is_dir);
+        }
+    }
+
+    /// Performs the actual file/directory deletion, closes affected tabs, and sets a status message.
+    fn execute_file_delete(&mut self, path: &Path, is_dir: bool) {
+        let result = if is_dir {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => {
+                self.close_tabs_for_deleted_path(path, is_dir);
+                let display = path
+                    .strip_prefix(&self.project_root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string();
+                self.set_status_message(format!("Deleted: {}", display));
+                self.reload_file_tree();
+                self.reload_git_info();
+            }
+            Err(e) => {
+                self.set_status_message(format!("Delete failed: {}", e));
+            }
+        }
+    }
+
+    /// Closes open tabs for a deleted file, or all tabs inside a deleted directory.
+    fn close_tabs_for_deleted_path(&mut self, path: &Path, is_dir: bool) {
+        if !is_dir {
+            if let Some(idx) = self.viewer.find_tab(&path.to_path_buf()) {
+                self.viewer.close_tab(idx);
+            }
+        } else {
+            let indices: Vec<usize> = self
+                .viewer
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.file_path.starts_with(path))
+                .map(|(i, _)| i)
+                .rev()
+                .collect();
+            for idx in indices {
+                self.viewer.close_tab(idx);
             }
         }
     }

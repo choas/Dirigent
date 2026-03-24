@@ -787,8 +787,9 @@ impl ThemeChoice {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum CliProvider {
+    #[default]
     Claude,
     OpenCode,
 }
@@ -803,12 +804,6 @@ impl CliProvider {
 
     pub fn all() -> &'static [CliProvider] {
         &[CliProvider::Claude, CliProvider::OpenCode]
-    }
-}
-
-impl Default for CliProvider {
-    fn default() -> Self {
-        CliProvider::Claude
     }
 }
 
@@ -831,6 +826,17 @@ impl SourceKind {
             SourceKind::Notion => "Notion",
             SourceKind::Mcp => "MCP",
             SourceKind::Custom => "Custom",
+        }
+    }
+
+    pub fn default_label(&self) -> &'static str {
+        match self {
+            SourceKind::GitHubIssues => "github",
+            SourceKind::Slack => "slack",
+            SourceKind::SonarQube => "sonar",
+            SourceKind::Notion => "notion",
+            SourceKind::Mcp => "mcp",
+            SourceKind::Custom => "custom",
         }
     }
 

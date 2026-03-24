@@ -5,8 +5,88 @@ use eframe::egui;
 use super::super::{icon, DirigentApp, SPACE_SM};
 use crate::git;
 
+/// Expand a leading `~` to the user's home directory.
+fn expand_tilde(raw: &str) -> PathBuf {
+    if raw == "~" || raw.starts_with("~/") || raw.starts_with("~\\") {
+        match dirs::home_dir() {
+            Some(home) => {
+                if raw == "~" {
+                    home
+                } else {
+                    home.join(&raw[2..])
+                }
+            }
+            None => PathBuf::from(raw),
+        }
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
+/// Format a byte size as a human-readable string (KB or MB).
+fn format_size(size_bytes: u64) -> String {
+    let size_kb = size_bytes as f64 / 1024.0;
+    if size_kb >= 1024.0 {
+        format!("{:.1} MB", size_kb / 1024.0)
+    } else {
+        format!("{:.0} KB", size_kb)
+    }
+}
+
+/// Reveal a file or directory in the platform's file manager.
+fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "macos")]
+    let mut child = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()?;
+    #[cfg(target_os = "windows")]
+    let mut child = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn()?;
+    #[cfg(target_os = "linux")]
+    let mut child = {
+        let dir = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| path.to_path_buf())
+        };
+        std::process::Command::new("xdg-open").arg(&dir).spawn()?
+    };
+
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// Worktree label based on its current/locked state.
+fn worktree_label(wt: &git::WorktreeInfo) -> String {
+    if wt.is_current {
+        format!("\u{25B6} {} (current)", wt.name)
+    } else if wt.is_locked {
+        format!("\u{25A0} {}", wt.name)
+    } else {
+        wt.name.clone()
+    }
+}
+
+/// Accumulated deferred actions from the worktree panel UI.
+#[derive(Default)]
+struct WorktreeActions {
+    switch_to: Option<PathBuf>,
+    remove_path: Option<PathBuf>,
+    create_name: Option<String>,
+    delete_archive_pending: Option<PathBuf>,
+    reveal_path: Option<PathBuf>,
+}
+
 impl DirigentApp {
-    // Repo picker window
+    // ── Repo picker ──────────────────────────────────────────────────
+
+    /// Repo picker window.
     pub(in crate::app) fn render_repo_picker(&mut self, ctx: &egui::Context) {
         if !self.show_repo_picker {
             return;
@@ -24,64 +104,67 @@ impl DirigentApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
-                // Consume clicks on empty space so they don't pass through
-                // to the modal overlay and dismiss this dialog.
                 ui.interact(ui.max_rect(), ui.id().with("body_bg"), egui::Sense::click());
-
-                ui.horizontal(|ui| {
-                    ui.label("Path:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.repo_path_input)
-                            .desired_width(300.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    if ui.button("Open").clicked() {
-                        let raw = &self.repo_path_input;
-                        let path = if raw == "~" || raw.starts_with("~/") {
-                            let home = std::env::var("HOME")
-                                .map(PathBuf::from)
-                                .unwrap_or_else(|_| PathBuf::from("/"));
-                            if raw == "~" {
-                                home
-                            } else {
-                                home.join(&raw[2..])
-                            }
-                        } else {
-                            PathBuf::from(raw)
-                        };
-                        if let Ok(canonical) = std::fs::canonicalize(&path) {
-                            switch_to = Some(canonical);
-                        } else {
-                            error_msg = Some(format!("Path not found: {}", path.display()));
-                        }
-                    }
-                });
-
+                self.render_repo_path_input(ui, &mut switch_to, &mut error_msg);
                 ui.separator();
-                ui.label("Recent repositories:");
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        for repo_path in self.settings.recent_repos.clone() {
-                            if ui.button(&repo_path).clicked() {
-                                let path = PathBuf::from(&repo_path);
-                                if let Ok(canonical) = std::fs::canonicalize(&path) {
-                                    switch_to = Some(canonical);
-                                }
-                            }
-                        }
-                        if self.settings.recent_repos.is_empty() {
-                            ui.label(
-                                egui::RichText::new("(none)")
-                                    .italics()
-                                    .color(self.semantic.tertiary_text),
-                            );
-                        }
-                    });
+                self.render_recent_repos(ui, &mut switch_to);
             });
 
         self.show_repo_picker = open;
+        self.apply_repo_picker_result(switch_to, error_msg);
+    }
 
+    /// Path input row with Open button.
+    fn render_repo_path_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        switch_to: &mut Option<PathBuf>,
+        error_msg: &mut Option<String>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label("Path:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.repo_path_input)
+                    .desired_width(300.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.button("Open").clicked() {
+                let path = expand_tilde(&self.repo_path_input);
+                if let Ok(canonical) = std::fs::canonicalize(&path) {
+                    *switch_to = Some(canonical);
+                } else {
+                    *error_msg = Some(format!("Path not found: {}", path.display()));
+                }
+            }
+        });
+    }
+
+    /// Recent repositories list.
+    fn render_recent_repos(&self, ui: &mut egui::Ui, switch_to: &mut Option<PathBuf>) {
+        ui.label("Recent repositories:");
+        egui::ScrollArea::vertical()
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for repo_path in self.settings.recent_repos.clone() {
+                    if ui.button(&repo_path).clicked() {
+                        let path = PathBuf::from(&repo_path);
+                        if let Ok(canonical) = std::fs::canonicalize(&path) {
+                            *switch_to = Some(canonical);
+                        }
+                    }
+                }
+                if self.settings.recent_repos.is_empty() {
+                    ui.label(
+                        egui::RichText::new("(none)")
+                            .italics()
+                            .color(self.semantic.tertiary_text),
+                    );
+                }
+            });
+    }
+
+    /// Apply the result of the repo picker dialog.
+    fn apply_repo_picker_result(&mut self, switch_to: Option<PathBuf>, error_msg: Option<String>) {
         if let Some(msg) = error_msg {
             self.set_status_message(msg);
         }
@@ -91,19 +174,16 @@ impl DirigentApp {
         }
     }
 
-    // Worktree panel
+    // ── Worktree panel ───────────────────────────────────────────────
+
+    /// Worktree panel.
     pub(in crate::app) fn render_worktree_panel(&mut self, ctx: &egui::Context) {
         if !self.git.show_worktree_panel {
             return;
         }
 
         let mut open = self.git.show_worktree_panel;
-        let mut switch_to: Option<PathBuf> = None;
-        let mut remove_path: Option<PathBuf> = None;
-        let mut create_name: Option<String> = None;
-        let mut delete_archive_pending: Option<PathBuf> = None;
-        let mut reveal_path: Option<PathBuf> = None;
-        let fs = self.settings.font_size;
+        let mut actions = WorktreeActions::default();
 
         egui::Window::new("Git Worktrees")
             .open(&mut open)
@@ -113,124 +193,143 @@ impl DirigentApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
-                // Consume clicks on empty space so they don't pass through
-                // to the modal overlay and dismiss this dialog.
                 ui.interact(ui.max_rect(), ui.id().with("body_bg"), egui::Sense::click());
-
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        for wt in &self.git.worktrees {
-                            ui.horizontal(|ui| {
-                                let label = if wt.is_current {
-                                    format!("\u{25B6} {} (current)", wt.name)
-                                } else if wt.is_locked {
-                                    format!("\u{25A0} {}", wt.name)
-                                } else {
-                                    wt.name.clone()
-                                };
-                                ui.label(icon(&label, fs).strong());
-                                ui.label(
-                                    egui::RichText::new(wt.path.to_string_lossy().as_ref())
-                                        .small()
-                                        .color(self.semantic.secondary_text),
-                                );
-
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if !wt.is_current
-                                            && !wt.is_locked
-                                            && ui.small_button("Remove").clicked()
-                                        {
-                                            remove_path = Some(wt.path.clone());
-                                        }
-                                        if !wt.is_current && ui.small_button("Switch").clicked() {
-                                            switch_to = Some(wt.path.clone());
-                                        }
-                                    },
-                                );
-                            });
-                            ui.separator();
-                        }
-
-                        if self.git.worktrees.is_empty() {
-                            ui.label(
-                                egui::RichText::new("No worktrees found")
-                                    .italics()
-                                    .color(self.semantic.tertiary_text),
-                            );
-                        }
-                    });
-
-                ui.add_space(SPACE_SM);
-                ui.label("Create new worktree:");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.git.new_worktree_name)
-                            .desired_width(200.0)
-                            .hint_text("branch-name")
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    if ui.button("Create").clicked() && !self.git.new_worktree_name.is_empty() {
-                        create_name = Some(self.git.new_worktree_name.clone());
-                    }
-                });
-
-                // Archived worktree DBs section
-                if !self.git.archived_dbs.is_empty() {
-                    ui.add_space(SPACE_SM);
-                    let header = format!(
-                        "{} Archived Worktree DBs ({})",
-                        if self.git.show_archived_dbs {
-                            "\u{25BC}"
-                        } else {
-                            "\u{25B6}"
-                        },
-                        self.git.archived_dbs.len()
-                    );
-                    if ui
-                        .selectable_label(false, egui::RichText::new(&header).strong())
-                        .clicked()
-                    {
-                        self.git.show_archived_dbs = !self.git.show_archived_dbs;
-                    }
-
-                    if self.git.show_archived_dbs {
-                        for db in &self.git.archived_dbs {
-                            ui.horizontal(|ui| {
-                                ui.label(&db.name);
-                                let size_kb = db.size_bytes as f64 / 1024.0;
-                                let size_str = if size_kb >= 1024.0 {
-                                    format!("{:.1} MB", size_kb / 1024.0)
-                                } else {
-                                    format!("{:.0} KB", size_kb)
-                                };
-                                ui.label(
-                                    egui::RichText::new(size_str)
-                                        .small()
-                                        .color(self.semantic.secondary_text),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("Delete").clicked() {
-                                            delete_archive_pending = Some(db.path.clone());
-                                        }
-                                        if ui.small_button("Reveal").clicked() {
-                                            reveal_path = Some(db.path.clone());
-                                        }
-                                    },
-                                );
-                            });
-                        }
-                    }
-                }
+                self.render_worktree_list(ui, &mut actions);
+                self.render_create_worktree_input(ui, &mut actions);
+                self.render_archived_dbs_section(ui, &mut actions);
             });
 
         self.git.show_worktree_panel = open;
+        self.handle_worktree_actions(actions);
+    }
 
-        if let Some(path) = switch_to {
+    /// Scrollable list of existing worktrees with Switch/Remove buttons.
+    fn render_worktree_list(&self, ui: &mut egui::Ui, actions: &mut WorktreeActions) {
+        let fs = self.settings.font_size;
+        egui::ScrollArea::vertical()
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for wt in &self.git.worktrees {
+                    self.render_worktree_row(ui, wt, fs, actions);
+                    ui.separator();
+                }
+
+                if self.git.worktrees.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No worktrees found")
+                            .italics()
+                            .color(self.semantic.tertiary_text),
+                    );
+                }
+            });
+    }
+
+    /// Single worktree row with label and action buttons.
+    fn render_worktree_row(
+        &self,
+        ui: &mut egui::Ui,
+        wt: &git::WorktreeInfo,
+        fs: f32,
+        actions: &mut WorktreeActions,
+    ) {
+        ui.horizontal(|ui| {
+            let label = worktree_label(wt);
+            ui.label(icon(&label, fs).strong());
+            ui.label(
+                egui::RichText::new(wt.path.to_string_lossy().as_ref())
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !wt.is_current && !wt.is_locked && ui.small_button("Remove").clicked() {
+                    actions.remove_path = Some(wt.path.clone());
+                }
+                if !wt.is_current && ui.small_button("Switch").clicked() {
+                    actions.switch_to = Some(wt.path.clone());
+                }
+            });
+        });
+    }
+
+    /// Input field and Create button for new worktrees.
+    fn render_create_worktree_input(&mut self, ui: &mut egui::Ui, actions: &mut WorktreeActions) {
+        ui.add_space(SPACE_SM);
+        ui.label("Create new worktree:");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.git.new_worktree_name)
+                    .desired_width(200.0)
+                    .hint_text("branch-name")
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.button("Create").clicked() && !self.git.new_worktree_name.is_empty() {
+                actions.create_name = Some(self.git.new_worktree_name.clone());
+            }
+        });
+    }
+
+    /// Collapsible section listing archived worktree databases.
+    fn render_archived_dbs_section(&mut self, ui: &mut egui::Ui, actions: &mut WorktreeActions) {
+        if self.git.archived_dbs.is_empty() {
+            return;
+        }
+
+        ui.add_space(SPACE_SM);
+        let arrow = if self.git.show_archived_dbs {
+            "\u{25BC}"
+        } else {
+            "\u{25B6}"
+        };
+        let header = format!(
+            "{} Archived Worktree DBs ({})",
+            arrow,
+            self.git.archived_dbs.len()
+        );
+        if ui
+            .selectable_label(false, egui::RichText::new(&header).strong())
+            .clicked()
+        {
+            self.git.show_archived_dbs = !self.git.show_archived_dbs;
+        }
+
+        if !self.git.show_archived_dbs {
+            return;
+        }
+
+        for db in &self.git.archived_dbs {
+            self.render_archived_db_row(ui, db, actions);
+        }
+    }
+
+    /// Single archived DB row with name, size, and action buttons.
+    fn render_archived_db_row(
+        &self,
+        ui: &mut egui::Ui,
+        db: &git::ArchivedDb,
+        actions: &mut WorktreeActions,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(&db.name);
+            ui.label(
+                egui::RichText::new(format_size(db.size_bytes))
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Delete").clicked() {
+                    actions.delete_archive_pending = Some(db.path.clone());
+                }
+                if ui.small_button("Reveal").clicked() {
+                    actions.reveal_path = Some(db.path.clone());
+                }
+            });
+        });
+    }
+
+    /// Process all deferred actions collected during the worktree panel frame.
+    fn handle_worktree_actions(&mut self, actions: WorktreeActions) {
+        if let Some(path) = actions.switch_to {
             self.git.show_worktree_panel = false;
             if let Ok(canonical) = std::fs::canonicalize(&path) {
                 self.switch_repo(canonical);
@@ -239,11 +338,11 @@ impl DirigentApp {
             }
         }
 
-        if let Some(path) = remove_path {
+        if let Some(path) = actions.remove_path {
             self.do_remove_worktree(path, false);
         }
 
-        if let Some(name) = create_name {
+        if let Some(name) = actions.create_name {
             match git::create_worktree(&self.project_root, &name) {
                 Ok(_path) => {
                     self.git.new_worktree_name.clear();
@@ -255,37 +354,18 @@ impl DirigentApp {
             }
         }
 
-        if let Some(path) = delete_archive_pending {
+        if let Some(path) = actions.delete_archive_pending {
             self.git.pending_delete_archive = Some(path);
         }
 
-        if let Some(path) = reveal_path {
-            #[cfg(target_os = "macos")]
-            {
-                let _ = std::process::Command::new("open")
-                    .arg("-R")
-                    .arg(&path)
-                    .spawn();
-            }
-            #[cfg(target_os = "windows")]
-            {
-                let _ = std::process::Command::new("explorer")
-                    .arg(format!("/select,{}", path.display()))
-                    .spawn();
-            }
-            #[cfg(target_os = "linux")]
-            {
-                let dir = if path.is_dir() {
-                    path.clone()
-                } else {
-                    path.parent()
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or(path.clone())
-                };
-                let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+        if let Some(path) = actions.reveal_path {
+            if let Err(e) = reveal_in_file_manager(&path) {
+                self.set_status_message(format!("Failed to reveal in file manager: {}", e));
             }
         }
     }
+
+    // ── Worktree removal ─────────────────────────────────────────────
 
     /// Attempt to remove a worktree, archiving its DB first.
     /// If removal fails due to modified/untracked files, stores state for the

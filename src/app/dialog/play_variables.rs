@@ -21,52 +21,7 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .show(ctx, |ui| {
                 let pending = self.pending_play.as_mut().unwrap();
-
-                for (i, var) in pending.variables.iter().enumerate() {
-                    // Skip auto-resolved variables.
-                    if pending.auto_resolved.contains_key(&i) {
-                        continue;
-                    }
-
-                    ui.add_space(SPACE_SM);
-                    ui.label(egui::RichText::new(&var.name).strong());
-
-                    if var.options.is_empty() {
-                        // Free-text input.
-                        ui.add(
-                            egui::TextEdit::singleline(&mut pending.custom_text[i])
-                                .desired_width(300.0)
-                                .hint_text(format!("Enter {}...", var.name.to_lowercase())),
-                        );
-                    } else {
-                        // Combo box with predefined options + "Other" for custom.
-                        let sel = &mut pending.selected[i];
-                        let other_idx = var.options.len();
-                        let display = if *sel < var.options.len() {
-                            var.options[*sel].as_str()
-                        } else {
-                            "Other..."
-                        };
-                        egui::ComboBox::from_id_salt(format!("play_var_{}", i))
-                            .selected_text(display)
-                            .width(300.0)
-                            .show_ui(ui, |ui| {
-                                for (j, opt) in var.options.iter().enumerate() {
-                                    ui.selectable_value(sel, j, opt);
-                                }
-                                ui.selectable_value(sel, other_idx, "Other...");
-                            });
-
-                        // Show custom text input when "Other" is selected.
-                        if *sel == other_idx {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut pending.custom_text[i])
-                                    .desired_width(300.0)
-                                    .hint_text(format!("Custom {}...", var.name.to_lowercase())),
-                            );
-                        }
-                    }
-                }
+                Self::render_play_variable_inputs(ui, pending);
 
                 ui.add_space(SPACE_SM * 2.0);
                 ui.horizontal(|ui| {
@@ -85,29 +40,114 @@ impl DirigentApp {
         }
 
         if submit {
-            let pending = self.pending_play.take().unwrap();
-            let resolved: Vec<(String, String)> = pending
-                .variables
-                .iter()
-                .enumerate()
-                .map(|(i, var)| {
-                    let value = if let Some(auto) = pending.auto_resolved.get(&i) {
-                        auto.clone()
-                    } else if var.options.is_empty() {
-                        // Free-text variable.
-                        pending.custom_text[i].clone()
-                    } else if pending.selected[i] < var.options.len() {
-                        var.options[pending.selected[i]].clone()
-                    } else {
-                        // "Other" selected — use custom text.
-                        pending.custom_text[i].clone()
-                    };
-                    (var.token.clone(), value)
-                })
-                .collect();
-            let final_prompt = settings::substitute_play_variables(&pending.prompt, &resolved);
-            let _ = self.db.insert_cue(&final_prompt, "", 0, None, &[]);
-            self.reload_cues();
+            self.submit_pending_play();
         }
     }
+
+    /// Render input widgets for all non-auto-resolved variables.
+    fn render_play_variable_inputs(ui: &mut egui::Ui, pending: &mut super::super::PendingPlay) {
+        let var_count = pending.variables.len();
+        for i in 0..var_count {
+            if pending.auto_resolved.contains_key(&i) {
+                continue;
+            }
+
+            let has_options = !pending.variables[i].options.is_empty();
+            let var_name = pending.variables[i].name.clone();
+
+            ui.add_space(SPACE_SM);
+            ui.label(egui::RichText::new(&var_name).strong());
+
+            if !has_options {
+                Self::render_freetext_input(ui, &mut pending.custom_text[i], &var_name);
+            } else {
+                Self::render_combo_input(ui, pending, i);
+            }
+        }
+    }
+
+    /// Render a free-text input for a variable with no predefined options.
+    fn render_freetext_input(ui: &mut egui::Ui, text: &mut String, var_name: &str) {
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width(300.0)
+                .hint_text(format!("Enter {}...", var_name.to_lowercase())),
+        );
+    }
+
+    /// Render a combo box with predefined options plus an "Other" free-text fallback.
+    fn render_combo_input(ui: &mut egui::Ui, pending: &mut super::super::PendingPlay, i: usize) {
+        let var = &pending.variables[i];
+        let sel = &mut pending.selected[i];
+        let other_idx = var.options.len();
+        let display = if *sel < var.options.len() {
+            var.options[*sel].as_str()
+        } else {
+            "Other..."
+        };
+        egui::ComboBox::from_id_salt(format!("play_var_{}", i))
+            .selected_text(display)
+            .width(300.0)
+            .show_ui(ui, |ui| {
+                for (j, opt) in var.options.iter().enumerate() {
+                    ui.selectable_value(sel, j, opt);
+                }
+                ui.selectable_value(sel, other_idx, "Other...");
+            });
+
+        if *sel == other_idx {
+            let var_name = pending.variables[i].name.clone();
+            Self::render_custom_input(ui, &mut pending.custom_text[i], &var_name);
+        }
+    }
+
+    /// Render the custom text input shown when "Other" is selected.
+    fn render_custom_input(ui: &mut egui::Ui, text: &mut String, var_name: &str) {
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width(300.0)
+                .hint_text(format!("Custom {}...", var_name.to_lowercase())),
+        );
+    }
+
+    /// Resolve all variable values and create the cue.
+    fn submit_pending_play(&mut self) {
+        let pending = self.pending_play.take().unwrap();
+        let resolved: Vec<(String, String)> = pending
+            .variables
+            .iter()
+            .enumerate()
+            .map(|(i, var)| {
+                let value = resolve_variable_value(&pending, i, var);
+                (var.token.clone(), value)
+            })
+            .collect();
+        let final_prompt = settings::substitute_play_variables(&pending.prompt, &resolved);
+        match self.db.insert_cue(&final_prompt, "", 0, None, &[]) {
+            Ok(_) => self.reload_cues(),
+            Err(e) => {
+                self.set_status_message(format!("Failed to create cue: {e}"));
+                self.pending_play = Some(pending);
+            }
+        }
+    }
+}
+
+/// Determine the resolved value for a single play variable.
+fn resolve_variable_value(
+    pending: &super::super::PendingPlay,
+    i: usize,
+    var: &settings::PlayVariable,
+) -> String {
+    if let Some(auto) = pending.auto_resolved.get(&i) {
+        return auto.clone();
+    }
+    if var.options.is_empty() {
+        return pending.custom_text[i].clone();
+    }
+    if pending.selected[i] < var.options.len() {
+        return var.options[pending.selected[i]].clone();
+    }
+    // "Other" selected — use custom text.
+    pending.custom_text[i].clone()
 }

@@ -145,7 +145,7 @@ impl DirigentApp {
             let needs_fallback = font_def
                 .families
                 .get(&egui::FontFamily::Name("Icons".into()))
-                .map_or(true, |v| v.is_empty());
+                .is_none_or(|v| v.is_empty());
             if needs_fallback {
                 let mono = font_def
                     .families

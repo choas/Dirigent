@@ -3,7 +3,6 @@
 /// Checks the user's cue text for common issues (too short, vague wording,
 /// missing action verb, no file context) and returns non-blocking suggestions
 /// to help the user write more effective prompts.
-
 /// A single suggestion with a short label and description.
 #[derive(Debug, Clone)]
 pub(crate) struct PromptSuggestion {
