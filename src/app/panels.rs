@@ -410,7 +410,9 @@ impl DirigentApp {
 
                 let file_tree_height = Self::compute_file_tree_height(
                     ui.available_height(),
-                    self.viewer.active().map_or(false, |t| !t.symbols.is_empty()),
+                    self.viewer
+                        .active()
+                        .map_or(false, |t| !t.symbols.is_empty()),
                     self.git.show_log,
                 );
                 let tree_action = egui::ScrollArea::vertical()
@@ -490,7 +492,7 @@ impl DirigentApp {
             .strip_prefix(&self.project_root)
             .unwrap_or(path)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
         let gitignore = self.project_root.join(".gitignore");
         let entry_line = if path.is_dir() {
             format!("{}/", rel)
@@ -591,9 +593,7 @@ impl DirigentApp {
                 .strong(),
         )
         .default_open(self.git.show_log)
-        .show(ui, |ui| {
-            self.render_git_log_entries(ui)
-        });
+        .show(ui, |ui| self.render_git_log_entries(ui));
         self.git.show_log = header_resp.fully_open();
         if let Some(Some((full_hash, message, body))) = header_resp.body_returned {
             self.open_commit_diff_review(&full_hash, &message, body);
@@ -601,10 +601,7 @@ impl DirigentApp {
     }
 
     /// Render individual commit entries inside the git log scroll area.
-    fn render_git_log_entries(
-        &mut self,
-        ui: &mut egui::Ui,
-    ) -> Option<(String, String, String)> {
+    fn render_git_log_entries(&mut self, ui: &mut egui::Ui) -> Option<(String, String, String)> {
         let mut clicked_commit: Option<(String, String, String)> = None;
         let mut load_more = false;
         egui::ScrollArea::vertical()
@@ -620,10 +617,7 @@ impl DirigentApp {
                 for (idx, commit) in self.git.commit_history.iter().enumerate() {
                     let is_unpushed = idx < ahead;
                     let msg = if commit.message.len() > max_msg_chars + 3 {
-                        format!(
-                            "{}...",
-                            super::truncate_str(&commit.message, max_msg_chars)
-                        )
+                        format!("{}...", super::truncate_str(&commit.message, max_msg_chars))
                     } else {
                         commit.message.clone()
                     };
@@ -685,8 +679,7 @@ impl DirigentApp {
     /// Open a diff review for the given commit.
     fn open_commit_diff_review(&mut self, full_hash: &str, message: &str, body: String) {
         let short_hash = &full_hash[..7.min(full_hash.len())];
-        let diff_text =
-            git::get_commit_diff(&self.project_root, full_hash).unwrap_or_default();
+        let diff_text = git::get_commit_diff(&self.project_root, full_hash).unwrap_or_default();
         let parsed = diff_view::parse_unified_diff(&diff_text);
         let cue_text = if body.len() > message.len() {
             body
@@ -711,11 +704,7 @@ impl DirigentApp {
         });
     }
 
-    fn render_file_entry(
-        ui: &mut egui::Ui,
-        entry: &FileEntry,
-        ctx: &mut FileTreeCtx<'_>,
-    ) {
+    fn render_file_entry(ui: &mut egui::Ui, entry: &FileEntry, ctx: &mut FileTreeCtx<'_>) {
         if entry.is_dir {
             Self::render_dir_entry(ui, entry, ctx);
         } else {
@@ -724,11 +713,7 @@ impl DirigentApp {
     }
 
     /// Render a directory entry row (disclosure triangle, name, context menu, children).
-    fn render_dir_entry(
-        ui: &mut egui::Ui,
-        entry: &FileEntry,
-        ctx: &mut FileTreeCtx<'_>,
-    ) {
+    fn render_dir_entry(ui: &mut egui::Ui, entry: &FileEntry, ctx: &mut FileTreeCtx<'_>) {
         let indent = ctx.depth as f32 * 16.0;
         let is_expanded = ctx.expanded.contains(&entry.path);
         let dir_has_dirty = Self::dir_has_dirty_files(entry, ctx.project_root, ctx.dirty_files);
@@ -779,11 +764,7 @@ impl DirigentApp {
     }
 
     /// Render a file (leaf) entry row (name, git badge, context menu).
-    fn render_file_leaf_entry(
-        ui: &mut egui::Ui,
-        entry: &FileEntry,
-        ctx: &mut FileTreeCtx<'_>,
-    ) {
+    fn render_file_leaf_entry(ui: &mut egui::Ui, entry: &FileEntry, ctx: &mut FileTreeCtx<'_>) {
         let indent = ctx.depth as f32 * 16.0;
         let is_selected = ctx.current_file.as_ref() == Some(&entry.path);
         let rel = entry
@@ -805,7 +786,8 @@ impl DirigentApp {
         }
 
         // File name
-        let name_color = file_name_color(ui, entry.is_ignored, status_letter.is_some(), ctx.semantic);
+        let name_color =
+            file_name_color(ui, entry.is_ignored, status_letter.is_some(), ctx.semantic);
         let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
         ui.painter().text(
             text_pos,
@@ -821,7 +803,14 @@ impl DirigentApp {
             *ctx.action = Some(FileTreeAction::Open(entry.path.clone()));
         }
 
-        render_file_context_menu(&response, entry, &rel, ctx.project_root, ctx.semantic, ctx.action);
+        render_file_context_menu(
+            &response,
+            entry,
+            &rel,
+            ctx.project_root,
+            ctx.semantic,
+            ctx.action,
+        );
     }
 
     /// Check if a directory contains any dirty files (recursively).
@@ -860,9 +849,10 @@ impl DirigentApp {
     /// Render the git branch and status summary in the status bar.
     fn render_status_bar_git_info(&mut self, ui: &mut egui::Ui) {
         if let Some(ref info) = self.git.info {
-            let branch_label = ui.label(
-                icon_small(&format!("\u{25CF} {}", info.branch), self.settings.font_size),
-            );
+            let branch_label = ui.label(icon_small(
+                &format!("\u{25CF} {}", info.branch),
+                self.settings.font_size,
+            ));
             branch_label.on_hover_text(format!(
                 "{} {}",
                 info.last_commit_hash, info.last_commit_message
@@ -952,11 +942,14 @@ impl DirigentApp {
             AgentStatus::Error => ("!", self.semantic.danger),
         };
         let label_text = format!("{} {}", name, icon_str);
-        let mut resp = ui.label(
-            egui::RichText::new(&label_text)
-                .monospace()
-                .small()
-                .color(color),
+        let mut resp = ui.add(
+            egui::Label::new(
+                egui::RichText::new(&label_text)
+                    .monospace()
+                    .small()
+                    .color(color),
+            )
+            .sense(egui::Sense::click()),
         );
         if let Some(output) = self.agent_state.latest_output.get(&kind) {
             let preview = if output.len() > 300 {
@@ -1107,11 +1100,7 @@ impl DirigentApp {
     }
 
     /// Render the send button and handle submit logic.
-    fn render_prompt_send_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        input_response: &egui::Response,
-    ) {
+    fn render_prompt_send_button(&mut self, ui: &mut egui::Ui, input_response: &egui::Response) {
         ui.vertical_centered(|ui| {
             let input_h = input_response.rect.height();
             let btn_size = self.settings.font_size + 12.0;
@@ -1137,8 +1126,7 @@ impl DirigentApp {
             } else {
                 (false, false)
             };
-            if (btn_clicked || enter_submitted || cmd_enter)
-                && !self.global_prompt_input.is_empty()
+            if (btn_clicked || enter_submitted || cmd_enter) && !self.global_prompt_input.is_empty()
             {
                 self.submit_prompt(cmd_enter);
             }
@@ -1148,23 +1136,24 @@ impl DirigentApp {
     /// Submit the current prompt text as a new cue.
     fn submit_prompt(&mut self, run_immediately: bool) {
         let text = self.global_prompt_input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
         let images: Vec<String> = self
             .global_prompt_images
-            .drain(..)
+            .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        if !text.is_empty() {
-            if let Ok(id) = self.db.insert_cue(&text, "", 0, None, &images) {
-                if run_immediately {
-                    let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                    self.claude.expand_running = true;
-                    self.reload_cues();
-                    self.trigger_claude(id);
-                }
+        if let Ok(id) = self.db.insert_cue(&text, "", 0, None, &images) {
+            self.global_prompt_images.clear();
+            self.global_prompt_input.clear();
+            if run_immediately {
+                let _ = self.db.update_cue_status(id, CueStatus::Ready);
+                self.claude.expand_running = true;
+                self.trigger_claude(id);
             }
+            self.reload_cues();
         }
-        self.global_prompt_input.clear();
-        self.reload_cues();
     }
 
     /// Render prompt refinement hints and suggestions below the input.
@@ -1186,10 +1175,7 @@ impl DirigentApp {
             });
         }
 
-        let suggestions = prompt_suggestions::analyse_prompt(
-            &self.global_prompt_input,
-            false,
-        );
+        let suggestions = prompt_suggestions::analyse_prompt(&self.global_prompt_input, false);
         if !suggestions.is_empty() {
             ui.add_space(SPACE_XS);
             for suggestion in &suggestions {
@@ -1382,11 +1368,7 @@ fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
 }
 
 /// Render "Reveal in Finder" and "Open in Terminal" context menu items.
-fn render_reveal_open_terminal_items(
-    ui: &mut egui::Ui,
-    reveal_path: &Path,
-    terminal_path: &Path,
-) {
+fn render_reveal_open_terminal_items(ui: &mut egui::Ui, reveal_path: &Path, terminal_path: &Path) {
     if ui.button("Reveal in Finder").clicked() {
         if reveal_path.is_file() {
             let _ = std::process::Command::new("open")
