@@ -126,7 +126,7 @@ impl DirigentApp {
         match self.db.insert_cue(&final_prompt, "", 0, None, &[]) {
             Ok(_) => self.reload_cues(),
             Err(e) => {
-                eprintln!("Failed to insert cue: {e}");
+                self.set_status_message(format!("Failed to create cue: {e}"));
                 self.pending_play = Some(pending);
             }
         }
