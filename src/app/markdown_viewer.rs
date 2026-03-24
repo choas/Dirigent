@@ -200,11 +200,7 @@ fn render_code_block_body(ui: &mut egui::Ui, language: Option<&str>, code: &str,
             ui.label(job);
         }
     } else {
-        ui.label(
-            egui::RichText::new(code)
-                .monospace()
-                .size(ctx.font_size),
-        );
+        ui.label(egui::RichText::new(code).monospace().size(ctx.font_size));
     }
 }
 
@@ -369,18 +365,19 @@ fn render_table(
     let header_bg = table_header_bg(ctx.semantic);
     let col_count = headers.len();
 
-    if indent > 0.0 {
-        ui.add_space(indent);
-    }
-
-    egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, border))
-        .corner_radius(4.0)
-        .show(ui, |ui| {
-            render_table_header(ui, headers, col_count, block_idx, header_bg, ctx);
-            render_table_separator(ui, border);
-            render_table_body(ui, rows, col_count, block_idx, ctx);
-        });
+    ui.horizontal_wrapped(|ui| {
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0, border))
+            .corner_radius(4.0)
+            .show(ui, |ui| {
+                render_table_header(ui, headers, col_count, block_idx, header_bg, ctx);
+                render_table_separator(ui, border);
+                render_table_body(ui, rows, col_count, block_idx, ctx);
+            });
+    });
     ui.add_space(SPACE_SM);
 }
 
@@ -476,12 +473,7 @@ fn render_thematic_break(ui: &mut egui::Ui) {
     ui.add_space(SPACE_SM);
 }
 
-fn render_checkbox(
-    ui: &mut egui::Ui,
-    checked: bool,
-    segments: &[TextSegment],
-    ctx: &RenderCtx,
-) {
+fn render_checkbox(ui: &mut egui::Ui, checked: bool, segments: &[TextSegment], ctx: &RenderCtx) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
         ui.add_space(indent + SPACE_MD);
@@ -500,13 +492,14 @@ fn render_checkbox(
 // ---------------------------------------------------------------------------
 
 fn checkbox_icon(checked: bool) -> &'static str {
-    if checked { "\u{2611}" } else { "\u{2610}" }
+    if checked {
+        "\u{2611}"
+    } else {
+        "\u{2610}"
+    }
 }
 
-fn checkbox_color(
-    checked: bool,
-    semantic: &crate::settings::SemanticColors,
-) -> egui::Color32 {
+fn checkbox_color(checked: bool, semantic: &crate::settings::SemanticColors) -> egui::Color32 {
     if checked {
         semantic.success
     } else {
