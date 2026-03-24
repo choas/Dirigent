@@ -412,10 +412,7 @@ impl DirigentApp {
         if !has_focus {
             return false;
         }
-        ui.input(|i| {
-            let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
-            pressed
-        })
+        ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift)
     }
 
     /// Render content inside a standard indented frame used for conversation messages.
