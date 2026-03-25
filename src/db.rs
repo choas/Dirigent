@@ -752,6 +752,7 @@ impl Database {
         file_path: &str,
         line_number: usize,
     ) -> Result<()> {
+        let text = Self::clamp_cue_text(text);
         self.conn.execute(
             "UPDATE cues SET text = ?1, file_path = ?2, line_number = ?3 WHERE source_ref = ?4",
             params![text, file_path, line_number as i64, source_ref],
