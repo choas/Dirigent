@@ -1176,9 +1176,8 @@ impl DirigentApp {
         }
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
-        let (new_count, updated_count, refreshed_count, error_count) =
-            self.upsert_pr_findings(&findings, &tag);
-        let has_changes = new_count > 0 || updated_count > 0 || refreshed_count > 0;
+        let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
+        let has_changes = new_count > 0 || updated_count > 0;
         if error_count > 0 && !has_changes {
             self.set_status_message(format!(
                 "PR #{}: import failed ({} DB errors across {} findings)",
@@ -1188,14 +1187,14 @@ impl DirigentApp {
             ));
         } else if error_count > 0 {
             self.reload_cues();
-            let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
+            let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!(
                 "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
                 pr_number, summary, tag, error_count
             ));
         } else if has_changes {
             self.reload_cues();
-            let summary = Self::build_findings_summary(new_count, updated_count, refreshed_count);
+            let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
         } else {
             self.set_status_message(format!(
@@ -1207,15 +1206,14 @@ impl DirigentApp {
     }
 
     /// Upsert each PR finding: update existing cues or insert new ones.
-    /// Returns (new_count, updated_count, refreshed_count, error_count).
+    /// Returns (new_count, updated_count, error_count).
     fn upsert_pr_findings(
         &mut self,
         findings: &[crate::sources::PrFinding],
         tag: &str,
-    ) -> (usize, usize, usize, usize) {
+    ) -> (usize, usize, usize) {
         let mut new_count = 0;
         let mut updated_count = 0;
-        let mut refreshed_count = 0;
         let mut error_count = 0;
         for finding in findings {
             match self.db.get_cue_by_source_ref(&finding.external_id) {
@@ -1235,7 +1233,6 @@ impl DirigentApp {
                         existing_line,
                     ) {
                         Ok(Some("updated")) => updated_count += 1,
-                        Ok(Some("refreshed")) => refreshed_count += 1,
                         Ok(_) => {}
                         Err(e) => {
                             eprintln!("DB error updating finding {}: {e}", finding.external_id);
@@ -1275,25 +1272,30 @@ impl DirigentApp {
                 }
             }
         }
-        (new_count, updated_count, refreshed_count, error_count)
+        (new_count, updated_count, error_count)
     }
 
-    /// Handle a single existing finding: update text or reset status as needed.
-    /// Returns `Ok(Some("updated"))` or `Ok(Some("refreshed"))` on success,
+    /// Handle a single existing finding: update text/location if changed.
+    /// Returns `Ok(Some("updated"))` when the cue was updated and reset to Inbox,
     /// `Ok(None)` when no change was needed, or `Err` if a DB write failed.
+    ///
+    /// Done/Archived cues are left alone when their text and location match —
+    /// only actual content changes from the PR reviewer warrant a re-open.
     fn update_existing_finding(
         &mut self,
         finding: &crate::sources::PrFinding,
         existing_id: i64,
         existing_text: &str,
-        existing_status: &str,
+        _existing_status: &str,
         existing_path: &str,
         existing_line: usize,
     ) -> anyhow::Result<Option<&'static str>> {
-        let text_changed = existing_text.trim() != finding.text.trim();
+        let clean_existing = crate::sources::strip_html_tags(existing_text);
+        let clean_finding = crate::sources::strip_html_tags(&finding.text);
+        let text_changed = crate::sources::strip_pr_context_hint(&clean_existing)
+            != crate::sources::strip_pr_context_hint(&clean_finding);
         let location_changed =
             existing_path != finding.file_path || existing_line != finding.line_number;
-        let is_completed = existing_status == "Done" || existing_status == "Archived";
         if text_changed || location_changed {
             // Text or location changed: update and reset to Inbox
             self.db.update_cue_by_source_ref(
@@ -1307,34 +1309,19 @@ impl DirigentApp {
                 .db
                 .log_activity(existing_id, "PR comment updated, reset to Inbox");
             Ok(Some("updated"))
-        } else if is_completed {
-            // Same text but Done/Archived: reset to Inbox for re-check
-            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
-            let _ = self
-                .db
-                .log_activity(existing_id, "PR refreshed, reset to Inbox");
-            Ok(Some("refreshed"))
         } else {
-            // If still in Inbox/Ready/Review, leave as-is
             Ok(None)
         }
     }
 
     /// Build a human-readable summary of finding counts.
-    fn build_findings_summary(
-        new_count: usize,
-        updated_count: usize,
-        refreshed_count: usize,
-    ) -> String {
+    fn build_findings_summary(new_count: usize, updated_count: usize) -> String {
         let mut parts = Vec::new();
         if new_count > 0 {
             parts.push(format!("{} new", new_count));
         }
         if updated_count > 0 {
             parts.push(format!("{} updated", updated_count));
-        }
-        if refreshed_count > 0 {
-            parts.push(format!("{} reset to Inbox", refreshed_count));
         }
         format!("{} finding(s)", parts.join(", "))
     }

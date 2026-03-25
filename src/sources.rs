@@ -495,6 +495,18 @@ pub(crate) struct PrFinding {
     pub external_id: String,
 }
 
+/// Strip the trailing `[Hint: use \`gh pr view …\`]` suffix that older versions
+/// appended to finding text.  Used to normalise the comparison so that removing
+/// the hint does not cause every existing cue to be detected as "text changed".
+pub(crate) fn strip_pr_context_hint(text: &str) -> &str {
+    let t = text.trim_end();
+    if let Some(pos) = t.rfind("\n\n[Hint: use `gh pr view") {
+        t[..pos].trim_end()
+    } else {
+        t
+    }
+}
+
 /// Run a `gh api` command with pagination and return parsed JSON values.
 fn gh_api_paginated(
     project_root: &Path,
@@ -689,12 +701,14 @@ fn is_confirmation_comment(body: &str) -> bool {
         || check.starts_with("Fixed in commit")
 }
 
-/// Check if a comment is an auto-generated summary (e.g. CodeRabbit walkthrough)
-/// rather than an actionable finding.
+/// Check if a comment is an auto-generated summary (e.g. CodeRabbit walkthrough,
+/// Qodo review header) rather than an actionable finding.
 fn is_auto_summary_comment(body: &str) -> bool {
     body.contains("<!-- walkthrough_start -->")
         || body.contains("auto-generated comment: summarize")
         || body.contains("auto-generated comment: release notes")
+        // Qodo review summary header (no actionable content)
+        || body.contains("Code Review by Qodo")
 }
 
 /// Extract the first "Prompt for AI Agents" block from a CodeRabbit comment.
@@ -753,7 +767,8 @@ fn extract_all_agent_prompts(body: &str) -> Vec<String> {
     prompts
 }
 
-/// Check whether a trimmed line is HTML markup that should be skipped.
+/// Check whether a trimmed line is HTML markup that should be skipped entirely.
+/// These are lines that are purely structural/decorative and contain no useful text.
 fn is_skippable_markup(trimmed: &str) -> bool {
     trimmed.starts_with("<!--")
         || trimmed.starts_with("<sub")
@@ -761,6 +776,200 @@ fn is_skippable_markup(trimmed: &str) -> bool {
         || trimmed.starts_with("<blockquote")
         || trimmed.starts_with("</blockquote")
         || trimmed.starts_with("![")
+        // Full-line image tags (logos, dividers, badges)
+        || (trimmed.starts_with("<img ") && !trimmed.to_ascii_lowercase().contains("alt=\"action required\""))
+        || trimmed.starts_with("<br")
+        || trimmed == "<br/>"
+        || trimmed == "<br />"
+        // Lines that are purely an HTML link wrapping an image (e.g. Qodo logo)
+        || (trimmed.starts_with("<a ") && trimmed.contains("<img ") && trimmed.ends_with("</a>"))
+}
+
+/// Strip inline HTML tags from a string, preserving the text content.
+/// Converts `<b>`, `<i>`, `<code>`, `<pre>` etc. to their text content,
+/// drops self-closing tags like `<img .../>` and `<br/>`.
+/// Also decodes HTML entities (`&amp;`, `&lt;`, `&#123;`, `&#x1F600;`, etc.).
+fn is_known_html_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "a" | "abbr"
+            | "b"
+            | "blockquote"
+            | "br"
+            | "caption"
+            | "cite"
+            | "code"
+            | "col"
+            | "colgroup"
+            | "dd"
+            | "del"
+            | "details"
+            | "dfn"
+            | "div"
+            | "dl"
+            | "dt"
+            | "em"
+            | "figcaption"
+            | "figure"
+            | "font"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "i"
+            | "img"
+            | "ins"
+            | "kbd"
+            | "li"
+            | "mark"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "q"
+            | "s"
+            | "samp"
+            | "section"
+            | "small"
+            | "span"
+            | "strike"
+            | "strong"
+            | "sub"
+            | "summary"
+            | "sup"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "tr"
+            | "tt"
+            | "u"
+            | "ul"
+            | "var"
+    )
+}
+
+pub(crate) fn strip_html_tags(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            // Consume everything until '>'
+            let mut tag = String::new();
+            let mut found_close = false;
+            for inner in chars.by_ref() {
+                if inner == '>' {
+                    found_close = true;
+                    break;
+                }
+                tag.push(inner);
+            }
+
+            // Parse the tag name: skip leading '/' for closing tags,
+            // stop at whitespace or '/' for attributes/self-close.
+            let tag_trimmed = tag.trim_start_matches('/');
+            let tag_name: String = tag_trimmed
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != '/')
+                .collect();
+            let tag_name_lower = tag_name.to_lowercase();
+
+            if !is_known_html_tag(&tag_name_lower) {
+                // Not a known HTML tag — preserve the angle-bracketed text verbatim.
+                result.push('<');
+                result.push_str(&tag);
+                if found_close {
+                    result.push('>');
+                }
+                continue;
+            }
+
+            // <br> / <br/> → space (if not at start/end)
+            if tag_name_lower == "br" {
+                if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') {
+                    result.push(' ');
+                }
+            }
+            // All other known HTML tags: just drop the tag, keep surrounding text
+        } else if ch == '&' {
+            // Try to consume an HTML entity
+            let mut entity = String::new();
+            let mut found_semicolon = false;
+            while let Some(&next) = chars.peek() {
+                if next == ';' {
+                    chars.next();
+                    found_semicolon = true;
+                    break;
+                }
+                // Entities are at most ~10 chars; bail if too long or whitespace
+                if entity.len() > 10 || next.is_whitespace() || next == '<' || next == '&' {
+                    break;
+                }
+                entity.push(next);
+                chars.next();
+            }
+            if found_semicolon {
+                if let Some(decoded) = decode_html_entity(&entity) {
+                    result.push(decoded);
+                } else {
+                    // Unknown entity — keep as-is
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+            } else {
+                // Not a valid entity — emit '&' and whatever we consumed
+                result.push('&');
+                result.push_str(&entity);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Decode a single HTML entity name (without the `&` and `;`).
+/// Handles common named entities and numeric entities (`#123`, `#x1F600`).
+fn decode_html_entity(entity: &str) -> Option<char> {
+    // Numeric entities
+    if let Some(rest) = entity.strip_prefix('#') {
+        let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
+            u32::from_str_radix(hex, 16).ok()?
+        } else {
+            rest.parse::<u32>().ok()?
+        };
+        return char::from_u32(code);
+    }
+    // Named entities
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{00A0}'),
+        "ndash" => Some('\u{2013}'),
+        "mdash" => Some('\u{2014}'),
+        "lsquo" => Some('\u{2018}'),
+        "rsquo" => Some('\u{2019}'),
+        "ldquo" => Some('\u{201C}'),
+        "rdquo" => Some('\u{201D}'),
+        "bull" => Some('\u{2022}'),
+        "hellip" => Some('\u{2026}'),
+        "copy" => Some('\u{00A9}'),
+        "reg" => Some('\u{00AE}'),
+        "trade" => Some('\u{2122}'),
+        _ => None,
+    }
 }
 
 /// Check whether a trimmed line is a severity/category label to skip.
@@ -826,10 +1035,17 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
+        // Strip inline HTML tags (e.g. <code>, <b>, <i>, <pre>, <h3>, <a>)
+        let cleaned = strip_html_tags(trimmed);
+        let cleaned = cleaned.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+
         if !result.is_empty() {
             result.push('\n');
         }
-        result.push_str(trimmed);
+        result.push_str(cleaned);
     }
 
     truncate_with_ellipsis(&mut result, 2000);
@@ -1207,5 +1423,119 @@ Combined prompt (should be skipped).
         assert!(text.contains("Finding"));
         assert!(text.contains("Visible"));
         assert!(!text.contains("Hidden"));
+    }
+
+    #[test]
+    fn extract_finding_text_strips_html_tags() {
+        let body = r#"<img src="https://example.com/badge.png" height="20" alt="Action required">
+1\. Pr cue location lost <code>🐞 Bug</code> <code>✓ Correctness</code>
+<pre>
+Refreshing an existing PR-sourced cue updates only <b><i>text</i></b> via <b><i>update_cue_text_by_source_ref</i></b>, but
+PR inline comment location is no longer embedded in the cue text.
+</pre>"#;
+        let text = extract_finding_text(body);
+        // HTML tags should be stripped, content preserved
+        assert!(text.contains("Pr cue location lost"));
+        assert!(text.contains("🐞 Bug"));
+        assert!(text.contains("Correctness"));
+        assert!(text.contains("update_cue_text_by_source_ref"));
+        // No raw HTML tags
+        assert!(!text.contains("<code>"));
+        assert!(!text.contains("</code>"));
+        assert!(!text.contains("<b>"));
+        assert!(!text.contains("<pre>"));
+        assert!(!text.contains("<img"));
+    }
+
+    #[test]
+    fn extract_finding_text_strips_qodo_decorative_lines() {
+        let body = r#"<img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo">
+<br/>
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo"></a>
+Actual finding text here."#;
+        let text = extract_finding_text(body);
+        assert!(text.contains("Actual finding text here"));
+        assert!(!text.contains("qodo.ai"));
+        assert!(!text.contains("<br"));
+    }
+
+    #[test]
+    fn qodo_summary_header_is_skipped() {
+        let body = r#"<h3>Code Review by Qodo</h3>
+<code>🐞 Bugs (2)</code>  <code>📘 Rule violations (0)</code>
+<img src="https://www.qodo.ai/logo.svg" height="10%" alt="Grey Divider">
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo"></a>"#;
+        assert!(is_auto_summary_comment(body));
+    }
+
+    #[test]
+    fn strip_html_tags_preserves_text() {
+        assert_eq!(strip_html_tags("hello <b>world</b>"), "hello world");
+        assert_eq!(strip_html_tags("<code>foo</code>"), "foo");
+        assert_eq!(strip_html_tags("a<br/>b"), "a b");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+        assert_eq!(strip_html_tags("<h3>Title</h3>"), "Title");
+        assert_eq!(
+            strip_html_tags(r#"<a href="url">link text</a>"#),
+            "link text"
+        );
+    }
+
+    #[test]
+    fn strip_html_tags_preserves_non_html_angle_brackets() {
+        // Generic type parameters should be preserved
+        assert_eq!(strip_html_tags("Vec<T>"), "Vec<T>");
+        // JSX-style components should be preserved
+        assert_eq!(strip_html_tags("<Button />"), "<Button />");
+        assert_eq!(
+            strip_html_tags("<MyComponent>child</MyComponent>"),
+            "<MyComponent>child</MyComponent>"
+        );
+        // Mixed: known HTML tags stripped, unknown preserved
+        assert_eq!(strip_html_tags("<code>Vec<T></code>"), "Vec<T>");
+        assert_eq!(
+            strip_html_tags("use <b>HashMap</b><K, V>"),
+            "use HashMap<K, V>"
+        );
+    }
+
+    #[test]
+    fn strip_html_tags_decodes_entities() {
+        assert_eq!(strip_html_tags("Hello &amp; World"), "Hello & World");
+        assert_eq!(strip_html_tags("&lt;code&gt;"), "<code>");
+        assert_eq!(strip_html_tags("a &amp; b &amp; c"), "a & b & c");
+        assert_eq!(strip_html_tags("&quot;quoted&quot;"), "\"quoted\"");
+        assert_eq!(strip_html_tags("&#60;tag&#62;"), "<tag>");
+        assert_eq!(strip_html_tags("&#x3C;hex&#x3E;"), "<hex>");
+        assert_eq!(strip_html_tags("no&amp;space"), "no&space");
+        assert_eq!(strip_html_tags("<b>&amp;</b> &lt;ok&gt;"), "& <ok>");
+        // Unknown entity preserved as-is
+        assert_eq!(strip_html_tags("&unknown;"), "&unknown;");
+        // Bare ampersand (no semicolon) preserved
+        assert_eq!(strip_html_tags("a & b"), "a & b");
+    }
+
+    #[test]
+    fn strip_pr_context_hint_removes_trailing_hint() {
+        let with_hint = "Fix the bug\n\n[Hint: use `gh pr view 7 --comments` to read the full PR discussion for additional context.]";
+        assert_eq!(strip_pr_context_hint(with_hint), "Fix the bug");
+    }
+
+    #[test]
+    fn strip_pr_context_hint_preserves_text_without_hint() {
+        assert_eq!(strip_pr_context_hint("Fix the bug"), "Fix the bug");
+        assert_eq!(strip_pr_context_hint(""), "");
+    }
+
+    #[test]
+    fn strip_pr_context_hint_normalises_old_vs_new_findings() {
+        // Simulates the scenario: old cue in DB has the hint suffix,
+        // new finding from API does not.  After stripping, both should match.
+        let old_db_text = "Review comment body\n\n[Hint: use `gh pr view 5 --comments` to read the full PR discussion for additional context.]";
+        let new_finding_text = "Review comment body";
+        assert_eq!(
+            strip_pr_context_hint(old_db_text),
+            strip_pr_context_hint(new_finding_text),
+        );
     }
 }
