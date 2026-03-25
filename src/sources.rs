@@ -1402,10 +1402,7 @@ Actual finding text here."#;
         assert_eq!(strip_html_tags("&#60;tag&#62;"), "<tag>");
         assert_eq!(strip_html_tags("&#x3C;hex&#x3E;"), "<hex>");
         assert_eq!(strip_html_tags("no&amp;space"), "no&space");
-        assert_eq!(
-            strip_html_tags("<b>&amp;</b> &lt;ok&gt;"),
-            "& <ok>"
-        );
+        assert_eq!(strip_html_tags("<b>&amp;</b> &lt;ok&gt;"), "& <ok>");
         // Unknown entity preserved as-is
         assert_eq!(strip_html_tags("&unknown;"), "&unknown;");
         // Bare ampersand (no semicolon) preserved

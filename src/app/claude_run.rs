@@ -283,7 +283,11 @@ impl DirigentApp {
         // The hint is added at prompt time (not stored in cue text) to avoid
         // triggering spurious text-changed updates on existing cues.
         let effective_text = if let Some(ref sref) = cue.source_ref {
-            if let Some(pr_num) = sref.strip_prefix("pr").and_then(|s| s.split(':').next()).and_then(|n| n.parse::<u64>().ok()) {
+            if let Some(pr_num) = sref
+                .strip_prefix("pr")
+                .and_then(|s| s.split(':').next())
+                .and_then(|n| n.parse::<u64>().ok())
+            {
                 format!(
                     "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
                     effective_text, pr_num,
