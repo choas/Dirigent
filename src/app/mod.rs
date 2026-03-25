@@ -1252,8 +1252,7 @@ impl DirigentApp {
                 &finding.external_id,
                 &finding.file_path,
                 finding.line_number,
-            )
-            {
+            ) {
                 Ok(id) => {
                     if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
                         eprintln!("DB error tagging new cue {id}: {e}");
