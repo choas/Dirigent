@@ -1411,4 +1411,28 @@ Actual finding text here."#;
         // Bare ampersand (no semicolon) preserved
         assert_eq!(strip_html_tags("a & b"), "a & b");
     }
+
+    #[test]
+    fn strip_pr_context_hint_removes_trailing_hint() {
+        let with_hint = "Fix the bug\n\n[Hint: use `gh pr view 7 --comments` to read the full PR discussion for additional context.]";
+        assert_eq!(strip_pr_context_hint(with_hint), "Fix the bug");
+    }
+
+    #[test]
+    fn strip_pr_context_hint_preserves_text_without_hint() {
+        assert_eq!(strip_pr_context_hint("Fix the bug"), "Fix the bug");
+        assert_eq!(strip_pr_context_hint(""), "");
+    }
+
+    #[test]
+    fn strip_pr_context_hint_normalises_old_vs_new_findings() {
+        // Simulates the scenario: old cue in DB has the hint suffix,
+        // new finding from API does not.  After stripping, both should match.
+        let old_db_text = "Review comment body\n\n[Hint: use `gh pr view 5 --comments` to read the full PR discussion for additional context.]";
+        let new_finding_text = "Review comment body";
+        assert_eq!(
+            strip_pr_context_hint(old_db_text),
+            strip_pr_context_hint(new_finding_text),
+        );
+    }
 }
