@@ -67,10 +67,10 @@ These fields were populated when parsing PR review comments but never consumed d
 
 ---
 
-## 4. `src/agents.rs` — `AgentKind::builtins()` (line 57)
+## 4. ~~`src/agents.rs` — `AgentKind::builtins()` (line 57)~~ ✅ FIXED
 
 ```rust
-#[allow(dead_code)]
+#[allow(dead_code)]  // ← removed
 pub fn builtins() -> &'static [AgentKind] {
     &[AgentKind::Format, AgentKind::Lint, AgentKind::Build, AgentKind::Test, AgentKind::Outdated]
 }
@@ -80,9 +80,7 @@ pub fn builtins() -> &'static [AgentKind] {
 
 Called once in `src/agents.rs:1565` in the `agent_kind_roundtrip` test. The `#[allow(dead_code)]` suppresses the warning because it's only used in `#[cfg(test)]` code.
 
-**Recommendation:** Either:
-- Move the function into the `#[cfg(test)]` module since it's test-only.
-- Or mark it `#[cfg(test)]` directly.
+**Resolution:** Moved the function from `impl AgentKind` into the `#[cfg(test)] mod tests` block, removing the need for `#[allow(dead_code)]`.
 
 ---
 
@@ -124,11 +122,11 @@ The consumer (`claude_run.rs:243`) ignores these metrics entirely, using `RunMet
 | `db.rs:126` | `Execution::status` | Dead (schema field) | Keep, acceptable |
 | `sources.rs:489` | `PrFinding::file_path` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `sources.rs:492` | `PrFinding::line_number` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
-| `agents.rs:57` | `AgentKind::builtins()` | Test-only | Move to `#[cfg(test)]` |
+| `agents.rs:57` | `AgentKind::builtins()` | ~~Test-only~~ | ✅ Fixed — moved to `#[cfg(test)]` module |
 | `opencode.rs:43` | `OpenCodeResponse::cost_usd` | Dead (stub) | Remove |
 | `opencode.rs:43` | `OpenCodeResponse::duration_ms` | Dead (stub) | Remove |
 | `opencode.rs:43` | `OpenCodeResponse::num_turns` | Dead (stub) | Remove |
 
-**Total: 11 items annotated, 1 false positive (fixed), 2 implemented (fixed), 4 acceptable schema fields, 4 actionable (3 remaining).**
+**Total: 11 items annotated, 1 false positive (fixed), 2 implemented (fixed), 1 moved to test (fixed), 4 acceptable schema fields, 3 actionable (remaining).**
 
 No additional dead code warnings exist beyond these explicitly suppressed items — the rest of the codebase compiles clean.
