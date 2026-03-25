@@ -495,6 +495,18 @@ pub(crate) struct PrFinding {
     pub external_id: String,
 }
 
+/// Strip the trailing `[Hint: use \`gh pr view …\`]` suffix that older versions
+/// appended to finding text.  Used to normalise the comparison so that removing
+/// the hint does not cause every existing cue to be detected as "text changed".
+pub(crate) fn strip_pr_context_hint(text: &str) -> &str {
+    let t = text.trim_end();
+    if let Some(pos) = t.rfind("\n\n[Hint: use `gh pr view") {
+        t[..pos].trim_end()
+    } else {
+        t
+    }
+}
+
 /// Run a `gh api` command with pagination and return parsed JSON values.
 fn gh_api_paginated(
     project_root: &Path,
