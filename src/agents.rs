@@ -1534,6 +1534,7 @@ impl AgentKind {
             "lint" => Some(AgentKind::Lint),
             "build" => Some(AgentKind::Build),
             "test" => Some(AgentKind::Test),
+            "outdated" => Some(AgentKind::Outdated),
             s if s.starts_with("custom_") => s[7..].parse().ok().map(AgentKind::Custom),
             "custom" => Some(AgentKind::Custom(0)),
             _ => None,
