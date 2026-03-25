@@ -559,8 +559,13 @@ impl DirigentApp {
             self.handle_run_no_changes(&result);
         }
 
-        // Auto-trigger queued follow-ups on successful completion.
+        // After every successful run, refresh git state and open tabs so that
+        // commits made by Claude Code (or any other file changes) are visible
+        // immediately in the UI — git log, dirty-file markers, tab contents.
         if !is_error {
+            self.refresh_open_tabs();
+            self.reload_git_info();
+            self.reload_commit_history();
             self.try_dispatch_follow_up(result.cue_id);
         }
 
@@ -643,8 +648,6 @@ impl DirigentApp {
             .map(|c| c.text.clone())
             .unwrap_or_default();
         self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
-        self.refresh_open_tabs();
-        self.reload_git_info();
     }
 
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {
