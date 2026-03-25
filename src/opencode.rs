@@ -398,10 +398,10 @@ fn dispatch_event(
     match event_type {
         "text" => process_text_event(event, on_log),
         "tool_use" | "tool" => {
-            if let Some(path) = process_tool_event(event, on_log) {
-                if !edited_files.contains(&path) {
-                    edited_files.push(path);
-                }
+            if let Some(path) =
+                process_tool_event(event, on_log).filter(|p| !edited_files.contains(p))
+            {
+                edited_files.push(path);
             }
         }
         "step_finish" => {
