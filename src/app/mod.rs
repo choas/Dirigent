@@ -1246,9 +1246,13 @@ impl DirigentApp {
                     continue;
                 }
             }
-            match self
-                .db
-                .insert_cue_from_source(&finding.text, "PR Review", &finding.external_id)
+            match self.db.insert_cue_from_source(
+                &finding.text,
+                "PR Review",
+                &finding.external_id,
+                &finding.file_path,
+                finding.line_number,
+            )
             {
                 Ok(id) => {
                     if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {

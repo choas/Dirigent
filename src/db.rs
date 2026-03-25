@@ -750,17 +750,19 @@ impl Database {
         Ok(())
     }
 
-    /// Insert a cue from an external source (global cue with source tracking).
+    /// Insert a cue from an external source with optional file location.
     pub fn insert_cue_from_source(
         &self,
         text: &str,
         source_label: &str,
         source_ref: &str,
+        file_path: &str,
+        line_number: usize,
     ) -> Result<i64> {
         let text = Self::clamp_cue_text(text);
         self.conn.execute(
-            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, '', 0, ?2, ?3, ?4)",
-            params![text, CueStatus::Inbox.as_str(), source_label, source_ref],
+            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![text, file_path, line_number as i64, CueStatus::Inbox.as_str(), source_label, source_ref],
         )?;
         let id = self.conn.last_insert_rowid();
         let _ = self.log_activity(id, &format!("Created from {}", source_label));
@@ -1178,7 +1180,7 @@ mod tests {
     #[test]
     fn insert_cue_from_source_and_find_by_ref() {
         let db = test_db();
-        db.insert_cue_from_source("issue title", "GitHub", "gh#42")
+        db.insert_cue_from_source("issue title", "GitHub", "gh#42", "", 0)
             .unwrap();
         assert!(db.cue_exists_by_source_ref("gh#42").unwrap());
         assert!(!db.cue_exists_by_source_ref("gh#99").unwrap());
@@ -1188,7 +1190,7 @@ mod tests {
     fn update_cue_text_by_source_ref() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("old title", "GitHub", "gh#1")
+            .insert_cue_from_source("old title", "GitHub", "gh#1", "", 0)
             .unwrap();
         db.update_cue_text_by_source_ref("gh#1", "new title")
             .unwrap();
@@ -1200,7 +1202,7 @@ mod tests {
     fn source_cue_has_correct_fields() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("body", "Notion", "notion:abc")
+            .insert_cue_from_source("body", "Notion", "notion:abc", "", 0)
             .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.file_path, "");
