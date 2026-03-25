@@ -2,6 +2,23 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.4] - 2026-03-26
+
+### Fixed
+- PR findings import now preserves file path and line number on cues
+- Done/Archived cues no longer reset on PR re-import when content is unchanged
+- Clamped line numbers to 1 for file-specific PR findings (avoids invalid navigation)
+- HTML tags stripped from imported PR finding text (Qodo, CodeRabbit)
+- Qodo review summary headers filtered out as non-actionable
+- Trailing PR context hints normalised to prevent false "text changed" detection
+
+### Changed
+- Dead code cleanup: removed `#[allow(dead_code)]` annotations from actively used fields
+- Refactored `update_cue_text_by_source_ref` to also update file path and line number
+- Cognitive complexity reduction in `fetch_pr_findings`
+- Updated `num-conv` transitive dependency (0.2.0 to 0.2.1)
+- Minor formatting cleanup in agents and app modules
+
 ## [0.3.3] - 2026-03-25
 
 ### Added
