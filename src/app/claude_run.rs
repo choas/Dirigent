@@ -279,9 +279,25 @@ impl DirigentApp {
                 String::new()
             };
 
+        // For PR-sourced cues, append a hint so the AI can fetch more context.
+        // The hint is added at prompt time (not stored in cue text) to avoid
+        // triggering spurious text-changed updates on existing cues.
+        let effective_text = if let Some(ref sref) = cue.source_ref {
+            if let Some(pr_num) = sref.strip_prefix("pr").and_then(|s| s.split(':').next()).and_then(|n| n.parse::<u64>().ok()) {
+                format!(
+                    "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
+                    effective_text, pr_num,
+                )
+            } else {
+                effective_text.to_string()
+            }
+        } else {
+            effective_text.to_string()
+        };
+
         match self.settings.cli_provider {
             CliProvider::Claude => claude::build_prompt_with_auto_context(
-                effective_text,
+                &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
@@ -289,7 +305,7 @@ impl DirigentApp {
                 &auto_context,
             ),
             CliProvider::OpenCode => opencode::build_prompt(
-                effective_text,
+                &effective_text,
                 &cue.file_path,
                 cue.line_number,
                 cue.line_number_end,
