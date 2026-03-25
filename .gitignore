@@ -3,7 +3,6 @@
 .dirigent/
 .claude/
 analyze_*
-!analyze_dead_code.md
 Dirigent.app
 .cache
 .env
