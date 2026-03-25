@@ -104,7 +104,6 @@ pub(crate) struct Cue {
     pub line_number_end: Option<usize>,
     pub status: CueStatus,
     pub source_label: Option<String>,
-    #[allow(dead_code)]
     pub source_ref: Option<String>,
     /// Attached image file paths (stored as JSON array in DB).
     pub attached_images: Vec<String>,
@@ -114,11 +113,9 @@ pub(crate) struct Cue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Execution {
-    #[allow(dead_code)]
     pub id: i64,
     #[allow(dead_code)]
     pub cue_id: i64,
-    #[allow(dead_code)]
     pub prompt: String,
     pub response: Option<String>,
     pub diff: Option<String>,
@@ -723,16 +720,21 @@ impl Database {
         Ok(count > 0)
     }
 
-    /// Get the cue id, text, and status for a given source_ref (for refresh/update logic).
-    pub fn get_cue_by_source_ref(&self, source_ref: &str) -> Result<Option<(i64, String, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, text, status FROM cues WHERE source_ref = ?1 LIMIT 1")?;
+    /// Get the cue id, text, status, file_path, and line_number for a given source_ref.
+    pub fn get_cue_by_source_ref(
+        &self,
+        source_ref: &str,
+    ) -> Result<Option<(i64, String, String, String, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, status, file_path, line_number FROM cues WHERE source_ref = ?1 LIMIT 1",
+        )?;
         let result = stmt.query_row(params![source_ref], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)? as usize,
             ))
         });
         match result {
@@ -742,26 +744,34 @@ impl Database {
         }
     }
 
-    /// Update the text of an existing cue identified by source_ref.
-    pub fn update_cue_text_by_source_ref(&self, source_ref: &str, text: &str) -> Result<()> {
+    /// Update text and location of an existing cue identified by source_ref.
+    pub fn update_cue_by_source_ref(
+        &self,
+        source_ref: &str,
+        text: &str,
+        file_path: &str,
+        line_number: usize,
+    ) -> Result<()> {
         self.conn.execute(
-            "UPDATE cues SET text = ?1 WHERE source_ref = ?2",
-            params![text, source_ref],
+            "UPDATE cues SET text = ?1, file_path = ?2, line_number = ?3 WHERE source_ref = ?4",
+            params![text, file_path, line_number as i64, source_ref],
         )?;
         Ok(())
     }
 
-    /// Insert a cue from an external source (global cue with source tracking).
+    /// Insert a cue from an external source with optional file location.
     pub fn insert_cue_from_source(
         &self,
         text: &str,
         source_label: &str,
         source_ref: &str,
+        file_path: &str,
+        line_number: usize,
     ) -> Result<i64> {
         let text = Self::clamp_cue_text(text);
         self.conn.execute(
-            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, '', 0, ?2, ?3, ?4)",
-            params![text, CueStatus::Inbox.as_str(), source_label, source_ref],
+            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![text, file_path, line_number as i64, CueStatus::Inbox.as_str(), source_label, source_ref],
         )?;
         let id = self.conn.last_insert_rowid();
         let _ = self.log_activity(id, &format!("Created from {}", source_label));
@@ -1179,29 +1189,31 @@ mod tests {
     #[test]
     fn insert_cue_from_source_and_find_by_ref() {
         let db = test_db();
-        db.insert_cue_from_source("issue title", "GitHub", "gh#42")
+        db.insert_cue_from_source("issue title", "GitHub", "gh#42", "", 0)
             .unwrap();
         assert!(db.cue_exists_by_source_ref("gh#42").unwrap());
         assert!(!db.cue_exists_by_source_ref("gh#99").unwrap());
     }
 
     #[test]
-    fn update_cue_text_by_source_ref() {
+    fn update_cue_by_source_ref() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("old title", "GitHub", "gh#1")
+            .insert_cue_from_source("old title", "GitHub", "gh#1", "", 0)
             .unwrap();
-        db.update_cue_text_by_source_ref("gh#1", "new title")
+        db.update_cue_by_source_ref("gh#1", "new title", "src/main.rs", 42)
             .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.text, "new title");
+        assert_eq!(cue.file_path, "src/main.rs");
+        assert_eq!(cue.line_number, 42);
     }
 
     #[test]
     fn source_cue_has_correct_fields() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("body", "Notion", "notion:abc")
+            .insert_cue_from_source("body", "Notion", "notion:abc", "", 0)
             .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.file_path, "");

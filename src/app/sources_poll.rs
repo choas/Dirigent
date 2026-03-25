@@ -121,7 +121,7 @@ impl DirigentApp {
             }
             if self
                 .db
-                .insert_cue_from_source(&item.text, &item.source_label, &item.external_id)
+                .insert_cue_from_source(&item.text, &item.source_label, &item.external_id, "", 0)
                 .is_ok()
             {
                 new_count += 1;

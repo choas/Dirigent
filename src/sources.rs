@@ -486,10 +486,8 @@ fn parse_source_object(obj: &serde_json::Value, source_label: &str) -> Option<So
 #[derive(Debug, Clone)]
 pub(crate) struct PrFinding {
     /// The file path the comment refers to (empty for general comments).
-    #[allow(dead_code)]
     pub file_path: String,
     /// The line number referenced (0 if not file-specific).
-    #[allow(dead_code)]
     pub line_number: usize,
     /// The finding text (reviewer comment body).
     pub text: String,
@@ -559,17 +557,19 @@ fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Ve
             .or_else(|| comment.get("original_line"))
             .and_then(|l| l.as_u64())
             .unwrap_or(0) as usize;
+        // Clamp to 1 when file_path is present: the app uses 1-based line numbers,
+        // and 0 would create an invalid navigation target.
+        let line = if !path.is_empty() && line == 0 {
+            1
+        } else {
+            line
+        };
         let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
         if let Some(finding_text) = finding_text_from_body(body) {
-            let text = if path.is_empty() {
-                finding_text
-            } else {
-                format!("In `{}` (line {}): {}", path, line, finding_text)
-            };
             findings.push(PrFinding {
                 file_path: path.to_string(),
                 line_number: line,
-                text,
+                text: finding_text,
                 external_id: format!("pr{}:comment:{}", pr_number, comment_id),
             });
         }

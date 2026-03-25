@@ -1219,12 +1219,20 @@ impl DirigentApp {
         let mut error_count = 0;
         for finding in findings {
             match self.db.get_cue_by_source_ref(&finding.external_id) {
-                Ok(Some((existing_id, existing_text, existing_status))) => {
+                Ok(Some((
+                    existing_id,
+                    existing_text,
+                    existing_status,
+                    existing_path,
+                    existing_line,
+                ))) => {
                     match self.update_existing_finding(
                         finding,
                         existing_id,
                         &existing_text,
                         &existing_status,
+                        &existing_path,
+                        existing_line,
                     ) {
                         Ok(Some("updated")) => updated_count += 1,
                         Ok(Some("refreshed")) => refreshed_count += 1,
@@ -1246,10 +1254,13 @@ impl DirigentApp {
                     continue;
                 }
             }
-            match self
-                .db
-                .insert_cue_from_source(&finding.text, "PR Review", &finding.external_id)
-            {
+            match self.db.insert_cue_from_source(
+                &finding.text,
+                "PR Review",
+                &finding.external_id,
+                &finding.file_path,
+                finding.line_number,
+            ) {
                 Ok(id) => {
                     if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
                         eprintln!("DB error tagging new cue {id}: {e}");
@@ -1276,13 +1287,21 @@ impl DirigentApp {
         existing_id: i64,
         existing_text: &str,
         existing_status: &str,
+        existing_path: &str,
+        existing_line: usize,
     ) -> anyhow::Result<Option<&'static str>> {
         let text_changed = existing_text.trim() != finding.text.trim();
+        let location_changed =
+            existing_path != finding.file_path || existing_line != finding.line_number;
         let is_completed = existing_status == "Done" || existing_status == "Archived";
-        if text_changed {
-            // Text changed: update and reset to Inbox
-            self.db
-                .update_cue_text_by_source_ref(&finding.external_id, &finding.text)?;
+        if text_changed || location_changed {
+            // Text or location changed: update and reset to Inbox
+            self.db.update_cue_by_source_ref(
+                &finding.external_id,
+                &finding.text,
+                &finding.file_path,
+                finding.line_number,
+            )?;
             self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
             let _ = self
                 .db

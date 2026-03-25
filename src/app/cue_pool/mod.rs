@@ -196,7 +196,7 @@ impl DirigentApp {
                 Ok(true) => {
                     if self
                         .db
-                        .update_cue_text_by_source_ref(&source_ref, &text)
+                        .update_cue_by_source_ref(&source_ref, &text, "", 0)
                         .is_ok()
                     {
                         updated_count += 1;
@@ -205,7 +205,7 @@ impl DirigentApp {
                 Ok(false) => {
                     if self
                         .db
-                        .insert_cue_from_source(&text, stem, &source_ref)
+                        .insert_cue_from_source(&text, stem, &source_ref, "", 0)
                         .is_ok()
                     {
                         new_count += 1;
