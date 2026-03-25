@@ -662,15 +662,6 @@ pub(crate) fn fetch_pr_findings(
         findings.extend(process_reviews(&reviews, pr_number));
     }
 
-    // Append a hint so Claude Code knows it can fetch more context from the PR.
-    let hint = format!(
-        "\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
-        pr_number,
-    );
-    for finding in &mut findings {
-        finding.text.push_str(&hint);
-    }
-
     Ok(findings)
 }
 
@@ -774,7 +765,7 @@ fn is_skippable_markup(trimmed: &str) -> bool {
         || trimmed.starts_with("</blockquote")
         || trimmed.starts_with("![")
         // Full-line image tags (logos, dividers, badges)
-        || (trimmed.starts_with("<img ") && !trimmed.contains("alt=\"Action required\""))
+        || (trimmed.starts_with("<img ") && !trimmed.to_ascii_lowercase().contains("alt=\"action required\""))
         || trimmed.starts_with("<br")
         || trimmed == "<br/>"
         || trimmed == "<br />"
@@ -785,6 +776,7 @@ fn is_skippable_markup(trimmed: &str) -> bool {
 /// Strip inline HTML tags from a string, preserving the text content.
 /// Converts `<b>`, `<i>`, `<code>`, `<pre>` etc. to their text content,
 /// drops self-closing tags like `<img .../>` and `<br/>`.
+/// Also decodes HTML entities (`&amp;`, `&lt;`, `&#123;`, `&#x1F600;`, etc.).
 fn strip_html_tags(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -807,11 +799,77 @@ fn strip_html_tags(input: &str) -> String {
                 }
             }
             // All other tags: just drop the tag, keep surrounding text
+        } else if ch == '&' {
+            // Try to consume an HTML entity
+            let mut entity = String::new();
+            let mut found_semicolon = false;
+            while let Some(&next) = chars.peek() {
+                if next == ';' {
+                    chars.next();
+                    found_semicolon = true;
+                    break;
+                }
+                // Entities are at most ~10 chars; bail if too long or whitespace
+                if entity.len() > 10 || next.is_whitespace() || next == '<' || next == '&' {
+                    break;
+                }
+                entity.push(next);
+                chars.next();
+            }
+            if found_semicolon {
+                if let Some(decoded) = decode_html_entity(&entity) {
+                    result.push(decoded);
+                } else {
+                    // Unknown entity — keep as-is
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+            } else {
+                // Not a valid entity — emit '&' and whatever we consumed
+                result.push('&');
+                result.push_str(&entity);
+            }
         } else {
             result.push(ch);
         }
     }
     result
+}
+
+/// Decode a single HTML entity name (without the `&` and `;`).
+/// Handles common named entities and numeric entities (`#123`, `#x1F600`).
+fn decode_html_entity(entity: &str) -> Option<char> {
+    // Numeric entities
+    if let Some(rest) = entity.strip_prefix('#') {
+        let code = if let Some(hex) = rest.strip_prefix('x').or_else(|| rest.strip_prefix('X')) {
+            u32::from_str_radix(hex, 16).ok()?
+        } else {
+            rest.parse::<u32>().ok()?
+        };
+        return char::from_u32(code);
+    }
+    // Named entities
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{00A0}'),
+        "ndash" => Some('\u{2013}'),
+        "mdash" => Some('\u{2014}'),
+        "lsquo" => Some('\u{2018}'),
+        "rsquo" => Some('\u{2019}'),
+        "ldquo" => Some('\u{201C}'),
+        "rdquo" => Some('\u{201D}'),
+        "bull" => Some('\u{2022}'),
+        "hellip" => Some('\u{2026}'),
+        "copy" => Some('\u{00A9}'),
+        "reg" => Some('\u{00AE}'),
+        "trade" => Some('\u{2122}'),
+        _ => None,
+    }
 }
 
 /// Check whether a trimmed line is a severity/category label to skip.
@@ -1321,5 +1379,24 @@ Actual finding text here."#;
             strip_html_tags(r#"<a href="url">link text</a>"#),
             "link text"
         );
+    }
+
+    #[test]
+    fn strip_html_tags_decodes_entities() {
+        assert_eq!(strip_html_tags("Hello &amp; World"), "Hello & World");
+        assert_eq!(strip_html_tags("&lt;code&gt;"), "<code>");
+        assert_eq!(strip_html_tags("a &amp; b &amp; c"), "a & b & c");
+        assert_eq!(strip_html_tags("&quot;quoted&quot;"), "\"quoted\"");
+        assert_eq!(strip_html_tags("&#60;tag&#62;"), "<tag>");
+        assert_eq!(strip_html_tags("&#x3C;hex&#x3E;"), "<hex>");
+        assert_eq!(strip_html_tags("no&amp;space"), "no&space");
+        assert_eq!(
+            strip_html_tags("<b>&amp;</b> &lt;ok&gt;"),
+            "& <ok>"
+        );
+        // Unknown entity preserved as-is
+        assert_eq!(strip_html_tags("&unknown;"), "&unknown;");
+        // Bare ampersand (no semicolon) preserved
+        assert_eq!(strip_html_tags("a & b"), "a & b");
     }
 }
