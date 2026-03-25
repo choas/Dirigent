@@ -24,7 +24,7 @@ The `source_ref` field is actively read in multiple locations:
 
 ---
 
-## 2. `src/db.rs` — `Execution` struct fields (lines 117–127)
+## 2. `src/db.rs` — `Execution` struct fields (lines 117–127) — 🔍 under investigation
 
 ```rust
 #[allow(dead_code)]
@@ -42,11 +42,7 @@ pub status: ExecutionStatus,
 
 These fields (`id`, `cue_id`, `prompt`, `status`) are populated when loading an `Execution` from SQLite but are never accessed afterwards. The struct is only consumed via its other fields (`response`, `diff`, `log`, `cost_usd`, `duration_ms`, `num_turns`, `provider`).
 
-**Recommendation:** These fields exist because they are columns in the DB row and are deserialized as part of the full `Execution` struct. Two options:
-- **Keep as-is** — they document the DB schema and may be needed in future UI features (e.g., showing execution history details).
-- **Remove from struct** — adjust the SQL `SELECT` to omit these columns, but this adds fragility for little gain.
-
-Keeping them is reasonable since they reflect the DB schema, but the `#[allow(dead_code)]` annotations are honest about their status.
+**Recommendation:** Rather than removing these fields or keeping them dead, they could be put to use by implementing an **Execution History** feature — a panel showing past runs with their status, prompt, cost, and duration. See [analyze_execution_history.md](analyze_execution_history.md) for a detailed feasibility analysis of what this would involve.
 
 ---
 
@@ -116,10 +112,10 @@ The consumer (`claude_run.rs:243`) ignores these metrics entirely, using `RunMet
 | Location | Item | Status | Recommendation |
 |---|---|---|---|
 | `db.rs:107` | `Cue::source_ref` | ~~**Used** (false positive)~~ | ✅ Fixed — removed `#[allow(dead_code)]` |
-| `db.rs:117` | `Execution::id` | Dead (schema field) | Keep, acceptable |
-| `db.rs:119` | `Execution::cue_id` | Dead (schema field) | Keep, acceptable |
-| `db.rs:121` | `Execution::prompt` | Dead (schema field) | Keep, acceptable |
-| `db.rs:126` | `Execution::status` | Dead (schema field) | Keep, acceptable |
+| `db.rs:117` | `Execution::id` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
+| `db.rs:119` | `Execution::cue_id` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
+| `db.rs:121` | `Execution::prompt` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
+| `db.rs:126` | `Execution::status` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
 | `sources.rs:489` | `PrFinding::file_path` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `sources.rs:492` | `PrFinding::line_number` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `agents.rs:57` | `AgentKind::builtins()` | ~~Test-only~~ | ✅ Fixed — moved to `#[cfg(test)]` module |
