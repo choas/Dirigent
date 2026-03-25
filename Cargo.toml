@@ -20,6 +20,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 regex = "1"
 pulldown-cmark = "0.13"
+which = "8.0.2"
+shlex = "1"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
