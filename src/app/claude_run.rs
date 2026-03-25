@@ -292,18 +292,6 @@ impl DirigentApp {
         }
     }
 
-    /// Initialize run-tracking state (log buffer, start time, exec id, conversation history).
-    fn init_run_tracking(&mut self, cue_id: i64, exec_id: i64, provider: &CliProvider) {
-        self.claude
-            .running_logs
-            .insert(cue_id, (String::new(), provider.clone()));
-        self.claude.start_times.insert(cue_id, Instant::now());
-        self.claude.exec_ids.insert(cue_id, exec_id);
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            self.claude.conversation_history = execs;
-        }
-    }
-
     /// Spawn a background thread to run the CLI provider and return the task handle.
     fn spawn_provider_thread(
         &self,
@@ -351,22 +339,41 @@ impl DirigentApp {
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
         settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
 
+        // Start tracking immediately so the timer appears in the UI while
+        // we build the prompt (which may involve blocking I/O for auto-context).
+        let provider = self.settings.cli_provider.clone();
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
+        self.claude.start_times.insert(cue_id, Instant::now());
+
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
-            None => return,
+            None => {
+                // Cue not found — revert tracking state and status so the card
+                // doesn't stay stuck in "Running" forever.
+                self.claude.running_logs.remove(&cue_id);
+                self.claude.start_times.remove(&cue_id);
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.set_status_message("Failed to start run: cue not found".to_string());
+                self.reload_cues();
+                return;
+            }
         };
 
         let (effective_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        let provider = self.settings.cli_provider.clone();
         let exec_id = self
             .db
             .insert_execution(cue_id, &prompt, &provider)
             .unwrap_or(0);
 
-        self.init_run_tracking(cue_id, exec_id, &provider);
+        self.claude.exec_ids.insert(cue_id, exec_id);
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
 
         let config = build_provider_config(&self.settings, &provider, &matched_command);
         let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
@@ -381,9 +388,14 @@ impl DirigentApp {
     ) {
         settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
 
+        let provider = self.settings.cli_provider.clone();
+
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
-            None => return,
+            None => {
+                self.set_status_message("Failed to start reply: cue not found".to_string());
+                return;
+            }
         };
 
         let (original_text, matched_command) =
@@ -426,13 +438,21 @@ impl DirigentApp {
         self.claude.expand_running = true;
         self.reload_cues();
 
-        let provider = self.settings.cli_provider.clone();
+        // Start tracking immediately so the timer appears in the UI.
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
+        self.claude.start_times.insert(cue_id, Instant::now());
+
         let exec_id = self
             .db
             .insert_execution(cue_id, &prompt, &provider)
             .unwrap_or(0);
 
-        self.init_run_tracking(cue_id, exec_id, &provider);
+        self.claude.exec_ids.insert(cue_id, exec_id);
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
 
         let config = build_provider_config(&self.settings, &provider, &matched_command);
         let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
@@ -459,11 +479,22 @@ impl DirigentApp {
     }
 
     fn process_single_result(&mut self, result: ClaudeResult) {
-        if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
-            let _ = self.db.update_execution_log(result.exec_id, log_text);
+        // Check if a newer run has started for the same cue. If so, this is
+        // a stale result (e.g. from a cancelled run) — update the DB record
+        // but don't touch the live tracking state or cue status.
+        let is_stale = self
+            .claude
+            .exec_ids
+            .get(&result.cue_id)
+            .is_some_and(|&current| current != result.exec_id);
+
+        if !is_stale {
+            if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
+                let _ = self.db.update_execution_log(result.exec_id, log_text);
+            }
+            self.claude.exec_ids.remove(&result.cue_id);
+            self.claude.start_times.remove(&result.cue_id);
         }
-        self.claude.exec_ids.remove(&result.cue_id);
-        self.claude.start_times.remove(&result.cue_id);
 
         let _ = self.db.update_execution_metrics(
             result.exec_id,
@@ -473,6 +504,23 @@ impl DirigentApp {
             result.metrics.input_tokens,
             result.metrics.output_tokens,
         );
+
+        if is_stale {
+            // Stale result — just mark the old execution in the DB, don't change cue status.
+            if let Some(ref error) = result.error {
+                let _ = self.db.fail_execution(result.exec_id, error);
+            } else {
+                let _ = self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    result.diff.as_deref(),
+                    Some(result.metrics.cost_usd),
+                    Some(result.metrics.duration_ms),
+                    Some(result.metrics.num_turns),
+                );
+            }
+            return;
+        }
 
         let is_error = result.error.is_some();
         if let Some(ref error) = result.error {

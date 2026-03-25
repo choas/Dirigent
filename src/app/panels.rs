@@ -1170,6 +1170,7 @@ impl DirigentApp {
                     match self.db.update_cue_status(id, CueStatus::Ready) {
                         Ok(()) => {
                             self.claude.expand_running = true;
+                            self.reload_cues();
                             self.trigger_claude(id);
                         }
                         Err(e) => {
