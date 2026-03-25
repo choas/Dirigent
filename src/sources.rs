@@ -662,6 +662,15 @@ pub(crate) fn fetch_pr_findings(
         findings.extend(process_reviews(&reviews, pr_number));
     }
 
+    // Append a hint so Claude Code knows it can fetch more context from the PR.
+    let hint = format!(
+        "\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
+        pr_number,
+    );
+    for finding in &mut findings {
+        finding.text.push_str(&hint);
+    }
+
     Ok(findings)
 }
 
@@ -689,12 +698,14 @@ fn is_confirmation_comment(body: &str) -> bool {
         || check.starts_with("Fixed in commit")
 }
 
-/// Check if a comment is an auto-generated summary (e.g. CodeRabbit walkthrough)
-/// rather than an actionable finding.
+/// Check if a comment is an auto-generated summary (e.g. CodeRabbit walkthrough,
+/// Qodo review header) rather than an actionable finding.
 fn is_auto_summary_comment(body: &str) -> bool {
     body.contains("<!-- walkthrough_start -->")
         || body.contains("auto-generated comment: summarize")
         || body.contains("auto-generated comment: release notes")
+        // Qodo review summary header (no actionable content)
+        || body.contains("Code Review by Qodo")
 }
 
 /// Extract the first "Prompt for AI Agents" block from a CodeRabbit comment.
@@ -753,7 +764,8 @@ fn extract_all_agent_prompts(body: &str) -> Vec<String> {
     prompts
 }
 
-/// Check whether a trimmed line is HTML markup that should be skipped.
+/// Check whether a trimmed line is HTML markup that should be skipped entirely.
+/// These are lines that are purely structural/decorative and contain no useful text.
 fn is_skippable_markup(trimmed: &str) -> bool {
     trimmed.starts_with("<!--")
         || trimmed.starts_with("<sub")
@@ -761,6 +773,45 @@ fn is_skippable_markup(trimmed: &str) -> bool {
         || trimmed.starts_with("<blockquote")
         || trimmed.starts_with("</blockquote")
         || trimmed.starts_with("![")
+        // Full-line image tags (logos, dividers, badges)
+        || (trimmed.starts_with("<img ") && !trimmed.contains("alt=\"Action required\""))
+        || trimmed.starts_with("<br")
+        || trimmed == "<br/>"
+        || trimmed == "<br />"
+        // Lines that are purely an HTML link wrapping an image (e.g. Qodo logo)
+        || (trimmed.starts_with("<a ") && trimmed.contains("<img ") && trimmed.ends_with("</a>"))
+}
+
+/// Strip inline HTML tags from a string, preserving the text content.
+/// Converts `<b>`, `<i>`, `<code>`, `<pre>` etc. to their text content,
+/// drops self-closing tags like `<img .../>` and `<br/>`.
+fn strip_html_tags(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            // Consume everything until '>'
+            let mut tag = String::new();
+            for inner in chars.by_ref() {
+                if inner == '>' {
+                    break;
+                }
+                tag.push(inner);
+            }
+            // <br> / <br/> → space (if not at start/end)
+            let tag_lower = tag.to_lowercase();
+            if tag_lower.starts_with("br") {
+                if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') {
+                    result.push(' ');
+                }
+            }
+            // All other tags: just drop the tag, keep surrounding text
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Check whether a trimmed line is a severity/category label to skip.
@@ -826,10 +877,17 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
+        // Strip inline HTML tags (e.g. <code>, <b>, <i>, <pre>, <h3>, <a>)
+        let cleaned = strip_html_tags(trimmed);
+        let cleaned = cleaned.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+
         if !result.is_empty() {
             result.push('\n');
         }
-        result.push_str(trimmed);
+        result.push_str(cleaned);
     }
 
     truncate_with_ellipsis(&mut result, 2000);
@@ -1207,5 +1265,61 @@ Combined prompt (should be skipped).
         assert!(text.contains("Finding"));
         assert!(text.contains("Visible"));
         assert!(!text.contains("Hidden"));
+    }
+
+    #[test]
+    fn extract_finding_text_strips_html_tags() {
+        let body = r#"<img src="https://example.com/badge.png" height="20" alt="Action required">
+1\. Pr cue location lost <code>🐞 Bug</code> <code>✓ Correctness</code>
+<pre>
+Refreshing an existing PR-sourced cue updates only <b><i>text</i></b> via <b><i>update_cue_text_by_source_ref</i></b>, but
+PR inline comment location is no longer embedded in the cue text.
+</pre>"#;
+        let text = extract_finding_text(body);
+        // HTML tags should be stripped, content preserved
+        assert!(text.contains("Pr cue location lost"));
+        assert!(text.contains("🐞 Bug"));
+        assert!(text.contains("Correctness"));
+        assert!(text.contains("update_cue_text_by_source_ref"));
+        // No raw HTML tags
+        assert!(!text.contains("<code>"));
+        assert!(!text.contains("</code>"));
+        assert!(!text.contains("<b>"));
+        assert!(!text.contains("<pre>"));
+        assert!(!text.contains("<img"));
+    }
+
+    #[test]
+    fn extract_finding_text_strips_qodo_decorative_lines() {
+        let body = r#"<img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo">
+<br/>
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo"></a>
+Actual finding text here."#;
+        let text = extract_finding_text(body);
+        assert!(text.contains("Actual finding text here"));
+        assert!(!text.contains("qodo.ai"));
+        assert!(!text.contains("<br"));
+    }
+
+    #[test]
+    fn qodo_summary_header_is_skipped() {
+        let body = r#"<h3>Code Review by Qodo</h3>
+<code>🐞 Bugs (2)</code>  <code>📘 Rule violations (0)</code>
+<img src="https://www.qodo.ai/logo.svg" height="10%" alt="Grey Divider">
+<a href="https://www.qodo.ai"><img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo"></a>"#;
+        assert!(is_auto_summary_comment(body));
+    }
+
+    #[test]
+    fn strip_html_tags_preserves_text() {
+        assert_eq!(strip_html_tags("hello <b>world</b>"), "hello world");
+        assert_eq!(strip_html_tags("<code>foo</code>"), "foo");
+        assert_eq!(strip_html_tags("a<br/>b"), "a b");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+        assert_eq!(strip_html_tags("<h3>Title</h3>"), "Title");
+        assert_eq!(
+            strip_html_tags(r#"<a href="url">link text</a>"#),
+            "link text"
+        );
     }
 }
