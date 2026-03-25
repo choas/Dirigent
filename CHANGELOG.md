@@ -2,6 +2,29 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.3] - 2026-03-25
+
+### Added
+- Outdated dependency check agent
+- Markdown file outline with heading navigation
+- File rename via right-click context menu in Files panel
+- SonarQube integration script and source support
+- Agent log analysis button for diagnosing failed runs
+- Function identification across programming languages
+- Follow-up messages for running cues
+
+### Fixed
+- Clicking "Run" sometimes not starting Claude Code
+- Worktree dialog closing unexpectedly on click
+- Main branch removal protection in Worktree manager
+- SonarQube source URL display
+- Rename tab update logic for directories vs files
+
+### Changed
+- Extensive SonarQube-driven code quality improvements (cognitive complexity reduction, parameter count reduction)
+- Resolved all clippy warnings (40+ fixes)
+- Added `Screenshot*` to `.gitignore`
+
 ## [0.3.2] - 2026-03-23
 
 ### Added
