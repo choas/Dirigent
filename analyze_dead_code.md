@@ -24,25 +24,27 @@ The `source_ref` field is actively read in multiple locations:
 
 ---
 
-## 2. `src/db.rs` — `Execution` struct fields (lines 117–127) — 🔍 under investigation
+## 2. ~~`src/db.rs` — `Execution` struct fields (lines 117–127)~~ ✅ MOSTLY FIXED
 
 ```rust
+pub id: i64,                  // ← #[allow(dead_code)] removed
 #[allow(dead_code)]
-pub id: i64,
-#[allow(dead_code)]
-pub cue_id: i64,
-#[allow(dead_code)]
-pub prompt: String,
+pub cue_id: i64,              // still dead (schema-only)
+pub prompt: String,           // ← #[allow(dead_code)] removed
 // ...
 #[allow(dead_code)]
-pub status: ExecutionStatus,
+pub status: ExecutionStatus,  // used in tests only
 ```
 
-**Verdict: TRULY DEAD — these 4 fields are never read after deserialization.**
+**Verdict: 2 of 4 fields are now actively used; 2 remain dead.**
 
-These fields (`id`, `cue_id`, `prompt`, `status`) are populated when loading an `Execution` from SQLite but are never accessed afterwards. The struct is only consumed via its other fields (`response`, `diff`, `log`, `cost_usd`, `duration_ms`, `num_turns`, `provider`).
+The Execution History / Conversation Log feature (`src/app/dialog/running_log.rs`) now consumes `Execution` structs to render past runs as a chat-style conversation:
+- `id` — **used** in `running_log.rs:119,130` to match the currently-running execution
+- `prompt` — **used** in `running_log.rs:315` to display the user's message in the conversation
+- `cue_id` — **dead** (schema field, loaded from SQL but never read in production code)
+- `status` — **dead in production**, used only in test assertions (`db.rs:1099,1101,1123,1140`)
 
-**Recommendation:** Rather than removing these fields or keeping them dead, they could be put to use by implementing an **Execution History** feature — a panel showing past runs with their status, prompt, cost, and duration. See [analyze_execution_history.md](analyze_execution_history.md) for a detailed feasibility analysis of what this would involve.
+**Resolution:** Removed `#[allow(dead_code)]` from `id` and `prompt`. The remaining two annotations on `cue_id` and `status` are legitimate — these fields exist for schema completeness and test coverage.
 
 ---
 
@@ -110,10 +112,10 @@ pub(crate) struct OpenCodeResponse {
 | Location | Item | Status | Recommendation |
 |---|---|---|---|
 | `db.rs:107` | `Cue::source_ref` | ~~**Used** (false positive)~~ | ✅ Fixed — removed `#[allow(dead_code)]` |
-| `db.rs:117` | `Execution::id` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
-| `db.rs:119` | `Execution::cue_id` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
-| `db.rs:121` | `Execution::prompt` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
-| `db.rs:126` | `Execution::status` | Dead (schema field) | 🔍 Under investigation — see [execution history analysis](analyze_execution_history.md) |
+| `db.rs:117` | `Execution::id` | ~~Dead~~ | ✅ Fixed — now used in conversation log (`running_log.rs`) |
+| `db.rs:119` | `Execution::cue_id` | Dead (schema field) | Kept — `#[allow(dead_code)]` is legitimate |
+| `db.rs:121` | `Execution::prompt` | ~~Dead~~ | ✅ Fixed — now used in conversation log (`running_log.rs`) |
+| `db.rs:126` | `Execution::status` | Test-only | Kept — `#[allow(dead_code)]` is legitimate |
 | `sources.rs:489` | `PrFinding::file_path` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `sources.rs:492` | `PrFinding::line_number` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `agents.rs:57` | `AgentKind::builtins()` | ~~Test-only~~ | ✅ Fixed — moved to `#[cfg(test)]` module |
@@ -121,6 +123,6 @@ pub(crate) struct OpenCodeResponse {
 | `opencode.rs:43` | `OpenCodeResponse::duration_ms` | ~~Dead (stub)~~ | ✅ Fixed — now populated from wall-clock |
 | `opencode.rs:43` | `OpenCodeResponse::num_turns` | ~~Dead (stub)~~ | ✅ Fixed — now populated from stream |
 
-**Total: 11 items annotated, 1 false positive (fixed), 2 implemented (fixed), 1 moved to test (fixed), 4 under investigation (schema fields), 3 implemented (fixed). All actionable items resolved.**
+**Total: 11 items annotated, 1 false positive (fixed), 2 fields now used (fixed), 1 moved to test (fixed), 2 remaining `#[allow(dead_code)]` (legitimate), 3 implemented (fixed). All actionable items resolved; 2 annotations intentionally kept.**
 
 No additional dead code warnings exist beyond these explicitly suppressed items — the rest of the codebase compiles clean.

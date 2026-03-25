@@ -113,11 +113,9 @@ pub(crate) struct Cue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Execution {
-    #[allow(dead_code)]
     pub id: i64,
     #[allow(dead_code)]
     pub cue_id: i64,
-    #[allow(dead_code)]
     pub prompt: String,
     pub response: Option<String>,
     pub diff: Option<String>,
