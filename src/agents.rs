@@ -18,6 +18,7 @@ pub(crate) enum AgentKind {
     Lint,
     Build,
     Test,
+    Outdated,
     Custom(u32),
 }
 
@@ -28,6 +29,7 @@ impl AgentKind {
             AgentKind::Lint => "lint",
             AgentKind::Build => "build",
             AgentKind::Test => "test",
+            AgentKind::Outdated => "outdated",
             AgentKind::Custom(_) => "custom",
         }
     }
@@ -46,6 +48,7 @@ impl AgentKind {
             AgentKind::Lint => "Lint",
             AgentKind::Build => "Build",
             AgentKind::Test => "Test",
+            AgentKind::Outdated => "Outdated",
             AgentKind::Custom(_) => "Custom",
         }
     }
@@ -58,6 +61,7 @@ impl AgentKind {
             AgentKind::Lint,
             AgentKind::Build,
             AgentKind::Test,
+            AgentKind::Outdated,
         ]
     }
 }
@@ -294,6 +298,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "cargo outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 120,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
         ],
         AgentLanguage::TypeScript => vec![
             AgentConfig {
@@ -333,6 +347,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "npx jest 2>&1".into(),
                 trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "npm outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
             },
@@ -378,6 +402,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "pip list --outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
         ],
         AgentLanguage::Go => vec![
             AgentConfig {
@@ -417,6 +451,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "go test ./... 2>&1".into(),
                 trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "go list -m -u all 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
             },
@@ -462,6 +506,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "mvn versions:display-dependency-updates 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 120,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
         ],
         AgentLanguage::CSharp => vec![
             AgentConfig {
@@ -504,6 +558,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "dotnet list package --outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
         ],
         AgentLanguage::Ruby => vec![
             AgentConfig {
@@ -543,6 +607,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "bundle exec rspec 2>&1".into(),
                 trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "bundle outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
             },
@@ -711,6 +785,16 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 command: "mix test 2>&1".into(),
                 trigger: AgentTrigger::AfterAgent(AgentKind::Build),
                 timeout_secs: 300,
+                working_dir: String::new(),
+                before_run: String::new(),
+            },
+            AgentConfig {
+                kind: AgentKind::Outdated,
+                name: String::new(),
+                enabled: true,
+                command: "mix hex.outdated 2>&1".into(),
+                trigger: AgentTrigger::Manual,
+                timeout_secs: 60,
                 working_dir: String::new(),
                 before_run: String::new(),
             },
