@@ -15,6 +15,7 @@ pub(crate) enum OpenCodeError {
     StreamReadError(std::io::Error),
     Cancelled,
     NonZeroExit(std::process::ExitStatus),
+    InvalidExtraArgs(String),
 }
 
 impl std::error::Error for OpenCodeError {}
@@ -28,6 +29,9 @@ impl std::fmt::Display for OpenCodeError {
                 write!(f, "failed to read opencode stdout: {e}")
             }
             OpenCodeError::Cancelled => write!(f, "cancelled"),
+            OpenCodeError::InvalidExtraArgs(args) => {
+                write!(f, "failed to parse extra_args (unmatched quote?): {args}")
+            }
             OpenCodeError::NonZeroExit(status) => {
                 write!(f, "opencode exited with {status}")
             }
@@ -282,7 +286,7 @@ fn build_opencode_command(
     prompt: &str,
     project_root: &Path,
     config: &OpenCodeRunConfig<'_>,
-) -> Command {
+) -> Result<Command, OpenCodeError> {
     use std::process::Stdio;
 
     let mut cmd = Command::new(opencode_bin);
@@ -291,25 +295,17 @@ fn build_opencode_command(
         cmd.arg("--model").arg(config.model);
     }
     if !config.extra_args.trim().is_empty() {
-        match shlex::split(config.extra_args) {
-            Some(args) => {
-                for arg in args {
-                    cmd.arg(arg);
-                }
-            }
-            None => {
-                eprintln!(
-                    "Warning: failed to parse extra_args (unmatched quote?): {:?}",
-                    config.extra_args
-                );
-            }
+        let args = shlex::split(config.extra_args)
+            .ok_or_else(|| OpenCodeError::InvalidExtraArgs(config.extra_args.to_string()))?;
+        for arg in args {
+            cmd.arg(arg);
         }
     }
     apply_env_vars(&mut cmd, config.env_vars);
     cmd.current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    cmd
+    Ok(cmd)
 }
 
 /// Parse KEY=VALUE lines and apply them as environment variables.
@@ -434,7 +430,7 @@ pub(crate) fn invoke_opencode_streaming(
         true,
     )?;
 
-    let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)
+    let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)?
         .spawn()
         .map_err(OpenCodeError::SpawnFailed)?;
 
