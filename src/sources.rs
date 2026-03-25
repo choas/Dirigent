@@ -789,7 +789,74 @@ fn is_skippable_markup(trimmed: &str) -> bool {
 /// Converts `<b>`, `<i>`, `<code>`, `<pre>` etc. to their text content,
 /// drops self-closing tags like `<img .../>` and `<br/>`.
 /// Also decodes HTML entities (`&amp;`, `&lt;`, `&#123;`, `&#x1F600;`, etc.).
-fn strip_html_tags(input: &str) -> String {
+fn is_known_html_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "a" | "abbr"
+            | "b"
+            | "blockquote"
+            | "br"
+            | "caption"
+            | "cite"
+            | "code"
+            | "col"
+            | "colgroup"
+            | "dd"
+            | "del"
+            | "details"
+            | "dfn"
+            | "div"
+            | "dl"
+            | "dt"
+            | "em"
+            | "figcaption"
+            | "figure"
+            | "font"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "i"
+            | "img"
+            | "ins"
+            | "kbd"
+            | "li"
+            | "mark"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "q"
+            | "s"
+            | "samp"
+            | "section"
+            | "small"
+            | "span"
+            | "strike"
+            | "strong"
+            | "sub"
+            | "summary"
+            | "sup"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "tr"
+            | "tt"
+            | "u"
+            | "ul"
+            | "var"
+    )
+}
+
+pub(crate) fn strip_html_tags(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
 
@@ -797,20 +864,41 @@ fn strip_html_tags(input: &str) -> String {
         if ch == '<' {
             // Consume everything until '>'
             let mut tag = String::new();
+            let mut found_close = false;
             for inner in chars.by_ref() {
                 if inner == '>' {
+                    found_close = true;
                     break;
                 }
                 tag.push(inner);
             }
+
+            // Parse the tag name: skip leading '/' for closing tags,
+            // stop at whitespace or '/' for attributes/self-close.
+            let tag_trimmed = tag.trim_start_matches('/');
+            let tag_name: String = tag_trimmed
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != '/')
+                .collect();
+            let tag_name_lower = tag_name.to_lowercase();
+
+            if !is_known_html_tag(&tag_name_lower) {
+                // Not a known HTML tag — preserve the angle-bracketed text verbatim.
+                result.push('<');
+                result.push_str(&tag);
+                if found_close {
+                    result.push('>');
+                }
+                continue;
+            }
+
             // <br> / <br/> → space (if not at start/end)
-            let tag_lower = tag.to_lowercase();
-            if tag_lower.starts_with("br") {
+            if tag_name_lower == "br" {
                 if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') {
                     result.push(' ');
                 }
             }
-            // All other tags: just drop the tag, keep surrounding text
+            // All other known HTML tags: just drop the tag, keep surrounding text
         } else if ch == '&' {
             // Try to consume an HTML entity
             let mut entity = String::new();
@@ -1390,6 +1478,24 @@ Actual finding text here."#;
         assert_eq!(
             strip_html_tags(r#"<a href="url">link text</a>"#),
             "link text"
+        );
+    }
+
+    #[test]
+    fn strip_html_tags_preserves_non_html_angle_brackets() {
+        // Generic type parameters should be preserved
+        assert_eq!(strip_html_tags("Vec<T>"), "Vec<T>");
+        // JSX-style components should be preserved
+        assert_eq!(strip_html_tags("<Button />"), "<Button />");
+        assert_eq!(
+            strip_html_tags("<MyComponent>child</MyComponent>"),
+            "<MyComponent>child</MyComponent>"
+        );
+        // Mixed: known HTML tags stripped, unknown preserved
+        assert_eq!(strip_html_tags("<code>Vec<T></code>"), "Vec<T>");
+        assert_eq!(
+            strip_html_tags("use <b>HashMap</b><K, V>"),
+            "use HashMap<K, V>"
         );
     }
 

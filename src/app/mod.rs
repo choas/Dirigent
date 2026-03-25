@@ -1290,8 +1290,10 @@ impl DirigentApp {
         existing_path: &str,
         existing_line: usize,
     ) -> anyhow::Result<Option<&'static str>> {
-        let text_changed = crate::sources::strip_pr_context_hint(existing_text)
-            != crate::sources::strip_pr_context_hint(&finding.text);
+        let clean_existing = crate::sources::strip_html_tags(existing_text);
+        let clean_finding = crate::sources::strip_html_tags(&finding.text);
+        let text_changed = crate::sources::strip_pr_context_hint(&clean_existing)
+            != crate::sources::strip_pr_context_hint(&clean_finding);
         let location_changed =
             existing_path != finding.file_path || existing_line != finding.line_number;
         if text_changed || location_changed {
