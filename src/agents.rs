@@ -53,17 +53,6 @@ impl AgentKind {
         }
     }
 
-    /// Built-in agent kinds (used for language presets and tests).
-    #[allow(dead_code)]
-    pub fn builtins() -> &'static [AgentKind] {
-        &[
-            AgentKind::Format,
-            AgentKind::Lint,
-            AgentKind::Build,
-            AgentKind::Test,
-            AgentKind::Outdated,
-        ]
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1560,9 +1549,19 @@ impl AgentStatus {
 mod tests {
     use super::*;
 
+    fn builtins() -> &'static [AgentKind] {
+        &[
+            AgentKind::Format,
+            AgentKind::Lint,
+            AgentKind::Build,
+            AgentKind::Test,
+            AgentKind::Outdated,
+        ]
+    }
+
     #[test]
     fn agent_kind_roundtrip() {
-        for kind in AgentKind::builtins() {
+        for kind in builtins() {
             let s = kind.as_str();
             assert_eq!(AgentKind::from_str(s), Some(*kind));
         }
