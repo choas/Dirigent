@@ -96,6 +96,25 @@ fn resolve_command_prefix(cue_text: &str, commands: &[CueCommand]) -> (String, O
     }
 }
 
+/// For PR-sourced cues, append a hint so the AI can fetch more context.
+/// The hint is added at prompt time (not stored in cue text) to avoid
+/// triggering spurious text-changed updates on existing cues.
+fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String {
+    if let Some(sref) = source_ref {
+        if let Some(pr_num) = sref
+            .strip_prefix("pr")
+            .and_then(|s| s.split(':').next())
+            .and_then(|n| n.parse::<u64>().ok())
+        {
+            return format!(
+                "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
+                text, pr_num,
+            );
+        }
+    }
+    text.to_string()
+}
+
 /// Build provider-specific configuration from settings, with optional command overrides.
 fn build_provider_config(
     settings: &settings::Settings,
@@ -279,25 +298,7 @@ impl DirigentApp {
                 String::new()
             };
 
-        // For PR-sourced cues, append a hint so the AI can fetch more context.
-        // The hint is added at prompt time (not stored in cue text) to avoid
-        // triggering spurious text-changed updates on existing cues.
-        let effective_text = if let Some(ref sref) = cue.source_ref {
-            if let Some(pr_num) = sref
-                .strip_prefix("pr")
-                .and_then(|s| s.split(':').next())
-                .and_then(|n| n.parse::<u64>().ok())
-            {
-                format!(
-                    "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
-                    effective_text, pr_num,
-                )
-            } else {
-                effective_text.to_string()
-            }
-        } else {
-            effective_text.to_string()
-        };
+        let effective_text = build_pr_hint_text(effective_text, cue.source_ref.as_deref());
 
         match self.settings.cli_provider {
             CliProvider::Claude => claude::build_prompt_with_auto_context(
@@ -424,8 +425,9 @@ impl DirigentApp {
             }
         };
 
-        let (original_text, matched_command) =
+        let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
+        let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
 
         let previous_diff = self
             .db
