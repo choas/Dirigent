@@ -42,6 +42,7 @@ impl DirigentApp {
             .default_size([400.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let display = target
                     .strip_prefix(&self.project_root)
@@ -55,28 +56,18 @@ impl DirigentApp {
                     resp.request_focus();
                     self.rename_focus_requested = true;
                 }
-                if resp.lost_focus()
+                confirm |= resp.lost_focus()
                     && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && validate_filename(&self.rename_buffer)
-                {
-                    confirm = true;
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    cancel = true;
-                }
+                    && validate_filename(&self.rename_buffer);
+                cancel |= ui.input(|i| i.key_pressed(egui::Key::Escape));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
+                    cancel |= ui.button("Cancel").clicked();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let name_valid = validate_filename(&self.rename_buffer);
-                        if ui
+                        confirm |= ui
                             .add_enabled(name_valid, egui::Button::new("Rename"))
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
+                            .clicked();
                     });
                 });
             });
@@ -162,6 +153,7 @@ impl DirigentApp {
             .default_size([400.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label(format!(
                     "Are you sure you want to delete this {}?",

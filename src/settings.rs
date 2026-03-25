@@ -915,32 +915,36 @@ pub(crate) fn parse_play_variables(prompt: &str) -> Vec<PlayVariable> {
     let mut seen_tokens = std::collections::HashSet::new();
     let mut rest = prompt;
     while let Some(start) = rest.find('{') {
-        if let Some(end) = rest[start..].find('}') {
-            let token = &rest[start..start + end + 1];
-            let inner = &rest[start + 1..start + end];
-            if (!inner.is_empty() && !inner.contains(' ')) || inner.contains(':') {
-                let (name, options) = if let Some(colon) = inner.find(':') {
-                    let name = inner[..colon].to_string();
-                    let opts: Vec<String> = inner[colon + 1..]
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    (name, opts)
-                } else {
-                    (inner.to_string(), Vec::new())
-                };
-                if !name.is_empty() && seen_tokens.insert(token.to_string()) {
-                    vars.push(PlayVariable {
-                        name,
-                        options,
-                        token: token.to_string(),
-                    });
-                }
-            }
-            rest = &rest[start + end + 1..];
-        } else {
+        let Some(end) = rest[start..].find('}') else {
             break;
+        };
+        let token = &rest[start..start + end + 1];
+        let inner = &rest[start + 1..start + end];
+        rest = &rest[start + end + 1..];
+
+        let is_variable = (!inner.is_empty() && !inner.contains(' ')) || inner.contains(':');
+        if !is_variable {
+            continue;
+        }
+
+        let (name, options) = if let Some(colon) = inner.find(':') {
+            let name = inner[..colon].to_string();
+            let opts: Vec<String> = inner[colon + 1..]
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            (name, opts)
+        } else {
+            (inner.to_string(), Vec::new())
+        };
+
+        if !name.is_empty() && seen_tokens.insert(token.to_string()) {
+            vars.push(PlayVariable {
+                name,
+                options,
+                token: token.to_string(),
+            });
         }
     }
     vars

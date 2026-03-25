@@ -18,6 +18,7 @@ impl DirigentApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label(
                     "The remote branch has diverged from your local branch \

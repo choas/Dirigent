@@ -782,6 +782,16 @@ fn truncate_with_ellipsis(s: &mut String, max_len: usize) {
     s.push_str("...");
 }
 
+/// Check whether a trimmed line opens a `<details>` or `<summary>` block.
+fn is_details_open(trimmed: &str) -> bool {
+    trimmed.starts_with("<details") || trimmed.starts_with("<summary")
+}
+
+/// Check whether a trimmed line should be ignored (markup, labels, or blank).
+fn is_ignorable_line(trimmed: &str) -> bool {
+    is_skippable_markup(trimmed) || is_severity_label(trimmed) || trimmed.is_empty()
+}
+
 /// Extract a clean finding text from a review comment body.
 /// Strips HTML tags, diff blocks, and suggestion blocks to get the core message.
 fn extract_finding_text(body: &str) -> String {
@@ -800,7 +810,7 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
-        if trimmed.starts_with("<details") || trimmed.starts_with("<summary") {
+        if is_details_open(trimmed) {
             in_details = true;
             continue;
         }
@@ -812,7 +822,7 @@ fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
-        if is_skippable_markup(trimmed) || is_severity_label(trimmed) || trimmed.is_empty() {
+        if is_ignorable_line(trimmed) {
             continue;
         }
 

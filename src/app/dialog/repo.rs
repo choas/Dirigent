@@ -103,6 +103,7 @@ impl DirigentApp {
             .default_size([450.0, 300.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.interact(ui.max_rect(), ui.id().with("body_bg"), egui::Sense::click());
                 self.render_repo_path_input(ui, &mut switch_to, &mut error_msg);
@@ -192,6 +193,7 @@ impl DirigentApp {
             .default_size([400.0, 300.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.interact(ui.max_rect(), ui.id().with("body_bg"), egui::Sense::click());
                 self.render_worktree_list(ui, &mut actions);
@@ -476,6 +478,7 @@ impl DirigentApp {
             .default_size([420.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label("The worktree contains modified or untracked files:");
                 ui.add_space(4.0);
@@ -533,6 +536,7 @@ impl DirigentApp {
             .default_size([400.0, 0.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label("Are you sure you want to delete this archived database?");
                 ui.add_space(8.0);

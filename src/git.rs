@@ -863,6 +863,31 @@ pub(crate) struct WorktreeInfo {
     pub is_main: bool,
 }
 
+fn build_worktree_info(
+    p: PathBuf,
+    branch: Option<String>,
+    is_locked: bool,
+    is_first: bool,
+    current: &Path,
+) -> WorktreeInfo {
+    let canon_wt = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+    let name = branch
+        .and_then(|b| b.rsplit('/').next().map(|s| s.to_string()))
+        .unwrap_or_else(|| {
+            p.file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "main".to_string())
+        });
+    let is_current = canon_wt == current || current.starts_with(&canon_wt);
+    WorktreeInfo {
+        name,
+        path: p,
+        is_current,
+        is_locked,
+        is_main: is_first,
+    }
+}
+
 pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
     use std::process::Command;
 
@@ -890,24 +915,13 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
         if line.is_empty() {
             if let Some(p) = wt_path.take() {
                 if !is_bare {
-                    let canon_wt = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
-                    let name = branch
-                        .take()
-                        .and_then(|b| b.rsplit('/').next().map(|s| s.to_string()))
-                        .unwrap_or_else(|| {
-                            p.file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "main".to_string())
-                        });
-                    let is_current = canon_wt == current || current.starts_with(&canon_wt);
-                    let is_main = worktrees.is_empty();
-                    worktrees.push(WorktreeInfo {
-                        name,
-                        path: p,
-                        is_current,
+                    worktrees.push(build_worktree_info(
+                        p,
+                        branch.take(),
                         is_locked,
-                        is_main,
-                    });
+                        worktrees.is_empty(),
+                        &current,
+                    ));
                 }
             }
             is_bare = false;
