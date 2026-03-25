@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::claude;
 
@@ -40,13 +40,19 @@ impl std::fmt::Display for OpenCodeError {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Metric fields are stubs for future OpenCode metrics support (§1)
 pub(crate) struct OpenCodeResponse {
     pub stdout: String,
     pub edited_files: Vec<String>,
     pub cost_usd: Option<f64>,
     pub duration_ms: Option<u64>,
     pub num_turns: Option<u64>,
+}
+
+/// Accumulated metrics from the OpenCode JSON event stream.
+#[derive(Default)]
+struct StreamMetrics {
+    cost_usd: f64,
+    num_turns: u64,
 }
 
 pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
@@ -345,17 +351,18 @@ fn spawn_watchdog(
     })
 }
 
-/// Process the JSON event stream from stdout, collecting results and edited files.
+/// Process the JSON event stream from stdout, collecting results, edited files, and metrics.
 fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
     on_log: &mut impl FnMut(&str),
-) -> Result<(String, Vec<String>), std::io::Error> {
+) -> Result<(String, Vec<String>, StreamMetrics), std::io::Error> {
     use std::io::BufRead;
 
     let reader = std::io::BufReader::new(stdout_handle);
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
+    let mut metrics = StreamMetrics::default();
 
     for line_result in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -367,10 +374,16 @@ fn process_event_stream(
             on_log("\n");
             continue;
         };
-        dispatch_event(&event, on_log, &mut final_result, &mut edited_files);
+        dispatch_event(
+            &event,
+            on_log,
+            &mut final_result,
+            &mut edited_files,
+            &mut metrics,
+        );
     }
 
-    Ok((final_result, edited_files))
+    Ok((final_result, edited_files, metrics))
 }
 
 /// Dispatch a single parsed JSON event to the appropriate handler.
@@ -379,6 +392,7 @@ fn dispatch_event(
     on_log: &mut impl FnMut(&str),
     final_result: &mut String,
     edited_files: &mut Vec<String>,
+    metrics: &mut StreamMetrics,
 ) {
     let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match event_type {
@@ -391,6 +405,13 @@ fn dispatch_event(
             }
         }
         "step_finish" => {
+            // Accumulate metrics from every step_finish event.
+            if let Some(part) = event.get("part") {
+                if let Some(cost) = part.get("cost").and_then(|c| c.as_f64()) {
+                    metrics.cost_usd += cost;
+                }
+                metrics.num_turns += 1;
+            }
             if let Some(text) = process_step_finish_event(event, on_log) {
                 if !text.is_empty() {
                     *final_result = text;
@@ -430,6 +451,7 @@ pub(crate) fn invoke_opencode_streaming(
         true,
     )?;
 
+    let run_start = Instant::now();
     let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)?
         .spawn()
         .map_err(OpenCodeError::SpawnFailed)?;
@@ -455,7 +477,8 @@ pub(crate) fn invoke_opencode_streaming(
     let _ = watchdog.join();
     let exit_status = wait_for_child(&child);
 
-    let (final_result, edited_files) = stream_result.map_err(OpenCodeError::StreamReadError)?;
+    let (final_result, edited_files, stream_metrics) =
+        stream_result.map_err(OpenCodeError::StreamReadError)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
@@ -483,12 +506,22 @@ pub(crate) fn invoke_opencode_streaming(
         false,
     )?;
 
+    let elapsed_ms = run_start.elapsed().as_millis() as u64;
+
     Ok(OpenCodeResponse {
         stdout: final_result,
         edited_files,
-        cost_usd: None,
-        duration_ms: None,
-        num_turns: None,
+        cost_usd: if stream_metrics.cost_usd > 0.0 {
+            Some(stream_metrics.cost_usd)
+        } else {
+            None
+        },
+        duration_ms: Some(elapsed_ms),
+        num_turns: if stream_metrics.num_turns > 0 {
+            Some(stream_metrics.num_turns)
+        } else {
+            None
+        },
     })
 }
 

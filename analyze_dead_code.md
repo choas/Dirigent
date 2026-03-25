@@ -80,10 +80,10 @@ Called once in `src/agents.rs:1565` in the `agent_kind_roundtrip` test. The `#[a
 
 ---
 
-## 5. `src/opencode.rs` — `OpenCodeResponse` struct (line 43)
+## 5. ~~`src/opencode.rs` — `OpenCodeResponse` struct (line 43)~~ ✅ FIXED
 
 ```rust
-#[allow(dead_code)] // Metric fields are stubs for future OpenCode metrics support (§1)
+#[allow(dead_code)]  // ← removed
 pub(crate) struct OpenCodeResponse {
     pub stdout: String,
     pub edited_files: Vec<String>,
@@ -93,17 +93,15 @@ pub(crate) struct OpenCodeResponse {
 }
 ```
 
-**Verdict: PARTIALLY DEAD — 3 of 5 fields are never read.**
+**Verdict: PARTIALLY DEAD — 3 of 5 fields were never read.**
 
-- `stdout` — **used** in `src/app/claude_run.rs:232, 235, 241`
-- `edited_files` — **used** in `src/app/claude_run.rs:231, 234`
-- `cost_usd` — **dead**, always constructed as `None`, never read
-- `duration_ms` — **dead**, always constructed as `None`, never read
-- `num_turns` — **dead**, always constructed as `None`, never read
+- `stdout` — **used** in `src/app/claude_run.rs`
+- `edited_files` — **used** in `src/app/claude_run.rs`
+- `cost_usd` — ~~**dead**, always constructed as `None`, never read~~ now populated
+- `duration_ms` — ~~**dead**, always constructed as `None`, never read~~ now populated
+- `num_turns` — ~~**dead**, always constructed as `None`, never read~~ now populated
 
-The consumer (`claude_run.rs:243`) ignores these metrics entirely, using `RunMetrics::default()` instead.
-
-**Recommendation:** Remove the three stub fields. If/when OpenCode metrics parsing is implemented, the fields can be added back. Keeping `None`-only fields that are never read adds noise.
+**Resolution:** Implemented metrics extraction from the OpenCode JSON event stream. Added `StreamMetrics` accumulator that collects `cost_usd` (summed from `part.cost` on step_finish events) and `num_turns` (count of step_finish events) during stream processing. `duration_ms` is measured as wall-clock time from process spawn to completion. The consumer in `claude_run.rs` now builds `RunMetrics` from these response fields instead of using `RunMetrics::default()`.
 
 ---
 
@@ -119,10 +117,10 @@ The consumer (`claude_run.rs:243`) ignores these metrics entirely, using `RunMet
 | `sources.rs:489` | `PrFinding::file_path` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `sources.rs:492` | `PrFinding::line_number` | ~~Dead (unused feature)~~ | ✅ Fixed — now passed to cue |
 | `agents.rs:57` | `AgentKind::builtins()` | ~~Test-only~~ | ✅ Fixed — moved to `#[cfg(test)]` module |
-| `opencode.rs:43` | `OpenCodeResponse::cost_usd` | Dead (stub) | Remove |
-| `opencode.rs:43` | `OpenCodeResponse::duration_ms` | Dead (stub) | Remove |
-| `opencode.rs:43` | `OpenCodeResponse::num_turns` | Dead (stub) | Remove |
+| `opencode.rs:43` | `OpenCodeResponse::cost_usd` | ~~Dead (stub)~~ | ✅ Fixed — now populated from stream |
+| `opencode.rs:43` | `OpenCodeResponse::duration_ms` | ~~Dead (stub)~~ | ✅ Fixed — now populated from wall-clock |
+| `opencode.rs:43` | `OpenCodeResponse::num_turns` | ~~Dead (stub)~~ | ✅ Fixed — now populated from stream |
 
-**Total: 11 items annotated, 1 false positive (fixed), 2 implemented (fixed), 1 moved to test (fixed), 4 acceptable schema fields, 3 actionable (remaining).**
+**Total: 11 items annotated, 1 false positive (fixed), 2 implemented (fixed), 1 moved to test (fixed), 4 under investigation (schema fields), 3 implemented (fixed). All actionable items resolved.**
 
 No additional dead code warnings exist beyond these explicitly suppressed items — the rest of the codebase compiles clean.

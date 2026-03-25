@@ -234,13 +234,19 @@ fn run_opencode_provider(
                 git::get_working_diff(req.project_root, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
             };
+            let metrics = claude::RunMetrics {
+                cost_usd: response.cost_usd.unwrap_or(0.0),
+                duration_ms: response.duration_ms.unwrap_or(0),
+                num_turns: response.num_turns.unwrap_or(0),
+                ..claude::RunMetrics::default()
+            };
             ClaudeResult {
                 cue_id: req.cue_id,
                 exec_id: req.exec_id,
                 diff,
                 response: response.stdout,
                 error: None,
-                metrics: claude::RunMetrics::default(),
+                metrics,
             }
         }
         Err(e) => ClaudeResult {
