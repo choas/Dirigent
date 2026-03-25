@@ -557,6 +557,13 @@ fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Ve
             .or_else(|| comment.get("original_line"))
             .and_then(|l| l.as_u64())
             .unwrap_or(0) as usize;
+        // Clamp to 1 when file_path is present: the app uses 1-based line numbers,
+        // and 0 would create an invalid navigation target.
+        let line = if !path.is_empty() && line == 0 {
+            1
+        } else {
+            line
+        };
         let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
         if let Some(finding_text) = finding_text_from_body(body) {
             findings.push(PrFinding {
