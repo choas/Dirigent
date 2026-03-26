@@ -79,7 +79,7 @@ impl DirigentApp {
             "claude-haiku-4-5-20251001",
         ];
 
-        egui::ComboBox::from_id_salt("model_combo")
+        egui::ComboBox::from_id_salt("claude_model_combo")
             .selected_text(&self.settings.claude_model)
             .show_ui(ui, |ui| {
                 for model in DEFAULT_CLAUDE_MODELS {
@@ -128,7 +128,7 @@ impl DirigentApp {
             self.opencode_models.clone()
         };
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("model_combo")
+            egui::ComboBox::from_id_salt("opencode_model_combo")
                 .selected_text(&self.settings.opencode_model)
                 .show_ui(ui, |ui| {
                     for model in &models {
