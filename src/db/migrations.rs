@@ -118,8 +118,7 @@ impl Database {
             .query_map([], |row| row.get::<_, String>(1))
             .with_context(|| format!("checking column \"{column}\" on \"{table}\""))?;
         for name in rows {
-            let name =
-                name.with_context(|| format!("reading column info for \"{table}\""))?;
+            let name = name.with_context(|| format!("reading column info for \"{table}\""))?;
             if name == column {
                 return Ok(true);
             }
@@ -271,9 +270,7 @@ impl Database {
             {
                 Ok(false)
             }
-            Err(e) => {
-                Err(e).with_context(|| format!("checking settings migration \"{name}\""))
-            }
+            Err(e) => Err(e).with_context(|| format!("checking settings migration \"{name}\"")),
         }
     }
 
