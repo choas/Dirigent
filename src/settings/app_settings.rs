@@ -81,8 +81,10 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub auto_context_git_diff: bool,
     /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
-    /// Disabled by default; must be explicitly opted-in via the settings UI.
-    #[serde(default)]
+    /// Enabled by default — without this flag, non-interactive `-p` mode
+    /// cannot get tool permissions and Claude will only describe changes
+    /// instead of actually editing files.
+    #[serde(default = "default_true")]
     pub allow_dangerous_skip_permissions: bool,
 }
 
@@ -131,7 +133,7 @@ impl Default for Settings {
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,
-            allow_dangerous_skip_permissions: false,
+            allow_dangerous_skip_permissions: true,
         }
     }
 }

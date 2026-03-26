@@ -190,7 +190,7 @@ impl DirigentApp {
         ui.label(egui::RichText::new(flags).monospace().weak());
         ui.end_row();
 
-        ui.label("Skip Permissions:");
+        ui.label("Yolo:");
         ui.checkbox(
             &mut self.settings.allow_dangerous_skip_permissions,
             "Append --dangerously-skip-permissions",
