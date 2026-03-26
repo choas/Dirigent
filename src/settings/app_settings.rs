@@ -21,6 +21,8 @@ pub(crate) struct Settings {
     pub claude_cli_path: String,
     #[serde(default)]
     pub claude_extra_args: String,
+    /// Environment variable **names** to forward to the CLI process (one per line).
+    /// Values are resolved from the current environment at runtime — never stored.
     #[serde(default)]
     pub claude_env_vars: String,
     #[serde(default)]
@@ -32,6 +34,8 @@ pub(crate) struct Settings {
     pub opencode_cli_path: String,
     #[serde(default)]
     pub opencode_extra_args: String,
+    /// Environment variable **names** to forward to the CLI process (one per line).
+    /// Values are resolved from the current environment at runtime — never stored.
     #[serde(default)]
     pub opencode_env_vars: String,
     #[serde(default)]

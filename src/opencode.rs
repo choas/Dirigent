@@ -314,19 +314,34 @@ fn build_opencode_command(
     Ok(cmd)
 }
 
-/// Parse KEY=VALUE lines and apply them as environment variables.
+/// Resolve environment variable **names** (one per line, # comments allowed)
+/// from the current process environment and apply them to the command.
+/// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
+/// for backward compatibility with old KEY=VALUE config entries.
 fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
     for line in env_vars.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
+        // Accept bare names; strip any =value suffix left over from old config.
+        let name = match line.split_once('=') {
+            Some((key, _)) => key.trim(),
+            None => line,
         };
-        let key = key.trim();
-        if !key.is_empty() {
-            cmd.env(key, value.trim());
+        if name.is_empty() {
+            continue;
+        }
+        match std::env::var(name) {
+            Ok(value) => {
+                cmd.env(name, value);
+            }
+            Err(_) => {
+                eprintln!(
+                    "warning: env var '{}' not found in environment, skipping",
+                    name
+                );
+            }
         }
     }
 }
