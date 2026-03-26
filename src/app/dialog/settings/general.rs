@@ -74,7 +74,13 @@ impl DirigentApp {
         egui::ComboBox::from_id_salt("model_combo")
             .selected_text(&self.settings.claude_model)
             .show_ui(ui, |ui| {
-                for model in &["claude-opus-4-6", "claude-sonnet-4-6"] {
+                for model in &[
+                    "claude-opus-4-6",
+                    "claude-opus-4-5-20251101",
+                    "claude-sonnet-4-6",
+                    "claude-sonnet-4-5-20250929",
+                    "claude-haiku-4-5-20251001",
+                ] {
                     ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
                 }
             });
@@ -107,7 +113,9 @@ impl DirigentApp {
                         );
                     }
                 });
-            if ui
+            if self.opencode_models_loading {
+                ui.spinner();
+            } else if ui
                 .small_button("\u{21BB}")
                 .on_hover_text("Refresh available models from OpenCode")
                 .clicked()
