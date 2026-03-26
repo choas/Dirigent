@@ -231,15 +231,14 @@ impl Database {
             );",
         )?;
         // Index on status for faster filtered queries
-        let _ = self
-            .conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);");
-        let _ = self.conn.execute_batch(
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);")?;
+        self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);",
-        );
-        let _ = self.conn.execute_batch(
+        )?;
+        self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
-        );
+        )?;
         // Settings migrations tracker – records which playbook/settings
         // migrations have already been applied so they run at most once.
         self.conn.execute_batch(
