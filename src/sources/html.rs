@@ -116,6 +116,12 @@ fn consume_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mu
         tag.push(inner);
     }
 
+    if !found_close {
+        result.push('<');
+        result.push_str(&tag);
+        return;
+    }
+
     let tag_trimmed = tag.trim_start_matches('/');
     let tag_name: String = tag_trimmed
         .chars()
@@ -126,9 +132,7 @@ fn consume_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mu
     if !is_known_html_tag(&tag_name_lower) {
         result.push('<');
         result.push_str(&tag);
-        if found_close {
-            result.push('>');
-        }
+        result.push('>');
         return;
     }
 
