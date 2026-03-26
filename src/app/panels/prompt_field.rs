@@ -7,14 +7,14 @@ use crate::prompt_suggestions;
 
 impl DirigentApp {
     // Feature 2: Global prompt input
-    pub(in super::super) fn render_prompt_field(&mut self, ctx: &egui::Context) {
+    pub(in super::super) fn render_prompt_field(&mut self, ui: &mut egui::Ui) {
         let prompt_frame = egui::Frame::NONE
             .fill(self.semantic.prompt_surface())
             .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
 
-        egui::TopBottomPanel::bottom("prompt_field")
+        egui::Panel::bottom("prompt_field")
             .frame(prompt_frame)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 // Top border line to visually separate from content above
                 let rect = ui.available_rect_before_wrap();
                 ui.painter().hline(

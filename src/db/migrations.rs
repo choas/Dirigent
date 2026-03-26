@@ -3,6 +3,30 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+/// Validate that a string is a safe SQL identifier (letters, digits, underscores).
+/// Panics if the identifier contains unexpected characters, preventing SQL injection
+/// if these helpers are ever called with non-hardcoded values.
+fn assert_valid_ident(s: &str) {
+    assert!(
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+        "invalid SQL identifier: {s:?}"
+    );
+}
+
+/// Validate that a column-type expression contains only safe characters.
+/// Allows alphanumeric, spaces, single quotes, parentheses, underscores, and
+/// minus signs (needed for e.g. `TEXT DEFAULT 'Claude'` or `INTEGER DEFAULT -1`)
+/// while blocking injection vectors like semicolons, double-dashes, or slashes.
+fn assert_valid_col_type(s: &str) {
+    assert!(
+        !s.is_empty()
+            && !s.contains("--")
+            && s.bytes().all(|b| b.is_ascii_alphanumeric()
+                || matches!(b, b' ' | b'_' | b'\'' | b'(' | b')' | b'-')),
+        "invalid SQL column type expression: {s:?}"
+    );
+}
+
 /// Propagate all errors from a schema-migration statement except
 /// "duplicate column" / "already exists", which indicate the migration
 /// was already applied and are safe to ignore.
@@ -41,34 +65,111 @@ impl Database {
         Ok(db)
     }
 
-    pub(super) fn create_tables(&self) -> Result<()> {
-        // Migration: rename comments -> cues if old table exists
-        let has_old_table: bool = self.conn.prepare("SELECT 1 FROM comments LIMIT 0").is_ok();
-        if has_old_table {
-            let cues_count: i64 = match self
-                .conn
-                .prepare("SELECT COUNT(*) FROM cues")
-                .and_then(|mut s| s.query_row([], |r| r.get(0)))
-            {
-                Ok(n) => n,
-                Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
-                    if msg.contains("no such table") =>
-                {
-                    0
-                }
-                Err(e) => {
-                    return Err(e).with_context(|| "migration: checking cues table count");
-                }
-            };
-            if cues_count == 0 {
-                self.conn.execute_batch("DROP TABLE IF EXISTS cues;")?;
-                self.conn
-                    .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
-            } else {
-                // cues table has data — drop the legacy comments table instead
-                self.conn.execute_batch("DROP TABLE comments;")?;
+    /// Add a column to a table if it does not already exist.
+    /// Parameters require `&'static str` to guarantee at compile time that
+    /// table/column/type names are hardcoded literals, not user input.
+    fn add_column(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        col_type: &'static str,
+    ) -> Result<()> {
+        assert_valid_ident(table);
+        assert_valid_ident(column);
+        assert_valid_col_type(col_type);
+        if !self.has_column(table, column)? {
+            let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {col_type}");
+            ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
+        }
+        Ok(())
+    }
+
+    /// Rename a column if the old name still exists.
+    fn rename_column(
+        &self,
+        table: &'static str,
+        old_col: &'static str,
+        new_col: &'static str,
+    ) -> Result<()> {
+        assert_valid_ident(table);
+        assert_valid_ident(old_col);
+        assert_valid_ident(new_col);
+        if self.has_column(table, old_col)? {
+            let sql =
+                format!("ALTER TABLE \"{table}\" RENAME COLUMN \"{old_col}\" TO \"{new_col}\"");
+            ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
+        }
+        Ok(())
+    }
+
+    /// Check whether a table has a given column using PRAGMA table_info.
+    /// Returns `Ok(false)` when the table does not exist (PRAGMA returns an
+    /// empty result set); propagates other SQLite errors (locked / corrupted
+    /// DB) so they are not silently masked.
+    fn has_column(&self, table: &'static str, column: &'static str) -> Result<bool> {
+        assert_valid_ident(table);
+        assert_valid_ident(column);
+        let sql = format!("PRAGMA table_info(\"{table}\")");
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .with_context(|| format!("checking column \"{column}\" on \"{table}\""))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .with_context(|| format!("checking column \"{column}\" on \"{table}\""))?;
+        for name in rows {
+            let name = name.with_context(|| format!("reading column info for \"{table}\""))?;
+            if name == column {
+                return Ok(true);
             }
         }
+        Ok(false)
+    }
+
+    /// Migrate the legacy `comments` table to `cues`.
+    fn migrate_comments_to_cues(&self) -> Result<()> {
+        let has_old_table: bool = self.conn.prepare("SELECT 1 FROM comments LIMIT 0").is_ok();
+        if !has_old_table {
+            return Ok(());
+        }
+        let cues_count: i64 = match self
+            .conn
+            .prepare("SELECT COUNT(*) FROM cues")
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+        {
+            Ok(n) => n,
+            Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                if msg.contains("no such table") =>
+            {
+                0
+            }
+            Err(e) => {
+                return Err(e).with_context(|| "migration: checking cues table count");
+            }
+        };
+        if cues_count == 0 {
+            self.conn.execute_batch("DROP TABLE IF EXISTS cues;")?;
+            self.conn
+                .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
+        } else {
+            let comments_count: i64 =
+                self.conn
+                    .query_row("SELECT COUNT(*) FROM comments", [], |r| r.get(0))?;
+            if comments_count == 0 {
+                self.conn.execute_batch("DROP TABLE comments;")?;
+            } else {
+                anyhow::bail!(
+                    "Migration conflict: both 'cues' ({cues_count} rows) and \
+                     'comments' ({comments_count} rows) contain data. \
+                     Please manually merge or remove duplicates before restarting."
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn create_tables(&self) -> Result<()> {
+        self.migrate_comments_to_cues()?;
 
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS cues (
@@ -90,124 +191,25 @@ impl Database {
             );
             ",
         )?;
-        // Migration: add line_number_end column if missing
-        let has_col: bool = self
-            .conn
-            .prepare("SELECT line_number_end FROM cues LIMIT 0")
-            .is_ok();
-        if !has_col {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE cues ADD COLUMN line_number_end INTEGER;"),
-                "ALTER TABLE cues ADD COLUMN line_number_end",
-            )?;
-        }
-        // Migration: rename comment_id -> cue_id in executions
-        let has_old_col: bool = self
-            .conn
-            .prepare("SELECT comment_id FROM executions LIMIT 0")
-            .is_ok();
-        if has_old_col {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;"),
-                "ALTER TABLE executions RENAME COLUMN comment_id TO cue_id",
-            )?;
-        }
-        // Migration: add log column to executions
-        let has_log_col: bool = self
-            .conn
-            .prepare("SELECT log FROM executions LIMIT 0")
-            .is_ok();
-        if !has_log_col {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE executions ADD COLUMN log TEXT;"),
-                "ALTER TABLE executions ADD COLUMN log",
-            )?;
-        }
-        // Migration: add source_label and source_ref columns to cues
-        let has_source_label: bool = self
-            .conn
-            .prepare("SELECT source_label FROM cues LIMIT 0")
-            .is_ok();
-        if !has_source_label {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE cues ADD COLUMN source_label TEXT;"),
-                "ALTER TABLE cues ADD COLUMN source_label",
-            )?;
-        }
-        let has_source_ref: bool = self
-            .conn
-            .prepare("SELECT source_ref FROM cues LIMIT 0")
-            .is_ok();
-        if !has_source_ref {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE cues ADD COLUMN source_ref TEXT;"),
-                "ALTER TABLE cues ADD COLUMN source_ref",
-            )?;
-        }
-        // Migration: add attached_images column to cues
-        let has_attached_images: bool = self
-            .conn
-            .prepare("SELECT attached_images FROM cues LIMIT 0")
-            .is_ok();
-        if !has_attached_images {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;"),
-                "ALTER TABLE cues ADD COLUMN attached_images",
-            )?;
-        }
-        // Migration: add tag column to cues
-        let has_tag: bool = self.conn.prepare("SELECT tag FROM cues LIMIT 0").is_ok();
-        if !has_tag {
-            ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE cues ADD COLUMN tag TEXT;"),
-                "ALTER TABLE cues ADD COLUMN tag",
-            )?;
-        }
-        // Migration: add provider column to executions
-        let has_provider_col: bool = self
-            .conn
-            .prepare("SELECT provider FROM executions LIMIT 0")
-            .is_ok();
-        if !has_provider_col {
-            ok_if_duplicate(
-                self.conn.execute_batch(
-                    "ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';",
-                ),
-                "ALTER TABLE executions ADD COLUMN provider",
-            )?;
-        }
-        // Migration: add run metrics columns to executions
-        {
-            let mut existing_cols: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            if let Ok(mut stmt) = self.conn.prepare("PRAGMA table_info(executions)") {
-                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(1)) {
-                    for name in rows.flatten() {
-                        existing_cols.insert(name);
-                    }
-                }
-            }
-            for (col, typ) in [
-                ("cost_usd", "REAL"),
-                ("duration_ms", "INTEGER"),
-                ("num_turns", "INTEGER"),
-                ("input_tokens", "INTEGER"),
-                ("output_tokens", "INTEGER"),
-            ] {
-                if !existing_cols.contains(col) {
-                    let sql = format!("ALTER TABLE executions ADD COLUMN {col} {typ}");
-                    ok_if_duplicate(self.conn.execute(&sql, []), &sql)?;
-                }
-            }
-        }
-        // Activity log table for cue lifecycle timestamps
+
+        // Column migrations — cues
+        self.add_column("cues", "line_number_end", "INTEGER")?;
+        self.add_column("cues", "source_label", "TEXT")?;
+        self.add_column("cues", "source_ref", "TEXT")?;
+        self.add_column("cues", "attached_images", "TEXT")?;
+        self.add_column("cues", "tag", "TEXT")?;
+
+        // Column migrations — executions
+        self.rename_column("executions", "comment_id", "cue_id")?;
+        self.add_column("executions", "log", "TEXT")?;
+        self.add_column("executions", "provider", "TEXT DEFAULT 'Claude'")?;
+        self.add_column("executions", "cost_usd", "REAL")?;
+        self.add_column("executions", "duration_ms", "INTEGER")?;
+        self.add_column("executions", "num_turns", "INTEGER")?;
+        self.add_column("executions", "input_tokens", "INTEGER")?;
+        self.add_column("executions", "output_tokens", "INTEGER")?;
+
+        // Additional tables
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS cue_activity_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -216,7 +218,6 @@ impl Database {
                 event TEXT NOT NULL
             );",
         )?;
-        // Agent runs table
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS agent_runs (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,17 +232,18 @@ impl Database {
                 finished_at   TEXT
             );",
         )?;
-        // Index on status for faster filtered queries
+        // Indexes
         self.conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);")?;
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_source_ref ON cues(source_ref);")?;
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);",
         )?;
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
         )?;
-        // Settings migrations tracker – records which playbook/settings
-        // migrations have already been applied so they run at most once.
+        // Settings migrations tracker
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS settings_migrations (
                 name       TEXT PRIMARY KEY,
@@ -253,11 +255,23 @@ impl Database {
 
     // -- Settings migrations --
 
-    fn has_settings_migration(&self, name: &str) -> bool {
-        self.conn
+    /// Check whether a settings migration has already been applied.
+    /// Returns `Ok(false)` when the `settings_migrations` table does not
+    /// exist yet; propagates other SQLite errors.
+    fn has_settings_migration(&self, name: &str) -> Result<bool> {
+        match self
+            .conn
             .prepare("SELECT 1 FROM settings_migrations WHERE name = ?1")
             .and_then(|mut s| s.exists(params![name]))
-            .unwrap_or(false)
+        {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                if msg.contains("no such table") =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(e).with_context(|| format!("checking settings migration \"{name}\"")),
+        }
     }
 
     fn record_settings_migration(&self, name: &str) {
@@ -274,11 +288,14 @@ impl Database {
     /// default playbook prompts that changed between versions).  The caller
     /// is responsible for saving the settings back to disk afterwards.
     /// Returns `true` if any migration was applied (i.e. settings changed).
-    pub(crate) fn migrate_settings(&self, settings: &mut crate::settings::Settings) -> bool {
+    pub(crate) fn migrate_settings(
+        &self,
+        settings: &mut crate::settings::Settings,
+    ) -> Result<bool> {
         let mut changed = false;
 
         // v0.2.3 – "Create release" play now uses {VERSION} variable
-        if !self.has_settings_migration("create_release_version_var") {
+        if !self.has_settings_migration("create_release_version_var")? {
             let old_prefix = "Prepare a release:";
             if let Some(play) = settings
                 .playbook
@@ -297,7 +314,7 @@ impl Database {
         }
 
         // v0.2.5 – "Create release" play now includes git push && git push --tags
-        if !self.has_settings_migration("create_release_git_push") {
+        if !self.has_settings_migration("create_release_git_push")? {
             let old_suffix = "create a git tag v{VERSION}.";
             if let Some(play) = settings
                 .playbook
@@ -315,6 +332,40 @@ impl Database {
             self.record_settings_migration("create_release_git_push");
         }
 
-        changed
+        Ok(changed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn col_type_allows_negative_default() {
+        assert_valid_col_type("INTEGER DEFAULT -1");
+    }
+
+    #[test]
+    fn col_type_allows_text_default() {
+        assert_valid_col_type("TEXT DEFAULT 'Claude'");
+    }
+
+    #[test]
+    fn col_type_allows_plain_type() {
+        assert_valid_col_type("INTEGER");
+        assert_valid_col_type("TEXT");
+        assert_valid_col_type("REAL");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SQL column type expression")]
+    fn col_type_rejects_semicolon() {
+        assert_valid_col_type("TEXT; DROP TABLE cues");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SQL column type expression")]
+    fn col_type_rejects_empty() {
+        assert_valid_col_type("");
     }
 }

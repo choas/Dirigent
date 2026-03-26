@@ -1,4 +1,10 @@
-use super::*;
+use std::sync::mpsc;
+use std::time::Instant;
+
+use crate::db::CueStatus;
+use crate::git;
+
+use super::{detect_pr_number_from_branch, DirigentApp};
 
 impl DirigentApp {
     /// Start an async git push operation.

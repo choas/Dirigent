@@ -31,12 +31,12 @@ pub(super) enum FileTreeAction {
 }
 
 impl DirigentApp {
-    pub(in super::super) fn render_file_tree_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("file_tree")
-            .default_width(220.0)
-            .min_width(150.0)
-            .max_width(400.0)
-            .show(ctx, |ui| {
+    pub(in super::super) fn render_file_tree_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("file_tree")
+            .default_size(220.0)
+            .min_size(150.0)
+            .max_size(400.0)
+            .show_inside(ui, |ui| {
                 ui.label(
                     egui::RichText::new("Files")
                         .size(self.settings.font_size * FONT_SCALE_SUBHEADING)

@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 dirs = "6"
-eframe = "0.33"
-egui_extras = { version = "0.33", features = ["syntect"] }
+eframe = "0.34"
+egui_extras = { version = "0.34", features = ["syntect"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 git2 = "0.20"
 anyhow = "1"
@@ -24,7 +24,7 @@ which = "8.0.2"
 shlex = "1"
 tempfile = "3"
 libc = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

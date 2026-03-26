@@ -74,7 +74,7 @@ impl DirigentApp {
             egui_extras::syntax_highlighting::CodeTheme::light(self.settings.font_size)
         };
 
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
         let font_family = &self.settings.font_family;
         let size = self.settings.font_size;
 
@@ -180,6 +180,6 @@ impl DirigentApp {
             egui::TextStyle::Heading,
             egui::FontId::new(size * FONT_SCALE_HEADING, egui::FontFamily::Proportional),
         );
-        ctx.set_style(style);
+        ctx.set_global_style(style);
     }
 }

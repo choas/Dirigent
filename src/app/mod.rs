@@ -286,7 +286,10 @@ impl DirigentApp {
         let db = Database::open(&project_root).expect("failed to open database");
         let mut settings = settings::load_settings(&project_root);
         // Apply one-time settings migrations (e.g. updated default plays).
-        if db.migrate_settings(&mut settings) {
+        if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
+            eprintln!("settings migration error: {e:#}");
+            false
+        }) {
             settings::save_settings(&project_root, &settings);
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -652,7 +655,8 @@ impl DirigentApp {
 }
 
 impl eframe::App for DirigentApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx();
         // Store egui context so the file watcher can request repaints
         let _ = self.egui_ctx.set(ctx.clone());
 
@@ -704,7 +708,7 @@ impl eframe::App for DirigentApp {
         self.handle_global_shortcuts(ctx);
 
         // Render all panels and dialogs
-        self.render_panels_and_dialogs(ctx);
+        self.render_panels_and_dialogs(ui);
     }
 }
 

@@ -93,79 +93,90 @@ pub(crate) fn strip_html_tags(input: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if ch == '<' {
-            // Consume everything until '>'
-            let mut tag = String::new();
-            let mut found_close = false;
-            for inner in chars.by_ref() {
-                if inner == '>' {
-                    found_close = true;
-                    break;
-                }
-                tag.push(inner);
-            }
-
-            // Parse the tag name: skip leading '/' for closing tags,
-            // stop at whitespace or '/' for attributes/self-close.
-            let tag_trimmed = tag.trim_start_matches('/');
-            let tag_name: String = tag_trimmed
-                .chars()
-                .take_while(|c| !c.is_whitespace() && *c != '/')
-                .collect();
-            let tag_name_lower = tag_name.to_lowercase();
-
-            if !is_known_html_tag(&tag_name_lower) {
-                // Not a known HTML tag — preserve the angle-bracketed text verbatim.
-                result.push('<');
-                result.push_str(&tag);
-                if found_close {
-                    result.push('>');
-                }
-                continue;
-            }
-
-            // <br> / <br/> → space (if not at start/end)
-            if tag_name_lower == "br" {
-                if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') {
-                    result.push(' ');
-                }
-            }
-            // All other known HTML tags: just drop the tag, keep surrounding text
+            consume_tag(&mut chars, &mut result);
         } else if ch == '&' {
-            // Try to consume an HTML entity
-            let mut entity = String::new();
-            let mut found_semicolon = false;
-            while let Some(&next) = chars.peek() {
-                if next == ';' {
-                    chars.next();
-                    found_semicolon = true;
-                    break;
-                }
-                // Entities are at most ~10 chars; bail if too long or whitespace
-                if entity.len() > 10 || next.is_whitespace() || next == '<' || next == '&' {
-                    break;
-                }
-                entity.push(next);
-                chars.next();
-            }
-            if found_semicolon {
-                if let Some(decoded) = decode_html_entity(&entity) {
-                    result.push(decoded);
-                } else {
-                    // Unknown entity — keep as-is
-                    result.push('&');
-                    result.push_str(&entity);
-                    result.push(';');
-                }
-            } else {
-                // Not a valid entity — emit '&' and whatever we consumed
-                result.push('&');
-                result.push_str(&entity);
-            }
+            consume_entity(&mut chars, &mut result);
         } else {
             result.push(ch);
         }
     }
     result
+}
+
+/// Consume an HTML tag from `chars` (the `<` has already been consumed).
+/// Known tags are stripped; unknown angle-bracketed text is preserved verbatim.
+fn consume_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mut String) {
+    let mut tag = String::new();
+    let mut found_close = false;
+    for inner in chars.by_ref() {
+        if inner == '>' {
+            found_close = true;
+            break;
+        }
+        tag.push(inner);
+    }
+
+    if !found_close {
+        result.push('<');
+        result.push_str(&tag);
+        return;
+    }
+
+    let tag_trimmed = tag.trim_start_matches('/');
+    let tag_name: String = tag_trimmed
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '/')
+        .collect();
+    let tag_name_lower = tag_name.to_lowercase();
+
+    if !is_known_html_tag(&tag_name_lower) {
+        result.push('<');
+        result.push_str(&tag);
+        if found_close {
+            result.push('>');
+        }
+        return;
+    }
+
+    if tag_name_lower == "br"
+        && !result.is_empty()
+        && !result.ends_with(' ')
+        && !result.ends_with('\n')
+    {
+        result.push(' ');
+    }
+}
+
+/// Consume an HTML entity from `chars` (the `&` has already been consumed).
+/// Decoded entities are appended; unknown or malformed entities are preserved as-is.
+fn consume_entity(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mut String) {
+    let mut entity = String::new();
+    let mut found_semicolon = false;
+    while let Some(&next) = chars.peek() {
+        if next == ';' {
+            chars.next();
+            found_semicolon = true;
+            break;
+        }
+        if entity.len() > 10 || next.is_whitespace() || next == '<' || next == '&' {
+            break;
+        }
+        entity.push(next);
+        chars.next();
+    }
+    if found_semicolon {
+        match decode_html_entity(&entity) {
+            Some(decoded) => result.push(decoded),
+            None => {
+                result.push('&');
+                result.push_str(&entity);
+                result.push(';');
+            }
+        }
+    } else {
+        result.push('&');
+        result.push_str(&entity);
+    }
 }
 
 /// Decode a single HTML entity name (without the `&` and `;`).

@@ -7,7 +7,7 @@ use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     /// Agent run log rendered in the central panel (replaces code viewer).
-    pub(in crate::app) fn render_agent_log_central(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn render_agent_log_central(&mut self, ui: &mut egui::Ui) {
         let kind = self.agent_state.show_output.unwrap();
         let fs = self.settings.font_size;
 
@@ -20,7 +20,7 @@ impl DirigentApp {
         let mut close = false;
         let mut analyze_run_idx: Option<usize> = None;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_agent_log_header(ui, kind, fs, &mut close);
             ui.separator();
 

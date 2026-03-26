@@ -13,7 +13,7 @@ use crate::opencode;
 use crate::settings;
 
 impl DirigentApp {
-    pub(in crate::app) fn render_settings_panel(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         let mut save = false;
         let mut close = false;
         let mut fetch_idx: Option<usize> = None;
@@ -31,7 +31,7 @@ impl DirigentApp {
             self.spawn_opencode_models_fetch();
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Settings");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

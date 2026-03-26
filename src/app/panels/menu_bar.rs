@@ -17,10 +17,10 @@ struct MenuBarActions {
 }
 
 impl DirigentApp {
-    pub(in super::super) fn render_menu_bar(&mut self, ctx: &egui::Context) {
+    pub(in super::super) fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
         let mut actions = MenuBarActions::default();
 
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_dirigent_menu(ui);
                 self.render_git_menu(ui, &mut actions);

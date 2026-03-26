@@ -128,24 +128,22 @@ pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) 
 
     let mut paths = Vec::new();
     for line in diff_text.lines() {
-        let rest = if let Some(r) = line.strip_prefix("+++ b/") {
-            Some(r)
-        } else if let Some(r) = line.strip_prefix("--- a/") {
-            Some(r)
-        } else {
-            None
+        let rest = line
+            .strip_prefix("+++ b/")
+            .or_else(|| line.strip_prefix("--- a/"));
+        let rest = match rest {
+            Some(r) => r,
+            None => continue,
         };
-        if let Some(rest) = rest {
-            let path = rest.trim();
-            if path == "/dev/null" || path.is_empty() {
-                continue;
-            }
-            // Strip dir prefix if present
-            let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
-            let path = path.to_string();
-            if !path.is_empty() && !paths.contains(&path) {
-                paths.push(path);
-            }
+        let path = rest.trim();
+        if path.is_empty() {
+            continue;
+        }
+        // Strip dir prefix if present
+        let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
+        let path = path.to_string();
+        if !path.is_empty() && !paths.contains(&path) {
+            paths.push(path);
         }
     }
     paths

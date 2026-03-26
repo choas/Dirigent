@@ -21,35 +21,36 @@ use line_rendering::{
 use types::{CodeLineActions, CodeLineContext};
 
 impl DirigentApp {
-    pub(super) fn render_code_viewer(&mut self, ctx: &egui::Context) {
-        if self.should_render_central_overlay(ctx) {
+    pub(super) fn render_code_viewer(&mut self, ui: &mut egui::Ui) {
+        if self.should_render_central_overlay(ui) {
             return;
         }
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_code_viewer_panel(ctx, ui);
+        let ctx = ui.ctx().clone();
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            self.render_code_viewer_panel(&ctx, ui);
         });
     }
 
     /// Dispatch to any full-screen central overlay. Returns true if one was rendered.
-    fn should_render_central_overlay(&mut self, ctx: &egui::Context) -> bool {
+    fn should_render_central_overlay(&mut self, ui: &mut egui::Ui) -> bool {
         if self.show_settings {
-            self.render_settings_panel(ctx);
+            self.render_settings_panel(ui);
             return true;
         }
         if self.diff_review.is_some() {
-            self.render_diff_review_central(ctx);
+            self.render_diff_review_central(ui);
             return true;
         }
         if self.claude.show_log.is_some() {
-            self.render_running_log_central(ctx);
+            self.render_running_log_central(ui);
             return true;
         }
         if self.agent_state.show_output.is_some() {
-            self.render_agent_log_central(ctx);
+            self.render_agent_log_central(ui);
             return true;
         }
         if self.show_agent_runs_for_cue.is_some() {
-            self.render_cue_agent_runs_central(ctx);
+            self.render_cue_agent_runs_central(ui);
             return true;
         }
         false
