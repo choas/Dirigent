@@ -296,7 +296,7 @@ fn build_opencode_command(
     use std::process::Stdio;
 
     let mut cmd = Command::new(opencode_bin);
-    cmd.arg("run").arg(prompt).arg("--format").arg("json");
+    cmd.arg("run").arg(prompt).arg("--format").arg("stream");
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
