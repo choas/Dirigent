@@ -314,14 +314,22 @@ impl DirigentApp {
             let text = self.viewer.tabs[active_idx].cue_input.clone();
             let images: Vec<String> = self.viewer.tabs[active_idx]
                 .cue_images
-                .drain(..)
+                .iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
-            let _ = self
+            match self
                 .db
-                .insert_cue(&text, rel_path, start, line_end, &images);
-            self.viewer.tabs[active_idx].cue_input.clear();
-            self.reload_cues();
+                .insert_cue(&text, rel_path, start, line_end, &images)
+            {
+                Ok(_) => {
+                    self.viewer.tabs[active_idx].cue_input.clear();
+                    self.viewer.tabs[active_idx].cue_images.clear();
+                    self.reload_cues();
+                }
+                Err(e) => {
+                    eprintln!("Failed to insert cue: {e}");
+                }
+            }
         }
     }
 
