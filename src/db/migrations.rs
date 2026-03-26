@@ -177,8 +177,9 @@ impl Database {
             .is_ok();
         if !has_provider_col {
             ok_if_duplicate(
-                self.conn
-                    .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';"),
+                self.conn.execute_batch(
+                    "ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';",
+                ),
                 "ALTER TABLE executions ADD COLUMN provider",
             )?;
         }
@@ -220,7 +221,7 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS agent_runs (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_kind    TEXT NOT NULL,
-                cue_id        INTEGER,
+                cue_id        INTEGER REFERENCES cues(id) ON DELETE SET NULL,
                 command       TEXT NOT NULL,
                 status        TEXT NOT NULL,
                 output        TEXT,
@@ -261,10 +262,12 @@ impl Database {
 
     fn record_settings_migration(&self, name: &str) {
         let now = Local::now().to_rfc3339();
-        let _ = self.conn.execute(
+        if let Err(e) = self.conn.execute(
             "INSERT OR IGNORE INTO settings_migrations (name, applied_at) VALUES (?1, ?2)",
             params![name, now],
-        );
+        ) {
+            eprintln!("Failed to record settings migration '{name}': {e}");
+        }
     }
 
     /// Apply one-time migrations to the in-memory settings (e.g. updating
