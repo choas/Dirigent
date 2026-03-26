@@ -29,10 +29,23 @@ fn is_ignorable_line(trimmed: &str) -> bool {
     is_skippable_markup(trimmed) || is_severity_label(trimmed) || trimmed.is_empty()
 }
 
+/// Strip HTML tags from a non-ignorable line, returning `None` if nothing remains.
+fn clean_line(trimmed: &str) -> Option<String> {
+    if is_ignorable_line(trimmed) {
+        return None;
+    }
+    let cleaned = strip_html_tags(trimmed);
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(cleaned.to_string())
+}
+
 /// Extract a clean finding text from a review comment body.
 /// Strips HTML tags, diff blocks, and suggestion blocks to get the core message.
 pub(super) fn extract_finding_text(body: &str) -> String {
-    let mut result = String::new();
+    let mut lines_out = Vec::new();
     let mut in_details = false;
     let mut in_code_block = false;
 
@@ -59,23 +72,12 @@ pub(super) fn extract_finding_text(body: &str) -> String {
             continue;
         }
 
-        if is_ignorable_line(trimmed) {
-            continue;
+        if let Some(cleaned) = clean_line(trimmed) {
+            lines_out.push(cleaned);
         }
-
-        // Strip inline HTML tags (e.g. <code>, <b>, <i>, <pre>, <h3>, <a>)
-        let cleaned = strip_html_tags(trimmed);
-        let cleaned = cleaned.trim();
-        if cleaned.is_empty() {
-            continue;
-        }
-
-        if !result.is_empty() {
-            result.push('\n');
-        }
-        result.push_str(cleaned);
     }
 
+    let mut result = lines_out.join("\n");
     truncate_with_ellipsis(&mut result, 2000);
     result
 }
