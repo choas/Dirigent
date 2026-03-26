@@ -652,7 +652,9 @@ impl DirigentApp {
 }
 
 impl eframe::App for DirigentApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         // Store egui context so the file watcher can request repaints
         let _ = self.egui_ctx.set(ctx.clone());
 

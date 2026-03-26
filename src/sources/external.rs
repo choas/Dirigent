@@ -99,23 +99,23 @@ pub(crate) fn fetch_slack_messages(
         .json()
         .map_err(|e| DirigentError::Source(format!("Slack response parse error: {e}")))?;
 
-    if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+    if resp.get("ok").and_then(|v: &serde_json::Value| v.as_bool()) != Some(true) {
         let err = resp
             .get("error")
-            .and_then(|v| v.as_str())
+            .and_then(|v: &serde_json::Value| v.as_str())
             .unwrap_or("unknown error");
         return Err(DirigentError::Source(format!("Slack API error: {}", err)));
     }
 
     let messages = resp
         .get("messages")
-        .and_then(|v| v.as_array())
+        .and_then(|v: &serde_json::Value| v.as_array())
         .cloned()
         .unwrap_or_default();
 
     Ok(messages
         .iter()
-        .filter_map(|msg| {
+        .filter_map(|msg: &serde_json::Value| {
             let text = msg.get("text")?.as_str()?;
             if text.trim().is_empty() {
                 return None;
@@ -123,7 +123,7 @@ pub(crate) fn fetch_slack_messages(
             let ts = msg.get("ts")?.as_str()?;
             let user = msg
                 .get("user")
-                .and_then(|u| u.as_str())
+                .and_then(|u: &serde_json::Value| u.as_str())
                 .unwrap_or("unknown");
             Some(SourceItem {
                 external_id: format!("{}/{}", channel, ts),
