@@ -2,6 +2,26 @@ use crate::settings::CliProvider;
 
 use super::types::{Cue, CueStatus, Execution, ExecutionStatus};
 
+fn try_i64_to_usize(v: i64) -> rusqlite::Result<usize> {
+    usize::try_from(v).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            format!("negative integer {v} cannot convert to usize").into(),
+        )
+    })
+}
+
+fn try_i64_to_u64(v: i64) -> rusqlite::Result<u64> {
+    u64::try_from(v).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            format!("negative integer {v} cannot convert to u64").into(),
+        )
+    })
+}
+
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(5)?;
     let line_end: Option<i64> = row.get(4)?;
@@ -13,8 +33,8 @@ pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         id: row.get(0)?,
         text: row.get(1)?,
         file_path: row.get(2)?,
-        line_number: row.get::<_, i64>(3)? as usize,
-        line_number_end: line_end.map(|n| n as usize),
+        line_number: try_i64_to_usize(row.get::<_, i64>(3)?)?,
+        line_number_end: line_end.map(try_i64_to_usize).transpose()?,
         status: CueStatus::from_str(&status_str).unwrap_or(CueStatus::Inbox),
         source_label: row.get(6)?,
         source_ref: row.get(7)?,
@@ -42,7 +62,7 @@ pub(super) fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Executio
         status: ExecutionStatus::from_str(&status_str).unwrap_or(ExecutionStatus::Pending),
         provider,
         cost_usd: row.get(8)?,
-        duration_ms: duration_raw.map(|v| v as u64),
-        num_turns: turns_raw.map(|v| v as u64),
+        duration_ms: duration_raw.map(try_i64_to_u64).transpose()?,
+        num_turns: turns_raw.map(try_i64_to_u64).transpose()?,
     })
 }
