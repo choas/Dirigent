@@ -90,13 +90,9 @@ pub(crate) fn fetch_slack_messages(
         .build()
         .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
 
-    let url = format!(
-        "https://slack.com/api/conversations.history?channel={}&limit=50",
-        channel,
-    );
-
     let resp: serde_json::Value = client
-        .get(&url)
+        .get("https://slack.com/api/conversations.history")
+        .query(&[("channel", channel), ("limit", "50")])
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .map_err(|e| DirigentError::Source(format!("Slack request failed: {e}")))?
