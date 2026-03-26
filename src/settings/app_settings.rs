@@ -8,6 +8,7 @@ use super::providers::{CliProvider, SourceConfig};
 use super::theme::ThemeChoice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct Settings {
     pub theme: ThemeChoice,
     pub cli_provider: CliProvider,
