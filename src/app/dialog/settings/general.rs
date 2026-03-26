@@ -71,17 +71,43 @@ impl DirigentApp {
     }
 
     fn render_claude_model_combo(&mut self, ui: &mut egui::Ui) {
+        const DEFAULT_CLAUDE_MODELS: &[&str] = &[
+            "claude-opus-4-6",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+        ];
+
         egui::ComboBox::from_id_salt("model_combo")
             .selected_text(&self.settings.claude_model)
             .show_ui(ui, |ui| {
-                for model in &[
-                    "claude-opus-4-6",
-                    "claude-opus-4-5-20251101",
-                    "claude-sonnet-4-6",
-                    "claude-sonnet-4-5-20250929",
-                    "claude-haiku-4-5-20251001",
-                ] {
+                for model in DEFAULT_CLAUDE_MODELS {
                     ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
+                }
+                if !self.settings.claude_custom_models.is_empty() {
+                    ui.separator();
+                    for model in &self.settings.claude_custom_models {
+                        ui.selectable_value(
+                            &mut self.settings.claude_model,
+                            model.clone(),
+                            model.as_str(),
+                        );
+                    }
+                }
+                // Show the current model even if it's not in either list
+                // (e.g. manually edited in settings JSON).
+                let current = self.settings.claude_model.clone();
+                if !current.is_empty()
+                    && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
+                    && !self.settings.claude_custom_models.contains(&current)
+                {
+                    ui.separator();
+                    ui.selectable_value(
+                        &mut self.settings.claude_model,
+                        current.clone(),
+                        current.as_str(),
+                    );
                 }
             });
     }

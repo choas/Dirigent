@@ -13,6 +13,10 @@ pub(crate) struct Settings {
     pub theme: ThemeChoice,
     pub cli_provider: CliProvider,
     pub claude_model: String,
+    /// Extra model identifiers to show in the Claude model dropdown.
+    /// Add new model IDs here (in settings JSON) so they appear without a code change.
+    #[serde(default)]
+    pub claude_custom_models: Vec<String>,
     #[serde(default)]
     pub claude_cli_path: String,
     #[serde(default)]
@@ -92,6 +96,7 @@ impl Default for Settings {
             theme: ThemeChoice::Dark,
             cli_provider: CliProvider::default(),
             claude_model: "claude-opus-4-6".to_string(),
+            claude_custom_models: Vec::new(),
             claude_cli_path: String::new(),
             claude_extra_args: String::new(),
             claude_env_vars: String::new(),
