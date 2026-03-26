@@ -20,6 +20,7 @@ fn assert_valid_ident(s: &str) {
 fn assert_valid_col_type(s: &str) {
     assert!(
         !s.is_empty()
+            && !s.contains("--")
             && s.bytes().all(|b| b.is_ascii_alphanumeric()
                 || matches!(b, b' ' | b'_' | b'\'' | b'(' | b')' | b'-')),
         "invalid SQL column type expression: {s:?}"
@@ -76,7 +77,7 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(column);
         assert_valid_col_type(col_type);
-        if !self.has_column(table, column) {
+        if !self.has_column(table, column)? {
             let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {col_type}");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
         }
@@ -93,8 +94,7 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(old_col);
         assert_valid_ident(new_col);
-        let has_old_col = self.has_column(table, old_col);
-        if has_old_col {
+        if self.has_column(table, old_col)? {
             let sql =
                 format!("ALTER TABLE \"{table}\" RENAME COLUMN \"{old_col}\" TO \"{new_col}\"");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
@@ -103,24 +103,28 @@ impl Database {
     }
 
     /// Check whether a table has a given column using PRAGMA table_info.
-    fn has_column(&self, table: &'static str, column: &'static str) -> bool {
+    /// Returns `Ok(false)` when the table does not exist (PRAGMA returns an
+    /// empty result set); propagates other SQLite errors (locked / corrupted
+    /// DB) so they are not silently masked.
+    fn has_column(&self, table: &'static str, column: &'static str) -> Result<bool> {
         assert_valid_ident(table);
         assert_valid_ident(column);
         let sql = format!("PRAGMA table_info(\"{table}\")");
-        let mut stmt = match self.conn.prepare(&sql) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
-        for name in rows.flatten() {
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .with_context(|| format!("checking column \"{column}\" on \"{table}\""))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .with_context(|| format!("checking column \"{column}\" on \"{table}\""))?;
+        for name in rows {
+            let name =
+                name.with_context(|| format!("reading column info for \"{table}\""))?;
             if name == column {
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     /// Migrate the legacy `comments` table to `cues`.
@@ -232,6 +236,8 @@ impl Database {
         // Indexes
         self.conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);")?;
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_source_ref ON cues(source_ref);")?;
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);",
         )?;
@@ -250,11 +256,25 @@ impl Database {
 
     // -- Settings migrations --
 
-    fn has_settings_migration(&self, name: &str) -> bool {
-        self.conn
+    /// Check whether a settings migration has already been applied.
+    /// Returns `Ok(false)` when the `settings_migrations` table does not
+    /// exist yet; propagates other SQLite errors.
+    fn has_settings_migration(&self, name: &str) -> Result<bool> {
+        match self
+            .conn
             .prepare("SELECT 1 FROM settings_migrations WHERE name = ?1")
             .and_then(|mut s| s.exists(params![name]))
-            .unwrap_or(false)
+        {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                if msg.contains("no such table") =>
+            {
+                Ok(false)
+            }
+            Err(e) => {
+                Err(e).with_context(|| format!("checking settings migration \"{name}\""))
+            }
+        }
     }
 
     fn record_settings_migration(&self, name: &str) {
@@ -271,11 +291,14 @@ impl Database {
     /// default playbook prompts that changed between versions).  The caller
     /// is responsible for saving the settings back to disk afterwards.
     /// Returns `true` if any migration was applied (i.e. settings changed).
-    pub(crate) fn migrate_settings(&self, settings: &mut crate::settings::Settings) -> bool {
+    pub(crate) fn migrate_settings(
+        &self,
+        settings: &mut crate::settings::Settings,
+    ) -> Result<bool> {
         let mut changed = false;
 
         // v0.2.3 – "Create release" play now uses {VERSION} variable
-        if !self.has_settings_migration("create_release_version_var") {
+        if !self.has_settings_migration("create_release_version_var")? {
             let old_prefix = "Prepare a release:";
             if let Some(play) = settings
                 .playbook
@@ -294,7 +317,7 @@ impl Database {
         }
 
         // v0.2.5 – "Create release" play now includes git push && git push --tags
-        if !self.has_settings_migration("create_release_git_push") {
+        if !self.has_settings_migration("create_release_git_push")? {
             let old_suffix = "create a git tag v{VERSION}.";
             if let Some(play) = settings
                 .playbook
@@ -312,7 +335,7 @@ impl Database {
             self.record_settings_migration("create_release_git_push");
         }
 
-        changed
+        Ok(changed)
     }
 }
 
