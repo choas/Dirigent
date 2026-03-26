@@ -9,7 +9,7 @@ use crate::settings::CliProvider;
 
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
-    pub(in crate::app) fn render_running_log_central(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn render_running_log_central(&mut self, ui: &mut egui::Ui) {
         let cue_id = self.claude.show_log.unwrap();
         let fs = self.settings.font_size;
 
@@ -53,10 +53,10 @@ impl DirigentApp {
 
         // Reply field at the bottom – rendered as a bottom panel so it stays visible
         if can_reply {
-            reply_send = self.render_reply_panel(ctx, fs);
+            reply_send = self.render_reply_panel(ui, fs);
         }
 
-        egui::CentralPanel::default().show_inside(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             // Header bar
             close = self.render_conversation_header(ui, fs, is_running, cue_id, &cue_text);
             ui.separator();
@@ -140,7 +140,7 @@ impl DirigentApp {
 
     /// Render the reply input panel at the bottom of the conversation view.
     /// Returns `Some(reply_text)` if the user submitted a reply.
-    fn render_reply_panel(&mut self, ctx: &egui::Context, fs: f32) -> Option<String> {
+    fn render_reply_panel(&mut self, ui: &mut egui::Ui, fs: f32) -> Option<String> {
         let mut reply_send: Option<String> = None;
 
         let reply_frame = egui::Frame::NONE
@@ -148,7 +148,7 @@ impl DirigentApp {
             .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
         egui::Panel::bottom("conversation_reply_panel")
             .frame(reply_frame)
-            .show_inside(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 // Top border line
                 let rect = ui.available_rect_before_wrap();
                 ui.painter().hline(

@@ -5,14 +5,15 @@ use crate::agents::{AgentKind, AgentStatus};
 use crate::git;
 
 impl DirigentApp {
-    pub(in super::super) fn render_status_bar(&mut self, ctx: &egui::Context) {
-        egui::Panel::bottom("status_bar").show_inside(ctx, |ui| {
+    pub(in super::super) fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+            let ctx = ui.ctx().clone();
             ui.horizontal(|ui| {
                 self.render_status_bar_git_info(ui);
                 self.render_status_bar_db_cost(ui);
-                self.render_status_bar_agents(ui, ctx);
+                self.render_status_bar_agents(ui, &ctx);
                 self.render_status_bar_cached_cost(ui);
-                self.render_status_bar_message(ui, ctx);
+                self.render_status_bar_message(ui, &ctx);
             });
         });
     }

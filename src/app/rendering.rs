@@ -72,20 +72,21 @@ impl DirigentApp {
     }
 
     /// Render main layout panels and all floating dialogs.
-    pub(super) fn render_panels_and_dialogs(&mut self, ctx: &egui::Context) {
-        self.render_menu_bar(ctx);
-        self.render_repo_bar(ctx);
-        self.render_status_bar(ctx);
-        self.render_prompt_field(ctx);
+    pub(super) fn render_panels_and_dialogs(&mut self, ui: &mut egui::Ui) {
+        self.render_menu_bar(ui);
+        self.render_repo_bar(ui);
+        self.render_status_bar(ui);
+        self.render_prompt_field(ui);
         if self.search.in_files_active {
-            self.render_search_in_files_panel_wrapper(ctx);
+            self.render_search_in_files_panel_wrapper(ui);
         } else {
-            self.render_file_tree_panel(ctx);
+            self.render_file_tree_panel(ui);
         }
-        self.render_cue_pool(ctx);
-        self.render_code_viewer(ctx);
-        self.render_modal_overlay(ctx);
-        self.render_floating_dialogs(ctx);
+        self.render_cue_pool(ui);
+        self.render_code_viewer(ui);
+        let ctx = ui.ctx().clone();
+        self.render_modal_overlay(&ctx);
+        self.render_floating_dialogs(&ctx);
     }
 
     /// Render modal overlay dimming behind floating windows.
@@ -178,12 +179,12 @@ impl DirigentApp {
     }
 
     /// Render project-wide search panel as a left side panel (replaces file tree).
-    pub(super) fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
+    pub(super) fn render_search_in_files_panel_wrapper(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("search_files_panel")
             .default_size(SEARCH_PANEL_DEFAULT_WIDTH)
             .min_size(SEARCH_PANEL_MIN_WIDTH)
             .max_size(400.0)
-            .show_inside(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 self.render_search_in_files_panel(ui);
             });
     }

@@ -705,7 +705,7 @@ impl eframe::App for DirigentApp {
         self.handle_global_shortcuts(ctx);
 
         // Render all panels and dialogs
-        self.render_panels_and_dialogs(ctx);
+        self.render_panels_and_dialogs(ui);
     }
 }
 

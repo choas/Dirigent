@@ -47,7 +47,7 @@ impl DiffReviewActions {
 
 impl DirigentApp {
     // Diff review rendered in the central panel (replaces code viewer)
-    pub(in crate::app) fn render_diff_review_central(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn render_diff_review_central(&mut self, ui: &mut egui::Ui) {
         let mut actions = DiffReviewActions::new();
         let fs = self.settings.font_size;
         let sem = self.semantic;
@@ -67,7 +67,7 @@ impl DirigentApp {
         let search_matches = &review.search_matches;
         let search_current = review.search_current;
 
-        egui::CentralPanel::default().show_inside(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             Self::render_diff_header_bar(
                 ui,
                 fs,
