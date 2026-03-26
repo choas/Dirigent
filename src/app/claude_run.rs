@@ -255,11 +255,10 @@ fn run_opencode_provider(
     // Snapshot dirty files before the run so we can scope the fallback diff
     // to only files newly changed by this run, avoiding the risk of
     // committing pre-existing local modifications.
-    let baseline_dirty: std::collections::HashSet<String> =
-        git::get_dirty_files(req.project_root)
-            .keys()
-            .cloned()
-            .collect();
+    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
+        .keys()
+        .cloned()
+        .collect();
 
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
