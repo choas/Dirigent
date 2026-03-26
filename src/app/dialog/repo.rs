@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
@@ -146,15 +146,21 @@ impl DirigentApp {
         egui::ScrollArea::vertical()
             .max_height(200.0)
             .show(ui, |ui| {
-                for repo_path in self.settings.recent_repos.clone() {
-                    if ui.button(&repo_path).clicked() {
-                        let path = PathBuf::from(&repo_path);
+                let existing: Vec<_> = self
+                    .settings
+                    .recent_repos
+                    .iter()
+                    .filter(|p| Path::new(p.as_str()).is_dir())
+                    .collect();
+                for repo_path in &existing {
+                    if ui.button(repo_path.as_str()).clicked() {
+                        let path = PathBuf::from(repo_path.as_str());
                         if let Ok(canonical) = std::fs::canonicalize(&path) {
                             *switch_to = Some(canonical);
                         }
                     }
                 }
-                if self.settings.recent_repos.is_empty() {
+                if existing.is_empty() {
                     ui.label(
                         egui::RichText::new("(none)")
                             .italics()
