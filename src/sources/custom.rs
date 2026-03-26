@@ -120,25 +120,12 @@ pub(crate) fn parse_paginated_json(raw: &str) -> Vec<serde_json::Value> {
     if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
         return arr;
     }
-    // Slow path: concatenated arrays — split on `][` and parse each chunk
+    // Slow path: concatenated arrays — use streaming deserializer to handle `[...][...]`
     let mut items = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0;
-    for (i, ch) in trimmed.char_indices() {
-        match ch {
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    if let Ok(arr) =
-                        serde_json::from_str::<Vec<serde_json::Value>>(&trimmed[start..=i])
-                    {
-                        items.extend(arr);
-                    }
-                    start = i + 1;
-                }
-            }
-            _ => {}
+    let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Vec<serde_json::Value>>();
+    for result in stream {
+        if let Ok(arr) = result {
+            items.extend(arr);
         }
     }
     items
@@ -327,5 +314,15 @@ mod tests {
     fn parse_source_object_missing_id() {
         let obj: serde_json::Value = serde_json::from_str(r#"{"text":"hello"}"#).unwrap();
         assert!(parse_source_object(&obj, "lbl").is_none());
+    }
+
+    #[test]
+    fn parse_concatenated_arrays_with_brackets_in_strings() {
+        // Brackets inside JSON strings must not confuse the parser
+        let json = r#"[{"id":"1","text":"has ] bracket"}][{"id":"2","text":"has [ bracket"}]"#;
+        let items = parse_source_json(json, "test");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].text, "has ] bracket");
+        assert_eq!(items[1].text, "has [ bracket");
     }
 }
