@@ -76,6 +76,10 @@ pub(crate) struct Settings {
     /// Automatically include the git diff in the prompt.
     #[serde(default)]
     pub auto_context_git_diff: bool,
+    /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
+    /// Disabled by default; must be explicitly opted-in via the settings UI.
+    #[serde(default)]
+    pub allow_dangerous_skip_permissions: bool,
 }
 
 fn default_true() -> bool {
@@ -123,6 +127,7 @@ impl Default for Settings {
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,
+            allow_dangerous_skip_permissions: false,
         }
     }
 }

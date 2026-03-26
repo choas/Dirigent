@@ -182,12 +182,18 @@ impl DirigentApp {
         ui.end_row();
 
         ui.label("Default Flags:");
-        ui.label(
-            egui::RichText::new(
-                "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions",
-            )
-            .monospace()
-            .weak(),
+        let flags = if self.settings.allow_dangerous_skip_permissions {
+            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
+        } else {
+            "-p <prompt> --verbose --output-format stream-json"
+        };
+        ui.label(egui::RichText::new(flags).monospace().weak());
+        ui.end_row();
+
+        ui.label("Skip Permissions:");
+        ui.checkbox(
+            &mut self.settings.allow_dangerous_skip_permissions,
+            "Append --dangerously-skip-permissions",
         );
         ui.end_row();
 

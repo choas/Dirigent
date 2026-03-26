@@ -25,14 +25,17 @@ pub(super) fn build_claude_command(
     model: &str,
     extra_args: &str,
     env_vars: &str,
+    skip_permissions: bool,
 ) -> Command {
     let mut cmd = Command::new(claude_bin);
     cmd.arg("-p")
         .arg(prompt)
         .arg("--verbose")
         .arg("--output-format")
-        .arg("stream-json")
-        .arg("--dangerously-skip-permissions");
+        .arg("stream-json");
+    if skip_permissions {
+        cmd.arg("--dangerously-skip-permissions");
+    }
     if !model.is_empty() {
         cmd.arg("--model").arg(model);
     }
