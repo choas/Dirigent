@@ -109,13 +109,19 @@ fn gather_file_snippet(
         return None;
     }
 
-    let center = line_number.saturating_sub(1); // 0-indexed
-    let end_line = line_number_end.unwrap_or(line_number).saturating_sub(1);
+    let center = line_number
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
+    let end_line = line_number_end
+        .unwrap_or(line_number)
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
     let span = end_line.saturating_sub(center) + 1;
     // Window: 50 lines total, centered on the target range
     let padding = 50usize.saturating_sub(span) / 2;
-    let start = center.saturating_sub(padding);
+    let start = center.saturating_sub(padding).min(lines.len());
     let end = (end_line + padding + 1).min(lines.len());
+    let start = start.min(end);
 
     let snippet: Vec<String> = lines[start..end]
         .iter()
