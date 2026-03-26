@@ -15,6 +15,23 @@ pub(crate) fn archive_worktree_db(
         return Ok(None);
     }
 
+    // Checkpoint the WAL so all data is flushed into the main DB file before copying.
+    // TRUNCATE mode also removes the -wal and -shm files afterward.
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &src_db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|e| {
+            DirigentError::GitCommand(format!(
+                "failed to open worktree DB for WAL checkpoint: {}",
+                e
+            ))
+        })?;
+        conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")
+            .map_err(|e| DirigentError::GitCommand(format!("WAL checkpoint failed: {}", e)))?;
+    }
+
     let archives_dir = main_repo_path.join(".Dirigent").join("archives");
     std::fs::create_dir_all(&archives_dir)
         .map_err(|e| DirigentError::GitCommand(format!("failed to create archives dir: {}", e)))?;
