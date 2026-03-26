@@ -132,7 +132,9 @@ fn consume_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, result: &mu
     if !is_known_html_tag(&tag_name_lower) {
         result.push('<');
         result.push_str(&tag);
-        result.push('>');
+        if found_close {
+            result.push('>');
+        }
         return;
     }
 
