@@ -126,10 +126,8 @@ impl DirigentApp {
     /// (used for backdrop/overlay clicks so selections are not lost).
     pub(super) fn dismiss_topmost_modal(&mut self, keep_pending_play: bool) {
         if self.pending_play.is_some() {
-            if !keep_pending_play {
-                self.pending_play = None;
-            }
-            // pending_play is the topmost modal; don't fall through.
+            // Clear unless caller wants to keep the selection intact.
+            self.pending_play = self.pending_play.take().filter(|_| keep_pending_play);
             return;
         }
         if self.git.pending_force_remove.is_some() {
