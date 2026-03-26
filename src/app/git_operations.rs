@@ -432,6 +432,11 @@ impl DirigentApp {
 
     /// Push and notify all Done PR-sourced cues.
     pub(super) fn start_push_and_notify_pr(&mut self) {
+        if self.git.notifying_pr {
+            self.set_status_message("PR notification already in progress".to_string());
+            return;
+        }
+
         // Collect all Done cues with PR source_ref
         let pr_cues: Vec<(i64, String, String)> = self
             .cues
@@ -470,11 +475,6 @@ impl DirigentApp {
 
         if pr_cues.is_empty() {
             self.set_status_message("No un-notified PR findings in Done".to_string());
-            return;
-        }
-
-        if self.git.notifying_pr {
-            self.set_status_message("PR notification already in progress".to_string());
             return;
         }
 
