@@ -150,7 +150,7 @@ impl DirigentApp {
         let _ = self.db.delete_cue(id);
     }
 
-    fn process_navigate(&mut self, file_path: &str, line: usize, line_end: Option<usize>) {
+    fn process_navigate(&mut self, file_path: &str, line: usize, _line_end: Option<usize>) {
         self.push_nav_history();
         let full_path = self.project_root.join(file_path);
         if self.viewer.current_file() != Some(&full_path) {
@@ -159,8 +159,8 @@ impl DirigentApp {
             self.dismiss_central_overlays();
         }
         if let Some(tab) = self.viewer.active_mut() {
-            tab.selection_start = Some(line);
-            tab.selection_end = Some(line_end.unwrap_or(line));
+            tab.selection_start = None;
+            tab.selection_end = None;
         }
         self.viewer.scroll_to_line = Some(line);
     }
