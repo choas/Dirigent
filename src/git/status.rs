@@ -92,6 +92,24 @@ fn count_status_entries(repo: &Repository) -> (usize, usize, usize, usize) {
     (m, a, d, u)
 }
 
+fn status_letter(s: git2::Status) -> Option<char> {
+    if s.intersects(git2::Status::CONFLICTED) {
+        Some('U')
+    } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+        Some('D')
+    } else if s.intersects(git2::Status::WT_RENAMED | git2::Status::INDEX_RENAMED) {
+        Some('R')
+    } else if s.intersects(git2::Status::WT_MODIFIED | git2::Status::INDEX_MODIFIED) {
+        Some('M')
+    } else if s.intersects(git2::Status::INDEX_NEW) {
+        Some('A')
+    } else if s.intersects(git2::Status::WT_NEW) {
+        Some('?')
+    } else {
+        None
+    }
+}
+
 /// Returns relative paths of all files with uncommitted changes, mapped to their
 /// git status letter (M = modified, A = added/new, D = deleted, R = renamed, ? = untracked).
 pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
@@ -102,27 +120,13 @@ pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
     };
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
-    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
-        for entry in statuses.iter() {
-            let s = entry.status();
-            let letter = if s.intersects(git2::Status::CONFLICTED) {
-                'U'
-            } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
-                'D'
-            } else if s.intersects(git2::Status::WT_RENAMED | git2::Status::INDEX_RENAMED) {
-                'R'
-            } else if s.intersects(git2::Status::WT_MODIFIED | git2::Status::INDEX_MODIFIED) {
-                'M'
-            } else if s.intersects(git2::Status::INDEX_NEW) {
-                'A'
-            } else if s.intersects(git2::Status::WT_NEW) {
-                '?'
-            } else {
-                continue;
-            };
-            if let Some(p) = entry.path() {
-                result.insert(p.to_string(), letter);
-            }
+    let statuses = match repo.statuses(Some(&mut opts)) {
+        Ok(s) => s,
+        Err(_) => return result,
+    };
+    for entry in statuses.iter() {
+        if let (Some(letter), Some(p)) = (status_letter(entry.status()), entry.path()) {
+            result.insert(p.to_string(), letter);
         }
     }
     result
