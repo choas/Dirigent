@@ -163,6 +163,11 @@ impl DirigentApp {
     }
 
     pub(super) fn start_import_pr_findings(&mut self) {
+        if self.git.importing_pr {
+            self.set_status_message("PR import already in progress".to_string());
+            return;
+        }
+
         let pr_number: u32 = match self.git.import_pr_number.trim().parse() {
             Ok(n) if n > 0 => n,
             _ => {
@@ -272,7 +277,7 @@ impl DirigentApp {
                 Ok(Some((
                     existing_id,
                     existing_text,
-                    existing_status,
+                    _existing_status,
                     existing_path,
                     existing_line,
                 ))) => {
@@ -280,7 +285,6 @@ impl DirigentApp {
                         finding,
                         existing_id,
                         &existing_text,
-                        &existing_status,
                         &existing_path,
                         existing_line,
                     ) {
@@ -338,7 +342,6 @@ impl DirigentApp {
         finding: &crate::sources::PrFinding,
         existing_id: i64,
         existing_text: &str,
-        _existing_status: &str,
         existing_path: &str,
         existing_line: usize,
     ) -> anyhow::Result<Option<&'static str>> {
@@ -380,6 +383,10 @@ impl DirigentApp {
 
     /// Notify a single PR comment that a finding was fixed.
     pub(super) fn start_notify_pr_single(&mut self, cue_id: i64) {
+        if self.git.notifying_pr {
+            self.set_status_message("PR notification already in progress".to_string());
+            return;
+        }
         // Look up the cue's source_ref and commit hash
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
@@ -463,6 +470,11 @@ impl DirigentApp {
 
         if pr_cues.is_empty() {
             self.set_status_message("No un-notified PR findings in Done".to_string());
+            return;
+        }
+
+        if self.git.notifying_pr {
+            self.set_status_message("PR notification already in progress".to_string());
             return;
         }
 
