@@ -134,6 +134,23 @@ impl DirigentApp {
     }
 }
 
+/// Resolve the token for a source: use the in-memory value if set, otherwise
+/// fall back to the appropriate environment variable from `.env`.
+fn resolve_source_token(source: &settings::SourceConfig, project_root: &Path) -> String {
+    if !source.token.is_empty() {
+        return source.token.clone();
+    }
+    let env_key = match source.kind {
+        SourceKind::Slack => "SLACK_BOT_TOKEN",
+        SourceKind::SonarQube => "SONAR_TOKEN",
+        _ => return String::new(),
+    };
+    std::env::var(env_key)
+        .ok()
+        .or_else(|| sources::load_env_var(project_root, env_key))
+        .unwrap_or_default()
+}
+
 fn fetch_source_items(
     source: &settings::SourceConfig,
     project_root: &Path,
@@ -154,7 +171,8 @@ fn fetch_source_items(
                 .unwrap_or_else(err)
         }
         SourceKind::Slack => {
-            sources::fetch_slack_messages(&source.token, &source.channel, &source.label)
+            let token = resolve_source_token(source, project_root);
+            sources::fetch_slack_messages(&token, &source.channel, &source.label)
                 .unwrap_or_else(err)
         }
         SourceKind::SonarQube => {
@@ -163,11 +181,12 @@ fn fetch_source_items(
             } else {
                 &source.host_url
             };
+            let token = resolve_source_token(source, project_root);
             sources::fetch_sonarqube_issues(
                 project_root,
                 host,
                 &source.project_key,
-                &source.token,
+                &token,
                 &source.label,
             )
             .unwrap_or_else(err)
