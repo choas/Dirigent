@@ -3,6 +3,23 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+/// Propagate all errors from a schema-migration statement except
+/// "duplicate column" / "already exists", which indicate the migration
+/// was already applied and are safe to ignore.
+fn ok_if_duplicate<T>(result: rusqlite::Result<T>, sql: &str) -> Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("duplicate column") || msg.contains("already exists") {
+                Ok(())
+            } else {
+                Err(e).with_context(|| format!("migration failed: {sql}"))
+            }
+        }
+    }
+}
+
 pub(crate) struct Database {
     pub(super) conn: Connection,
 }
@@ -17,7 +34,7 @@ impl Database {
         let conn = Connection::open(&db_path)
             .with_context(|| format!("opening database at {}", db_path.display()))?;
 
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         let db = Database { conn };
         db.create_tables()?;
@@ -28,10 +45,29 @@ impl Database {
         // Migration: rename comments -> cues if old table exists
         let has_old_table: bool = self.conn.prepare("SELECT 1 FROM comments LIMIT 0").is_ok();
         if has_old_table {
-            // Drop empty cues table if it was already created, so rename can succeed
-            let _ = self.conn.execute_batch("DROP TABLE IF EXISTS cues;");
-            self.conn
-                .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
+            let cues_count: i64 = match self
+                .conn
+                .prepare("SELECT COUNT(*) FROM cues")
+                .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            {
+                Ok(n) => n,
+                Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                    if msg.contains("no such table") =>
+                {
+                    0
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| "migration: checking cues table count");
+                }
+            };
+            if cues_count == 0 {
+                self.conn.execute_batch("DROP TABLE IF EXISTS cues;")?;
+                self.conn
+                    .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
+            } else {
+                // cues table has data — drop the legacy comments table instead
+                self.conn.execute_batch("DROP TABLE comments;")?;
+            }
         }
 
         self.conn.execute_batch(
@@ -60,9 +96,11 @@ impl Database {
             .prepare("SELECT line_number_end FROM cues LIMIT 0")
             .is_ok();
         if !has_col {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE cues ADD COLUMN line_number_end INTEGER;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE cues ADD COLUMN line_number_end INTEGER;"),
+                "ALTER TABLE cues ADD COLUMN line_number_end",
+            )?;
         }
         // Migration: rename comment_id -> cue_id in executions
         let has_old_col: bool = self
@@ -70,9 +108,11 @@ impl Database {
             .prepare("SELECT comment_id FROM executions LIMIT 0")
             .is_ok();
         if has_old_col {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE executions RENAME COLUMN comment_id TO cue_id;"),
+                "ALTER TABLE executions RENAME COLUMN comment_id TO cue_id",
+            )?;
         }
         // Migration: add log column to executions
         let has_log_col: bool = self
@@ -80,9 +120,11 @@ impl Database {
             .prepare("SELECT log FROM executions LIMIT 0")
             .is_ok();
         if !has_log_col {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions ADD COLUMN log TEXT;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE executions ADD COLUMN log TEXT;"),
+                "ALTER TABLE executions ADD COLUMN log",
+            )?;
         }
         // Migration: add source_label and source_ref columns to cues
         let has_source_label: bool = self
@@ -90,18 +132,22 @@ impl Database {
             .prepare("SELECT source_label FROM cues LIMIT 0")
             .is_ok();
         if !has_source_label {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE cues ADD COLUMN source_label TEXT;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE cues ADD COLUMN source_label TEXT;"),
+                "ALTER TABLE cues ADD COLUMN source_label",
+            )?;
         }
         let has_source_ref: bool = self
             .conn
             .prepare("SELECT source_ref FROM cues LIMIT 0")
             .is_ok();
         if !has_source_ref {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE cues ADD COLUMN source_ref TEXT;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE cues ADD COLUMN source_ref TEXT;"),
+                "ALTER TABLE cues ADD COLUMN source_ref",
+            )?;
         }
         // Migration: add attached_images column to cues
         let has_attached_images: bool = self
@@ -109,16 +155,20 @@ impl Database {
             .prepare("SELECT attached_images FROM cues LIMIT 0")
             .is_ok();
         if !has_attached_images {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE cues ADD COLUMN attached_images TEXT;"),
+                "ALTER TABLE cues ADD COLUMN attached_images",
+            )?;
         }
         // Migration: add tag column to cues
         let has_tag: bool = self.conn.prepare("SELECT tag FROM cues LIMIT 0").is_ok();
         if !has_tag {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE cues ADD COLUMN tag TEXT;");
+            ok_if_duplicate(
+                self.conn
+                    .execute_batch("ALTER TABLE cues ADD COLUMN tag TEXT;"),
+                "ALTER TABLE cues ADD COLUMN tag",
+            )?;
         }
         // Migration: add provider column to executions
         let has_provider_col: bool = self
@@ -126,23 +176,36 @@ impl Database {
             .prepare("SELECT provider FROM executions LIMIT 0")
             .is_ok();
         if !has_provider_col {
-            let _ = self
-                .conn
-                .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
+            ok_if_duplicate(
+                self.conn.execute_batch(
+                    "ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';",
+                ),
+                "ALTER TABLE executions ADD COLUMN provider",
+            )?;
         }
         // Migration: add run metrics columns to executions
-        let has_cost_col: bool = self
-            .conn
-            .prepare("SELECT cost_usd FROM executions LIMIT 0")
-            .is_ok();
-        if !has_cost_col {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE executions ADD COLUMN cost_usd REAL;
-                 ALTER TABLE executions ADD COLUMN duration_ms INTEGER;
-                 ALTER TABLE executions ADD COLUMN num_turns INTEGER;
-                 ALTER TABLE executions ADD COLUMN input_tokens INTEGER;
-                 ALTER TABLE executions ADD COLUMN output_tokens INTEGER;",
-            );
+        {
+            let mut existing_cols: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            if let Ok(mut stmt) = self.conn.prepare("PRAGMA table_info(executions)") {
+                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(1)) {
+                    for name in rows.flatten() {
+                        existing_cols.insert(name);
+                    }
+                }
+            }
+            for (col, typ) in [
+                ("cost_usd", "REAL"),
+                ("duration_ms", "INTEGER"),
+                ("num_turns", "INTEGER"),
+                ("input_tokens", "INTEGER"),
+                ("output_tokens", "INTEGER"),
+            ] {
+                if !existing_cols.contains(col) {
+                    let sql = format!("ALTER TABLE executions ADD COLUMN {col} {typ}");
+                    ok_if_duplicate(self.conn.execute(&sql, []), &sql)?;
+                }
+            }
         }
         // Activity log table for cue lifecycle timestamps
         self.conn.execute_batch(
@@ -158,7 +221,7 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS agent_runs (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_kind    TEXT NOT NULL,
-                cue_id        INTEGER,
+                cue_id        INTEGER REFERENCES cues(id) ON DELETE SET NULL,
                 command       TEXT NOT NULL,
                 status        TEXT NOT NULL,
                 output        TEXT,
@@ -169,15 +232,14 @@ impl Database {
             );",
         )?;
         // Index on status for faster filtered queries
-        let _ = self
-            .conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);");
-        let _ = self.conn.execute_batch(
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);")?;
+        self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_activity_cue ON cue_activity_log(cue_id);",
-        );
-        let _ = self.conn.execute_batch(
+        )?;
+        self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
-        );
+        )?;
         // Settings migrations tracker – records which playbook/settings
         // migrations have already been applied so they run at most once.
         self.conn.execute_batch(
@@ -200,10 +262,12 @@ impl Database {
 
     fn record_settings_migration(&self, name: &str) {
         let now = Local::now().to_rfc3339();
-        let _ = self.conn.execute(
+        if let Err(e) = self.conn.execute(
             "INSERT OR IGNORE INTO settings_migrations (name, applied_at) VALUES (?1, ?2)",
             params![name, now],
-        );
+        ) {
+            eprintln!("Failed to record settings migration '{name}': {e}");
+        }
     }
 
     /// Apply one-time migrations to the in-memory settings (e.g. updating

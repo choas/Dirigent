@@ -77,6 +77,7 @@ struct ProviderConfig {
     env_vars: String,
     pre_run_script: String,
     post_run_script: String,
+    skip_permissions: bool,
 }
 
 /// Resolve a `[command]` prefix from cue text, returning the effective prompt text
@@ -156,6 +157,7 @@ fn build_provider_config(
         env_vars,
         pre_run_script,
         post_run_script,
+        skip_permissions: settings.allow_dangerous_skip_permissions,
     }
 }
 
@@ -195,6 +197,7 @@ fn run_claude_provider(
         &req.config.env_vars,
         &req.config.pre_run_script,
         &req.config.post_run_script,
+        req.config.skip_permissions,
         on_log,
         cancel,
     );
@@ -364,7 +367,13 @@ impl DirigentApp {
     }
 
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
-        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            eprintln!("Failed to sync home guard hook: {e:#}");
+            return;
+        }
 
         // Start tracking immediately so the timer appears in the UI while
         // we build the prompt (which may involve blocking I/O for auto-context).
@@ -413,7 +422,13 @@ impl DirigentApp {
         reply: &str,
         reply_images: &[String],
     ) {
-        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            eprintln!("Failed to sync home guard hook: {e:#}");
+            return;
+        }
 
         let provider = self.settings.cli_provider.clone();
 

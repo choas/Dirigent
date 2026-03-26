@@ -8,14 +8,21 @@ use super::providers::{CliProvider, SourceConfig};
 use super::theme::ThemeChoice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct Settings {
     pub theme: ThemeChoice,
     pub cli_provider: CliProvider,
     pub claude_model: String,
+    /// Extra model identifiers to show in the Claude model dropdown.
+    /// Add new model IDs here (in settings JSON) so they appear without a code change.
+    #[serde(default)]
+    pub claude_custom_models: Vec<String>,
     #[serde(default)]
     pub claude_cli_path: String,
     #[serde(default)]
     pub claude_extra_args: String,
+    /// Environment variable **names** to forward to the CLI process (one per line).
+    /// Values are resolved from the current environment at runtime — never stored.
     #[serde(default)]
     pub claude_env_vars: String,
     #[serde(default)]
@@ -27,6 +34,8 @@ pub(crate) struct Settings {
     pub opencode_cli_path: String,
     #[serde(default)]
     pub opencode_extra_args: String,
+    /// Environment variable **names** to forward to the CLI process (one per line).
+    /// Values are resolved from the current environment at runtime — never stored.
     #[serde(default)]
     pub opencode_env_vars: String,
     #[serde(default)]
@@ -71,6 +80,10 @@ pub(crate) struct Settings {
     /// Automatically include the git diff in the prompt.
     #[serde(default)]
     pub auto_context_git_diff: bool,
+    /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
+    /// Disabled by default; must be explicitly opted-in via the settings UI.
+    #[serde(default)]
+    pub allow_dangerous_skip_permissions: bool,
 }
 
 fn default_true() -> bool {
@@ -91,6 +104,7 @@ impl Default for Settings {
             theme: ThemeChoice::Dark,
             cli_provider: CliProvider::default(),
             claude_model: "claude-opus-4-6".to_string(),
+            claude_custom_models: Vec::new(),
             claude_cli_path: String::new(),
             claude_extra_args: String::new(),
             claude_env_vars: String::new(),
@@ -117,6 +131,7 @@ impl Default for Settings {
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,
+            allow_dangerous_skip_permissions: false,
         }
     }
 }

@@ -71,19 +71,23 @@ fn append_new_file_diff(diff: &mut String, repo_path: &Path, rel_path: &str) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let line_count = contents.lines().count().max(1);
+    let line_count = contents.lines().count();
     diff.push_str(&format!("diff --git a/{rel_path} b/{rel_path}\n"));
     diff.push_str("new file mode 100644\n");
     diff.push_str("--- /dev/null\n");
     diff.push_str(&format!("+++ b/{rel_path}\n"));
-    diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
-    for line in contents.lines() {
-        diff.push('+');
-        diff.push_str(line);
-        diff.push('\n');
-    }
-    if !contents.ends_with('\n') {
-        diff.push_str("\\ No newline at end of file\n");
+    if line_count == 0 {
+        diff.push_str("@@ -0,0 +0,0 @@\n");
+    } else {
+        diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
+        for line in contents.lines() {
+            diff.push('+');
+            diff.push_str(line);
+            diff.push('\n');
+        }
+        if !contents.ends_with('\n') {
+            diff.push_str("\\ No newline at end of file\n");
+        }
     }
 }
 
@@ -124,8 +128,18 @@ pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) 
 
     let mut paths = Vec::new();
     for line in diff_text.lines() {
-        if let Some(rest) = line.strip_prefix("+++ b/") {
+        let rest = if let Some(r) = line.strip_prefix("+++ b/") {
+            Some(r)
+        } else if let Some(r) = line.strip_prefix("--- a/") {
+            Some(r)
+        } else {
+            None
+        };
+        if let Some(rest) = rest {
             let path = rest.trim();
+            if path == "/dev/null" || path.is_empty() {
+                continue;
+            }
             // Strip dir prefix if present
             let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
             let path = path.to_string();

@@ -71,11 +71,43 @@ impl DirigentApp {
     }
 
     fn render_claude_model_combo(&mut self, ui: &mut egui::Ui) {
-        egui::ComboBox::from_id_salt("model_combo")
+        const DEFAULT_CLAUDE_MODELS: &[&str] = &[
+            "claude-opus-4-6",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+        ];
+
+        egui::ComboBox::from_id_salt("claude_model_combo")
             .selected_text(&self.settings.claude_model)
             .show_ui(ui, |ui| {
-                for model in &["claude-opus-4-6", "claude-sonnet-4-6"] {
+                for model in DEFAULT_CLAUDE_MODELS {
                     ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
+                }
+                if !self.settings.claude_custom_models.is_empty() {
+                    ui.separator();
+                    for model in &self.settings.claude_custom_models {
+                        ui.selectable_value(
+                            &mut self.settings.claude_model,
+                            model.clone(),
+                            model.as_str(),
+                        );
+                    }
+                }
+                // Show the current model even if it's not in either list
+                // (e.g. manually edited in settings JSON).
+                let current = self.settings.claude_model.clone();
+                if !current.is_empty()
+                    && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
+                    && !self.settings.claude_custom_models.contains(&current)
+                {
+                    ui.separator();
+                    ui.selectable_value(
+                        &mut self.settings.claude_model,
+                        current.clone(),
+                        current.as_str(),
+                    );
                 }
             });
     }
@@ -96,7 +128,7 @@ impl DirigentApp {
             self.opencode_models.clone()
         };
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("model_combo")
+            egui::ComboBox::from_id_salt("opencode_model_combo")
                 .selected_text(&self.settings.opencode_model)
                 .show_ui(ui, |ui| {
                     for model in &models {
@@ -107,7 +139,9 @@ impl DirigentApp {
                         );
                     }
                 });
-            if ui
+            if self.opencode_models_loading {
+                ui.spinner();
+            } else if ui
                 .small_button("\u{21BB}")
                 .on_hover_text("Refresh available models from OpenCode")
                 .clicked()
@@ -148,12 +182,18 @@ impl DirigentApp {
         ui.end_row();
 
         ui.label("Default Flags:");
-        ui.label(
-            egui::RichText::new(
-                "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions",
-            )
-            .monospace()
-            .weak(),
+        let flags = if self.settings.allow_dangerous_skip_permissions {
+            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
+        } else {
+            "-p <prompt> --verbose --output-format stream-json"
+        };
+        ui.label(egui::RichText::new(flags).monospace().weak());
+        ui.end_row();
+
+        ui.label("Skip Permissions:");
+        ui.checkbox(
+            &mut self.settings.allow_dangerous_skip_permissions,
+            "Append --dangerously-skip-permissions",
         );
         ui.end_row();
 

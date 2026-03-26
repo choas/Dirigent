@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::Local;
 use rusqlite::params;
 
 use super::converters::row_to_cue;
@@ -38,7 +39,8 @@ impl Database {
         } else {
             Some(serde_json::to_string(images).unwrap_or_default())
         };
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO cues (text, file_path, line_number, line_number_end, status, attached_images) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 text,
@@ -49,8 +51,13 @@ impl Database {
                 images_json,
             ],
         )?;
-        let id = self.conn.last_insert_rowid();
-        let _ = self.log_activity(id, "Created");
+        let id = tx.last_insert_rowid();
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        tx.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![id, timestamp, "Created"],
+        )?;
+        tx.commit()?;
         Ok(id)
     }
 
@@ -76,14 +83,14 @@ impl Database {
     }
 
     pub fn delete_cue(&self, id: i64) -> Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "DELETE FROM cue_activity_log WHERE cue_id = ?1",
             params![id],
         )?;
-        self.conn
-            .execute("DELETE FROM executions WHERE cue_id = ?1", params![id])?;
-        self.conn
-            .execute("DELETE FROM cues WHERE id = ?1", params![id])?;
+        tx.execute("DELETE FROM executions WHERE cue_id = ?1", params![id])?;
+        tx.execute("DELETE FROM cues WHERE id = ?1", params![id])?;
+        tx.commit()?;
         Ok(())
     }
 

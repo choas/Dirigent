@@ -19,6 +19,7 @@ impl Database {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn =
             rusqlite::Connection::open_in_memory().with_context(|| "opening in-memory database")?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)

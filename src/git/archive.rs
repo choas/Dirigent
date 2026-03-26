@@ -15,12 +15,56 @@ pub(crate) fn archive_worktree_db(
         return Ok(None);
     }
 
+    // Checkpoint the WAL so all data is flushed into the main DB file before copying.
+    // TRUNCATE mode also removes the -wal and -shm files afterward.
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &src_db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
+        .map_err(|e| {
+            DirigentError::Sqlite(format!(
+                "failed to open worktree DB for WAL checkpoint: {}",
+                e
+            ))
+        })?;
+        conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")
+            .map_err(|e| DirigentError::Sqlite(format!("WAL checkpoint failed: {}", e)))?;
+    }
+
     let archives_dir = main_repo_path.join(".Dirigent").join("archives");
     std::fs::create_dir_all(&archives_dir)
         .map_err(|e| DirigentError::GitCommand(format!("failed to create archives dir: {}", e)))?;
 
-    // Sanitize worktree name for use as filename (replace path separators)
-    let safe_name = worktree_name.replace(['/', '\\'], "-");
+    // Sanitize worktree name for cross-platform filename safety:
+    // replace path separators, Windows-invalid chars, and control characters.
+    let safe_name: String = worktree_name
+        .chars()
+        .map(|c| {
+            if c == '/'
+                || c == '\\'
+                || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                || c.is_control()
+            {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    // Collapse consecutive dashes, trim leading/trailing dashes and dots
+    let safe_name: String = safe_name
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let safe_name = safe_name.trim_matches('.').to_string();
+    // Fallback if the result is empty
+    let safe_name = if safe_name.is_empty() {
+        format!("worktree_{}", chrono::Utc::now().format("%Y%m%dT%H%M%S"))
+    } else {
+        safe_name
+    };
 
     let mut target = archives_dir.join(format!("{}.db", safe_name));
     if target.exists() {
@@ -49,7 +93,13 @@ pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
     let archives_dir = main_repo_path.join(".Dirigent").join("archives");
     let entries = match std::fs::read_dir(&archives_dir) {
         Ok(e) => e,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            eprintln!(
+                "failed to read archives dir {}: {e}",
+                archives_dir.display()
+            );
+            return Vec::new();
+        }
     };
 
     let mut result = Vec::new();

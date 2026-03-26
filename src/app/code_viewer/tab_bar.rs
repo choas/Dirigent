@@ -91,7 +91,7 @@ impl DirigentApp {
             ui.id().with(("tab_ctx", i)),
             egui::Sense::click(),
         );
-        if ctx_resp.clicked() {
+        if ctx_resp.clicked() && *action != TabBarAction::CloseOne(i) {
             *action = TabBarAction::Activate(i);
         }
         self.render_tab_context_menu(&ctx_resp, i, action);

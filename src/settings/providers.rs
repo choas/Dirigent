@@ -76,7 +76,7 @@ pub(crate) struct SourceConfig {
     pub filter: String,
     #[serde(default)]
     pub command: String,
-    #[serde(default)]
+    #[serde(skip)]
     pub token: String,
     #[serde(default)]
     pub channel: String,

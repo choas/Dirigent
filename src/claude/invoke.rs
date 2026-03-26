@@ -33,13 +33,21 @@ pub(crate) fn invoke_claude_streaming(
     env_vars: &str,
     pre_run_script: &str,
     post_run_script: &str,
+    skip_permissions: bool,
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
     use std::process::Stdio;
 
     let claude_bin = resolve_claude_binary(cli_path)?;
-    let mut cmd = build_claude_command(claude_bin, prompt, model, extra_args, env_vars);
+    let mut cmd = build_claude_command(
+        claude_bin,
+        prompt,
+        model,
+        extra_args,
+        env_vars,
+        skip_permissions,
+    );
 
     run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
 

@@ -1,3 +1,5 @@
+use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::Path;
 
 /// Install or remove the Claude Code home-directory guard hook.
@@ -8,7 +10,7 @@ use std::path::Path;
 ///
 /// When `allow_home_folder_access` is **true**, removes the hook script and
 /// its registration from the settings file.
-pub(crate) fn sync_home_guard_hook(project_root: &Path, allow: bool) {
+pub(crate) fn sync_home_guard_hook(project_root: &Path, allow: bool) -> Result<()> {
     let dirigent_dir = project_root.join(".Dirigent");
     let claude_dir = project_root.join(".claude");
     let hook_script = dirigent_dir.join("home_guard.sh");
@@ -16,36 +18,45 @@ pub(crate) fn sync_home_guard_hook(project_root: &Path, allow: bool) {
 
     if allow {
         // --- Remove the hook ---
-        let _ = std::fs::remove_file(&hook_script);
-        remove_hook_from_settings(&settings_file);
+        // Ignore "not found" – the hook may already be absent.
+        if hook_script.exists() {
+            std::fs::remove_file(&hook_script).context("removing home_guard.sh")?;
+        }
+        remove_hook_from_settings(&settings_file)?;
     } else {
         // --- Install the hook ---
-        let _ = std::fs::create_dir_all(&dirigent_dir);
-        let _ = std::fs::write(&hook_script, home_guard_script_content());
+        std::fs::create_dir_all(&dirigent_dir).context("creating .Dirigent directory")?;
+        std::fs::write(&hook_script, home_guard_script_content(project_root))
+            .context("writing home_guard.sh")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&hook_script, std::fs::Permissions::from_mode(0o755));
+            std::fs::set_permissions(&hook_script, std::fs::Permissions::from_mode(0o755))
+                .context("setting home_guard.sh permissions")?;
         }
-        let _ = std::fs::create_dir_all(&claude_dir);
-        upsert_hook_in_settings(&settings_file, &hook_script);
+        std::fs::create_dir_all(&claude_dir).context("creating .claude directory")?;
+        upsert_hook_in_settings(&settings_file, &hook_script)?;
     }
+    Ok(())
 }
 
 /// The shell script that Claude Code runs as a `PreToolUse` hook.
 /// It checks every path-like value in the tool input JSON against a set of
 /// restricted home sub-directories and exits with code 2 to block the call.
-fn home_guard_script_content() -> String {
+fn home_guard_script_content(project_root: &Path) -> String {
     r#"#!/bin/bash
 # Dirigent home-directory guard – Claude Code PreToolUse hook.
 # Blocks tool calls that reference personal home directories or
 # recursively search from the home directory root.
 INPUT=$(cat)
 HOME_DIR="${HOME:-/Users/$(whoami)}"
+PROJECT_ROOT="__PROJECT_ROOT__"
 
 # 1. Block explicit references to personal sub-directories.
 for DIR in Documents Desktop Downloads Photos Pictures Movies Music Library Applications .ssh .gnupg; do
     BLOCKED="$HOME_DIR/$DIR"
+    # Skip if the project root lives under this blocked directory.
+    case "$PROJECT_ROOT" in "$BLOCKED"|"$BLOCKED"/*) continue ;; esac
     if echo "$INPUT" | grep -qF "$BLOCKED"; then
         echo "Blocked by Dirigent: access to ~/$DIR is restricted. Disable the home-folder guard in Dirigent Settings to override."
         exit 2
@@ -69,12 +80,15 @@ fi
 
 exit 0
 "#
-    .to_string()
+    .replace("__PROJECT_ROOT__", &project_root.to_string_lossy())
 }
 
 /// Add (or re-add) our guard hook entry to a `.claude/settings.local.json` file.
-fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) {
+fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) -> Result<()> {
     let mut root = read_json_object(settings_path);
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
 
     let hooks = root
         .as_object_mut()
@@ -105,15 +119,15 @@ fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) {
         }));
     }
 
-    if let Ok(json) = serde_json::to_string_pretty(&root) {
-        let _ = std::fs::write(settings_path, json);
-    }
+    let json = serde_json::to_string_pretty(&root).context("serializing settings JSON")?;
+    atomic_write(settings_path, json.as_bytes()).context("writing settings.local.json")?;
+    Ok(())
 }
 
 /// Remove our guard hook entry from a `.claude/settings.local.json` file.
-fn remove_hook_from_settings(settings_path: &Path) {
+fn remove_hook_from_settings(settings_path: &Path) -> Result<()> {
     if !settings_path.exists() {
-        return;
+        return Ok(());
     }
     let mut root = read_json_object(settings_path);
 
@@ -134,10 +148,24 @@ fn remove_hook_from_settings(settings_path: &Path) {
     };
 
     if changed {
-        if let Ok(json) = serde_json::to_string_pretty(&root) {
-            let _ = std::fs::write(settings_path, json);
-        }
+        let json = serde_json::to_string_pretty(&root).context("serializing settings JSON")?;
+        atomic_write(settings_path, json.as_bytes()).context("writing settings.local.json")?;
     }
+    Ok(())
+}
+
+/// Write `data` to `path` atomically: write to a temp file in the same
+/// directory, fsync, then rename over the target. This prevents
+/// crash-corruption of the settings file.
+fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
+    let dir = path
+        .parent()
+        .context("settings path has no parent directory")?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir).context("creating temp file")?;
+    tmp.write_all(data).context("writing temp file")?;
+    tmp.as_file().sync_all().context("fsync temp file")?;
+    tmp.persist(path).context("renaming temp file into place")?;
+    Ok(())
 }
 
 /// Read a JSON file as a `serde_json::Value` object, defaulting to `{}`.

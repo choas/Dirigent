@@ -185,7 +185,7 @@ impl DirigentApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.settings.sources[i].token)
                         .desired_width(200.0)
-                        .hint_text("xoxb-...")
+                        .hint_text("from env SLACK_BOT_TOKEN or .env")
                         .password(true)
                         .font(egui::TextStyle::Monospace),
                 );
@@ -223,7 +223,7 @@ impl DirigentApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.settings.sources[i].token)
                         .desired_width(200.0)
-                        .hint_text("leave empty to use .env SONAR_TOKEN")
+                        .hint_text("from env SONAR_TOKEN or .env")
                         .password(true)
                         .font(egui::TextStyle::Monospace),
                 );
