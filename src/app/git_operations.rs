@@ -19,20 +19,30 @@ impl DirigentApp {
 
     /// Check for completed git push.
     pub(super) fn process_push_result(&mut self) {
-        if let Some(ref rx) = self.git.push_rx {
-            if let Ok(result) = rx.try_recv() {
+        let rx = match self.git.push_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.pushing = false;
                 self.git.push_rx = None;
-                match result {
-                    Ok(msg) => {
-                        self.set_status_message(msg);
-                        self.reload_git_info();
-                        self.reload_commit_history();
-                    }
-                    Err(e) => {
-                        self.set_status_message(format!("Push failed: {}", e));
-                    }
-                }
+                self.set_status_message("Git push failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.pushing = false;
+        self.git.push_rx = None;
+        match result {
+            Ok(msg) => {
+                self.set_status_message(msg);
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => {
+                self.set_status_message(format!("Push failed: {}", e));
             }
         }
     }
@@ -111,20 +121,30 @@ impl DirigentApp {
 
     /// Check for completed PR creation.
     pub(super) fn process_pr_result(&mut self) {
-        if let Some(ref rx) = self.git.pr_rx {
-            if let Ok(result) = rx.try_recv() {
+        let rx = match self.git.pr_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.creating_pr = false;
                 self.git.pr_rx = None;
-                match result {
-                    Ok(url) => {
-                        self.set_status_message(format!("PR created: {}", url));
-                        self.reload_git_info();
-                        self.reload_commit_history();
-                    }
-                    Err(e) => {
-                        self.set_status_message(format!("PR failed: {}", e));
-                    }
-                }
+                self.set_status_message("PR creation failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.creating_pr = false;
+        self.git.pr_rx = None;
+        match result {
+            Ok(url) => {
+                self.set_status_message(format!("PR created: {}", url));
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => {
+                self.set_status_message(format!("PR failed: {}", e));
             }
         }
     }
@@ -451,10 +471,6 @@ impl DirigentApp {
         let (tx, rx) = mpsc::channel();
         self.git.pr_notify_rx = Some(rx);
 
-        // Log which cue IDs we're notifying (for activity log after completion)
-        let cue_ids: Vec<i64> = pr_cues.iter().map(|(id, _, _)| *id).collect();
-        let cue_ids_clone = cue_ids.clone();
-
         std::thread::spawn(move || {
             // First push
             let push_result = crate::git::git_push(&project_root);
@@ -463,22 +479,22 @@ impl DirigentApp {
                 return;
             }
 
-            // Then notify each PR comment
-            let mut notified = 0;
+            // Then notify each PR comment, collecting only IDs that were actually notified
+            let mut notified_ids: Vec<i64> = Vec::new();
             let mut errors = Vec::new();
-            for (_cue_id, source_ref, commit_hash) in &pr_cues {
+            for (cue_id, source_ref, commit_hash) in &pr_cues {
                 match crate::sources::notify_pr_finding_fixed(
                     &project_root,
                     source_ref,
                     commit_hash,
                 ) {
-                    Ok(true) => notified += 1,
+                    Ok(true) => notified_ids.push(*cue_id),
                     Ok(false) => {}
                     Err(e) => errors.push(e.to_string()),
                 }
             }
 
-            let mut msg = format!("Pushed and notified {} PR comment(s)", notified);
+            let mut msg = format!("Pushed and notified {} PR comment(s)", notified_ids.len());
             if !errors.is_empty() {
                 msg.push_str(&format!(
                     "; {} error(s): {}",
@@ -486,8 +502,8 @@ impl DirigentApp {
                     errors.join(", ")
                 ));
             }
-            // Encode cue IDs in the result for activity logging
-            let ids_str: Vec<String> = cue_ids_clone.iter().map(|id| id.to_string()).collect();
+            // Encode only actually-notified cue IDs in the result for activity logging
+            let ids_str: Vec<String> = notified_ids.iter().map(|id| id.to_string()).collect();
             let _ = tx.send(Ok(format!("{}|{}", msg, ids_str.join(","))));
         });
     }
