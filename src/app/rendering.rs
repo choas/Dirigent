@@ -94,7 +94,16 @@ impl DirigentApp {
             || self.git.show_worktree_panel
             || self.show_about
             || self.pending_play.is_some()
-            || self.git.show_create_pr;
+            || self.git.show_create_pr
+            || self.git.pending_force_remove.is_some()
+            || self.git.pending_delete_archive.is_some()
+            || self.pending_file_delete.is_some()
+            || self.rename_target.is_some()
+            || self.git_init_confirm.is_some()
+            || self.git.show_pull_diverged
+            || self.git.show_pull_unmerged
+            || self.git.show_merge_conflicts
+            || self.git.show_import_pr;
         if !has_modal {
             return;
         }
@@ -123,7 +132,25 @@ impl DirigentApp {
             // pending_play is the topmost modal; don't fall through.
             return;
         }
-        if self.git.show_create_pr {
+        if self.git.pending_force_remove.is_some() {
+            self.git.pending_force_remove = None;
+        } else if self.git.pending_delete_archive.is_some() {
+            self.git.pending_delete_archive = None;
+        } else if self.pending_file_delete.is_some() {
+            self.pending_file_delete = None;
+        } else if self.rename_target.is_some() {
+            self.rename_target = None;
+        } else if self.git_init_confirm.is_some() {
+            self.git_init_confirm = None;
+        } else if self.git.show_merge_conflicts {
+            self.git.show_merge_conflicts = false;
+        } else if self.git.show_pull_diverged {
+            self.git.show_pull_diverged = false;
+        } else if self.git.show_pull_unmerged {
+            self.git.show_pull_unmerged = false;
+        } else if self.git.show_import_pr {
+            self.git.show_import_pr = false;
+        } else if self.git.show_create_pr {
             self.git.show_create_pr = false;
         } else if self.show_about {
             self.show_about = false;
