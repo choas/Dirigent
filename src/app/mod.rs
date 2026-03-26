@@ -286,7 +286,10 @@ impl DirigentApp {
         let db = Database::open(&project_root).expect("failed to open database");
         let mut settings = settings::load_settings(&project_root);
         // Apply one-time settings migrations (e.g. updated default plays).
-        if db.migrate_settings(&mut settings) {
+        if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
+            eprintln!("settings migration error: {e:#}");
+            false
+        }) {
             settings::save_settings(&project_root, &settings);
         }
         // Seed the in-session recent_repos from the global list so the repo
