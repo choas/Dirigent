@@ -180,6 +180,8 @@ pub struct DirigentApp {
 
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
+    opencode_models_loading: bool,
+    opencode_models_rx: mpsc::Receiver<Vec<String>>,
 
     // Agent run history cleanup tracking
     last_agent_cleanup: Instant,
@@ -480,6 +482,8 @@ impl DirigentApp {
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
+            opencode_models_loading: false,
+            opencode_models_rx: mpsc::channel().1,
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
             follow_up_queue: HashMap::new(),
