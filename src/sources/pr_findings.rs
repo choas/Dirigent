@@ -50,7 +50,7 @@ fn gh_api_paginated(
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_paginated_json(&json_str))
+    parse_paginated_json(&json_str)
 }
 
 /// Determine whether a comment body should be skipped (empty, confirmation, or summary).

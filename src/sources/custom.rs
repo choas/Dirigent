@@ -111,22 +111,23 @@ pub(crate) fn output_with_timeout(
 /// Parse JSON output from `gh api --paginate`.
 /// When paginating, `gh` may concatenate multiple JSON arrays: `[...][...]`.
 /// This function handles both a single valid array and concatenated arrays.
-pub(crate) fn parse_paginated_json(raw: &str) -> Vec<serde_json::Value> {
+pub(crate) fn parse_paginated_json(raw: &str) -> crate::error::Result<Vec<serde_json::Value>> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Fast path: valid single JSON array
     if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
-        return arr;
+        return Ok(arr);
     }
     // Slow path: concatenated arrays — use streaming deserializer to handle `[...][...]`
     let mut items = Vec::new();
     let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Vec<serde_json::Value>>();
-    for arr in stream.flatten() {
+    for result in stream {
+        let arr = result?;
         items.extend(arr);
     }
-    items
+    Ok(items)
 }
 
 /// Fetch items from a custom command source.
@@ -162,23 +163,11 @@ pub(crate) fn fetch_custom_command(
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_source_json(&json_str, source_label))
+    parse_source_json(&json_str, source_label)
 }
 
-/// Parse JSON output from a source command.
-/// Supports a single JSON array, concatenated arrays (`[...][...]`), or
-/// newline-delimited JSON objects.  Each object must have "id" and "text" fields.
-pub(super) fn parse_source_json(json_str: &str, source_label: &str) -> Vec<SourceItem> {
-    // Try paginated (possibly concatenated) JSON arrays first
-    let paginated = parse_paginated_json(json_str);
-    if !paginated.is_empty() {
-        return paginated
-            .iter()
-            .filter_map(|obj| parse_source_object(obj, source_label))
-            .collect();
-    }
-
-    // Try newline-delimited JSON
+/// Parse newline-delimited JSON objects into source items.
+fn parse_ndjson_items(json_str: &str, source_label: &str) -> Vec<SourceItem> {
     json_str
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -187,6 +176,36 @@ pub(super) fn parse_source_json(json_str: &str, source_label: &str) -> Vec<Sourc
             parse_source_object(&obj, source_label)
         })
         .collect()
+}
+
+/// Parse JSON output from a source command.
+/// Supports a single JSON array, concatenated arrays (`[...][...]`), or
+/// newline-delimited JSON objects.  Each object must have "id" and "text" fields.
+pub(super) fn parse_source_json(
+    json_str: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    // Try paginated (possibly concatenated) JSON arrays first
+    match parse_paginated_json(json_str) {
+        Ok(paginated) if !paginated.is_empty() => {
+            return Ok(paginated
+                .iter()
+                .filter_map(|obj| parse_source_object(obj, source_label))
+                .collect());
+        }
+        Ok(_) => {} // empty result, fall through to NDJSON
+        Err(paginated_err) => {
+            // Paginated parsing failed; try NDJSON before propagating the error
+            let ndjson_items = parse_ndjson_items(json_str, source_label);
+            if !ndjson_items.is_empty() {
+                return Ok(ndjson_items);
+            }
+            return Err(paginated_err);
+        }
+    }
+
+    // Try newline-delimited JSON
+    Ok(parse_ndjson_items(json_str, source_label))
 }
 
 pub(super) fn parse_source_object(
@@ -259,7 +278,7 @@ mod tests {
     #[test]
     fn parse_json_array() {
         let json = r#"[{"id":"1","text":"first"},{"id":"2","text":"second"}]"#;
-        let items = parse_source_json(json, "test");
+        let items = parse_source_json(json, "test").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].external_id, "1");
         assert_eq!(items[0].text, "first");
@@ -269,21 +288,21 @@ mod tests {
     #[test]
     fn parse_ndjson() {
         let json = "{\"id\":\"a\",\"text\":\"alpha\"}\n{\"id\":\"b\",\"text\":\"beta\"}\n";
-        let items = parse_source_json(json, "src");
+        let items = parse_source_json(json, "src").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].external_id, "b");
     }
 
     #[test]
     fn parse_empty_json() {
-        let items = parse_source_json("[]", "test");
+        let items = parse_source_json("[]", "test").unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
     fn parse_missing_fields_skipped() {
         let json = r#"[{"id":"1"},{"id":"2","text":"ok"}]"#;
-        let items = parse_source_json(json, "test");
+        let items = parse_source_json(json, "test").unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].external_id, "2");
     }
@@ -291,10 +310,16 @@ mod tests {
     #[test]
     fn parse_concatenated_arrays() {
         let json = r#"[{"id":"1","text":"first"}][{"id":"2","text":"second"}]"#;
-        let items = parse_source_json(json, "test");
+        let items = parse_source_json(json, "test").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].external_id, "1");
         assert_eq!(items[1].external_id, "2");
+    }
+
+    #[test]
+    fn parse_malformed_concatenated_arrays_returns_error() {
+        let json = r#"[{"id":"1","text":"first"}][{"id":"2","text":}]"#;
+        assert!(parse_source_json(json, "test").is_err());
     }
 
     // -- parse_source_object --
@@ -318,7 +343,7 @@ mod tests {
     fn parse_concatenated_arrays_with_brackets_in_strings() {
         // Brackets inside JSON strings must not confuse the parser
         let json = r#"[{"id":"1","text":"has ] bracket"}][{"id":"2","text":"has [ bracket"}]"#;
-        let items = parse_source_json(json, "test");
+        let items = parse_source_json(json, "test").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].text, "has ] bracket");
         assert_eq!(items[1].text, "has [ bracket");
