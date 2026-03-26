@@ -4,6 +4,12 @@ use std::path::Path;
 /// Keeps the final prompt well under OS `ARG_MAX` limits (~1 MB on macOS).
 const AUTO_CONTEXT_MAX_BYTES: usize = 100_000;
 
+/// Unique delimiters wrapping raw user text inside structured prompts,
+/// so `extract_user_text_from_prompt` can extract it deterministically
+/// even when the user's text contains markdown headers (`## …`).
+const USER_TEXT_BEGIN: &str = "<!-- BEGIN_USER_TEXT -->";
+const USER_TEXT_END: &str = "<!-- END_USER_TEXT -->";
+
 /// Parse a `[command]` prefix from cue text.
 ///
 /// Returns `Some((command_name, remaining_text))` if the text starts with
@@ -27,6 +33,10 @@ pub(crate) fn parse_command_prefix(text: &str) -> Option<(&str, &str)> {
 /// When `project_root` is provided and `file_path` is non-empty, the prompt
 /// includes the surrounding file content (±50 lines) and any recent git diff
 /// for the file, so Claude has immediate context without extra tool calls.
+///
+/// The `_project_root` parameter is intentionally reserved for API consistency
+/// with [`gather_auto_context`] and future auto-context features. The leading
+/// underscore suppresses the unused-variable warning and should not be removed.
 pub(crate) fn build_prompt(
     cue_text: &str,
     file_path: &str,
@@ -71,11 +81,11 @@ pub(crate) fn build_prompt_with_auto_context(
     };
     if file_path.is_empty() {
         format!(
-            "## Task\n\n{}{}{}\n\n\
+            "## Task\n\n{}{}{}{}{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, images_section, auto_ctx_section,
+            USER_TEXT_BEGIN, cue_text, USER_TEXT_END, images_section, auto_ctx_section,
         )
     } else {
         let line_ref = match line_number_end {
@@ -84,13 +94,19 @@ pub(crate) fn build_prompt_with_auto_context(
         };
 
         format!(
-            "## Task\n\n{}{}\n\n\
+            "## Task\n\n{}{}{}{}\n\n\
              ## Context\n\n\
              Focus on {} in `{}`.\n{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.",
-            cue_text, images_section, line_ref, file_path, auto_ctx_section,
+            USER_TEXT_BEGIN,
+            cue_text,
+            USER_TEXT_END,
+            images_section,
+            line_ref,
+            file_path,
+            auto_ctx_section,
         )
     }
 }
@@ -249,6 +265,10 @@ pub(crate) fn gather_auto_context(
 
 /// Build a follow-up prompt for replying to a Review cue with feedback.
 /// Includes the original task, the previous diff, and the user's reply.
+///
+/// The `_project_root` parameter is intentionally reserved for API consistency
+/// with [`build_prompt`] and future auto-context features. The leading
+/// underscore suppresses the unused-variable warning and should not be removed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_reply_prompt(
     original_cue: &str,
@@ -289,34 +309,26 @@ pub(crate) fn build_reply_prompt(
          ## Previous Changes\n\n\
          You already made the following changes (currently applied in the working tree):\n\n\
          ```diff\n{}\n```\n\n\
-         ## Feedback\n\n{}\n\n\
+         ## Feedback\n\n{}{}{}\n\n\
          ## Instructions\n\n\
          Adjust the code based on the feedback above. The previous changes are already applied — \
          build on them rather than starting over. \
          Make the requested changes directly by editing the files. \
          Do not output a diff — use your tools to edit files in place.",
-        original_cue, images_section, context, previous_diff, reply,
+        original_cue, images_section, context, previous_diff, USER_TEXT_BEGIN, reply, USER_TEXT_END,
     )
 }
 
 /// Extract the user-facing text from a structured prompt.
 ///
-/// For an initial prompt, returns the text between "## Task" and the next section.
-/// For a reply prompt, returns the text from "## Feedback".
-/// Falls back to the full prompt if no structure is found.
+/// Looks for the unique `BEGIN_USER_TEXT` / `END_USER_TEXT` delimiters
+/// that `build_prompt*` and `build_reply_prompt` wrap around user content.
+/// Falls back to the full prompt if no delimiters are found (e.g. plain text).
 pub(crate) fn extract_user_text_from_prompt(prompt: &str) -> String {
-    // Reply prompt: extract feedback section
-    if let Some(pos) = prompt.find("## Feedback\n\n") {
-        let start = pos + "## Feedback\n\n".len();
+    if let Some(begin) = prompt.find(USER_TEXT_BEGIN) {
+        let start = begin + USER_TEXT_BEGIN.len();
         let rest = &prompt[start..];
-        let end = rest.find("\n\n## ").unwrap_or(rest.len());
-        return rest[..end].trim().to_string();
-    }
-    // Initial prompt: extract task section
-    if let Some(pos) = prompt.find("## Task\n\n") {
-        let start = pos + "## Task\n\n".len();
-        let rest = &prompt[start..];
-        let end = rest.find("\n\n## ").unwrap_or(rest.len());
+        let end = rest.find(USER_TEXT_END).unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
     prompt.to_string()
@@ -400,6 +412,30 @@ mod tests {
             extract_user_text_from_prompt("just plain text"),
             "just plain text"
         );
+    }
+
+    #[test]
+    fn extract_task_with_markdown_headers_in_user_text() {
+        // User text contains "## " headers that previously fooled the extractor
+        let cue = "Fix the layout\n\n## Details\n\nThe sidebar is broken";
+        let prompt = build_prompt(cue, "src/ui.rs", 10, None, &[], None);
+        assert_eq!(extract_user_text_from_prompt(&prompt), cue);
+    }
+
+    #[test]
+    fn extract_feedback_with_markdown_headers_in_user_text() {
+        let feedback = "Change approach\n\n## Rationale\n\nThe old way is slow";
+        let prompt = build_reply_prompt(
+            "original task",
+            "f.rs",
+            1,
+            None,
+            "some diff",
+            feedback,
+            &[],
+            None,
+        );
+        assert_eq!(extract_user_text_from_prompt(&prompt), feedback);
     }
 
     // -- parse_command_prefix --
