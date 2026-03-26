@@ -11,13 +11,14 @@ pub(crate) struct GitInfo {
     pub modified_count: usize,
     pub added_count: usize,
     pub deleted_count: usize,
+    pub conflicted_count: usize,
 }
 
 pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
     let repo = Repository::discover(path).ok()?;
     let branch = resolve_branch_name(&repo);
     let (hash, message) = resolve_last_commit(&repo);
-    let (modified, added, deleted) = count_status_entries(&repo);
+    let (modified, added, deleted, conflicted) = count_status_entries(&repo);
 
     Some(GitInfo {
         branch,
@@ -26,6 +27,7 @@ pub(crate) fn read_git_info(path: &Path) -> Option<GitInfo> {
         modified_count: modified,
         added_count: added,
         deleted_count: deleted,
+        conflicted_count: conflicted,
     })
 }
 
@@ -59,19 +61,22 @@ fn resolve_last_commit(repo: &Repository) -> (String, String) {
     (short, msg)
 }
 
-fn count_status_entries(repo: &Repository) -> (usize, usize, usize) {
+fn count_status_entries(repo: &Repository) -> (usize, usize, usize, usize) {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = match repo.statuses(Some(&mut opts)) {
         Ok(s) => s,
-        Err(_) => return (0, 0, 0),
+        Err(_) => return (0, 0, 0, 0),
     };
     let mut m = 0;
     let mut a = 0;
     let mut d = 0;
+    let mut u = 0;
     for entry in statuses.iter() {
         let s = entry.status();
-        if s.intersects(
+        if s.intersects(git2::Status::CONFLICTED) {
+            u += 1;
+        } else if s.intersects(
             git2::Status::WT_MODIFIED
                 | git2::Status::INDEX_MODIFIED
                 | git2::Status::WT_RENAMED
@@ -84,7 +89,7 @@ fn count_status_entries(repo: &Repository) -> (usize, usize, usize) {
             d += 1;
         }
     }
-    (m, a, d)
+    (m, a, d, u)
 }
 
 /// Returns relative paths of all files with uncommitted changes, mapped to their
@@ -100,7 +105,9 @@ pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
     if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
         for entry in statuses.iter() {
             let s = entry.status();
-            let letter = if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
+            let letter = if s.intersects(git2::Status::CONFLICTED) {
+                'U'
+            } else if s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED) {
                 'D'
             } else if s.intersects(git2::Status::WT_RENAMED | git2::Status::INDEX_RENAMED) {
                 'R'
@@ -147,7 +154,13 @@ pub(crate) fn get_ahead_of_remote(path: &Path) -> usize {
         Err(_) => {
             // No remote tracking branch — compare against origin's default branch
             let default_oid = repo
-                .refname_to_id("refs/remotes/origin/main")
+                .find_reference("refs/remotes/origin/HEAD")
+                .and_then(|r| r.resolve())
+                .and_then(|r| {
+                    r.target()
+                        .ok_or_else(|| git2::Error::from_str("symbolic ref has no target"))
+                })
+                .or_else(|_| repo.refname_to_id("refs/remotes/origin/main"))
                 .or_else(|_| repo.refname_to_id("refs/remotes/origin/master"))
                 .ok();
             match default_oid {
@@ -168,10 +181,15 @@ pub(crate) fn get_ahead_of_remote(path: &Path) -> usize {
 }
 
 pub(crate) fn format_status_summary(info: &GitInfo) -> String {
-    format!(
+    let base = format!(
         "~{} +{} -{}",
         info.modified_count, info.added_count, info.deleted_count
-    )
+    );
+    if info.conflicted_count > 0 {
+        format!("{} U{}", base, info.conflicted_count)
+    } else {
+        base
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +206,7 @@ mod tests {
             modified_count: 3,
             added_count: 1,
             deleted_count: 2,
+            conflicted_count: 0,
         };
         assert_eq!(format_status_summary(&info), "~3 +1 -2");
     }
@@ -201,6 +220,7 @@ mod tests {
             modified_count: 0,
             added_count: 0,
             deleted_count: 0,
+            conflicted_count: 0,
         };
         assert_eq!(format_status_summary(&info), "~0 +0 -0");
     }
@@ -235,6 +255,21 @@ mod tests {
         assert_eq!(info.modified_count, 0);
         assert_eq!(info.added_count, 0);
         assert_eq!(info.deleted_count, 0);
+        assert_eq!(info.conflicted_count, 0);
+    }
+
+    #[test]
+    fn format_status_summary_with_conflicts() {
+        let info = GitInfo {
+            branch: "main".to_string(),
+            last_commit_hash: "abc1234".to_string(),
+            last_commit_message: "merge".to_string(),
+            modified_count: 0,
+            added_count: 0,
+            deleted_count: 0,
+            conflicted_count: 2,
+        };
+        assert_eq!(format_status_summary(&info), "~0 +0 -0 U2");
     }
 
     #[test]
