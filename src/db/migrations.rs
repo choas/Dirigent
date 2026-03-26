@@ -70,9 +70,9 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(column);
         assert_valid_col_type(col_type);
-        let probe = format!("SELECT {column} FROM {table} LIMIT 0");
+        let probe = format!("SELECT \"{column}\" FROM \"{table}\" LIMIT 0");
         if self.conn.prepare(&probe).is_err() {
-            let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}");
+            let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {col_type}");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
         }
         Ok(())
@@ -83,9 +83,10 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(old_col);
         assert_valid_ident(new_col);
-        let probe = format!("SELECT {old_col} FROM {table} LIMIT 0");
+        let probe = format!("SELECT \"{old_col}\" FROM \"{table}\" LIMIT 0");
         if self.conn.prepare(&probe).is_ok() {
-            let sql = format!("ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}");
+            let sql =
+                format!("ALTER TABLE \"{table}\" RENAME COLUMN \"{old_col}\" TO \"{new_col}\"");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
         }
         Ok(())
