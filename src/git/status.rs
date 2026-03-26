@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use git2::{Repository, StatusOptions};
+use git2::{BranchType, Repository, StatusOptions};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GitInfo {
@@ -148,11 +148,16 @@ pub(crate) fn get_ahead_of_remote(path: &Path) -> usize {
         Some(name) => name.to_string(),
         None => return 0,
     };
-    let upstream_ref = format!("refs/remotes/origin/{}", branch_name);
-    let remote_oid = match repo.refname_to_id(&upstream_ref) {
-        Ok(oid) => oid,
-        Err(_) => {
-            // No remote tracking branch — compare against origin's default branch
+    // Try to resolve the branch's configured upstream tracking branch
+    let remote_oid = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .ok()
+        .and_then(|branch| branch.upstream().ok())
+        .and_then(|upstream| upstream.get().target());
+    let remote_oid = match remote_oid {
+        Some(oid) => oid,
+        None => {
+            // No configured upstream — compare against origin's default branch
             let default_oid = repo
                 .find_reference("refs/remotes/origin/HEAD")
                 .and_then(|r| r.resolve())
