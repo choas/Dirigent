@@ -364,7 +364,12 @@ impl DirigentApp {
     }
 
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
-        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            eprintln!("Failed to sync home guard hook: {e:#}");
+        }
 
         // Start tracking immediately so the timer appears in the UI while
         // we build the prompt (which may involve blocking I/O for auto-context).
@@ -413,7 +418,12 @@ impl DirigentApp {
         reply: &str,
         reply_images: &[String],
     ) {
-        settings::sync_home_guard_hook(&self.project_root, self.settings.allow_home_folder_access);
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            eprintln!("Failed to sync home guard hook: {e:#}");
+        }
 
         let provider = self.settings.cli_provider.clone();
 

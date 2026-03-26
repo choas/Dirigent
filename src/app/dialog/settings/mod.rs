@@ -4,6 +4,8 @@ mod general;
 mod playbook;
 mod sources;
 
+use std::sync::mpsc;
+
 use eframe::egui;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
@@ -18,10 +20,15 @@ impl DirigentApp {
         let mut refresh_models = false;
         let fs = self.settings.font_size;
 
-        // Load OpenCode models if not already loaded
-        if self.opencode_models.is_empty() {
-            let cli_path = self.settings.opencode_cli_path.clone();
-            self.opencode_models = opencode::get_available_models(&cli_path);
+        // Drain any completed background model fetch
+        if let Ok(models) = self.opencode_models_rx.try_recv() {
+            self.opencode_models = models;
+            self.opencode_models_loading = false;
+        }
+
+        // Kick off background fetch if not yet loaded and not already loading
+        if self.opencode_models.is_empty() && !self.opencode_models_loading {
+            self.spawn_opencode_models_fetch();
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -97,6 +104,21 @@ impl DirigentApp {
             });
     }
 
+    fn spawn_opencode_models_fetch(&mut self) {
+        self.opencode_models_loading = true;
+        let (tx, rx) = mpsc::channel();
+        self.opencode_models_rx = rx;
+        let cli_path = self.settings.opencode_cli_path.clone();
+        let ctx = self.egui_ctx.clone();
+        std::thread::spawn(move || {
+            let models = opencode::get_available_models(&cli_path);
+            let _ = tx.send(models);
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
+        });
+    }
+
     fn handle_settings_actions(
         &mut self,
         save: bool,
@@ -109,15 +131,17 @@ impl DirigentApp {
         }
         if save {
             settings::save_settings(&self.project_root, &self.settings);
-            settings::sync_home_guard_hook(
+            if let Err(e) = settings::sync_home_guard_hook(
                 &self.project_root,
                 self.settings.allow_home_folder_access,
-            );
+            ) {
+                eprintln!("Failed to sync home guard hook: {e:#}");
+            }
             self.needs_theme_apply = true;
         }
         if refresh_models {
-            let cli_path = self.settings.opencode_cli_path.clone();
-            self.opencode_models = opencode::get_available_models(&cli_path);
+            self.opencode_models.clear();
+            self.spawn_opencode_models_fetch();
         }
         if let Some(idx) = fetch_idx {
             self.trigger_source_fetch(idx);
