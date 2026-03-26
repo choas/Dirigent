@@ -14,15 +14,14 @@ fn assert_valid_ident(s: &str) {
 }
 
 /// Validate that a column-type expression contains only safe characters.
-/// Allows alphanumeric, spaces, single quotes, parentheses, and underscores
-/// (needed for e.g. `TEXT DEFAULT 'Claude'`) while blocking injection vectors
-/// like semicolons, double-dashes, or slashes.
+/// Allows alphanumeric, spaces, single quotes, parentheses, underscores, and
+/// minus signs (needed for e.g. `TEXT DEFAULT 'Claude'` or `INTEGER DEFAULT -1`)
+/// while blocking injection vectors like semicolons, double-dashes, or slashes.
 fn assert_valid_col_type(s: &str) {
     assert!(
         !s.is_empty()
-            && s.bytes().all(
-                |b| b.is_ascii_alphanumeric() || matches!(b, b' ' | b'_' | b'\'' | b'(' | b')')
-            ),
+            && s.bytes().all(|b| b.is_ascii_alphanumeric()
+                || matches!(b, b' ' | b'_' | b'\'' | b'(' | b')' | b'-')),
         "invalid SQL column type expression: {s:?}"
     );
 }
@@ -66,7 +65,14 @@ impl Database {
     }
 
     /// Add a column to a table if it does not already exist.
-    fn add_column(&self, table: &str, column: &str, col_type: &str) -> Result<()> {
+    /// Parameters require `&'static str` to guarantee at compile time that
+    /// table/column/type names are hardcoded literals, not user input.
+    fn add_column(
+        &self,
+        table: &'static str,
+        column: &'static str,
+        col_type: &'static str,
+    ) -> Result<()> {
         assert_valid_ident(table);
         assert_valid_ident(column);
         assert_valid_col_type(col_type);
@@ -78,7 +84,12 @@ impl Database {
     }
 
     /// Rename a column if the old name still exists.
-    fn rename_column(&self, table: &str, old_col: &str, new_col: &str) -> Result<()> {
+    fn rename_column(
+        &self,
+        table: &'static str,
+        old_col: &'static str,
+        new_col: &'static str,
+    ) -> Result<()> {
         assert_valid_ident(table);
         assert_valid_ident(old_col);
         assert_valid_ident(new_col);
@@ -92,7 +103,7 @@ impl Database {
     }
 
     /// Check whether a table has a given column using PRAGMA table_info.
-    fn has_column(&self, table: &str, column: &str) -> bool {
+    fn has_column(&self, table: &'static str, column: &'static str) -> bool {
         assert_valid_ident(table);
         assert_valid_ident(column);
         let sql = format!("PRAGMA table_info(\"{table}\")");
@@ -302,5 +313,39 @@ impl Database {
         }
 
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn col_type_allows_negative_default() {
+        assert_valid_col_type("INTEGER DEFAULT -1");
+    }
+
+    #[test]
+    fn col_type_allows_text_default() {
+        assert_valid_col_type("TEXT DEFAULT 'Claude'");
+    }
+
+    #[test]
+    fn col_type_allows_plain_type() {
+        assert_valid_col_type("INTEGER");
+        assert_valid_col_type("TEXT");
+        assert_valid_col_type("REAL");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SQL column type expression")]
+    fn col_type_rejects_semicolon() {
+        assert_valid_col_type("TEXT; DROP TABLE cues");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SQL column type expression")]
+    fn col_type_rejects_empty() {
+        assert_valid_col_type("");
     }
 }
