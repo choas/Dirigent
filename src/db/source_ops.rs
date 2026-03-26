@@ -5,7 +5,7 @@ use super::types::CueStatus;
 use super::Database;
 
 /// (id, text, status, file_path, line_number)
-type CueSourceRow = (i64, String, String, String, usize);
+pub(crate) type CueSourceRow = (i64, String, String, String, usize);
 
 impl Database {
     // -- Source integration --
@@ -21,10 +21,7 @@ impl Database {
     }
 
     /// Get the cue id, text, status, file_path, and line_number for a given source_ref.
-    pub fn get_cue_by_source_ref(
-        &self,
-        source_ref: &str,
-    ) -> Result<Option<CueSourceRow>> {
+    pub fn get_cue_by_source_ref(&self, source_ref: &str) -> Result<Option<CueSourceRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, status, file_path, line_number FROM cues WHERE source_ref = ?1 LIMIT 1",
         )?;
