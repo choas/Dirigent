@@ -369,6 +369,7 @@ impl DirigentApp {
             self.settings.allow_home_folder_access,
         ) {
             eprintln!("Failed to sync home guard hook: {e:#}");
+            return;
         }
 
         // Start tracking immediately so the timer appears in the UI while
@@ -423,6 +424,7 @@ impl DirigentApp {
             self.settings.allow_home_folder_access,
         ) {
             eprintln!("Failed to sync home guard hook: {e:#}");
+            return;
         }
 
         let provider = self.settings.cli_provider.clone();
