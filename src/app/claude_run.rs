@@ -342,7 +342,7 @@ impl DirigentApp {
             let on_log = |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
-                    text: text.to_string(),
+                    text: super::util::strip_ansi(text),
                     provider: provider_for_log.clone(),
                 });
             };
