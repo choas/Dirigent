@@ -13,6 +13,20 @@ fn assert_valid_ident(s: &str) {
     );
 }
 
+/// Validate that a column-type expression contains only safe characters.
+/// Allows alphanumeric, spaces, single quotes, parentheses, and underscores
+/// (needed for e.g. `TEXT DEFAULT 'Claude'`) while blocking injection vectors
+/// like semicolons, double-dashes, or slashes.
+fn assert_valid_col_type(s: &str) {
+    assert!(
+        !s.is_empty()
+            && s.bytes().all(
+                |b| b.is_ascii_alphanumeric() || matches!(b, b' ' | b'_' | b'\'' | b'(' | b')')
+            ),
+        "invalid SQL column type expression: {s:?}"
+    );
+}
+
 /// Propagate all errors from a schema-migration statement except
 /// "duplicate column" / "already exists", which indicate the migration
 /// was already applied and are safe to ignore.
@@ -55,6 +69,7 @@ impl Database {
     fn add_column(&self, table: &str, column: &str, col_type: &str) -> Result<()> {
         assert_valid_ident(table);
         assert_valid_ident(column);
+        assert_valid_col_type(col_type);
         let probe = format!("SELECT {column} FROM {table} LIMIT 0");
         if self.conn.prepare(&probe).is_err() {
             let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}");
