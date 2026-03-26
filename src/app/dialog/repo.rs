@@ -92,6 +92,18 @@ impl DirigentApp {
             return;
         }
 
+        // Populate the cached list of existing repos once when the picker opens,
+        // instead of calling is_dir() on every frame.
+        if self.cached_existing_repos.is_empty() && !self.settings.recent_repos.is_empty() {
+            self.cached_existing_repos = self
+                .settings
+                .recent_repos
+                .iter()
+                .filter(|p| Path::new(p.as_str()).is_dir())
+                .cloned()
+                .collect();
+        }
+
         let mut open = self.show_repo_picker;
         let mut switch_to: Option<PathBuf> = None;
         let mut error_msg: Option<String> = None;
@@ -112,6 +124,9 @@ impl DirigentApp {
             });
 
         self.show_repo_picker = open;
+        if !open {
+            self.cached_existing_repos.clear();
+        }
         self.apply_repo_picker_result(switch_to, error_msg);
     }
 
@@ -146,13 +161,7 @@ impl DirigentApp {
         egui::ScrollArea::vertical()
             .max_height(200.0)
             .show(ui, |ui| {
-                let existing: Vec<_> = self
-                    .settings
-                    .recent_repos
-                    .iter()
-                    .filter(|p| Path::new(p.as_str()).is_dir())
-                    .collect();
-                for repo_path in &existing {
+                for repo_path in &self.cached_existing_repos {
                     if ui.button(repo_path.as_str()).clicked() {
                         let path = PathBuf::from(repo_path.as_str());
                         if let Ok(canonical) = std::fs::canonicalize(&path) {
@@ -160,7 +169,7 @@ impl DirigentApp {
                         }
                     }
                 }
-                if existing.is_empty() {
+                if self.cached_existing_repos.is_empty() {
                     ui.label(
                         egui::RichText::new("(none)")
                             .italics()
@@ -177,6 +186,7 @@ impl DirigentApp {
         }
         if let Some(new_root) = switch_to {
             self.show_repo_picker = false;
+            self.cached_existing_repos.clear();
             self.switch_repo(new_root);
         }
     }
