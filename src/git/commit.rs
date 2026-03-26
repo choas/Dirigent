@@ -198,7 +198,9 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
     } else {
         // No upstream — determine the default remote and push with -u to set up tracking
         let remotes = repo.remotes()?;
-        let remote_name = remotes.iter().flatten().next().unwrap_or("origin");
+        let remote_name = remotes.iter().flatten().next().ok_or_else(|| {
+            DirigentError::GitCommand("no remotes configured for repository".to_string())
+        })?;
         Command::new("git")
             .args([
                 "push",
