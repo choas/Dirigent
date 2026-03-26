@@ -395,7 +395,27 @@ fn process_event_stream(
             break;
         }
         let line = line_result?;
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+
+        // The stream format may use SSE (Server-Sent Events) framing.
+        // Strip `data:` prefixes and skip non-data SSE lines.
+        let json_str = if let Some(data) = line.strip_prefix("data:") {
+            data.trim()
+        } else if line.is_empty()
+            || line.starts_with("event:")
+            || line.starts_with("id:")
+            || line.starts_with("retry:")
+            || line.starts_with(':')
+        {
+            continue;
+        } else {
+            line.trim()
+        };
+
+        if json_str.is_empty() {
+            continue;
+        }
+
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) else {
             on_log(&line);
             on_log("\n");
             continue;
