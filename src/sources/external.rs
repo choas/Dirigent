@@ -139,9 +139,8 @@ pub(crate) fn fetch_slack_messages(
 }
 
 /// Fetch issues from a SonarQube instance using its Web API.
-/// Reads the token from the project-root `.env` file if `token` is empty.
+/// The caller is expected to resolve the token (e.g. via `resolve_source_token`).
 pub(crate) fn fetch_sonarqube_issues(
-    project_root: &Path,
     host_url: &str,
     project_key: &str,
     token: &str,
@@ -157,14 +156,7 @@ pub(crate) fn fetch_sonarqube_issues(
             "SonarQube project key is empty".to_string(),
         ));
     }
-
-    // Resolve token: use explicit token, fall back to .env SONAR_TOKEN
-    let resolved_token = if token.is_empty() {
-        load_env_var(project_root, "SONAR_TOKEN").unwrap_or_default()
-    } else {
-        token.to_string()
-    };
-    if resolved_token.is_empty() {
+    if token.is_empty() {
         return Err(DirigentError::Source(
             "SonarQube token is empty (set in source config or SONAR_TOKEN in .env)".to_string(),
         ));
@@ -183,7 +175,7 @@ pub(crate) fn fetch_sonarqube_issues(
 
     let resp: serde_json::Value = client
         .get(&url)
-        .basic_auth(&resolved_token, Option::<&str>::None)
+        .basic_auth(token, Option::<&str>::None)
         .send()
         .map_err(|e| DirigentError::Source(format!("SonarQube request failed: {e}")))?
         .json()
@@ -256,17 +248,16 @@ pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(rest) = line.strip_prefix(key) {
-            if let Some(value) = rest.strip_prefix('=') {
-                // Strip surrounding quotes if present
-                let value = value.trim();
-                let value = value
-                    .strip_prefix('"')
-                    .and_then(|v| v.strip_suffix('"'))
-                    .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                    .unwrap_or(value);
-                return Some(value.to_string());
-            }
+        let prefix = format!("{}=", key);
+        if let Some(value) = line.strip_prefix(&prefix) {
+            // Strip surrounding quotes if present
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .unwrap_or(value);
+            return Some(value.to_string());
         }
     }
     None

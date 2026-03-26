@@ -182,14 +182,8 @@ fn fetch_source_items(
                 &source.host_url
             };
             let token = resolve_source_token(source, project_root);
-            sources::fetch_sonarqube_issues(
-                project_root,
-                host,
-                &source.project_key,
-                &token,
-                &source.label,
-            )
-            .unwrap_or_else(err)
+            sources::fetch_sonarqube_issues(host, &source.project_key, &token, &source.label)
+                .unwrap_or_else(err)
         }
         SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
             if source.command.is_empty() {
