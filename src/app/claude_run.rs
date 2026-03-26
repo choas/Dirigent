@@ -684,6 +684,11 @@ impl DirigentApp {
             "Claude completed but no file changes detected for \"{}\"",
             preview
         ));
+        // Moving to Done even when Claude produced no file changes is intentional:
+        // the AI examined the cue, decided nothing needed changing, and that
+        // counts as "addressed."  The cue should not stay in Review or loop
+        // back to Inbox — the human can always re-open it from Done if they
+        // disagree with the AI's assessment.
         let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
         let _ = self
             .db
