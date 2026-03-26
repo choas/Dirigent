@@ -85,29 +85,23 @@ pub(crate) fn fetch_slack_messages(
         return Err(DirigentError::Source("Slack channel is empty".to_string()));
     }
 
-    let child = Command::new("curl")
-        .arg("-s")
-        .arg("-H")
-        .arg(format!("Authorization: Bearer {}", token))
-        .arg(format!(
-            "https://slack.com/api/conversations.history?channel={}&limit=50",
-            channel,
-        ))
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
 
-    if !output.status.success() {
-        return Err(DirigentError::Source(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
+    let url = format!(
+        "https://slack.com/api/conversations.history?channel={}&limit=50",
+        channel,
+    );
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let resp: serde_json::Value = serde_json::from_str(&json_str)?;
+    let resp: serde_json::Value = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Slack request failed: {e}")))?
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Slack response parse error: {e}")))?;
 
     if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = resp
@@ -182,26 +176,33 @@ pub(crate) fn fetch_sonarqube_issues(
         project_key,
     );
 
-    let child = Command::new("curl")
-        .arg("-s")
-        .arg("-u")
-        .arg(format!("{}:", resolved_token))
-        .arg(&url)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
 
-    if !output.status.success() {
+    let resp: serde_json::Value = client
+        .get(&url)
+        .basic_auth(&resolved_token, Option::<&str>::None)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("SonarQube request failed: {e}")))?
+        .json()
+        .map_err(|e| DirigentError::Source(format!("SonarQube response parse error: {e}")))?;
+
+    if let Some(errors) = resp.get("errors").and_then(|v| v.as_array()) {
+        let msgs: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.get("msg").and_then(|m| m.as_str()).map(String::from))
+            .collect();
         return Err(DirigentError::Source(format!(
-            "SonarQube API request failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "SonarQube API error: {}",
+            if msgs.is_empty() {
+                "unknown error".to_string()
+            } else {
+                msgs.join("; ")
+            }
         )));
     }
-
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let resp: serde_json::Value = serde_json::from_str(&json_str)?;
 
     let issues = resp
         .get("issues")
@@ -247,7 +248,7 @@ pub(crate) fn fetch_sonarqube_issues(
 
 /// Load a variable from the `.env` file in the project root.
 /// Returns `None` if the file doesn't exist or the key is not found.
-fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
+pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
     let env_path = project_root.join(".env");
     let content = std::fs::read_to_string(env_path).ok()?;
     for line in content.lines() {
