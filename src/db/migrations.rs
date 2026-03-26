@@ -28,10 +28,19 @@ impl Database {
         // Migration: rename comments -> cues if old table exists
         let has_old_table: bool = self.conn.prepare("SELECT 1 FROM comments LIMIT 0").is_ok();
         if has_old_table {
-            // Drop empty cues table if it was already created, so rename can succeed
-            let _ = self.conn.execute_batch("DROP TABLE IF EXISTS cues;");
-            self.conn
-                .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
+            let cues_count: i64 = self
+                .conn
+                .prepare("SELECT COUNT(*) FROM cues")
+                .and_then(|mut s| s.query_row([], |r| r.get(0)))
+                .unwrap_or(0); // 0 if cues table doesn't exist yet
+            if cues_count == 0 {
+                let _ = self.conn.execute_batch("DROP TABLE IF EXISTS cues;");
+                self.conn
+                    .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
+            } else {
+                // cues table has data — drop the legacy comments table instead
+                let _ = self.conn.execute_batch("DROP TABLE comments;");
+            }
         }
 
         self.conn.execute_batch(
@@ -131,18 +140,30 @@ impl Database {
                 .execute_batch("ALTER TABLE executions ADD COLUMN provider TEXT DEFAULT 'Claude';");
         }
         // Migration: add run metrics columns to executions
-        let has_cost_col: bool = self
-            .conn
-            .prepare("SELECT cost_usd FROM executions LIMIT 0")
-            .is_ok();
-        if !has_cost_col {
-            let _ = self.conn.execute_batch(
-                "ALTER TABLE executions ADD COLUMN cost_usd REAL;
-                 ALTER TABLE executions ADD COLUMN duration_ms INTEGER;
-                 ALTER TABLE executions ADD COLUMN num_turns INTEGER;
-                 ALTER TABLE executions ADD COLUMN input_tokens INTEGER;
-                 ALTER TABLE executions ADD COLUMN output_tokens INTEGER;",
-            );
+        {
+            let mut existing_cols: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            if let Ok(mut stmt) = self.conn.prepare("PRAGMA table_info(executions)") {
+                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(1)) {
+                    for name in rows.flatten() {
+                        existing_cols.insert(name);
+                    }
+                }
+            }
+            for (col, typ) in [
+                ("cost_usd", "REAL"),
+                ("duration_ms", "INTEGER"),
+                ("num_turns", "INTEGER"),
+                ("input_tokens", "INTEGER"),
+                ("output_tokens", "INTEGER"),
+            ] {
+                if !existing_cols.contains(col) {
+                    let _ = self.conn.execute(
+                        &format!("ALTER TABLE executions ADD COLUMN {col} {typ}"),
+                        [],
+                    );
+                }
+            }
         }
         // Activity log table for cue lifecycle timestamps
         self.conn.execute_batch(
