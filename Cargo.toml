@@ -22,6 +22,7 @@ regex = "1"
 pulldown-cmark = "0.13"
 which = "8.0.2"
 shlex = "1"
+tempfile = "3"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 

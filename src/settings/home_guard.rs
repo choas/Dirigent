@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::Path;
 
 /// Install or remove the Claude Code home-directory guard hook.
@@ -119,7 +120,7 @@ fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) -> Result<(
     }
 
     let json = serde_json::to_string_pretty(&root).context("serializing settings JSON")?;
-    std::fs::write(settings_path, json).context("writing settings.local.json")?;
+    atomic_write(settings_path, json.as_bytes()).context("writing settings.local.json")?;
     Ok(())
 }
 
@@ -148,8 +149,22 @@ fn remove_hook_from_settings(settings_path: &Path) -> Result<()> {
 
     if changed {
         let json = serde_json::to_string_pretty(&root).context("serializing settings JSON")?;
-        std::fs::write(settings_path, json).context("writing settings.local.json")?;
+        atomic_write(settings_path, json.as_bytes()).context("writing settings.local.json")?;
     }
+    Ok(())
+}
+
+/// Write `data` to `path` atomically: write to a temp file in the same
+/// directory, fsync, then rename over the target. This prevents
+/// crash-corruption of the settings file.
+fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
+    let dir = path
+        .parent()
+        .context("settings path has no parent directory")?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir).context("creating temp file")?;
+    tmp.write_all(data).context("writing temp file")?;
+    tmp.as_file().sync_all().context("fsync temp file")?;
+    tmp.persist(path).context("renaming temp file into place")?;
     Ok(())
 }
 
