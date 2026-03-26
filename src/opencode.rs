@@ -121,13 +121,23 @@ fn run_hook_script(
     Ok(())
 }
 
-/// Process a "text" event from the OpenCode JSON stream.
-fn process_text_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) {
-    let text = event
+/// Extract text content from a text event, trying multiple field paths
+/// to handle different OpenCode stream format versions.
+fn extract_text_from_event(event: &serde_json::Value) -> Option<&str> {
+    // Primary: event.part.text
+    event
         .get("part")
         .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str());
-    if let Some(text) = text {
+        .and_then(|t| t.as_str())
+        // Fallback: event.text (flat format)
+        .or_else(|| event.get("text").and_then(|t| t.as_str()))
+        // Fallback: event.content (alternative format)
+        .or_else(|| event.get("content").and_then(|t| t.as_str()))
+}
+
+/// Process a "text" event from the OpenCode JSON stream.
+fn process_text_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) {
+    if let Some(text) = extract_text_from_event(event) {
         on_log(text);
         on_log("\n");
     } else {
@@ -378,6 +388,7 @@ fn process_event_stream(
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
     let mut metrics = StreamMetrics::default();
+    let mut accumulated_text = String::new();
 
     for line_result in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -395,7 +406,15 @@ fn process_event_stream(
             &mut final_result,
             &mut edited_files,
             &mut metrics,
+            &mut accumulated_text,
         );
+    }
+
+    // Use accumulated text output as the response when step_finish didn't
+    // provide a final result — matches Claude's behaviour where the "result"
+    // event carries the full response text.
+    if final_result.is_empty() && !accumulated_text.is_empty() {
+        final_result = accumulated_text;
     }
 
     Ok((final_result, edited_files, metrics))
@@ -408,10 +427,18 @@ fn dispatch_event(
     final_result: &mut String,
     edited_files: &mut Vec<String>,
     metrics: &mut StreamMetrics,
+    accumulated_text: &mut String,
 ) {
     let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match event_type {
-        "text" => process_text_event(event, on_log),
+        "text" => {
+            process_text_event(event, on_log);
+            // Accumulate text for the response (like Claude's "result" event).
+            if let Some(text) = extract_text_from_event(event) {
+                accumulated_text.push_str(text);
+                accumulated_text.push('\n');
+            }
+        }
         "tool_use" | "tool" => {
             if let Some(path) =
                 process_tool_event(event, on_log).filter(|p| !edited_files.contains(p))
@@ -538,45 +565,6 @@ pub(crate) fn invoke_opencode_streaming(
             None
         },
     })
-}
-
-pub(crate) fn build_prompt(
-    cue_text: &str,
-    file_path: &str,
-    line_number: usize,
-    line_number_end: Option<usize>,
-    images: &[String],
-) -> String {
-    // OpenCode doesn't pass project_root for auto-context (no file embedding)
-    claude::build_prompt(
-        cue_text,
-        file_path,
-        line_number,
-        line_number_end,
-        images,
-        None,
-    )
-}
-
-pub(crate) fn build_reply_prompt(
-    original_cue: &str,
-    file_path: &str,
-    line_number: usize,
-    line_number_end: Option<usize>,
-    previous_diff: &str,
-    reply: &str,
-    images: &[String],
-) -> String {
-    claude::build_reply_prompt(
-        original_cue,
-        file_path,
-        line_number,
-        line_number_end,
-        previous_diff,
-        reply,
-        images,
-        None,
-    )
 }
 
 pub(crate) fn parse_diff_from_response(response: &str) -> Option<String> {
