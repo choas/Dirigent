@@ -2119,6 +2119,7 @@ impl DirigentApp {
         egui::SidePanel::left("search_files_panel")
             .default_width(SEARCH_PANEL_DEFAULT_WIDTH)
             .min_width(SEARCH_PANEL_MIN_WIDTH)
+            .max_width(400.0)
             .show(ctx, |ui| {
                 self.render_search_in_files_panel(ui);
             });

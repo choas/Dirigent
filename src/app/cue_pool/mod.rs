@@ -28,6 +28,7 @@ impl DirigentApp {
         egui::SidePanel::right("cue_pool")
             .default_width(250.0)
             .min_width(200.0)
+            .max_width(500.0)
             .show(ctx, |ui| {
                 let (selected_play_prompt, custom_cue_requested, import_requested) =
                     self.render_cue_pool_header(ui);

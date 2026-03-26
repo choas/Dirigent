@@ -389,6 +389,7 @@ impl DirigentApp {
         egui::SidePanel::left("file_tree")
             .default_width(220.0)
             .min_width(150.0)
+            .max_width(400.0)
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new("Files")
@@ -557,6 +558,7 @@ impl DirigentApp {
                             if ui
                                 .add(
                                     egui::Label::new(egui::RichText::new(&label).small())
+                                        .truncate()
                                         .sense(egui::Sense::click()),
                                 )
                                 .clicked()
