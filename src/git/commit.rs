@@ -34,6 +34,19 @@ pub(crate) fn commit_diff(
         ));
     }
 
+    // Reset the index to HEAD so pre-existing staged changes aren't included.
+    {
+        let repo = Repository::discover(repo_path)?;
+        let head_commit = repo
+            .head()?
+            .peel_to_commit()
+            .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
+        let head_tree = head_commit.tree()?;
+        let mut idx = repo.index()?;
+        idx.read_tree(&head_tree)?;
+        idx.write()?;
+    }
+
     // Stage the working-tree state of the affected files.
     stage_files(repo_path, &file_paths)?;
 
