@@ -68,6 +68,7 @@ fn is_diff_body_line(line: &str) -> bool {
         || line.starts_with('+')
         || line.starts_with('-')
         || line.starts_with(' ')
+        || line.starts_with("\\ No newline at end of file")
 }
 
 /// Check whether the line at `i` starts a new file header (`--- ` / `+++ ` pair).
@@ -133,6 +134,8 @@ fn count_hunk_lines(lines: &[&str], start: usize) -> (usize, usize) {
         } else if line.starts_with(' ') {
             old_count += 1;
             new_count += 1;
+        } else if line.starts_with("\\ No newline at end of file") {
+            // marker line; does not affect old/new counts
         } else {
             break;
         }
