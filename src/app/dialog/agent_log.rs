@@ -20,7 +20,7 @@ impl DirigentApp {
         let mut close = false;
         let mut analyze_run_idx: Option<usize> = None;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             self.render_agent_log_header(ui, kind, fs, &mut close);
             ui.separator();
 

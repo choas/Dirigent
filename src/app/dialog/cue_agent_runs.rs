@@ -13,7 +13,7 @@ impl DirigentApp {
 
         let mut close = false;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             close = self.render_agent_runs_header(ui, &cue_text);
             ui.separator();
 

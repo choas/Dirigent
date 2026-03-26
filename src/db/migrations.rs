@@ -3,6 +3,16 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+/// Validate that a string is a safe SQL identifier (letters, digits, underscores).
+/// Panics if the identifier contains unexpected characters, preventing SQL injection
+/// if these helpers are ever called with non-hardcoded values.
+fn assert_valid_ident(s: &str) {
+    assert!(
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+        "invalid SQL identifier: {s:?}"
+    );
+}
+
 /// Propagate all errors from a schema-migration statement except
 /// "duplicate column" / "already exists", which indicate the migration
 /// was already applied and are safe to ignore.
@@ -43,6 +53,8 @@ impl Database {
 
     /// Add a column to a table if it does not already exist.
     fn add_column(&self, table: &str, column: &str, col_type: &str) -> Result<()> {
+        assert_valid_ident(table);
+        assert_valid_ident(column);
         let probe = format!("SELECT {column} FROM {table} LIMIT 0");
         if self.conn.prepare(&probe).is_err() {
             let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}");
@@ -53,6 +65,9 @@ impl Database {
 
     /// Rename a column if the old name still exists.
     fn rename_column(&self, table: &str, old_col: &str, new_col: &str) -> Result<()> {
+        assert_valid_ident(table);
+        assert_valid_ident(old_col);
+        assert_valid_ident(new_col);
         let probe = format!("SELECT {old_col} FROM {table} LIMIT 0");
         if self.conn.prepare(&probe).is_ok() {
             let sql = format!("ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}");
@@ -87,9 +102,9 @@ impl Database {
             self.conn
                 .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
         } else {
-            let comments_count: i64 = self
-                .conn
-                .query_row("SELECT COUNT(*) FROM comments", [], |r| r.get(0))?;
+            let comments_count: i64 =
+                self.conn
+                    .query_row("SELECT COUNT(*) FROM comments", [], |r| r.get(0))?;
             if comments_count == 0 {
                 self.conn.execute_batch("DROP TABLE comments;")?;
             } else {

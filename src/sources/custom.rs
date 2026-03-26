@@ -123,10 +123,8 @@ pub(crate) fn parse_paginated_json(raw: &str) -> Vec<serde_json::Value> {
     // Slow path: concatenated arrays — use streaming deserializer to handle `[...][...]`
     let mut items = Vec::new();
     let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<Vec<serde_json::Value>>();
-    for result in stream {
-        if let Ok(arr) = result {
-            items.extend(arr);
-        }
+    for arr in stream.flatten() {
+        items.extend(arr);
     }
     items
 }

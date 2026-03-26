@@ -12,9 +12,9 @@ impl DirigentApp {
             .fill(self.semantic.prompt_surface())
             .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
 
-        egui::TopBottomPanel::bottom("prompt_field")
+        egui::Panel::bottom("prompt_field")
             .frame(prompt_frame)
-            .show(ctx, |ui| {
+            .show_inside(ctx, |ui| {
                 // Top border line to visually separate from content above
                 let rect = ui.available_rect_before_wrap();
                 ui.painter().hline(

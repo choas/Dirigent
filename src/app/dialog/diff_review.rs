@@ -67,7 +67,7 @@ impl DirigentApp {
         let search_matches = &review.search_matches;
         let search_current = review.search_current;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             Self::render_diff_header_bar(
                 ui,
                 fs,

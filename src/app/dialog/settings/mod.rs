@@ -31,7 +31,7 @@ impl DirigentApp {
             self.spawn_opencode_models_fetch();
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Settings");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

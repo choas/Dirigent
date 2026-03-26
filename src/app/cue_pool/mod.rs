@@ -29,11 +29,11 @@ impl DirigentApp {
         self.cue_move_flash
             .retain(|_, when| when.elapsed().as_secs_f32() < 1.0);
 
-        egui::SidePanel::right("cue_pool")
-            .default_width(250.0)
-            .min_width(200.0)
-            .max_width(500.0)
-            .show(ctx, |ui| {
+        egui::Panel::right("cue_pool")
+            .default_size(250.0)
+            .min_size(200.0)
+            .max_size(500.0)
+            .show_inside(ctx, |ui| {
                 let (selected_play_prompt, custom_cue_requested, import_requested) =
                     self.render_cue_pool_header(ui);
                 self.handle_playbook_selection(selected_play_prompt);

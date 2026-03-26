@@ -56,7 +56,7 @@ impl DirigentApp {
             reply_send = self.render_reply_panel(ctx, fs);
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             // Header bar
             close = self.render_conversation_header(ui, fs, is_running, cue_id, &cue_text);
             ui.separator();
@@ -146,9 +146,9 @@ impl DirigentApp {
         let reply_frame = egui::Frame::NONE
             .fill(self.semantic.prompt_surface())
             .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_SM as i8));
-        egui::TopBottomPanel::bottom("conversation_reply_panel")
+        egui::Panel::bottom("conversation_reply_panel")
             .frame(reply_frame)
-            .show(ctx, |ui| {
+            .show_inside(ctx, |ui| {
                 // Top border line
                 let rect = ui.available_rect_before_wrap();
                 ui.painter().hline(

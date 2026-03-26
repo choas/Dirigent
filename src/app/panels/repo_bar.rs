@@ -5,7 +5,7 @@ use super::super::{icon_small, DirigentApp};
 impl DirigentApp {
     // Feature 4: Repo bar at top
     pub(in super::super) fn render_repo_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("repo_bar").show(ctx, |ui| {
+        egui::Panel::top("repo_bar").show_inside(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(icon_small(
                     &format!("\u{25B6} {}", self.project_root.display()),

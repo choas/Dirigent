@@ -179,11 +179,11 @@ impl DirigentApp {
 
     /// Render project-wide search panel as a left side panel (replaces file tree).
     pub(super) fn render_search_in_files_panel_wrapper(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("search_files_panel")
-            .default_width(SEARCH_PANEL_DEFAULT_WIDTH)
-            .min_width(SEARCH_PANEL_MIN_WIDTH)
-            .max_width(400.0)
-            .show(ctx, |ui| {
+        egui::Panel::left("search_files_panel")
+            .default_size(SEARCH_PANEL_DEFAULT_WIDTH)
+            .min_size(SEARCH_PANEL_MIN_WIDTH)
+            .max_size(400.0)
+            .show_inside(ctx, |ui| {
                 self.render_search_in_files_panel(ui);
             });
     }

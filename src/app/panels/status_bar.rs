@@ -6,7 +6,7 @@ use crate::git;
 
 impl DirigentApp {
     pub(in super::super) fn render_status_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+        egui::Panel::bottom("status_bar").show_inside(ctx, |ui| {
             ui.horizontal(|ui| {
                 self.render_status_bar_git_info(ui);
                 self.render_status_bar_db_cost(ui);

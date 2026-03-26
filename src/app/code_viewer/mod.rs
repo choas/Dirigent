@@ -25,7 +25,7 @@ impl DirigentApp {
         if self.should_render_central_overlay(ctx) {
             return;
         }
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             self.render_code_viewer_panel(ctx, ui);
         });
     }
