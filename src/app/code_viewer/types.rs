@@ -34,6 +34,7 @@ pub(crate) struct CodeLineContext<'a> {
 }
 
 /// Result of tab bar rendering: what action, if any, to apply.
+#[derive(PartialEq)]
 pub(crate) enum TabBarAction {
     None,
     CloseAll,
