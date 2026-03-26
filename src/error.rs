@@ -11,6 +11,9 @@ pub enum DirigentError {
     #[error("git: {0}")]
     GitCommand(String),
 
+    #[error("sqlite: {0}")]
+    Sqlite(String),
+
     #[error("claude error: {0}")]
     Claude(#[from] crate::claude::ClaudeError),
 
