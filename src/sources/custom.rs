@@ -16,7 +16,7 @@ pub(super) const SHELL_METACHARACTERS: &[char] =
     &['`', '$', '!', ';', '&', '|', '<', '>', '(', ')'];
 
 /// Validate a custom command string for safety.
-/// Rejects null bytes, control characters (except common whitespace),
+/// Rejects null bytes, line breaks, control characters (except tab),
 /// shell metacharacters, and excessively long commands.
 pub(super) fn validate_command(command: &str) -> Result<(), String> {
     if command.is_empty() {
@@ -32,11 +32,12 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
     if command.contains('\0') {
         return Err("command contains null byte".to_string());
     }
-    // Reject control characters other than tab/newline/carriage-return
-    if let Some(pos) = command
-        .chars()
-        .position(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r')
-    {
+    // Reject newlines/carriage-returns — they could chain commands via sh -c
+    if command.contains('\n') || command.contains('\r') {
+        return Err("command contains line break".to_string());
+    }
+    // Reject control characters other than tab
+    if let Some(pos) = command.chars().position(|c| c.is_control() && c != '\t') {
         return Err(format!(
             "command contains control character at position {}",
             pos
@@ -180,12 +181,13 @@ pub(crate) fn fetch_custom_command(
 }
 
 /// Parse JSON output from a source command.
-/// Supports JSON array or newline-delimited JSON objects.
-/// Each object must have "id" and "text" fields.
+/// Supports a single JSON array, concatenated arrays (`[...][...]`), or
+/// newline-delimited JSON objects.  Each object must have "id" and "text" fields.
 pub(super) fn parse_source_json(json_str: &str, source_label: &str) -> Vec<SourceItem> {
-    // Try parsing as array first
-    if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
-        return items
+    // Try paginated (possibly concatenated) JSON arrays first
+    let paginated = parse_paginated_json(json_str);
+    if !paginated.is_empty() {
+        return paginated
             .iter()
             .filter_map(|obj| parse_source_object(obj, source_label))
             .collect();
@@ -248,6 +250,12 @@ mod tests {
     }
 
     #[test]
+    fn validate_command_rejects_newlines() {
+        assert!(validate_command("echo hello\nrm -rf /").is_err());
+        assert!(validate_command("echo hello\r\nrm -rf /").is_err());
+    }
+
+    #[test]
     fn validate_command_rejects_shell_metacharacters() {
         for &meta in SHELL_METACHARACTERS {
             let cmd = format!("echo {}foo", meta);
@@ -293,6 +301,15 @@ mod tests {
         let items = parse_source_json(json, "test");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].external_id, "2");
+    }
+
+    #[test]
+    fn parse_concatenated_arrays() {
+        let json = r#"[{"id":"1","text":"first"}][{"id":"2","text":"second"}]"#;
+        let items = parse_source_json(json, "test");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].external_id, "1");
+        assert_eq!(items[1].external_id, "2");
     }
 
     // -- parse_source_object --
