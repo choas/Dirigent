@@ -136,7 +136,7 @@ pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) 
             None => continue,
         };
         let path = rest.trim();
-        if path == "/dev/null" || path.is_empty() {
+        if path.is_empty() {
             continue;
         }
         // Strip dir prefix if present
