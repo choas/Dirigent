@@ -87,7 +87,18 @@ impl Database {
             self.conn
                 .execute_batch("ALTER TABLE comments RENAME TO cues;")?;
         } else {
-            self.conn.execute_batch("DROP TABLE comments;")?;
+            let comments_count: i64 = self
+                .conn
+                .query_row("SELECT COUNT(*) FROM comments", [], |r| r.get(0))?;
+            if comments_count == 0 {
+                self.conn.execute_batch("DROP TABLE comments;")?;
+            } else {
+                anyhow::bail!(
+                    "Migration conflict: both 'cues' ({cues_count} rows) and \
+                     'comments' ({comments_count} rows) contain data. \
+                     Please manually merge or remove duplicates before restarting."
+                );
+            }
         }
         Ok(())
     }
