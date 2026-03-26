@@ -70,8 +70,7 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(column);
         assert_valid_col_type(col_type);
-        let probe = format!("SELECT \"{column}\" FROM \"{table}\" LIMIT 0");
-        if self.conn.prepare(&probe).is_err() {
+        if !self.has_column(table, column) {
             let sql = format!("ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {col_type}");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
         }
@@ -83,13 +82,34 @@ impl Database {
         assert_valid_ident(table);
         assert_valid_ident(old_col);
         assert_valid_ident(new_col);
-        let probe = format!("SELECT \"{old_col}\" FROM \"{table}\" LIMIT 0");
-        if self.conn.prepare(&probe).is_ok() {
+        let has_old_col = self.has_column(table, old_col);
+        if has_old_col {
             let sql =
                 format!("ALTER TABLE \"{table}\" RENAME COLUMN \"{old_col}\" TO \"{new_col}\"");
             ok_if_duplicate(self.conn.execute_batch(&sql), &sql)?;
         }
         Ok(())
+    }
+
+    /// Check whether a table has a given column using PRAGMA table_info.
+    fn has_column(&self, table: &str, column: &str) -> bool {
+        assert_valid_ident(table);
+        assert_valid_ident(column);
+        let sql = format!("PRAGMA table_info(\"{table}\")");
+        let mut stmt = match self.conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        for name in rows.flatten() {
+            if name == column {
+                return true;
+            }
+        }
+        false
     }
 
     /// Migrate the legacy `comments` table to `cues`.
