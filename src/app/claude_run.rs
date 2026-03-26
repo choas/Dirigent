@@ -228,11 +228,39 @@ fn run_claude_provider(
     }
 }
 
+/// Compute a working-tree diff scoped to only files that were *newly* changed
+/// since a pre-run baseline snapshot. This avoids capturing pre-existing local
+/// modifications in the fallback diff path.
+fn scoped_working_diff(
+    project_root: &Path,
+    baseline_dirty: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let current_dirty = git::get_dirty_files(project_root);
+    let new_files: Vec<String> = current_dirty
+        .keys()
+        .filter(|f| !baseline_dirty.contains(f.as_str()))
+        .cloned()
+        .collect();
+    if new_files.is_empty() {
+        return None;
+    }
+    git::get_working_diff(project_root, &new_files)
+}
+
 fn run_opencode_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
+    // Snapshot dirty files before the run so we can scope the fallback diff
+    // to only files newly changed by this run, avoiding the risk of
+    // committing pre-existing local modifications.
+    let baseline_dirty: std::collections::HashSet<String> =
+        git::get_dirty_files(req.project_root)
+            .keys()
+            .cloned()
+            .collect();
+
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
         cli_path: &req.config.cli_path,
@@ -250,15 +278,11 @@ fn run_opencode_provider(
     );
     match res {
         Ok(response) => {
-            // Diff detection with multiple fallbacks — OpenCode tool names may
-            // vary across versions, so we also check all working-tree changes
-            // (empty slice = `git diff` on every file) as a last resort.
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| git::get_working_diff(req.project_root, &[]))
+                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
             } else {
                 git::get_working_diff(req.project_root, &response.edited_files)
-                    .or_else(|| git::get_working_diff(req.project_root, &[]))
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
             };
             let metrics = claude::RunMetrics {
