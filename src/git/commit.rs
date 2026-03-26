@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use git2::{Repository, Signature};
+use git2::{BranchType, Repository, Signature};
 
 use crate::error::DirigentError;
 
@@ -170,9 +170,12 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
         .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
         .to_string();
 
-    // Check if there is a remote tracking branch
-    let upstream_ref = format!("refs/remotes/origin/{}", branch_name);
-    let has_upstream = repo.refname_to_id(&upstream_ref).is_ok();
+    // Check if the local branch already has an upstream configured
+    let has_upstream = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .ok()
+        .and_then(|b| b.upstream().ok())
+        .is_some();
 
     let output = if has_upstream {
         Command::new("git")
@@ -180,12 +183,14 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
             .current_dir(repo_path)
             .output()?
     } else {
-        // No upstream — push with -u to set up tracking
+        // No upstream — determine the default remote and push with -u to set up tracking
+        let remotes = repo.remotes()?;
+        let remote_name = remotes.iter().flatten().next().unwrap_or("origin");
         Command::new("git")
             .args([
                 "push",
                 "-u",
-                "origin",
+                remote_name,
                 &branch_name,
                 "--porcelain",
                 "--follow-tags",
