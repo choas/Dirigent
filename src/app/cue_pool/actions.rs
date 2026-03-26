@@ -1,0 +1,398 @@
+use std::collections::HashSet;
+use std::time::Instant;
+
+use super::super::{CueAction, DirigentApp};
+use crate::db::{Cue, CueStatus};
+use crate::diff_view::{self, DiffViewMode};
+use crate::git;
+use crate::settings::CliProvider;
+
+use super::helpers::{build_commit_all_subject, parse_schedule_duration};
+
+impl DirigentApp {
+    pub(in crate::app) fn process_cue_action(&mut self, id: i64, action: CueAction) {
+        match action {
+            CueAction::StartEdit(text) => {
+                self.editing_cue = Some(super::super::EditingCue {
+                    id,
+                    text,
+                    focus_requested: false,
+                });
+            }
+            CueAction::CancelEdit => {
+                self.editing_cue = None;
+            }
+            CueAction::SaveEdit(new_text) => {
+                let _ = self.db.update_cue_text(id, &new_text);
+                let _ = self.db.log_activity(id, "Edited");
+                self.editing_cue = None;
+            }
+            CueAction::MoveTo(new_status) => {
+                self.process_move_to(id, new_status);
+            }
+            CueAction::Delete => {
+                self.process_delete(id);
+            }
+            CueAction::Navigate(file_path, line, line_end) => {
+                self.process_navigate(&file_path, line, line_end);
+            }
+            CueAction::ShowDiff(cue_id) => {
+                self.process_show_diff(cue_id);
+            }
+            CueAction::CommitReview(cue_id) => {
+                self.process_commit_review(cue_id);
+            }
+            CueAction::RevertReview(cue_id) => {
+                self.process_revert_review(cue_id);
+            }
+            CueAction::ReplyReview(cue_id, reply_text) => {
+                self.reply_inputs.remove(&cue_id);
+                let _ = self.db.log_activity(cue_id, "Reply sent");
+                self.trigger_claude_reply(cue_id, &reply_text, &[]);
+            }
+            CueAction::ShowRunningLog(cue_id) => {
+                self.process_show_running_log(cue_id);
+            }
+            CueAction::ShowAgentRuns(cue_id) => {
+                self.dismiss_central_overlays();
+                self.show_agent_runs_for_cue = Some(cue_id);
+            }
+            CueAction::CommitAll => {
+                self.process_commit_all();
+            }
+            CueAction::QueueNext => {
+                self.process_queue_next(id);
+            }
+            CueAction::ScheduleRun(input) => {
+                self.process_schedule_run(id, &input);
+            }
+            CueAction::CancelQueue => {
+                self.run_queue.retain(|&cid| cid != id);
+                self.scheduled_runs.remove(&id);
+                self.schedule_inputs.remove(&id);
+                let _ = self.db.log_activity(id, "Queue/schedule cancelled");
+            }
+            CueAction::SetTag(tag) => {
+                let _ = self.db.update_cue_tag(id, tag.as_deref());
+                self.tag_inputs.remove(&id);
+                if let Some(ref t) = tag {
+                    let _ = self.db.log_activity(id, &format!("Tagged: {}", t));
+                } else {
+                    let _ = self.db.log_activity(id, "Tag removed");
+                }
+            }
+            CueAction::Push => {
+                self.start_git_push();
+            }
+            CueAction::CreatePR => {
+                self.open_create_pr_dialog();
+            }
+            CueAction::NotifyPR(cue_id) => {
+                self.start_notify_pr_single(cue_id);
+            }
+            CueAction::PushAndNotifyPR => {
+                self.start_push_and_notify_pr();
+            }
+            CueAction::RefreshPR => {
+                self.process_refresh_pr();
+            }
+            CueAction::TagAllReview(tag) => {
+                self.process_tag_all_review(&tag);
+            }
+            CueAction::QueueFollowUp(cue_id, text) => {
+                self.reply_inputs.remove(&cue_id);
+                self.follow_up_queue.entry(cue_id).or_default().push(text);
+                let count = self
+                    .follow_up_queue
+                    .get(&cue_id)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                let _ = self
+                    .db
+                    .log_activity(cue_id, &format!("Follow-up queued ({} pending)", count));
+            }
+        }
+        self.reload_cues();
+    }
+
+    fn process_move_to(&mut self, id: i64, new_status: CueStatus) {
+        if new_status != CueStatus::Ready {
+            self.cancel_cue_task(id);
+            self.follow_up_queue.remove(&id);
+        }
+        self.run_queue.retain(|&cid| cid != id);
+        self.scheduled_runs.remove(&id);
+        self.schedule_inputs.remove(&id);
+        if let Err(e) = self.db.update_cue_status(id, new_status) {
+            let _ = self.db.log_activity(
+                id,
+                &format!("Failed to move to {}: {}", new_status.label(), e),
+            );
+            return;
+        }
+        let _ = self
+            .db
+            .log_activity(id, &format!("Moved to {}", new_status.label()));
+        self.cue_move_flash.insert(id, Instant::now());
+        if new_status == CueStatus::Ready {
+            self.claude.expand_running = true;
+            self.reload_cues();
+            self.trigger_claude(id);
+        }
+    }
+
+    fn process_delete(&mut self, id: i64) {
+        self.cancel_cue_task(id);
+        self.run_queue.retain(|&cid| cid != id);
+        self.follow_up_queue.remove(&id);
+        self.scheduled_runs.remove(&id);
+        self.schedule_inputs.remove(&id);
+        let _ = self.db.delete_cue(id);
+    }
+
+    fn process_navigate(&mut self, file_path: &str, line: usize, line_end: Option<usize>) {
+        self.push_nav_history();
+        let full_path = self.project_root.join(file_path);
+        if self.viewer.current_file() != Some(&full_path) {
+            self.load_file(full_path);
+        } else {
+            self.dismiss_central_overlays();
+        }
+        if let Some(tab) = self.viewer.active_mut() {
+            tab.selection_start = Some(line);
+            tab.selection_end = Some(line_end.unwrap_or(line));
+        }
+        self.viewer.scroll_to_line = Some(line);
+    }
+
+    fn process_show_diff(&mut self, cue_id: i64) {
+        let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) else {
+            return;
+        };
+        let Some(diff) = exec.diff else { return };
+        let cue = self.cues.iter().find(|c| c.id == cue_id);
+        let text = cue.map(|c| c.text.clone()).unwrap_or_default();
+        let read_only = cue.map(|c| c.status != CueStatus::Review).unwrap_or(true);
+        let parsed = diff_view::parse_unified_diff(&diff);
+        self.dismiss_central_overlays();
+        self.diff_review = Some(super::super::DiffReview {
+            cue_id,
+            diff,
+            cue_text: text,
+            parsed,
+            view_mode: DiffViewMode::Inline,
+            read_only,
+            collapsed_files: HashSet::new(),
+            prompt_expanded: false,
+            reply_text: String::new(),
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+        });
+    }
+
+    fn process_commit_review(&mut self, cue_id: i64) {
+        if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
+            if let Some(ref diff) = exec.diff {
+                let cue_text = self
+                    .cues
+                    .iter()
+                    .find(|c| c.id == cue_id)
+                    .map(|c| c.text.clone())
+                    .unwrap_or_default();
+                let commit_msg = git::generate_commit_message(&cue_text);
+                self.apply_commit_result(
+                    cue_id,
+                    git::commit_diff(&self.project_root, diff, &commit_msg),
+                );
+            }
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    fn apply_commit_result(&mut self, cue_id: i64, result: crate::error::Result<String>) {
+        match result {
+            Ok(hash) => {
+                let short = &hash[..7.min(hash.len())];
+                self.set_status_message(format!("Committed: {}", short));
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+                let _ = self
+                    .db
+                    .log_activity(cue_id, &format!("Committed ({})", short));
+            }
+            Err(e) => {
+                let msg = format!("{}", e);
+                if msg.contains("nothing to commit") {
+                    self.set_status_message("Nothing to commit \u{2014} moved to Done".into());
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+                    let _ = self
+                        .db
+                        .log_activity(cue_id, "Moved to Done (already committed)");
+                } else {
+                    self.set_status_message(format!("Commit failed: {}", e));
+                }
+            }
+        }
+    }
+
+    fn process_revert_review(&mut self, cue_id: i64) {
+        let reverted = match self.db.get_latest_execution(cue_id) {
+            Ok(Some(exec)) => {
+                if let Some(ref diff) = exec.diff {
+                    let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
+                    match git::revert_files(&self.project_root, &file_paths) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            self.set_status_message(format!("Revert failed: {}", e));
+                            false
+                        }
+                    }
+                } else {
+                    self.set_status_message("Nothing to revert — no diff in execution".into());
+                    false
+                }
+            }
+            Ok(None) => {
+                self.set_status_message("Nothing to revert — no execution found".into());
+                false
+            }
+            Err(e) => {
+                self.set_status_message(format!("Revert failed: {}", e));
+                false
+            }
+        };
+        if reverted {
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.log_activity(cue_id, "Reverted");
+            self.reload_open_tabs();
+            self.reload_git_info();
+        }
+    }
+
+    fn process_show_running_log(&mut self, cue_id: i64) {
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                self.claude.running_logs.entry(cue_id)
+            {
+                if let Some(last) = execs.last() {
+                    if let Some(ref log_text) = last.log {
+                        e.insert((log_text.clone(), CliProvider::Claude));
+                    }
+                }
+            }
+            self.claude.conversation_history = execs;
+        }
+        self.dismiss_central_overlays();
+        self.claude.show_log = Some(cue_id);
+    }
+
+    fn process_commit_all(&mut self) {
+        let review_cues: Vec<&Cue> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Review)
+            .collect();
+        if review_cues.is_empty() {
+            self.set_status_message("No cues in Review".into());
+            return;
+        }
+        let subject = build_commit_all_subject(&review_cues);
+        let cue_details: Vec<String> = review_cues
+            .iter()
+            .map(|c| format!("- {}", c.text.trim()))
+            .collect();
+        let commit_msg = format!("{}\n\n{}", subject, cue_details.join("\n\n"),);
+        let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
+        match git::commit_all(&self.project_root, &commit_msg) {
+            Ok(hash) => {
+                let short = &hash[..7.min(hash.len())];
+                let plural = if review_ids.len() == 1 { "" } else { "s" };
+                self.set_status_message(format!(
+                    "Committed all: {} ({} cue{})",
+                    short,
+                    review_ids.len(),
+                    plural,
+                ));
+                for cue_id in &review_ids {
+                    let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
+                    let _ = self
+                        .db
+                        .log_activity(*cue_id, &format!("Committed ({})", short));
+                }
+            }
+            Err(e) => {
+                self.set_status_message(format!("Commit all failed: {}", e));
+            }
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    fn process_queue_next(&mut self, id: i64) {
+        if self.run_queue.contains(&id) {
+            return;
+        }
+        self.run_queue.push(id);
+        let _ = self.db.log_activity(id, "Queued (run next)");
+        let preview = self.cue_preview(id);
+        self.set_status_message(format!(
+            "\"{}\" queued \u{2014} will run after current runs finish",
+            preview
+        ));
+    }
+
+    fn process_schedule_run(&mut self, id: i64, input: &str) {
+        if let Some(duration) = parse_schedule_duration(input) {
+            let when = Instant::now() + duration;
+            self.scheduled_runs.insert(id, when);
+            self.schedule_inputs.remove(&id);
+            let _ = self.db.log_activity(id, &format!("Scheduled ({})", input));
+            let preview = self.cue_preview(id);
+            self.set_status_message(format!("\"{}\" scheduled to run in {}", preview, input));
+        } else {
+            self.set_status_message(format!(
+                "Invalid schedule format: \"{}\" \u{2014} use e.g. 5m, 2h, 30s",
+                input
+            ));
+        }
+    }
+
+    fn process_refresh_pr(&mut self) {
+        let pr_num = self.cues.iter().find_map(|c| {
+            c.source_ref
+                .as_ref()
+                .and_then(|s| s.strip_prefix("pr"))
+                .and_then(|s| s.split(':').next())
+                .and_then(|n| n.parse::<u32>().ok())
+        });
+        if let Some(n) = pr_num {
+            self.git.import_pr_number = n.to_string();
+            self.start_import_pr_findings();
+        } else {
+            self.open_import_pr_dialog();
+        }
+    }
+
+    fn process_tag_all_review(&mut self, tag: &str) {
+        let review_ids: Vec<i64> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Review)
+            .map(|c| c.id)
+            .collect();
+        for cue_id in &review_ids {
+            let _ = self.db.update_cue_tag(*cue_id, Some(tag));
+            let _ = self.db.log_activity(*cue_id, &format!("Tagged: {}", tag));
+        }
+        self.tag_all_review_input = None;
+        let plural = if review_ids.len() == 1 { "" } else { "s" };
+        self.set_status_message(format!(
+            "Tagged {} Review cue{} with \"{}\"",
+            review_ids.len(),
+            plural,
+            tag
+        ));
+    }
+}

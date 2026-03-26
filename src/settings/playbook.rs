@@ -1,0 +1,113 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Play {
+    pub name: String,
+    pub prompt: String,
+}
+
+/// A parsed template variable from a play prompt, e.g. `{LICENSE:MIT,Apache 2.0,ISC}`.
+#[derive(Debug, Clone)]
+pub(crate) struct PlayVariable {
+    /// Variable name (e.g. "LICENSE").
+    pub name: String,
+    /// Predefined options (may be empty for free-text variables).
+    pub options: Vec<String>,
+    /// The full matched token including braces, for substitution.
+    pub token: String,
+}
+
+/// Parse template variables from a play prompt.
+/// Syntax: `{VAR_NAME:option1,option2,...}` or `{VAR_NAME}` for free-text.
+pub(crate) fn parse_play_variables(prompt: &str) -> Vec<PlayVariable> {
+    let mut vars = Vec::new();
+    let mut seen_tokens = std::collections::HashSet::new();
+    let mut rest = prompt;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}') else {
+            break;
+        };
+        let token = &rest[start..start + end + 1];
+        let inner = &rest[start + 1..start + end];
+        rest = &rest[start + end + 1..];
+
+        let is_variable = (!inner.is_empty() && !inner.contains(' ')) || inner.contains(':');
+        if !is_variable {
+            continue;
+        }
+
+        let (name, options) = if let Some(colon) = inner.find(':') {
+            let name = inner[..colon].to_string();
+            let opts: Vec<String> = inner[colon + 1..]
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            (name, opts)
+        } else {
+            (inner.to_string(), Vec::new())
+        };
+
+        if !name.is_empty() && seen_tokens.insert(token.to_string()) {
+            vars.push(PlayVariable {
+                name,
+                options,
+                token: token.to_string(),
+            });
+        }
+    }
+    vars
+}
+
+/// Substitute resolved variables back into the prompt template.
+pub(crate) fn substitute_play_variables(
+    prompt: &str,
+    resolved: &[(String, String)], // (token, value)
+) -> String {
+    let mut result = prompt.to_string();
+    for (token, value) in resolved {
+        result = result.replace(token, value);
+    }
+    result
+}
+
+pub(crate) fn default_playbook() -> Vec<Play> {
+    vec![
+        Play {
+            name: "Update README".into(),
+            prompt: "Review the project and update README.md to accurately reflect the current state: features, setup instructions, and usage.".into(),
+        },
+        Play {
+            name: "Verify architecture".into(),
+            prompt: "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes.".into(),
+        },
+        Play {
+            name: "Verify last 5 commits".into(),
+            prompt: "Review the last 5 git commits. Check for bugs, incomplete changes, or inconsistencies. Report findings without making changes.".into(),
+        },
+        Play {
+            name: "Create release".into(),
+            prompt: "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`.".into(),
+        },
+        Play {
+            name: "Security audit".into(),
+            prompt: "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings.".into(),
+        },
+        Play {
+            name: "Check dead code".into(),
+            prompt: "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything.".into(),
+        },
+        Play {
+            name: "Add tests".into(),
+            prompt: "Identify untested code paths and write comprehensive tests for the most critical and least covered areas.".into(),
+        },
+        Play {
+            name: "Fix all warnings".into(),
+            prompt: "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them.".into(),
+        },
+        Play {
+            name: "Commit changes".into(),
+            prompt: "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit.".into(),
+        },
+    ]
+}
