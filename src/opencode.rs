@@ -306,10 +306,10 @@ fn build_opencode_command(
     use std::process::Stdio;
 
     let mut cmd = Command::new(opencode_bin);
-    cmd.arg("--log-level")
-        .arg("ERROR")
-        .arg("run")
+    cmd.arg("run")
         .arg(prompt)
+        .arg("--log-level")
+        .arg("ERROR")
         .arg("--format")
         .arg("json")
         .arg("--print-logs");
@@ -518,7 +518,10 @@ pub(crate) fn invoke_opencode_streaming(
     let opencode_bin = resolve_opencode_bin(config.cli_path)?;
 
     {
-        let mut log = on_log.lock().unwrap();
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            eprintln!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
+            e.into_inner()
+        });
         run_hook_script(
             "pre-run",
             config.pre_run_script,
@@ -557,7 +560,14 @@ pub(crate) fn invoke_opencode_streaming(
                     full_stderr.push_str(&line);
                     full_stderr.push('\n');
                 }
-                Err(_) => break,
+                Err(e) => {
+                    let msg = format!("stderr read error: {e}\n");
+                    if let Ok(mut log) = on_log_for_stderr.lock() {
+                        log(&msg);
+                    }
+                    full_stderr.push_str(&msg);
+                    break;
+                }
             }
         }
         full_stderr
@@ -584,22 +594,38 @@ pub(crate) fn invoke_opencode_streaming(
     if let Some(status) = exit_status {
         if !status.success() {
             if !stderr.is_empty() {
-                if let Ok(mut log) = on_log.lock() {
-                    log(&format!("\nError: {}\n", stderr));
-                }
+                let mut log = on_log.lock().unwrap_or_else(|e| {
+                    eprintln!(
+                        "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
+                        e
+                    );
+                    e.into_inner()
+                });
+                log(&format!("\nError: {}\n", stderr));
             }
             return Err(OpenCodeError::NonZeroExit(status));
         }
     }
 
     if final_result.is_empty() && !stderr.is_empty() {
-        if let Ok(mut log) = on_log.lock() {
-            log(&format!("\nError: {}\n", stderr));
-        }
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            eprintln!(
+                "Mutex poisoned while acquiring on_log for empty-result error: {:?}",
+                e
+            );
+            e.into_inner()
+        });
+        log(&format!("\nError: {}\n", stderr));
     }
 
     {
-        let mut log = on_log.lock().unwrap();
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            eprintln!(
+                "Mutex poisoned while acquiring on_log for post-run: {:?}",
+                e
+            );
+            e.into_inner()
+        });
         run_hook_script(
             "post-run",
             config.post_run_script,
