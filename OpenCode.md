@@ -1,6 +1,32 @@
 # OpenCode Integration
 
-Dirigent supports [OpenCode](https://github.com/nicepkg/opencode) as an alternative CLI backend to Claude Code. This document covers configuration tips, particularly around permissions.
+Dirigent supports [OpenCode](https://github.com/nicepkg/opencode) as an alternative CLI backend to Claude Code. This document covers configuration, invocation details, and permission tips.
+
+## Running OpenCode with Dirigent
+
+1. Install OpenCode: follow [OpenCode installation instructions](https://github.com/nicepkg/opencode)
+2. In Dirigent, go to **Settings** and set the CLI backend to **OpenCode**
+3. Configure (all optional):
+   - **CLI Path** — path to the `opencode` binary. Auto-detected on startup by searching the login shell PATH, plain PATH, and well-known directories (Homebrew, npm, `.local`, `.nvm`). Leave empty if auto-detection works.
+   - **Model** — selected from a dropdown populated by `opencode models`. Default models include `openai/o1`, `openai/o3`, `openai/o4-mini`, `openai/gpt-4.1`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-opus-4-6`. Click the refresh button (↻) to re-fetch available models.
+   - **Extra Args** — additional CLI arguments passed to `opencode run` (parsed via `shlex`, so quoting works)
+   - **Pre-run Script** — shell command executed before each run (e.g. set up credentials, pull latest config). Failures abort the run.
+   - **Post-run Script** — shell command executed after each run (e.g. cleanup, notifications). Failures are logged but don't affect results.
+   - **Environment Variables** — env var **names** to forward to the CLI process (one per line in the settings JSON). Values are resolved from the current process environment at runtime, never stored.
+
+### How Dirigent Invokes OpenCode
+
+Dirigent runs OpenCode with these default flags:
+
+```
+opencode run "<prompt>" --format json --print-logs --model <model>
+```
+
+Any **Extra Args** from settings are appended after these. Environment variables from `.Dirigent/.env` in the project root are automatically injected into the CLI process (same mechanism as the Claude backend), so you can keep AI-specific credentials separate from your regular `.env`.
+
+### Cancellation
+
+Dirigent supports cancelling a running OpenCode invocation. A watchdog thread monitors a cancellation flag and kills the child process when triggered.
 
 ## Yolo Mode (Auto-Approve All Permissions)
 
@@ -71,15 +97,38 @@ Running in Yolo mode means:
 
 This is acceptable for local development with version control (you can always `git checkout` or `git stash`), but **do not use Yolo mode in production environments or on machines with sensitive credentials**.
 
-## Running OpenCode with Dirigent
+## Stream Processing & Log Filtering
 
-1. Install OpenCode: follow [OpenCode installation instructions](https://github.com/nicepkg/opencode)
-2. In Dirigent, go to **Settings** and set the CLI backend to **OpenCode**
-3. Optionally configure:
-   - **CLI Path** — path to the `opencode` binary (leave empty if it's on your PATH)
-   - **Model** — e.g. `anthropic/claude-sonnet-4-20250514`, `openai/o3`, `google/gemini-2.5-pro`
-   - **Extra Args** — additional CLI arguments passed to `opencode run`
-   - **Environment Variables** — env var names to forward (e.g. `ANTHROPIC_API_KEY`)
+Dirigent processes OpenCode's JSON event stream from stdout and structured log lines from stderr in real time.
+
+### JSON Events (stdout)
+
+Events are dispatched by type:
+
+| Event Type | Handling |
+|---|---|
+| `text` | Streamed text output displayed in the log |
+| `tool_use` / `tool` | Tool invocations — file-modifying tools (Write, Edit, Bash, Task, etc.) are tracked for diff calculation |
+| `step_finish` | Collects metrics (cost, tokens, duration) when reason is `"stop"` |
+| `error` | Error messages displayed in the log |
+
+### Structured Logs (stderr)
+
+OpenCode emits structured log lines on stderr (`INFO`, `DEBUG`, `WARN`, `ERROR` with ISO timestamps). Dirigent filters these:
+
+- **DEBUG** — dropped (too noisy)
+- **WARN / ERROR** — always passed through
+- **INFO** — formatted per service:
+
+| Service | Display |
+|---|---|
+| `service=llm` | `→ <modelID> (<providerID>)` |
+| `service=permission` | `→ <permission> — <pattern>` |
+| `service=format` | `→ format: <file>` |
+| `service=session` | `→ session: <slug>` |
+| `service=vcs` | `→ branch: <name>` |
+| `service=lsp` | `→ lsp: <method>` |
+| `service=session.prompt` | `→ step <N>` or `→ loop done` |
 
 ## Debugging
 
