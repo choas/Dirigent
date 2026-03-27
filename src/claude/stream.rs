@@ -126,11 +126,22 @@ fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
             on_log("\n");
             return;
         }
-        // Extract the one useful bit: LLM model + provider.
+        // Extract useful bits from specific services.
         if line.contains("service=llm") {
             let model = extract_kv(line, "modelID").unwrap_or("?");
             let provider = extract_kv(line, "providerID").unwrap_or("?");
             on_log(&format!("\u{2192} {} ({})\n", model, provider));
+        } else if line.contains("service=permission") {
+            let perm = extract_kv(line, "permission").unwrap_or("?");
+            let pattern = extract_kv(line, "pattern").unwrap_or("?");
+            on_log(&format!(
+                "\u{2192} permission: {} \u{2014} {}\n",
+                perm, pattern
+            ));
+        } else if line.contains("service=format") {
+            if let Some(file) = extract_kv(line, "file") {
+                on_log(&format!("\u{2192} format: {}\n", file));
+            }
         }
         // Everything else (INFO/DEBUG) is noise — drop it.
         return;
