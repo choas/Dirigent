@@ -92,16 +92,21 @@ pub(super) fn handle_non_json_line_for_claude(line: &str, on_log: &mut dyn FnMut
     handle_non_json_line(line, on_log);
 }
 
-/// Filter OpenCode stderr: drop DEBUG and INFO noise, keep WARN/ERROR.
+/// Filter OpenCode stderr: drop DEBUG noise, keep WARN/ERROR, delegate INFO
+/// and non-structured lines to `handle_non_json_line` for consistent formatting.
 pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     if !is_opencode_log_line(line) {
-        // Not a structured log line — pass through (plain text output).
-        on_log(line);
-        on_log("\n");
+        // Not a structured log line — delegate for consistent formatting.
+        handle_non_json_line(line, on_log);
         return;
     }
-    // Drop DEBUG and INFO lines — too noisy.
-    if line.starts_with("DEBUG") || line.starts_with("INFO") {
+    // Drop DEBUG lines — too noisy.
+    if line.starts_with("DEBUG") {
+        return;
+    }
+    // INFO lines: delegate so service=llm gets "→ model (provider)" formatting.
+    if line.starts_with("INFO") {
+        handle_non_json_line(line, on_log);
         return;
     }
     // Pass through WARN, ERROR lines.
