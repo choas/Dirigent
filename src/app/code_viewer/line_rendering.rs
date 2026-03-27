@@ -162,6 +162,36 @@ pub(crate) fn render_code_line(
         );
     }
 
+    // LSP hover: track hovered position for tooltip requests
+    if line_response.hovered() && !ctx.cmd_held {
+        if let Some(pos) = ui.ctx().pointer_latest_pos() {
+            let x_offset = (pos.x - code_resp.rect.left()).max(0.0);
+            let approx_char_width = app.settings.font_size * 0.6;
+            let byte_offset = compute_byte_offset(line_text, x_offset, approx_char_width);
+            // Convert byte offset to character column (0-based)
+            let character = line_text[..byte_offset.min(line_text.len())]
+                .chars()
+                .count() as u32;
+            actions.lsp_hover_position = Some((line_idx as u32, character));
+        }
+    }
+
+    // Show LSP hover tooltip if available for this line
+    if line_response.hovered() {
+        if let Some(ref hover_text) = app.lsp.hover_result {
+            if app
+                .lsp
+                .hover_file
+                .as_ref()
+                .and_then(|f| app.viewer.active().map(|t| t.file_path == *f))
+                .unwrap_or(false)
+                && app.lsp.hover_line == line_idx as u32
+            {
+                line_response.on_hover_text(hover_text);
+            }
+        }
+    }
+
     if is_selection_end {
         render_cue_input(ui, app, ctx.active_idx, ctx.sel_start, ctx.sel_end, actions);
     }
@@ -293,7 +323,7 @@ pub(crate) fn handle_line_click(
     let cmd = ui.input(|i| i.modifiers.command);
 
     if cmd && !shift_held {
-        handle_goto_def_click(ui, app, line_text, code_resp, actions);
+        handle_goto_def_click(ui, app, line_num, line_text, code_resp, actions);
     } else if shift_held {
         handle_shift_click(line_num, sel_start, actions);
     } else {
@@ -309,6 +339,7 @@ pub(crate) fn handle_line_click(
 fn handle_goto_def_click(
     ui: &mut egui::Ui,
     app: &DirigentApp,
+    line_num: usize,
     line_text: &str,
     code_resp: &egui::Response,
     actions: &mut CodeLineActions,
@@ -322,6 +353,11 @@ fn handle_goto_def_click(
     let byte_offset = compute_byte_offset(line_text, x_offset, approx_char_width);
     if let Some(word) = symbols::word_at_offset(line_text, byte_offset) {
         actions.goto_def_word = Some(word.to_string());
+        // Also set LSP position for go-to-definition (0-based line and character)
+        let character = line_text[..byte_offset.min(line_text.len())]
+            .chars()
+            .count() as u32;
+        actions.lsp_goto_def_position = Some(((line_num - 1) as u32, character));
     }
 }
 

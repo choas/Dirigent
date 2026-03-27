@@ -120,19 +120,60 @@ impl DirigentApp {
         let lines_with_cues = self.lines_with_cues();
         let num_lines = self.viewer.tabs[active_idx].content.len();
         let line_height = 16.0;
-        let diag_lines = build_diagnostic_lookup(&self.agent_state.latest_diagnostics, rel_path);
-        let diag_messages =
+        let mut diag_lines =
+            build_diagnostic_lookup(&self.agent_state.latest_diagnostics, rel_path);
+        let mut diag_messages =
             build_diagnostic_messages(&self.agent_state.latest_diagnostics, rel_path);
+
+        // Merge LSP diagnostics into the lookup
+        if let Some(lsp_diags) = self.lsp.diagnostics.get(file_path) {
+            use crate::agents::Severity;
+            use crate::lsp::LspDiagSeverity;
+            for d in lsp_diags {
+                let sev = match d.severity {
+                    LspDiagSeverity::Error => Severity::Error,
+                    LspDiagSeverity::Warning => Severity::Warning,
+                    LspDiagSeverity::Info | LspDiagSeverity::Hint => Severity::Info,
+                };
+                let entry = diag_lines.entry(d.line).or_insert(Severity::Info);
+                match (&*entry, &sev) {
+                    (Severity::Info, Severity::Warning | Severity::Error) => *entry = sev,
+                    (Severity::Warning, Severity::Error) => *entry = sev,
+                    _ => {}
+                }
+                let source_prefix = if d.source.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}] ", d.source)
+                };
+                diag_messages
+                    .entry(d.line)
+                    .or_default()
+                    .push(format!("{}{}", source_prefix, d.message));
+            }
+        }
         let ext = file_path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
-        let symbol_lines: HashMap<usize, (String, String)> = self.viewer.tabs[active_idx]
-            .symbols
-            .iter()
-            .map(|s| (s.line, (s.kind.label().to_string(), s.name.clone())))
-            .collect();
+        // Prefer LSP document symbols over regex-based ones when available
+        let symbol_lines: HashMap<usize, (String, String)> =
+            if let Some(lsp_syms) = self.lsp.document_symbols.get(file_path) {
+                lsp_syms
+                    .iter()
+                    .map(|s| {
+                        let kind_label = lsp_symbol_kind_label(s.kind);
+                        (s.line, (kind_label.to_string(), s.name.clone()))
+                    })
+                    .collect()
+            } else {
+                self.viewer.tabs[active_idx]
+                    .symbols
+                    .iter()
+                    .map(|s| (s.line, (s.kind.label().to_string(), s.name.clone())))
+                    .collect()
+            };
         let sel_start = self.viewer.tabs[active_idx].selection_start;
         let sel_end = self.viewer.tabs[active_idx].selection_end;
 
@@ -150,6 +191,8 @@ impl DirigentApp {
             fix_diagnostic_line: None,
             goto_def_word: None,
             implement_click_line: None,
+            lsp_hover_position: None,
+            lsp_goto_def_position: None,
         };
 
         let scroll_area =
@@ -175,6 +218,7 @@ impl DirigentApp {
         self.apply_code_line_actions(
             &mut actions,
             active_idx,
+            file_path,
             rel_path,
             &diag_messages,
             &symbol_lines,
@@ -252,6 +296,7 @@ impl DirigentApp {
         &mut self,
         actions: &mut CodeLineActions,
         active_idx: usize,
+        file_path: &Path,
         rel_path: &str,
         diag_messages: &HashMap<usize, Vec<String>>,
         symbol_lines: &HashMap<usize, (String, String)>,
@@ -284,7 +329,19 @@ impl DirigentApp {
 
         if let Some(ref word) = actions.goto_def_word {
             let w = word.clone();
-            self.goto_definition(&w);
+            // Try LSP go-to-definition first, fall back to regex
+            if let Some((line_0based, char_0based)) = actions.lsp_goto_def_position {
+                self.lsp_goto_definition(file_path, line_0based, char_0based, &w);
+            } else {
+                self.goto_definition(&w);
+            }
+        }
+
+        // LSP hover: request hover info for the hovered position
+        if let Some((line, character)) = actions.lsp_hover_position {
+            if self.settings.lsp_enabled {
+                self.lsp.hover(file_path, line, character);
+            }
         }
     }
 
@@ -350,5 +407,24 @@ impl DirigentApp {
             self.viewer.tabs[active_idx].cue_input = text;
             self.viewer.tabs[active_idx].cue_images.clear();
         }
+    }
+}
+
+/// Map LSP SymbolKind to a human-readable label.
+fn lsp_symbol_kind_label(kind: lsp_types::SymbolKind) -> &'static str {
+    match kind {
+        lsp_types::SymbolKind::FUNCTION | lsp_types::SymbolKind::METHOD => "fn",
+        lsp_types::SymbolKind::STRUCT => "struct",
+        lsp_types::SymbolKind::ENUM => "enum",
+        lsp_types::SymbolKind::INTERFACE => "interface",
+        lsp_types::SymbolKind::CLASS => "class",
+        lsp_types::SymbolKind::CONSTANT => "const",
+        lsp_types::SymbolKind::MODULE | lsp_types::SymbolKind::NAMESPACE => "mod",
+        lsp_types::SymbolKind::TYPE_PARAMETER => "type",
+        lsp_types::SymbolKind::FIELD | lsp_types::SymbolKind::PROPERTY => "field",
+        lsp_types::SymbolKind::VARIABLE => "var",
+        lsp_types::SymbolKind::CONSTRUCTOR => "constructor",
+        lsp_types::SymbolKind::ENUM_MEMBER => "variant",
+        _ => "",
     }
 }

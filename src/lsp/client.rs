@@ -324,6 +324,20 @@ impl LspClient {
         )
     }
 
+    /// Request `textDocument/documentSymbol`.
+    pub fn document_symbols(&self, file_path: &Path) -> u64 {
+        let uri = file_uri(file_path);
+        let params = DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        self.send_request(
+            "textDocument/documentSymbol",
+            serde_json::to_value(params).unwrap(),
+        )
+    }
+
     /// Request `textDocument/references`.
     pub fn references(&self, file_path: &Path, line: u32, character: u32) -> u64 {
         let uri = file_uri(file_path);

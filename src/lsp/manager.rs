@@ -17,18 +17,19 @@ pub(crate) struct LspEvent {
 }
 
 /// Kinds of pending LSP requests we track for routing responses.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum PendingRequestKind {
     Hover,
     Definition,
     References,
-    DocumentSymbol,
+    DocumentSymbol(PathBuf),
 }
 
 /// An LSP diagnostic for a specific file.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct LspDiagnostic {
-    pub line: usize,      // 1-based
+    pub line: usize, // 1-based
     pub character: usize,
     pub end_line: usize,
     pub end_character: usize,
@@ -50,7 +51,7 @@ pub(crate) enum LspDiagSeverity {
 pub(crate) struct LspDocumentSymbol {
     pub name: String,
     pub kind: lsp_types::SymbolKind,
-    pub line: usize,  // 1-based
+    pub line: usize, // 1-based
     pub depth: usize,
 }
 
@@ -78,7 +79,6 @@ pub(crate) struct LspManager {
     shell_init: String,
 
     // -- Shared state for UI consumption --
-
     /// Pending requests: request_id -> kind. Used to route responses.
     pending_requests: HashMap<u64, PendingRequestKind>,
 
@@ -104,9 +104,9 @@ pub(crate) struct LspManager {
     pending_doc_symbols: HashMap<PathBuf, u64>,
 
     /// Debounce: last hover request position to avoid spamming.
-    hover_file: Option<PathBuf>,
-    hover_line: u32,
-    hover_char: u32,
+    pub hover_file: Option<PathBuf>,
+    pub hover_line: u32,
+    pub hover_char: u32,
     hover_requested_at: Option<Instant>,
 }
 
@@ -306,6 +306,12 @@ impl LspManager {
                     }
                 }
 
+                // Route tracked responses to shared state
+                if let Some(kind) = self.pending_requests.remove(id) {
+                    self.handle_tracked_response(kind, result, error);
+                    return;
+                }
+
                 // Forward other responses to event channel
                 let _ = self.event_tx.send(LspEvent {
                     server_name: server_name.to_string(),
@@ -313,23 +319,9 @@ impl LspManager {
                 });
             }
             LspMessage::Notification { method, params } => {
-                // Log diagnostics
+                // Parse and store diagnostics
                 if method == "textDocument/publishDiagnostics" {
-                    if let Ok(diag_params) = serde_json::from_value::<
-                        lsp_types::PublishDiagnosticsParams,
-                    >(params.clone())
-                    {
-                        let count = diag_params.diagnostics.len();
-                        if count > 0 {
-                            let uri = diag_params.uri.to_string();
-                            let short_uri = uri.rsplit('/').next().unwrap_or(&uri);
-                            let msg = format!(
-                                "LSP {}: {} diagnostics for {}",
-                                server_name, count, short_uri
-                            );
-                            eprintln!("[lsp] {}", msg);
-                        }
-                    }
+                    self.handle_diagnostics_notification(server_name, params);
                 }
 
                 // Forward all notifications
@@ -347,6 +339,221 @@ impl LspManager {
                 self.status_log.push(msg);
             }
         }
+    }
+
+    /// Handle a tracked response (hover, definition, references, documentSymbol).
+    fn handle_tracked_response(
+        &mut self,
+        kind: PendingRequestKind,
+        result: &Option<serde_json::Value>,
+        error: &Option<serde_json::Value>,
+    ) {
+        if error.is_some() {
+            eprintln!("[lsp] {:?} request error: {:?}", kind, error);
+            match kind {
+                PendingRequestKind::Hover => self.hover_pending = false,
+                PendingRequestKind::Definition => self.definition_pending = false,
+                _ => {}
+            }
+            return;
+        }
+
+        let result_val = match result {
+            Some(v) if !v.is_null() => v,
+            _ => {
+                match kind {
+                    PendingRequestKind::Hover => {
+                        self.hover_pending = false;
+                        self.hover_result = None;
+                    }
+                    PendingRequestKind::Definition => {
+                        self.definition_pending = false;
+                        self.definition_result = None;
+                    }
+                    _ => {}
+                }
+                return;
+            }
+        };
+
+        match kind {
+            PendingRequestKind::Hover => {
+                self.hover_pending = false;
+                self.hover_result = Self::parse_hover_result(result_val);
+            }
+            PendingRequestKind::Definition => {
+                self.definition_pending = false;
+                self.definition_result = Self::parse_definition_result(result_val);
+            }
+            PendingRequestKind::References => {
+                self.references_result = Self::parse_references_result(result_val);
+            }
+            PendingRequestKind::DocumentSymbol(file_path) => {
+                self.pending_doc_symbols.remove(&file_path);
+                if let Some(syms) = Self::parse_document_symbols(result_val) {
+                    self.document_symbols.insert(file_path, syms);
+                }
+            }
+        }
+    }
+
+    /// Parse hover response into a display string.
+    fn parse_hover_result(val: &serde_json::Value) -> Option<String> {
+        let hover: lsp_types::Hover = serde_json::from_value(val.clone()).ok()?;
+        match hover.contents {
+            lsp_types::HoverContents::Scalar(content) => match content {
+                lsp_types::MarkedString::String(s) => Some(s),
+                lsp_types::MarkedString::LanguageString(ls) => Some(ls.value),
+            },
+            lsp_types::HoverContents::Array(items) => {
+                let parts: Vec<String> = items
+                    .into_iter()
+                    .map(|item| match item {
+                        lsp_types::MarkedString::String(s) => s,
+                        lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                    })
+                    .collect();
+                Some(parts.join("\n\n"))
+            }
+            lsp_types::HoverContents::Markup(markup) => Some(markup.value),
+        }
+    }
+
+    /// Parse definition response into (file_path, line).
+    fn parse_definition_result(val: &serde_json::Value) -> Option<(PathBuf, usize)> {
+        // Definition can be a single Location, Vec<Location>, or Vec<LocationLink>
+        if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(val.clone()) {
+            return Some(Self::location_to_path_line(&loc));
+        }
+        if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(val.clone()) {
+            if let Some(loc) = locs.first() {
+                return Some(Self::location_to_path_line(loc));
+            }
+        }
+        if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(val.clone()) {
+            if let Some(link) = links.first() {
+                let path = uri_to_path(&link.target_uri)?;
+                let line = link.target_selection_range.start.line as usize + 1;
+                return Some((path, line));
+            }
+        }
+        None
+    }
+
+    /// Parse references response into list of (file_path, line).
+    fn parse_references_result(val: &serde_json::Value) -> Option<Vec<(PathBuf, usize)>> {
+        let locs: Vec<lsp_types::Location> = serde_json::from_value(val.clone()).ok()?;
+        let results: Vec<(PathBuf, usize)> = locs
+            .iter()
+            .filter_map(|loc| {
+                let path = uri_to_path(&loc.uri)?;
+                let line = loc.range.start.line as usize + 1;
+                Some((path, line))
+            })
+            .collect();
+        if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        }
+    }
+
+    /// Parse document symbols response.
+    fn parse_document_symbols(val: &serde_json::Value) -> Option<Vec<LspDocumentSymbol>> {
+        // Can be Vec<DocumentSymbol> (hierarchical) or Vec<SymbolInformation> (flat)
+        if let Ok(syms) = serde_json::from_value::<Vec<lsp_types::DocumentSymbol>>(val.clone()) {
+            let mut result = Vec::new();
+            Self::flatten_document_symbols(&syms, 0, &mut result);
+            return Some(result);
+        }
+        if let Ok(infos) = serde_json::from_value::<Vec<lsp_types::SymbolInformation>>(val.clone())
+        {
+            let result: Vec<LspDocumentSymbol> = infos
+                .into_iter()
+                .map(|info| LspDocumentSymbol {
+                    name: info.name,
+                    kind: info.kind,
+                    line: info.location.range.start.line as usize + 1,
+                    depth: 0,
+                })
+                .collect();
+            return Some(result);
+        }
+        None
+    }
+
+    /// Recursively flatten hierarchical DocumentSymbol into a flat list with depth.
+    fn flatten_document_symbols(
+        syms: &[lsp_types::DocumentSymbol],
+        depth: usize,
+        out: &mut Vec<LspDocumentSymbol>,
+    ) {
+        for sym in syms {
+            out.push(LspDocumentSymbol {
+                name: sym.name.clone(),
+                kind: sym.kind,
+                line: sym.selection_range.start.line as usize + 1,
+                depth,
+            });
+            if let Some(ref children) = sym.children {
+                Self::flatten_document_symbols(children, depth + 1, out);
+            }
+        }
+    }
+
+    fn location_to_path_line(loc: &lsp_types::Location) -> (PathBuf, usize) {
+        let path = uri_to_path(&loc.uri).unwrap_or_default();
+        let line = loc.range.start.line as usize + 1;
+        (path, line)
+    }
+
+    /// Handle publishDiagnostics notification: parse and store.
+    fn handle_diagnostics_notification(&mut self, server_name: &str, params: &serde_json::Value) {
+        if let Ok(diag_params) =
+            serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(params.clone())
+        {
+            let path = match uri_to_path(&diag_params.uri) {
+                Some(p) => p,
+                None => return,
+            };
+
+            let diags: Vec<LspDiagnostic> = diag_params
+                .diagnostics
+                .iter()
+                .map(|d| {
+                    let severity = match d.severity {
+                        Some(lsp_types::DiagnosticSeverity::ERROR) => LspDiagSeverity::Error,
+                        Some(lsp_types::DiagnosticSeverity::WARNING) => LspDiagSeverity::Warning,
+                        Some(lsp_types::DiagnosticSeverity::HINT) => LspDiagSeverity::Hint,
+                        _ => LspDiagSeverity::Info,
+                    };
+                    LspDiagnostic {
+                        line: d.range.start.line as usize + 1,
+                        character: d.range.start.character as usize,
+                        end_line: d.range.end.line as usize + 1,
+                        end_character: d.range.end.character as usize,
+                        severity,
+                        message: d.message.clone(),
+                        source: d.source.clone().unwrap_or_default(),
+                    }
+                })
+                .collect();
+
+            let count = diags.len();
+            if count > 0 {
+                let short = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                eprintln!("[lsp:{}] {} diagnostics for {}", server_name, count, short);
+            }
+            self.diagnostics.insert(path, diags);
+        }
+    }
+
+    /// Request document symbols for a file and track pending request properly.
+    pub fn request_document_symbols(&mut self, file_path: &Path) -> Option<u64> {
+        self.document_symbols(file_path)
     }
 
     /// Notify the appropriate server that a file was opened.
@@ -454,8 +661,10 @@ impl LspManager {
         }
         let client = self.clients.get(&server_name)?;
         let id = client.document_symbols(file_path);
-        self.pending_requests
-            .insert(id, PendingRequestKind::DocumentSymbol);
+        self.pending_requests.insert(
+            id,
+            PendingRequestKind::DocumentSymbol(file_path.to_path_buf()),
+        );
         self.pending_doc_symbols.insert(file_path.to_path_buf(), id);
         Some(id)
     }
@@ -497,6 +706,16 @@ impl LspManager {
     /// Update the shell init snippet (called when settings change).
     pub fn set_shell_init(&mut self, shell_init: &str) {
         self.shell_init = shell_init.to_string();
+    }
+}
+
+/// Convert an LSP URI to a file system path.
+fn uri_to_path(uri: &lsp_types::Uri) -> Option<PathBuf> {
+    let s = uri.as_str();
+    if let Some(path_str) = s.strip_prefix("file://") {
+        Some(PathBuf::from(path_str))
+    } else {
+        None
     }
 }
 

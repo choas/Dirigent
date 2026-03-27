@@ -18,6 +18,10 @@ pub(crate) struct CodeLineActions {
     pub fix_diagnostic_line: Option<usize>,
     pub goto_def_word: Option<String>,
     pub implement_click_line: Option<usize>,
+    /// LSP hover request: (line_0based, character_0based)
+    pub lsp_hover_position: Option<(u32, u32)>,
+    /// LSP go-to-definition request: (line_0based, character_0based)
+    pub lsp_goto_def_position: Option<(u32, u32)>,
 }
 
 /// Per-render-pass context shared across all code lines.

@@ -57,6 +57,34 @@ impl SymbolKind {
     }
 }
 
+/// Convert LSP document symbols to FileSymbol.
+pub(super) fn from_lsp_symbols(lsp_syms: &[crate::lsp::LspDocumentSymbol]) -> Vec<FileSymbol> {
+    lsp_syms
+        .iter()
+        .map(|s| FileSymbol {
+            name: s.name.clone(),
+            kind: lsp_symbol_kind_to_internal(s.kind),
+            line: s.line,
+            depth: s.depth,
+        })
+        .collect()
+}
+
+/// Map LSP SymbolKind to our internal SymbolKind.
+fn lsp_symbol_kind_to_internal(kind: lsp_types::SymbolKind) -> SymbolKind {
+    match kind {
+        lsp_types::SymbolKind::FUNCTION | lsp_types::SymbolKind::METHOD => SymbolKind::Function,
+        lsp_types::SymbolKind::STRUCT => SymbolKind::Struct,
+        lsp_types::SymbolKind::ENUM | lsp_types::SymbolKind::ENUM_MEMBER => SymbolKind::Enum,
+        lsp_types::SymbolKind::INTERFACE => SymbolKind::Interface,
+        lsp_types::SymbolKind::CLASS => SymbolKind::Class,
+        lsp_types::SymbolKind::CONSTANT => SymbolKind::Constant,
+        lsp_types::SymbolKind::MODULE | lsp_types::SymbolKind::NAMESPACE => SymbolKind::Module,
+        lsp_types::SymbolKind::TYPE_PARAMETER => SymbolKind::Type,
+        _ => SymbolKind::Function, // default fallback
+    }
+}
+
 /// Parse symbols from file content based on file extension.
 pub(super) fn parse_symbols(content: &[String], ext: &str) -> Vec<FileSymbol> {
     match ext {

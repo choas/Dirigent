@@ -169,6 +169,8 @@ pub struct DirigentApp {
 
     // LSP integration
     pub(super) lsp: LspManager,
+    /// Fallback word for LSP go-to-definition (used when LSP returns no result).
+    pub(super) lsp_goto_def_fallback_word: Option<String>,
 
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
@@ -495,6 +497,7 @@ impl DirigentApp {
             task_handles: Vec::new(),
             agent_state: AgentRunState::new(),
             lsp: lsp_manager,
+            lsp_goto_def_fallback_word: None,
             cue_move_flash: HashMap::new(),
             cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
@@ -709,6 +712,9 @@ impl eframe::App for DirigentApp {
 
         // Poll LSP servers for responses and notifications
         self.lsp.poll();
+
+        // Process LSP results (definition, document symbols)
+        self.process_lsp_results();
 
         // Poll external sources for new cues
         self.poll_sources();
