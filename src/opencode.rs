@@ -553,9 +553,8 @@ pub(crate) fn invoke_opencode_streaming(
         for line in reader.lines() {
             match line {
                 Ok(line) => {
-                    if let Ok(mut log) = on_log_for_stderr.lock() {
-                        claude::filter_opencode_log_line(&line, &mut *log);
-                    }
+                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
+                    claude::filter_opencode_log_line(&line, &mut *log);
                     full_stderr.push_str(&line);
                     full_stderr.push('\n');
                 }
@@ -569,9 +568,8 @@ pub(crate) fn invoke_opencode_streaming(
     });
 
     let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
-        if let Ok(mut log) = on_log.lock() {
-            log(text);
-        }
+        let mut log = on_log.lock().unwrap_or_else(|e| e.into_inner());
+        log(text);
     });
 
     done.store(true, Ordering::Relaxed);
