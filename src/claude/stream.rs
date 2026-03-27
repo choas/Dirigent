@@ -119,14 +119,8 @@ fn handle_opencode_info(body: &str, on_log: &mut dyn FnMut(&str)) {
         return;
     }
 
-    // Tool completions: "service=tool.registry status=completed duration=0 codesearch"
-    if body.contains("service=tool.registry") && body.contains("status=completed") {
-        if let Some(tool_name) = body.split_whitespace().last() {
-            // Skip if the last token looks like a key=value pair (malformed)
-            if !tool_name.contains('=') {
-                on_log(&format!("\u{2192} {} ready\n", tool_name));
-            }
-        }
+    // Tool registry lines (started/completed) are pure init noise — skip all.
+    if body.contains("service=tool.registry") {
         return;
     }
 
