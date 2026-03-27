@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::lsp::{default_lsp_servers, LspServerConfig};
+use crate::lsp::{default_lsp_servers, lsp_servers_for_language, LspLanguage, LspServerConfig};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_lsp_section(&mut self, ui: &mut egui::Ui, fs: f32) {
@@ -108,7 +108,7 @@ impl DirigentApp {
             }
 
             frame.show(ui, |ui| {
-                ui.set_width(card_width - SPACE_MD);
+                ui.set_width(card_width - SPACE_MD - 20.0);
 
                 // Header row: enabled toggle + name + status + actions
                 ui.horizontal(|ui| {
@@ -238,6 +238,22 @@ impl DirigentApp {
             let configs = vec![self.settings.lsp_servers[idx].clone()];
             self.lsp.start_servers(&configs);
         }
+
+        // Language initialization dropdown
+        ui.add_space(SPACE_SM);
+        ui.horizontal(|ui| {
+            ui.label("Language:");
+            egui::ComboBox::from_id_salt("lsp_init_language")
+                .selected_text(self.lsp_init_language.label())
+                .show_ui(ui, |ui| {
+                    for lang in LspLanguage::all() {
+                        ui.selectable_value(&mut self.lsp_init_language, *lang, lang.label());
+                    }
+                });
+            if ui.button("Initialize").clicked() {
+                self.settings.lsp_servers = lsp_servers_for_language(self.lsp_init_language);
+            }
+        });
 
         // Show LSP status log (last few entries)
         if !self.lsp.status_log.is_empty() {
