@@ -147,6 +147,10 @@ fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
             if let Some(branch) = extract_kv(line, "branch") {
                 on_log(&format!("\u{2192} branch: {}\n", branch));
             }
+        } else if line.contains("service=lsp") {
+            if let Some(method) = extract_kv(line, "method") {
+                on_log(&format!("\u{2192} lsp: {}\n", method));
+            }
         } else if line.contains("service=session.prompt") {
             if line.contains("exiting loop") {
                 on_log("\u{2192} loop done\n");
