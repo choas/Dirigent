@@ -8,23 +8,23 @@ OpenCode has a permission system that prompts for confirmation on potentially da
 
 ### Default Permission Ruleset
 
-When running in the TUI, OpenCode uses a ruleset like this (visible in logs at `INFO` level):
+When running in the TUI, OpenCode uses a ruleset like this (visible in logs at `INFO` level). Rules are evaluated in order and the **last matching rule wins**, so later entries override earlier ones for the same permission and pattern:
 
-```json
+```jsonc
 [
   {"permission": "*",                   "action": "allow",  "pattern": "*"},
   {"permission": "doom_loop",           "action": "ask",    "pattern": "*"},
   {"permission": "external_directory",  "action": "ask",    "pattern": "*"},
   {"permission": "external_directory",  "action": "allow",  "pattern": "/Users/<you>/.local/share/opencode/tool-output/*"},
-  {"permission": "question",            "action": "deny",   "pattern": "*"},
-  {"permission": "plan_enter",          "action": "deny",   "pattern": "*"},
+  {"permission": "question",            "action": "deny",   "pattern": "*"},   // denied here…
+  {"permission": "plan_enter",          "action": "deny",   "pattern": "*"},   // denied here…
   {"permission": "plan_exit",           "action": "deny",   "pattern": "*"},
   {"permission": "read",               "action": "allow",  "pattern": "*"},
   {"permission": "read",               "action": "ask",    "pattern": "*.env"},
   {"permission": "read",               "action": "ask",    "pattern": "*.env.*"},
   {"permission": "read",               "action": "allow",  "pattern": "*.env.example"},
-  {"permission": "question",            "action": "allow",  "pattern": "*"},
-  {"permission": "plan_enter",          "action": "allow",  "pattern": "*"},
+  {"permission": "question",            "action": "allow",  "pattern": "*"},   // …overridden to allow (last match wins)
+  {"permission": "plan_enter",          "action": "allow",  "pattern": "*"},   // …overridden to allow (last match wins)
   {"permission": "external_directory",  "action": "allow",  "pattern": "/Users/<you>/.local/share/opencode/tool-output/*"}
 ]
 ```
