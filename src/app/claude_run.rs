@@ -174,7 +174,7 @@ struct RunRequest<'a> {
 /// Run the CLI provider on a background thread and produce a `ClaudeResult`.
 fn run_provider(
     req: &RunRequest,
-    on_log: impl FnMut(&str) + Send,
+    on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
     match req.provider {
@@ -185,7 +185,7 @@ fn run_provider(
 
 fn run_claude_provider(
     req: &RunRequest,
-    on_log: impl FnMut(&str) + Send,
+    on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
     let res = claude::invoke_claude_streaming(
@@ -249,7 +249,7 @@ fn scoped_working_diff(
 
 fn run_opencode_provider(
     req: &RunRequest,
-    on_log: impl FnMut(&str) + Send,
+    on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
     // Snapshot dirty files before the run so we can scope the fallback diff
@@ -358,7 +358,7 @@ impl DirigentApp {
         let provider_for_log = provider.clone();
 
         let join_handle = std::thread::spawn(move || {
-            let on_log = |text: &str| {
+            let on_log = move |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
                     text: super::util::strip_ansi(text),

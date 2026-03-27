@@ -78,14 +78,127 @@ pub(super) fn read_stream_events(
         let event: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {
-                on_log(&line);
-                on_log("\n");
+                handle_non_json_line(&line, on_log);
                 continue;
             }
         };
         dispatch_stream_event(&event, &mut state, on_log);
     }
     state
+}
+
+/// Public wrapper so `invoke.rs` can filter stderr through the same logic.
+pub(super) fn handle_non_json_line_for_claude(line: &str, on_log: &mut dyn FnMut(&str)) {
+    handle_non_json_line(line, on_log);
+}
+
+/// Filter OpenCode stderr: drop DEBUG noise, keep WARN/ERROR, delegate INFO
+/// and non-structured lines to `handle_non_json_line` for consistent formatting.
+pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str)) {
+    if !is_opencode_log_line(line) {
+        // Not a structured log line — delegate for consistent formatting.
+        handle_non_json_line(line, on_log);
+        return;
+    }
+    // Drop DEBUG lines — too noisy.
+    if line.starts_with("DEBUG") {
+        return;
+    }
+    // INFO lines: delegate so service=llm gets "→ model (provider)" formatting.
+    if line.starts_with("INFO") {
+        handle_non_json_line(line, on_log);
+        return;
+    }
+    // Pass through WARN, ERROR lines.
+    on_log(line);
+    on_log("\n");
+}
+
+/// Handle a line that isn't valid JSON — either an OpenCode structured log line
+/// or plain text from another CLI.
+fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
+    // OpenCode structured log lines: "INFO  2026-03-27T10:56:41 ..." or "DEBUG ...".
+    // Detect by matching INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO timestamp.
+    if is_opencode_log_line(line) {
+        // Always pass WARN/ERROR through — these are important.
+        if line.starts_with("WARN") || line.starts_with("ERROR") {
+            on_log(line);
+            on_log("\n");
+            return;
+        }
+        // Extract useful bits from specific services.
+        if line.contains("service=llm") {
+            let model = extract_kv(line, "modelID").unwrap_or("?");
+            let provider = extract_kv(line, "providerID").unwrap_or("?");
+            on_log(&format!("\u{2192} {} ({})\n", model, provider));
+        } else if line.contains("service=permission") {
+            let perm = extract_kv(line, "permission").unwrap_or("?");
+            let pattern = extract_kv(line, "pattern").unwrap_or("?");
+            on_log(&format!("\u{2192} {} \u{2014} {}\n", perm, pattern));
+        } else if line.contains("service=format") {
+            if let Some(file) = extract_kv(line, "file") {
+                on_log(&format!("\u{2192} format: {}\n", file));
+            }
+        } else if line.contains("service=session") && line.contains("created") {
+            if let Some(slug) = extract_kv(line, "slug") {
+                on_log(&format!("\u{2192} session: {}\n", slug));
+            }
+        } else if line.contains("service=vcs") {
+            if let Some(branch) = extract_kv(line, "branch") {
+                on_log(&format!("\u{2192} branch: {}\n", branch));
+            }
+        } else if line.contains("service=lsp") {
+            if let Some(method) = extract_kv(line, "method") {
+                on_log(&format!("\u{2192} lsp: {}\n", method));
+            }
+        } else if line.contains("service=session.prompt") {
+            if line.contains("exiting loop") {
+                on_log("\u{2192} loop done\n");
+            } else if let Some(step) = extract_kv(line, "step") {
+                on_log(&format!("\u{2192} step {}\n", step));
+            }
+        }
+        // Everything else (INFO/DEBUG) is noise — drop it.
+        return;
+    }
+    // Pass through everything else (plain text output).
+    on_log(line);
+    on_log("\n");
+}
+
+/// Returns true if `line` looks like an OpenCode structured log line
+/// (INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO-8601 timestamp).
+fn is_opencode_log_line(line: &str) -> bool {
+    let rest = if let Some(r) = line.strip_prefix("INFO") {
+        r
+    } else if let Some(r) = line.strip_prefix("DEBUG") {
+        r
+    } else if let Some(r) = line.strip_prefix("WARN") {
+        r
+    } else if let Some(r) = line.strip_prefix("ERROR") {
+        r
+    } else {
+        return false;
+    };
+    // After the level keyword there must be whitespace then a timestamp (YYYY-MM-DD).
+    let bytes = rest.trim_start().as_bytes();
+    bytes.len() >= 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[0..4].iter().all(|b| b.is_ascii_digit())
+}
+
+/// Extract the value for a `key=value` token in a space-separated log line.
+fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    for token in line.split_whitespace() {
+        if let Some(val) = token
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            return Some(val);
+        }
+    }
+    None
 }
 
 /// Route a single parsed JSON event to the correct handler.

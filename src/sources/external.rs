@@ -234,27 +234,8 @@ pub(crate) fn fetch_sonarqube_issues(
         .collect())
 }
 
-/// Load a variable from the `.env` file in the project root.
-/// Returns `None` if the file doesn't exist or the key is not found.
+/// Load a variable from `.Dirigent/.env` (preferred) or `.env` (fallback).
+/// Returns `None` if neither file contains the key.
 pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
-    let env_path = project_root.join(".env");
-    let content = std::fs::read_to_string(env_path).ok()?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let prefix = format!("{}=", key);
-        if let Some(value) = line.strip_prefix(&prefix) {
-            // Strip surrounding quotes if present
-            let value = value.trim();
-            let value = value
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                .unwrap_or(value);
-            return Some(value.to_string());
-        }
-    }
-    None
+    crate::claude::load_env_var_with_dirigent_fallback(project_root, key)
 }

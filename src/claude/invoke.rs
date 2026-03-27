@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::cli::{build_claude_command, resolve_claude_binary, run_lifecycle_script};
+use super::cli::{
+    apply_dirigent_env, build_claude_command, resolve_claude_binary, run_lifecycle_script,
+};
 use super::stream::{read_stream_events, spawn_stderr_reader, spawn_watchdog};
 use super::types::{ClaudeError, ClaudeResponse};
 
@@ -49,7 +51,11 @@ pub(crate) fn invoke_claude_streaming(
         skip_permissions,
     );
 
+    // Run pre-run script first so it can modify .Dirigent/.env before we read it.
     run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
+
+    // Inject .Dirigent/.env overrides so AI runs use dev credentials.
+    apply_dirigent_env(&mut cmd, project_root);
 
     let mut child = cmd
         .current_dir(project_root)
@@ -75,8 +81,12 @@ pub(crate) fn invoke_claude_streaming(
         return Err(ClaudeError::Cancelled);
     }
 
-    if state.final_result.is_empty() && !stderr.is_empty() {
-        on_log(&format!("\nError: {}\n", stderr));
+    if !stderr.is_empty() {
+        // Filter stderr through the same non-JSON handler used for stdout
+        // so OpenCode INFO noise doesn't leak into the log.
+        for line in stderr.lines() {
+            super::stream::handle_non_json_line_for_claude(line, &mut on_log);
+        }
     }
 
     run_lifecycle_script(

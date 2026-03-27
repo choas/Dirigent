@@ -135,7 +135,8 @@ impl DirigentApp {
 }
 
 /// Resolve the token for a source: use the in-memory value if set, otherwise
-/// fall back to the appropriate environment variable from `.env`.
+/// fall back to the appropriate environment variable from `.Dirigent/.env`
+/// (preferred) or `.env`.
 fn resolve_source_token(source: &settings::SourceConfig, project_root: &Path) -> String {
     if !source.token.is_empty() {
         return source.token.clone();
