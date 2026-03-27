@@ -92,9 +92,7 @@ pub(super) fn handle_non_json_line_for_claude(line: &str, on_log: &mut dyn FnMut
     handle_non_json_line(line, on_log);
 }
 
-/// Filter OpenCode stderr: keep everything except DEBUG noise.
-/// INFO lines carry useful tool-usage information (read_file, etc.)
-/// that the user wants to see in real time.
+/// Filter OpenCode stderr: drop DEBUG and INFO noise, keep WARN/ERROR.
 pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     if !is_opencode_log_line(line) {
         // Not a structured log line — pass through (plain text output).
@@ -102,18 +100,11 @@ pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str))
         on_log("\n");
         return;
     }
-    // Drop DEBUG lines — too noisy.
-    if line.starts_with("DEBUG") {
+    // Drop DEBUG and INFO lines — too noisy.
+    if line.starts_with("DEBUG") || line.starts_with("INFO") {
         return;
     }
-    // For LLM lines, extract a concise model summary instead of the raw log.
-    if line.contains("service=llm") {
-        let model = extract_kv(line, "modelID").unwrap_or("?");
-        let provider = extract_kv(line, "providerID").unwrap_or("?");
-        on_log(&format!("\u{2192} {} ({})\n", model, provider));
-        return;
-    }
-    // Pass through WARN, ERROR, and all other INFO lines.
+    // Pass through WARN, ERROR lines.
     on_log(line);
     on_log("\n");
 }
