@@ -1,6 +1,7 @@
 /target
 .DS_Store
 .dirigent/
+.Dirigent/
 .claude/
 analyze_*
 Dirigent.app
