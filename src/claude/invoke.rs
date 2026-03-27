@@ -80,7 +80,7 @@ pub(crate) fn invoke_claude_streaming(
         return Err(ClaudeError::Cancelled);
     }
 
-    if state.final_result.is_empty() && !stderr.is_empty() {
+    if !stderr.is_empty() {
         // Filter stderr through the same non-JSON handler used for stdout
         // so OpenCode INFO noise doesn't leak into the log.
         for line in stderr.lines() {
