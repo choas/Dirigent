@@ -306,7 +306,11 @@ fn build_opencode_command(
     use std::process::Stdio;
 
     let mut cmd = Command::new(opencode_bin);
-    cmd.arg("run").arg(prompt).arg("--format").arg("json");
+    cmd.arg("run")
+        .arg(prompt)
+        .arg("--format")
+        .arg("json")
+        .arg("--print-logs");
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
@@ -498,20 +502,27 @@ pub(crate) fn invoke_opencode_streaming(
     prompt: &str,
     project_root: &Path,
     config: &OpenCodeRunConfig<'_>,
-    mut on_log: impl FnMut(&str),
+    on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> Result<OpenCodeResponse, OpenCodeError> {
-    use std::io::Read;
+    // Wrap on_log in Arc<Mutex<>> so both the stderr streaming thread and the
+    // main stdout processing can log concurrently.  stderr from OpenCode is
+    // line-buffered (even when stdout is pipe-buffered), so streaming it gives
+    // the user real-time visibility while the run is in progress.
+    let on_log = Arc::new(Mutex::new(on_log));
 
     let opencode_bin = resolve_opencode_bin(config.cli_path)?;
 
-    run_hook_script(
-        "pre-run",
-        config.pre_run_script,
-        project_root,
-        &mut on_log,
-        true,
-    )?;
+    {
+        let mut log = on_log.lock().unwrap();
+        run_hook_script(
+            "pre-run",
+            config.pre_run_script,
+            project_root,
+            &mut *log,
+            true,
+        )?;
+    }
 
     let run_start = Instant::now();
     let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)?
@@ -525,15 +536,34 @@ pub(crate) fn invoke_opencode_streaming(
     let done = Arc::new(AtomicBool::new(false));
     let watchdog = spawn_watchdog(&child, &cancel, &done);
 
+    // Stream stderr line-by-line so the user sees OpenCode progress in real
+    // time (stderr is unbuffered / line-buffered even when stdout is piped).
+    let on_log_for_stderr = Arc::clone(&on_log);
     let stderr_thread = std::thread::spawn(move || {
-        let mut s = String::new();
-        std::io::BufReader::new(stderr_handle)
-            .read_to_string(&mut s)
-            .ok();
-        s
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stderr_handle);
+        let mut full_stderr = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(line) => {
+                    if let Ok(mut log) = on_log_for_stderr.lock() {
+                        log(&line);
+                        log("\n");
+                    }
+                    full_stderr.push_str(&line);
+                    full_stderr.push('\n');
+                }
+                Err(_) => break,
+            }
+        }
+        full_stderr
     });
 
-    let stream_result = process_event_stream(stdout_handle, &cancel, &mut on_log);
+    let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
+        if let Ok(mut log) = on_log.lock() {
+            log(text);
+        }
+    });
 
     done.store(true, Ordering::Relaxed);
     let _ = watchdog.join();
@@ -550,23 +580,30 @@ pub(crate) fn invoke_opencode_streaming(
     if let Some(status) = exit_status {
         if !status.success() {
             if !stderr.is_empty() {
-                on_log(&format!("\nError: {}\n", stderr));
+                if let Ok(mut log) = on_log.lock() {
+                    log(&format!("\nError: {}\n", stderr));
+                }
             }
             return Err(OpenCodeError::NonZeroExit(status));
         }
     }
 
     if final_result.is_empty() && !stderr.is_empty() {
-        on_log(&format!("\nError: {}\n", stderr));
+        if let Ok(mut log) = on_log.lock() {
+            log(&format!("\nError: {}\n", stderr));
+        }
     }
 
-    run_hook_script(
-        "post-run",
-        config.post_run_script,
-        project_root,
-        &mut on_log,
-        false,
-    )?;
+    {
+        let mut log = on_log.lock().unwrap();
+        run_hook_script(
+            "post-run",
+            config.post_run_script,
+            project_root,
+            &mut *log,
+            false,
+        )?;
+    }
 
     let elapsed_ms = run_start.elapsed().as_millis() as u64;
 
