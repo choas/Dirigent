@@ -78,14 +78,80 @@ pub(super) fn read_stream_events(
         let event: serde_json::Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {
-                on_log(&line);
-                on_log("\n");
+                handle_non_json_line(&line, on_log);
                 continue;
             }
         };
         dispatch_stream_event(&event, &mut state, on_log);
     }
     state
+}
+
+/// Handle a line that isn't valid JSON — either an OpenCode structured log line
+/// or plain text from another CLI.
+fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
+    // OpenCode INFO log lines: filter and reformat the useful ones.
+    if let Some(rest) = line
+        .strip_prefix("INFO ")
+        .or_else(|| line.strip_prefix("INFO\t"))
+    {
+        handle_opencode_info(rest, on_log);
+        return;
+    }
+    // Skip OpenCode DEBUG/WARN/ERROR prefixed lines that are pure noise.
+    if line.starts_with("DEBUG ") || line.starts_with("DEBUG\t") {
+        return;
+    }
+    // Pass through everything else (plain text output, WARN/ERROR).
+    on_log(line);
+    on_log("\n");
+}
+
+/// Parse an OpenCode INFO log body and emit a concise summary for the interesting ones.
+fn handle_opencode_info(body: &str, on_log: &mut dyn FnMut(&str)) {
+    // Skip noisy categories entirely.
+    if body.contains("service=permission")
+        || body.contains("service=bus")
+        || body.contains("service=snapshot")
+        || body.contains("service=session.prompt")
+        || body.contains("service=session.processor")
+    {
+        return;
+    }
+
+    // Tool completions: "service=tool.registry status=completed duration=0 codesearch"
+    if body.contains("service=tool.registry") && body.contains("status=completed") {
+        if let Some(tool_name) = body.split_whitespace().last() {
+            // Skip if the last token looks like a key=value pair (malformed)
+            if !tool_name.contains('=') {
+                on_log(&format!("\u{2192} {} ready\n", tool_name));
+            }
+        }
+        return;
+    }
+
+    // LLM streaming: extract model and provider.
+    if body.contains("service=llm") {
+        let model = extract_kv(body, "modelID").unwrap_or("?");
+        let provider = extract_kv(body, "providerID").unwrap_or("?");
+        on_log(&format!("\u{2192} {} ({})\n", model, provider));
+        return;
+    }
+
+    // Everything else from INFO: skip (avoids dumping unknown verbose lines).
+}
+
+/// Extract the value for a `key=value` token in a space-separated log line.
+fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    for token in line.split_whitespace() {
+        if let Some(val) = token
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            return Some(val);
+        }
+    }
+    None
 }
 
 /// Route a single parsed JSON event to the correct handler.
