@@ -76,7 +76,11 @@ pub(crate) fn invoke_claude_streaming(
     }
 
     if state.final_result.is_empty() && !stderr.is_empty() {
-        on_log(&format!("\nError: {}\n", stderr));
+        // Filter stderr through the same non-JSON handler used for stdout
+        // so OpenCode INFO noise doesn't leak into the log.
+        for line in stderr.lines() {
+            super::stream::handle_non_json_line_public(line, &mut on_log);
+        }
     }
 
     run_lifecycle_script(
