@@ -80,6 +80,10 @@ pub(super) enum CueAction {
     RefreshPR,
     /// Queue a follow-up prompt for a currently running cue.
     QueueFollowUp(i64, String),
+    /// Open a Claude Code plan file in the code viewer.
+    ViewPlan(i64),
+    /// Execute a Claude Code plan by sending it back to Claude.
+    RunPlan(i64),
 }
 
 /// State for a single open file tab.

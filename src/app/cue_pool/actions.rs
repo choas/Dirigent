@@ -111,6 +111,12 @@ impl DirigentApp {
                     .db
                     .log_activity(cue_id, &format!("Follow-up queued ({} pending)", count));
             }
+            CueAction::ViewPlan(cue_id) => {
+                self.process_view_plan(cue_id);
+            }
+            CueAction::RunPlan(cue_id) => {
+                self.process_run_plan(cue_id);
+            }
         }
         self.reload_cues();
     }
@@ -135,6 +141,8 @@ impl DirigentApp {
             .log_activity(id, &format!("Moved to {}", new_status.label()));
         self.cue_move_flash.insert(id, Instant::now());
         if new_status == CueStatus::Ready {
+            // Clear any previous plan when starting a new run.
+            let _ = self.db.update_cue_plan_path(id, None);
             self.claude.expand_running = true;
             self.reload_cues();
             self.trigger_claude(id);
@@ -376,6 +384,46 @@ impl DirigentApp {
             self.start_import_pr_findings();
         } else {
             self.open_import_pr_dialog();
+        }
+    }
+
+    fn process_view_plan(&mut self, cue_id: i64) {
+        let plan_path = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .and_then(|c| c.plan_path.clone());
+        if let Some(path) = plan_path {
+            let full_path = std::path::PathBuf::from(&path);
+            if full_path.exists() {
+                self.push_nav_history();
+                self.load_file(full_path);
+            } else {
+                self.set_status_message(format!("Plan file not found: {}", path));
+            }
+        }
+    }
+
+    fn process_run_plan(&mut self, cue_id: i64) {
+        let plan_path = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .and_then(|c| c.plan_path.clone());
+        if let Some(path) = plan_path {
+            let plan_content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.set_status_message(format!("Failed to read plan: {}", e));
+                    return;
+                }
+            };
+            let reply = format!(
+                "Execute the following plan:\n\n{}\n\nPlan file: {}",
+                plan_content, path
+            );
+            let _ = self.db.log_activity(cue_id, "Running plan");
+            self.trigger_claude_reply(cue_id, &reply, &[]);
         }
     }
 

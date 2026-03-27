@@ -193,6 +193,9 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let fs = self.settings.font_size;
+        if cue.plan_path.is_some() {
+            self.render_plan_buttons(ui, cue, actions, fs);
+        }
         if ui
             .small_button(icon("\u{25B6} Diff", fs))
             .on_hover_text("View the diff")
@@ -246,6 +249,9 @@ impl DirigentApp {
     ) {
         let fs = self.settings.font_size;
         ui.label(icon("\u{2713}", fs).color(self.semantic.success));
+        if cue.plan_path.is_some() {
+            self.render_plan_buttons(ui, cue, actions, fs);
+        }
         self.render_push_button(ui, cue, actions, fs);
         self.render_log_and_agents_buttons(ui, cue, actions, fs);
         if ui
@@ -269,6 +275,32 @@ impl DirigentApp {
             .clicked()
         {
             actions.push((cue.id, CueAction::MoveTo(CueStatus::Inbox)));
+        }
+    }
+
+    fn render_plan_buttons(
+        &self,
+        ui: &mut egui::Ui,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+        fs: f32,
+    ) {
+        let run_btn =
+            egui::Button::new(icon("\u{25B6} Run Plan", fs).color(self.semantic.badge_text))
+                .fill(self.semantic.accent);
+        if ui
+            .add(run_btn)
+            .on_hover_text("Execute the Claude Code plan")
+            .clicked()
+        {
+            actions.push((cue.id, CueAction::RunPlan(cue.id)));
+        }
+        if ui
+            .small_button(icon("View Plan", fs))
+            .on_hover_text("Open the plan file in the code viewer")
+            .clicked()
+        {
+            actions.push((cue.id, CueAction::ViewPlan(cue.id)));
         }
     }
 

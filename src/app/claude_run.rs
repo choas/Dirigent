@@ -587,6 +587,16 @@ impl DirigentApp {
         // commits made by Claude Code (or any other file changes) are visible
         // immediately in the UI — git log, dirty-file markers, tab contents.
         if !is_error {
+            // Detect Claude Code plan (ExitPlanMode) in the log output.
+            let plan_path = self
+                .claude
+                .running_logs
+                .get(&result.cue_id)
+                .and_then(|(log, _)| claude::extract_plan_path(log));
+            let _ = self
+                .db
+                .update_cue_plan_path(result.cue_id, plan_path.as_deref());
+
             self.refresh_open_tabs();
             self.reload_git_info();
             self.reload_commit_history();
