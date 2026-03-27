@@ -559,7 +559,10 @@ pub(crate) fn invoke_opencode_streaming(
                     full_stderr.push('\n');
                 }
                 Err(e) => {
-                    full_stderr.push_str(&format!("stderr read error: {e}\n"));
+                    let msg = format!("stderr read error: {e}\n");
+                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
+                    log(&msg);
+                    full_stderr.push_str(&msg);
                     break;
                 }
             }
