@@ -58,7 +58,7 @@ impl SemanticColors {
         if self.is_dark {
             egui::Color32::from_rgba_premultiplied(80, 80, 0, 40)
         } else {
-            egui::Color32::from_rgba_premultiplied(180, 180, 0, 30)
+            egui::Color32::from_rgba_premultiplied(160, 130, 20, 28)
         }
     }
 
@@ -66,7 +66,7 @@ impl SemanticColors {
         if self.is_dark {
             egui::Color32::from_rgb(180, 140, 0)
         } else {
-            egui::Color32::from_rgb(200, 160, 0)
+            egui::Color32::from_rgba_premultiplied(180, 120, 40, 90)
         }
     }
 
@@ -74,7 +74,7 @@ impl SemanticColors {
         if self.is_dark {
             egui::Color32::from_rgba_premultiplied(200, 120, 0, 60)
         } else {
-            egui::Color32::from_rgba_premultiplied(255, 180, 0, 80)
+            egui::Color32::from_rgba_premultiplied(200, 140, 40, 65)
         }
     }
 
@@ -82,7 +82,7 @@ impl SemanticColors {
         if self.is_dark {
             egui::Color32::from_rgba_premultiplied(180, 160, 0, 35)
         } else {
-            egui::Color32::from_rgba_premultiplied(220, 200, 0, 40)
+            egui::Color32::from_rgba_premultiplied(180, 150, 40, 30)
         }
     }
 
