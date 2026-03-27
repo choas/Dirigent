@@ -84,7 +84,7 @@ pub(crate) fn invoke_claude_streaming(
         // Filter stderr through the same non-JSON handler used for stdout
         // so OpenCode INFO noise doesn't leak into the log.
         for line in stderr.lines() {
-            super::stream::filter_opencode_log_line(line, &mut on_log);
+            super::stream::handle_non_json_line_for_claude(line, &mut on_log);
         }
     }
 
