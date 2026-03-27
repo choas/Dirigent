@@ -308,8 +308,6 @@ fn build_opencode_command(
     let mut cmd = Command::new(opencode_bin);
     cmd.arg("run")
         .arg(prompt)
-        .arg("--log-level")
-        .arg("ERROR")
         .arg("--format")
         .arg("json")
         .arg("--print-logs");
@@ -545,6 +543,8 @@ pub(crate) fn invoke_opencode_streaming(
 
     // Stream stderr line-by-line so the user sees OpenCode progress in real
     // time (stderr is unbuffered / line-buffered even when stdout is piped).
+    // We filter through `filter_opencode_log_line` to suppress verbose
+    // INFO/DEBUG noise while preserving WARN/ERROR and useful metadata.
     let on_log_for_stderr = Arc::clone(&on_log);
     let stderr_thread = std::thread::spawn(move || {
         use std::io::BufRead;
@@ -554,8 +554,7 @@ pub(crate) fn invoke_opencode_streaming(
             match line {
                 Ok(line) => {
                     if let Ok(mut log) = on_log_for_stderr.lock() {
-                        log(&line);
-                        log("\n");
+                        claude::filter_opencode_log_line(&line, &mut *log);
                     }
                     full_stderr.push_str(&line);
                     full_stderr.push('\n');

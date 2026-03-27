@@ -87,8 +87,8 @@ pub(super) fn read_stream_events(
     state
 }
 
-/// Public wrapper so `invoke.rs` can filter stderr through the same logic.
-pub(super) fn handle_non_json_line_public(line: &str, on_log: &mut dyn FnMut(&str)) {
+/// Public wrapper so `invoke.rs` and `opencode.rs` can filter stderr through the same logic.
+pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     handle_non_json_line(line, on_log);
 }
 
