@@ -561,11 +561,7 @@ pub(crate) fn invoke_opencode_streaming(
                     full_stderr.push('\n');
                 }
                 Err(e) => {
-                    let msg = format!("stderr read error: {e}\n");
-                    if let Ok(mut log) = on_log_for_stderr.lock() {
-                        log(&msg);
-                    }
-                    full_stderr.push_str(&msg);
+                    full_stderr.push_str(&format!("stderr read error: {e}\n"));
                     break;
                 }
             }
