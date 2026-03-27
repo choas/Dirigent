@@ -165,6 +165,24 @@ fn load_logo_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    let sentry_dsn = std::env::var("SENTRY_DSN")
+        .ok()
+        .or_else(|| {
+            claude::load_env_var_with_dirigent_fallback(
+                &std::env::current_dir().unwrap_or_default(),
+                "SENTRY_DSN",
+            )
+        })
+        .unwrap_or_default();
+    let _sentry_guard = sentry::init((
+        sentry_dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            send_default_pii: true,
+            ..Default::default()
+        },
+    ));
+
     // Filter out macOS Process Serial Number args (passed by Finder/Launch Services)
     let args: Vec<String> = std::env::args()
         .skip(1)

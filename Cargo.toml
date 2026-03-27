@@ -27,6 +27,7 @@ lsp-types = "0.97"
 tempfile = "3"
 libc = "0.2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+sentry = "0.47.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
