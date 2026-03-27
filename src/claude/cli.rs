@@ -110,12 +110,7 @@ pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
         if key.is_empty() {
             continue;
         }
-        // Strip surrounding quotes if present.
-        let value = value
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-            .unwrap_or(value);
+        let value = strip_surrounding_quotes(value);
         cmd.env(key, value);
     }
 }
@@ -136,6 +131,15 @@ pub(crate) fn load_env_var_with_dirigent_fallback(
     load_env_file_var(&project_root.join(".env"), key)
 }
 
+/// Strip matching surrounding single or double quotes from a string.
+/// Returns the original string unchanged if no matching quotes are found.
+fn strip_surrounding_quotes(s: &str) -> &str {
+    s.strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .or_else(|| s.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+        .unwrap_or(s)
+}
+
 /// Parse a single key from a dotenv-style file.
 fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
@@ -146,12 +150,7 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
             continue;
         }
         if let Some(value) = line.strip_prefix(&prefix) {
-            let value = value.trim();
-            let value = value
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                .unwrap_or(value);
+            let value = strip_surrounding_quotes(value.trim());
             return Some(value.to_string());
         }
     }
