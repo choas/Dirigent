@@ -121,6 +121,7 @@ pub struct DirigentApp {
     commands_expanded: bool,
     lsp_expanded: bool,
     agents_init_language: crate::agents::AgentLanguage,
+    lsp_init_language: crate::lsp::LspLanguage,
 
     // Global prompt
     global_prompt_input: String,
@@ -460,6 +461,7 @@ impl DirigentApp {
             commands_expanded: false,
             lsp_expanded: false,
             agents_init_language: crate::agents::AgentLanguage::Rust,
+            lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
             show_repo_picker: false,
