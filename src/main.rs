@@ -8,6 +8,7 @@ mod diff_view;
 mod error;
 mod file_tree;
 mod git;
+mod lsp;
 mod opencode;
 mod prompt_hints;
 mod prompt_suggestions;

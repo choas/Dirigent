@@ -126,7 +126,40 @@ impl DirigentApp {
 
     /// Apply a tab bar action. Returns true if the caller should return early.
     pub(in crate::app) fn apply_tab_bar_action(&mut self, action: TabBarAction) -> bool {
-        match action {
+        // Collect file paths of tabs that will be closed (for LSP didClose)
+        let closed_paths: Vec<std::path::PathBuf> = match &action {
+            TabBarAction::CloseAll => self
+                .viewer
+                .tabs
+                .iter()
+                .map(|t| t.file_path.clone())
+                .collect(),
+            TabBarAction::CloseOthers(keep_idx) => self
+                .viewer
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i != keep_idx)
+                .map(|(_, t)| t.file_path.clone())
+                .collect(),
+            TabBarAction::CloseToRight(idx) => self
+                .viewer
+                .tabs
+                .iter()
+                .skip(idx + 1)
+                .map(|t| t.file_path.clone())
+                .collect(),
+            TabBarAction::CloseOne(idx) => {
+                if let Some(tab) = self.viewer.tabs.get(*idx) {
+                    vec![tab.file_path.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            _ => vec![],
+        };
+
+        let result = match action {
             TabBarAction::None => false,
             TabBarAction::CloseAll => {
                 self.viewer.close_all_tabs();
@@ -168,7 +201,16 @@ impl DirigentApp {
                 self.search.in_file_current = None;
                 true
             }
+        };
+
+        // Notify LSP of closed files
+        if self.settings.lsp_enabled {
+            for path in &closed_paths {
+                self.lsp.notify_file_closed(path);
+            }
         }
+
+        result
     }
 }
 

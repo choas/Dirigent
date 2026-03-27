@@ -51,6 +51,13 @@ impl DirigentApp {
             crate::spawn_new_instance();
         }
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
+            // Notify LSP before closing
+            if self.settings.lsp_enabled {
+                if let Some(tab) = self.viewer.active() {
+                    let path = tab.file_path.clone();
+                    self.lsp.notify_file_closed(&path);
+                }
+            }
             self.viewer.close_active_tab();
         }
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {

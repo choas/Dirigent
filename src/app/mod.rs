@@ -69,6 +69,7 @@ use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
 use crate::git;
+use crate::lsp::LspManager;
 use crate::settings::{self, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
@@ -118,6 +119,7 @@ pub struct DirigentApp {
     sources_expanded: bool,
     agents_expanded: bool,
     commands_expanded: bool,
+    lsp_expanded: bool,
     agents_init_language: crate::agents::AgentLanguage,
 
     // Global prompt
@@ -163,6 +165,9 @@ pub struct DirigentApp {
 
     // Agent system (format, lint, build, test)
     pub(super) agent_state: AgentRunState,
+
+    // LSP integration
+    pub(super) lsp: LspManager,
 
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
@@ -375,6 +380,11 @@ impl DirigentApp {
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
+        let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
+        if settings.lsp_enabled {
+            lsp_manager.start_servers(&settings.lsp_servers);
+        }
+
         DirigentApp {
             project_root,
             db,
@@ -448,6 +458,7 @@ impl DirigentApp {
             sources_expanded: false,
             agents_expanded: false,
             commands_expanded: false,
+            lsp_expanded: false,
             agents_init_language: crate::agents::AgentLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
@@ -481,6 +492,7 @@ impl DirigentApp {
             },
             task_handles: Vec::new(),
             agent_state: AgentRunState::new(),
+            lsp: lsp_manager,
             cue_move_flash: HashMap::new(),
             cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
@@ -692,6 +704,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
+
+        // Poll LSP servers for responses and notifications
+        self.lsp.poll();
 
         // Poll external sources for new cues
         self.poll_sources();

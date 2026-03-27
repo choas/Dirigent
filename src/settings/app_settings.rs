@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{default_agents, AgentConfig};
+use crate::lsp::{default_lsp_servers, LspServerConfig};
 
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
@@ -71,6 +72,12 @@ pub(crate) struct Settings {
     /// Command modes triggered by `[name]` prefix in cue text.
     #[serde(default = "default_commands")]
     pub commands: Vec<CueCommand>,
+    /// Language server configurations for LSP integration.
+    #[serde(default = "default_lsp_servers")]
+    pub lsp_servers: Vec<LspServerConfig>,
+    /// Master toggle for LSP support.
+    #[serde(default)]
+    pub lsp_enabled: bool,
     /// Show heuristic prompt-refinement suggestions below the prompt field.
     #[serde(default)]
     pub prompt_suggestions_enabled: bool,
@@ -130,6 +137,8 @@ impl Default for Settings {
             agent_shell_init: String::new(),
             agents: default_agents(),
             commands: default_commands(),
+            lsp_servers: default_lsp_servers(),
+            lsp_enabled: false,
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,

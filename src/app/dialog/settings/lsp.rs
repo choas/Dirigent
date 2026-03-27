@@ -1,0 +1,256 @@
+use eframe::egui;
+
+use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::lsp::{default_lsp_servers, LspServerConfig};
+
+impl DirigentApp {
+    pub(in crate::app) fn render_settings_lsp_section(&mut self, ui: &mut egui::Ui, fs: f32) {
+        ui.add_space(SPACE_MD);
+        ui.separator();
+        ui.add_space(SPACE_SM);
+        ui.horizontal(|ui| {
+            let arrow = ["\u{25B6}", "\u{25BC}"][self.lsp_expanded as usize];
+            if ui
+                .button(icon(&format!("{} Language Servers (LSP)", arrow), fs))
+                .clicked()
+            {
+                self.lsp_expanded = !self.lsp_expanded;
+            }
+            let running = self.lsp.running_servers().len();
+            let total = self
+                .settings
+                .lsp_servers
+                .iter()
+                .filter(|s| s.enabled)
+                .count();
+            ui.label(
+                egui::RichText::new(format!("{}/{} running", running, total))
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+        });
+
+        if !self.lsp_expanded {
+            return;
+        }
+
+        ui.add_space(SPACE_SM);
+
+        // Master toggle
+        egui::Grid::new("lsp_master_grid")
+            .num_columns(2)
+            .spacing([SPACE_MD, SPACE_SM])
+            .show(ui, |ui| {
+                ui.label("LSP Enabled:");
+                if ui
+                    .checkbox(&mut self.settings.lsp_enabled, "Start language servers on launch")
+                    .on_hover_text(
+                        "When enabled, Dirigent spawns configured language servers for code intelligence (hover, go-to-definition, diagnostics).",
+                    )
+                    .changed()
+                {
+                    if self.settings.lsp_enabled {
+                        self.lsp.start_servers(&self.settings.lsp_servers);
+                    } else {
+                        self.lsp.stop_all();
+                    }
+                }
+                ui.end_row();
+            });
+
+        ui.add_space(SPACE_SM);
+
+        // Action buttons
+        ui.horizontal(|ui| {
+            if ui.small_button("+ Add Server").clicked() {
+                self.settings.lsp_servers.push(LspServerConfig {
+                    name: "new-server".into(),
+                    extensions: vec![],
+                    command: String::new(),
+                    args: vec![],
+                    env: vec![],
+                    enabled: false,
+                });
+            }
+            if ui.small_button("Reset Defaults").clicked() {
+                self.settings.lsp_servers = default_lsp_servers();
+            }
+            if self.settings.lsp_enabled {
+                if ui
+                    .small_button("\u{21BB} Restart All")
+                    .on_hover_text("Stop and restart all enabled servers")
+                    .clicked()
+                {
+                    self.lsp.stop_all();
+                    self.lsp.start_servers(&self.settings.lsp_servers);
+                }
+            }
+        });
+
+        ui.add_space(SPACE_SM);
+
+        // Server cards
+        let card_width = ui.available_width();
+        let mut delete_idx: Option<usize> = None;
+        let mut start_idx: Option<usize> = None;
+        let mut stop_name: Option<String> = None;
+        let num_servers = self.settings.lsp_servers.len();
+
+        for i in 0..num_servers {
+            let running_servers = self.lsp.running_servers();
+            let starting_servers = self.lsp.starting_servers();
+            let is_running = running_servers.contains(&self.settings.lsp_servers[i].name);
+            let is_starting = starting_servers.contains(&self.settings.lsp_servers[i].name);
+
+            let mut frame = self.semantic.card_frame();
+            if is_running {
+                frame = frame.fill(self.semantic.addition_bg());
+            }
+
+            frame.show(ui, |ui| {
+                ui.set_width(card_width - SPACE_MD);
+
+                // Header row: enabled toggle + name + status + actions
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.settings.lsp_servers[i].enabled, "");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.lsp_servers[i].name)
+                            .desired_width(140.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+
+                    // Status indicator
+                    if is_running {
+                        ui.label(
+                            egui::RichText::new("\u{25CF} running")
+                                .small()
+                                .color(self.semantic.success),
+                        );
+                    } else if is_starting {
+                        ui.spinner();
+                        ui.label(
+                            egui::RichText::new("starting...")
+                                .small()
+                                .color(self.semantic.secondary_text),
+                        );
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button(icon("\u{1F5D1}", fs))
+                            .on_hover_text("Remove this server")
+                            .clicked()
+                        {
+                            delete_idx = Some(i);
+                        }
+                        if is_running {
+                            if ui.small_button("Stop").clicked() {
+                                stop_name = Some(self.settings.lsp_servers[i].name.clone());
+                            }
+                        } else if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled
+                        {
+                            if ui.small_button("Start").clicked() {
+                                start_idx = Some(i);
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(SPACE_XS);
+
+                // Detail fields
+                egui::Grid::new(format!("lsp_server_{}", i))
+                    .num_columns(2)
+                    .spacing([SPACE_SM, SPACE_XS])
+                    .show(ui, |ui| {
+                        ui.label("Command:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings.lsp_servers[i].command)
+                                .desired_width(250.0)
+                                .hint_text("e.g. rust-analyzer")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        ui.end_row();
+
+                        ui.label("Extensions:");
+                        let mut ext_str = self.settings.lsp_servers[i].extensions.join(", ");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut ext_str)
+                                .desired_width(250.0)
+                                .hint_text("e.g. rs, toml")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        if resp.changed() {
+                            self.settings.lsp_servers[i].extensions = ext_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        }
+                        ui.end_row();
+
+                        ui.label("Arguments:");
+                        let mut args_str = self.settings.lsp_servers[i].args.join(" ");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut args_str)
+                                .desired_width(250.0)
+                                .hint_text("e.g. --stdio")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        if resp.changed() {
+                            self.settings.lsp_servers[i].args =
+                                args_str.split_whitespace().map(|s| s.to_string()).collect();
+                        }
+                        ui.end_row();
+
+                        ui.label("Env Vars:");
+                        let mut env_str = self.settings.lsp_servers[i].env.join("\n");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut env_str)
+                                .desired_width(250.0)
+                                .hint_text("KEY=VALUE (comma-separated)")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        if resp.changed() {
+                            self.settings.lsp_servers[i].env = env_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        }
+                        ui.end_row();
+                    });
+            });
+
+            ui.add_space(SPACE_XS);
+        }
+
+        // Apply deferred actions
+        if let Some(idx) = delete_idx {
+            let name = self.settings.lsp_servers[idx].name.clone();
+            self.lsp.stop_server(&name);
+            self.settings.lsp_servers.remove(idx);
+        }
+        if let Some(name) = stop_name {
+            self.lsp.stop_server(&name);
+        }
+        if let Some(idx) = start_idx {
+            let configs = vec![self.settings.lsp_servers[idx].clone()];
+            self.lsp.start_servers(&configs);
+        }
+
+        // Show LSP status log (last few entries)
+        if !self.lsp.status_log.is_empty() {
+            ui.add_space(SPACE_SM);
+            ui.label(
+                egui::RichText::new("Status Log")
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+            let start = self.lsp.status_log.len().saturating_sub(5);
+            for entry in &self.lsp.status_log[start..] {
+                ui.label(egui::RichText::new(entry).small().monospace());
+            }
+        }
+    }
+}

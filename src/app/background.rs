@@ -40,6 +40,7 @@ impl DirigentApp {
 
     /// Reload content of all open tabs from disk.
     pub(super) fn reload_open_tabs(&mut self) {
+        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
             let content = match std::fs::read_to_string(&tab.file_path) {
                 Ok(c) => c,
@@ -55,6 +56,13 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             tab.symbols = symbols::parse_symbols(&tab.content, ext);
+            changed_paths.push(tab.file_path.clone());
+        }
+        // Notify LSP of file changes
+        if self.settings.lsp_enabled {
+            for path in &changed_paths {
+                self.lsp.notify_file_changed(path);
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 mod agents;
 mod commands;
 mod general;
+mod lsp;
 mod playbook;
 mod sources;
 
@@ -63,6 +64,8 @@ impl DirigentApp {
                     self.render_settings_agents_section(ui, fs, &mut close);
 
                     self.render_settings_commands_section(ui, fs);
+
+                    self.render_settings_lsp_section(ui, fs);
 
                     self.render_settings_playbook_section(ui, fs);
 
