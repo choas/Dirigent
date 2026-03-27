@@ -306,7 +306,9 @@ fn build_opencode_command(
     use std::process::Stdio;
 
     let mut cmd = Command::new(opencode_bin);
-    cmd.arg("run")
+    cmd.arg("--log-level")
+        .arg("ERROR")
+        .arg("run")
         .arg(prompt)
         .arg("--format")
         .arg("json")
