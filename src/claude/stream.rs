@@ -96,18 +96,24 @@ pub(super) fn handle_non_json_line_public(line: &str, on_log: &mut dyn FnMut(&st
 /// or plain text from another CLI.
 fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     // OpenCode structured log lines: "INFO  2026-03-27T10:56:41 ..." or "DEBUG ...".
-    // Detect by matching INFO/DEBUG followed by whitespace and an ISO timestamp.
+    // Detect by matching INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO timestamp.
     if is_opencode_log_line(line) {
+        // Always pass WARN/ERROR through — these are important.
+        if line.starts_with("WARN") || line.starts_with("ERROR") {
+            on_log(line);
+            on_log("\n");
+            return;
+        }
         // Extract the one useful bit: LLM model + provider.
         if line.contains("service=llm") {
             let model = extract_kv(line, "modelID").unwrap_or("?");
             let provider = extract_kv(line, "providerID").unwrap_or("?");
             on_log(&format!("\u{2192} {} ({})\n", model, provider));
         }
-        // Everything else is noise — drop it.
+        // Everything else (INFO/DEBUG) is noise — drop it.
         return;
     }
-    // Pass through everything else (plain text output, WARN/ERROR).
+    // Pass through everything else (plain text output).
     on_log(line);
     on_log("\n");
 }
