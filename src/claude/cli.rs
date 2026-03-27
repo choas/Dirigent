@@ -96,7 +96,12 @@ pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
     let env_path = project_root.join(".Dirigent").join(".env");
     let content = match std::fs::read_to_string(&env_path) {
         Ok(c) => c,
-        Err(_) => return, // file doesn't exist or unreadable — silently skip
+        Err(e) => {
+            if env_path.exists() {
+                eprintln!("warning: .Dirigent/.env exists but is unreadable: {e}");
+            }
+            return;
+        }
     };
     for line in content.lines() {
         let line = line.trim();

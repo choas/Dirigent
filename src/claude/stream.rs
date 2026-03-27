@@ -181,11 +181,11 @@ fn is_opencode_log_line(line: &str) -> bool {
         return false;
     };
     // After the level keyword there must be whitespace then a timestamp (YYYY-MM-DD).
-    let trimmed = rest.trim_start();
-    trimmed.len() >= 10
-        && trimmed.as_bytes()[4] == b'-'
-        && trimmed.as_bytes()[7] == b'-'
-        && trimmed.as_bytes()[0..4].iter().all(|b| b.is_ascii_digit())
+    let bytes = rest.trim_start().as_bytes();
+    bytes.len() >= 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[0..4].iter().all(|b| b.is_ascii_digit())
 }
 
 /// Extract the value for a `key=value` token in a space-separated log line.
