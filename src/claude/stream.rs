@@ -95,16 +95,16 @@ pub(super) fn handle_non_json_line_public(line: &str, on_log: &mut dyn FnMut(&st
 /// Handle a line that isn't valid JSON — either an OpenCode structured log line
 /// or plain text from another CLI.
 fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
-    // OpenCode INFO log lines: filter and reformat the useful ones.
-    if let Some(rest) = line
-        .strip_prefix("INFO ")
-        .or_else(|| line.strip_prefix("INFO\t"))
-    {
-        handle_opencode_info(rest, on_log);
-        return;
-    }
-    // Skip OpenCode DEBUG/WARN/ERROR prefixed lines that are pure noise.
-    if line.starts_with("DEBUG ") || line.starts_with("DEBUG\t") {
+    // OpenCode structured log lines: "INFO  2026-03-27T10:56:41 ..." or "DEBUG ...".
+    // Detect by matching INFO/DEBUG followed by whitespace and an ISO timestamp.
+    if is_opencode_log_line(line) {
+        // Extract the one useful bit: LLM model + provider.
+        if line.contains("service=llm") {
+            let model = extract_kv(line, "modelID").unwrap_or("?");
+            let provider = extract_kv(line, "providerID").unwrap_or("?");
+            on_log(&format!("\u{2192} {} ({})\n", model, provider));
+        }
+        // Everything else is noise — drop it.
         return;
     }
     // Pass through everything else (plain text output, WARN/ERROR).
@@ -112,32 +112,26 @@ fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     on_log("\n");
 }
 
-/// Parse an OpenCode INFO log body and emit a concise summary for the interesting ones.
-fn handle_opencode_info(body: &str, on_log: &mut dyn FnMut(&str)) {
-    // Skip noisy categories entirely.
-    if body.contains("service=permission")
-        || body.contains("service=bus")
-        || body.contains("service=snapshot")
-        || body.contains("service=session.prompt")
-        || body.contains("service=session.processor")
-    {
-        return;
-    }
-
-    // Tool registry lines (started/completed) are pure init noise — skip all.
-    if body.contains("service=tool.registry") {
-        return;
-    }
-
-    // LLM streaming: extract model and provider.
-    if body.contains("service=llm") {
-        let model = extract_kv(body, "modelID").unwrap_or("?");
-        let provider = extract_kv(body, "providerID").unwrap_or("?");
-        on_log(&format!("\u{2192} {} ({})\n", model, provider));
-        return;
-    }
-
-    // Everything else from INFO: skip (avoids dumping unknown verbose lines).
+/// Returns true if `line` looks like an OpenCode structured log line
+/// (INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO-8601 timestamp).
+fn is_opencode_log_line(line: &str) -> bool {
+    let rest = if let Some(r) = line.strip_prefix("INFO") {
+        r
+    } else if let Some(r) = line.strip_prefix("DEBUG") {
+        r
+    } else if let Some(r) = line.strip_prefix("WARN") {
+        r
+    } else if let Some(r) = line.strip_prefix("ERROR") {
+        r
+    } else {
+        return false;
+    };
+    // After the level keyword there must be whitespace then a timestamp (YYYY-MM-DD).
+    let trimmed = rest.trim_start();
+    trimmed.len() >= 10
+        && trimmed.as_bytes()[4] == b'-'
+        && trimmed.as_bytes()[7] == b'-'
+        && trimmed.as_bytes()[0..4].iter().all(|b| b.is_ascii_digit())
 }
 
 /// Extract the value for a `key=value` token in a space-separated log line.
