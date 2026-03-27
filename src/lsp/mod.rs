@@ -4,5 +4,5 @@ pub(crate) mod types;
 
 pub(crate) use manager::LspManager;
 pub(crate) use types::{
-    default_lsp_servers, lsp_servers_for_language, LspLanguage, LspServerConfig,
+    default_lsp_servers, lsp_install_hint, lsp_servers_for_language, LspLanguage, LspServerConfig,
 };

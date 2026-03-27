@@ -192,6 +192,124 @@ pub(crate) fn lsp_servers_for_language(lang: LspLanguage) -> Vec<LspServerConfig
     }
 }
 
+/// Return an install hint for a known LSP server name.
+/// Used to generate helpful cue prompts when the binary is not found.
+pub(crate) fn lsp_install_hint(server_name: &str) -> String {
+    match server_name {
+        "rust-analyzer" => concat!(
+            "Install rust-analyzer for Rust LSP support.\n\n",
+            "Notes:\n",
+            "- If using rustup: `rustup component add rust-analyzer`\n",
+            "- Or install standalone: `brew install rust-analyzer` (macOS)\n",
+            "- Ensure `rust-analyzer` is on PATH",
+        )
+        .to_string(),
+        "typescript-language-server" => concat!(
+            "Install typescript-language-server for TypeScript/JavaScript LSP support.\n\n",
+            "Notes:\n",
+            "- `npm install -g typescript-language-server typescript`\n",
+            "- Or if using pnpm: `pnpm add -g typescript-language-server typescript`\n",
+            "- Requires Node.js to be installed",
+        )
+        .to_string(),
+        "pylsp" => concat!(
+            "Install pylsp (python-lsp-server) for Python LSP support.\n\n",
+            "Notes:\n",
+            "- Use uv if the project uses uv: `uv tool install python-lsp-server`\n",
+            "- Or with pip: `pip install python-lsp-server`\n",
+            "- Or with pipx: `pipx install python-lsp-server`\n",
+            "- Ensure `pylsp` is on PATH after installation",
+        )
+        .to_string(),
+        "gopls" => concat!(
+            "Install gopls for Go LSP support.\n\n",
+            "Notes:\n",
+            "- `go install golang.org/x/tools/gopls@latest`\n",
+            "- Requires Go to be installed\n",
+            "- Ensure `$GOPATH/bin` is on PATH",
+        )
+        .to_string(),
+        "jdtls" => concat!(
+            "Install Eclipse JDT Language Server for Java LSP support.\n\n",
+            "Notes:\n",
+            "- `brew install jdtls` (macOS)\n",
+            "- Or download from https://download.eclipse.org/jdtls/\n",
+            "- Requires Java JDK to be installed",
+        )
+        .to_string(),
+        "clangd" => concat!(
+            "Install clangd for C/C++ LSP support.\n\n",
+            "Notes:\n",
+            "- On macOS: `xcode-select --install` (includes clangd)\n",
+            "- Or `brew install llvm` and add to PATH\n",
+            "- On Linux: install via your package manager (e.g. `apt install clangd`)",
+        )
+        .to_string(),
+        "solargraph" => concat!(
+            "Install Solargraph for Ruby LSP support.\n\n",
+            "Notes:\n",
+            "- `gem install solargraph`\n",
+            "- Or with bundler: add `gem 'solargraph'` to Gemfile\n",
+            "- Requires Ruby to be installed",
+        )
+        .to_string(),
+        "sourcekit-lsp" => concat!(
+            "Install SourceKit-LSP for Swift LSP support.\n\n",
+            "Notes:\n",
+            "- Included with Xcode: `xcode-select --install`\n",
+            "- Or install Swift toolchain from swift.org\n",
+            "- Usually at `/usr/bin/sourcekit-lsp` after Xcode install",
+        )
+        .to_string(),
+        "kotlin-language-server" => concat!(
+            "Install kotlin-language-server for Kotlin LSP support.\n\n",
+            "Notes:\n",
+            "- `brew install kotlin-language-server` (macOS)\n",
+            "- Or build from source: https://github.com/fwcd/kotlin-language-server\n",
+            "- Requires JDK to be installed",
+        )
+        .to_string(),
+        "OmniSharp" | "omnisharp" => concat!(
+            "Install OmniSharp for C# LSP support.\n\n",
+            "Notes:\n",
+            "- `brew install omnisharp/omnisharp-roslyn/omnisharp-mono` (macOS)\n",
+            "- Or download from https://github.com/OmniSharp/omnisharp-roslyn\n",
+            "- Requires .NET SDK to be installed",
+        )
+        .to_string(),
+        "elixir-ls" => concat!(
+            "Install ElixirLS for Elixir LSP support.\n\n",
+            "Notes:\n",
+            "- Download from https://github.com/elixir-lsp/elixir-ls/releases\n",
+            "- Requires Elixir and Erlang/OTP to be installed\n",
+            "- Ensure the `elixir-ls` script is on PATH",
+        )
+        .to_string(),
+        "zls" => concat!(
+            "Install ZLS for Zig LSP support.\n\n",
+            "Notes:\n",
+            "- `brew install zls` (macOS) or download from https://github.com/zigtools/zls\n",
+            "- Requires Zig to be installed\n",
+            "- Ensure version matches your Zig compiler version",
+        )
+        .to_string(),
+        "lua-language-server" => concat!(
+            "Install lua-language-server for Lua LSP support.\n\n",
+            "Notes:\n",
+            "- `brew install lua-language-server` (macOS)\n",
+            "- Or download from https://github.com/LuaLS/lua-language-server\n",
+            "- No Lua runtime required (self-contained)",
+        )
+        .to_string(),
+        _ => format!(
+            "Install the '{}' language server.\n\n\
+             Check the server's documentation for installation instructions \
+             and ensure the binary is on PATH.",
+            server_name
+        ),
+    }
+}
+
 /// Well-known language server presets.
 pub(crate) fn default_lsp_servers() -> Vec<LspServerConfig> {
     vec![

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::Instant;
 
 use super::client::{LspClient, LspMessage};
 use super::types::LspServerConfig;
@@ -13,6 +14,44 @@ pub(crate) struct LspEvent {
     pub server_name: String,
     /// The message itself.
     pub message: LspMessage,
+}
+
+/// Kinds of pending LSP requests we track for routing responses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PendingRequestKind {
+    Hover,
+    Definition,
+    References,
+    DocumentSymbol,
+}
+
+/// An LSP diagnostic for a specific file.
+#[derive(Debug, Clone)]
+pub(crate) struct LspDiagnostic {
+    pub line: usize,      // 1-based
+    pub character: usize,
+    pub end_line: usize,
+    pub end_character: usize,
+    pub severity: LspDiagSeverity,
+    pub message: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum LspDiagSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+/// An LSP document symbol mapped to our internal representation.
+#[derive(Debug, Clone)]
+pub(crate) struct LspDocumentSymbol {
+    pub name: String,
+    pub kind: lsp_types::SymbolKind,
+    pub line: usize,  // 1-based
+    pub depth: usize,
 }
 
 /// Manages all running LSP clients for a project.
@@ -33,8 +72,42 @@ pub(crate) struct LspManager {
     initialized: HashMap<String, bool>,
     /// Log of LSP status messages (server_name -> latest status).
     pub status_log: Vec<String>,
+    /// Per-server error messages (server_name -> error string). Cleared on successful start.
+    pub failed_servers: HashMap<String, String>,
     /// Shell init snippet for resolving commands in macOS GUI context.
     shell_init: String,
+
+    // -- Shared state for UI consumption --
+
+    /// Pending requests: request_id -> kind. Used to route responses.
+    pending_requests: HashMap<u64, PendingRequestKind>,
+
+    /// Latest hover result (markdown/plaintext). Cleared when a new hover is requested.
+    pub hover_result: Option<String>,
+    /// Whether a hover request is in flight.
+    pub hover_pending: bool,
+
+    /// Latest definition result: (file_path, line_1based).
+    pub definition_result: Option<(PathBuf, usize)>,
+    /// Whether a definition request is in flight.
+    pub definition_pending: bool,
+
+    /// Latest references result: list of (file_path, line_1based).
+    pub references_result: Option<Vec<(PathBuf, usize)>>,
+
+    /// LSP diagnostics per file (absolute path -> diagnostics).
+    pub diagnostics: HashMap<PathBuf, Vec<LspDiagnostic>>,
+
+    /// LSP document symbols per file (absolute path -> symbols).
+    pub document_symbols: HashMap<PathBuf, Vec<LspDocumentSymbol>>,
+    /// Pending document symbol request IDs (file_path -> request_id).
+    pending_doc_symbols: HashMap<PathBuf, u64>,
+
+    /// Debounce: last hover request position to avoid spamming.
+    hover_file: Option<PathBuf>,
+    hover_line: u32,
+    hover_char: u32,
+    hover_requested_at: Option<Instant>,
 }
 
 #[allow(dead_code)]
@@ -50,12 +123,27 @@ impl LspManager {
             pending_init: HashMap::new(),
             initialized: HashMap::new(),
             status_log: Vec::new(),
+            failed_servers: HashMap::new(),
             shell_init: shell_init.to_string(),
+            pending_requests: HashMap::new(),
+            hover_result: None,
+            hover_pending: false,
+            definition_result: None,
+            definition_pending: false,
+            references_result: None,
+            diagnostics: HashMap::new(),
+            document_symbols: HashMap::new(),
+            pending_doc_symbols: HashMap::new(),
+            hover_file: None,
+            hover_line: 0,
+            hover_char: 0,
+            hover_requested_at: None,
         }
     }
 
     /// Start language servers from the provided configs.
     /// Only starts servers that are enabled and not already running.
+    /// Rebuilds the full extension map from all configs.
     pub fn start_servers(&mut self, configs: &[LspServerConfig]) {
         // Build extension map from all enabled configs
         self.extension_map.clear();
@@ -74,15 +162,29 @@ impl LspManager {
             if self.clients.contains_key(&cfg.name) {
                 continue; // already running
             }
-            self.start_server(cfg);
+            self.start_one(cfg);
         }
     }
 
+    /// Start a single server without clearing the extension map.
+    /// Use this when the user clicks "Start" on one server card.
+    pub fn start_single(&mut self, cfg: &LspServerConfig) {
+        if !cfg.enabled || self.clients.contains_key(&cfg.name) {
+            return;
+        }
+        // Add this server's extensions to the map (don't clear others)
+        for ext in &cfg.extensions {
+            self.extension_map.insert(ext.clone(), cfg.name.clone());
+        }
+        self.start_one(cfg);
+    }
+
     /// Start a single language server.
-    fn start_server(&mut self, cfg: &LspServerConfig) {
+    fn start_one(&mut self, cfg: &LspServerConfig) {
         let msg = format!("Starting LSP: {} ({})", cfg.name, cfg.command);
         eprintln!("[lsp] {}", msg);
         self.status_log.push(msg);
+        self.failed_servers.remove(&cfg.name);
 
         match LspClient::spawn(
             &cfg.name,
@@ -100,7 +202,8 @@ impl LspManager {
             Err(e) => {
                 let msg = format!("Failed to start {}: {}", cfg.name, e);
                 eprintln!("[lsp] {}", msg);
-                self.status_log.push(msg);
+                self.status_log.push(msg.clone());
+                self.failed_servers.insert(cfg.name.clone(), msg);
             }
         }
     }
@@ -156,7 +259,8 @@ impl LspManager {
         for name in dead {
             let msg = format!("LSP server exited: {}", name);
             eprintln!("[lsp] {}", msg);
-            self.status_log.push(msg);
+            self.status_log.push(msg.clone());
+            self.failed_servers.insert(name.clone(), msg);
             self.clients.remove(&name);
             self.initialized.remove(&name);
             self.pending_init.remove(&name);
@@ -174,7 +278,8 @@ impl LspManager {
                         if error.is_some() {
                             let msg = format!("LSP {} initialize failed: {:?}", server_name, error);
                             eprintln!("[lsp] {}", msg);
-                            self.status_log.push(msg);
+                            self.status_log.push(msg.clone());
+                            self.failed_servers.insert(server_name.to_string(), msg);
                         } else {
                             // Parse server capabilities
                             if let Some(result_val) = result {
@@ -283,33 +388,85 @@ impl LspManager {
     }
 
     /// Request hover information for a position.
-    pub fn hover(&self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
+    /// Debounces: skips if same position was requested recently.
+    pub fn hover(&mut self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
+        // Debounce: skip if same position
+        if self.hover_file.as_deref() == Some(file_path)
+            && self.hover_line == line
+            && self.hover_char == character
+            && self.hover_pending
+        {
+            return None;
+        }
         let server_name = self.server_for_file(file_path)?;
         if self.initialized.get(&server_name) != Some(&true) {
             return None;
         }
         let client = self.clients.get(&server_name)?;
-        Some(client.hover(file_path, line, character))
+        let id = client.hover(file_path, line, character);
+        self.pending_requests.insert(id, PendingRequestKind::Hover);
+        self.hover_pending = true;
+        self.hover_result = None;
+        self.hover_file = Some(file_path.to_path_buf());
+        self.hover_line = line;
+        self.hover_char = character;
+        self.hover_requested_at = Some(Instant::now());
+        Some(id)
     }
 
     /// Request go-to-definition for a position.
-    pub fn definition(&self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
+    pub fn definition(&mut self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
         let server_name = self.server_for_file(file_path)?;
         if self.initialized.get(&server_name) != Some(&true) {
             return None;
         }
         let client = self.clients.get(&server_name)?;
-        Some(client.definition(file_path, line, character))
+        let id = client.definition(file_path, line, character);
+        self.pending_requests
+            .insert(id, PendingRequestKind::Definition);
+        self.definition_pending = true;
+        self.definition_result = None;
+        Some(id)
     }
 
     /// Request find-references for a position.
-    pub fn references(&self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
+    pub fn references(&mut self, file_path: &Path, line: u32, character: u32) -> Option<u64> {
         let server_name = self.server_for_file(file_path)?;
         if self.initialized.get(&server_name) != Some(&true) {
             return None;
         }
         let client = self.clients.get(&server_name)?;
-        Some(client.references(file_path, line, character))
+        let id = client.references(file_path, line, character);
+        self.pending_requests
+            .insert(id, PendingRequestKind::References);
+        Some(id)
+    }
+
+    /// Request document symbols for a file.
+    pub fn document_symbols(&mut self, file_path: &Path) -> Option<u64> {
+        // Don't re-request if one is already pending for this file
+        if self.pending_doc_symbols.contains_key(file_path) {
+            return None;
+        }
+        let server_name = self.server_for_file(file_path)?;
+        if self.initialized.get(&server_name) != Some(&true) {
+            return None;
+        }
+        let client = self.clients.get(&server_name)?;
+        let id = client.document_symbols(file_path);
+        self.pending_requests
+            .insert(id, PendingRequestKind::DocumentSymbol);
+        self.pending_doc_symbols.insert(file_path.to_path_buf(), id);
+        Some(id)
+    }
+
+    /// Check if an LSP server is initialized for this file's extension.
+    pub fn has_initialized_server_for(&self, file_path: &Path) -> bool {
+        if let Some(server_name) = self.server_for_file(file_path) {
+            self.initialized.get(&server_name) == Some(&true)
+        } else {
+            false
+        }
     }
 
     /// Returns the names of all running (initialized) servers.

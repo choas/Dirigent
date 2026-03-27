@@ -1,7 +1,9 @@
 use eframe::egui;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::lsp::{default_lsp_servers, lsp_servers_for_language, LspLanguage, LspServerConfig};
+use crate::lsp::{
+    default_lsp_servers, lsp_install_hint, lsp_servers_for_language, LspLanguage, LspServerConfig,
+};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_lsp_section(&mut self, ui: &mut egui::Ui, fs: f32) {
@@ -94,17 +96,23 @@ impl DirigentApp {
         let mut delete_idx: Option<usize> = None;
         let mut start_idx: Option<usize> = None;
         let mut stop_name: Option<String> = None;
+        let mut install_server_name: Option<String> = None;
         let num_servers = self.settings.lsp_servers.len();
 
         for i in 0..num_servers {
             let running_servers = self.lsp.running_servers();
             let starting_servers = self.lsp.starting_servers();
-            let is_running = running_servers.contains(&self.settings.lsp_servers[i].name);
-            let is_starting = starting_servers.contains(&self.settings.lsp_servers[i].name);
+            let server_name = &self.settings.lsp_servers[i].name;
+            let is_running = running_servers.contains(server_name);
+            let is_starting = starting_servers.contains(server_name);
+            let server_error = self.lsp.failed_servers.get(server_name).cloned();
+            let has_error = server_error.is_some();
 
             let mut frame = self.semantic.card_frame();
             if is_running {
                 frame = frame.fill(self.semantic.addition_bg());
+            } else if has_error {
+                frame = frame.fill(self.semantic.deletion_bg());
             }
 
             frame.show(ui, |ui| {
@@ -133,6 +141,12 @@ impl DirigentApp {
                                 .small()
                                 .color(self.semantic.secondary_text),
                         );
+                    } else if has_error {
+                        ui.label(
+                            egui::RichText::new("\u{25CF} failed")
+                                .small()
+                                .color(self.semantic.danger),
+                        );
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -147,6 +161,26 @@ impl DirigentApp {
                             if ui.small_button("Stop").clicked() {
                                 stop_name = Some(self.settings.lsp_servers[i].name.clone());
                             }
+                        } else if has_error {
+                            if ui
+                                .small_button("\u{1F4E6} Install")
+                                .on_hover_text(
+                                    "Create a cue with instructions to install this LSP server",
+                                )
+                                .clicked()
+                            {
+                                install_server_name =
+                                    Some(self.settings.lsp_servers[i].name.clone());
+                            }
+                            if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
+                                if ui
+                                    .small_button("\u{21BB} Retry")
+                                    .on_hover_text("Try starting the server again")
+                                    .clicked()
+                                {
+                                    start_idx = Some(i);
+                                }
+                            }
                         } else if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled
                         {
                             if ui.small_button("Start").clicked() {
@@ -155,6 +189,12 @@ impl DirigentApp {
                         }
                     });
                 });
+
+                // Show error message if present
+                if let Some(ref err) = server_error {
+                    ui.add_space(SPACE_XS);
+                    ui.label(egui::RichText::new(err).small().color(self.semantic.danger));
+                }
 
                 ui.add_space(SPACE_XS);
 
@@ -229,14 +269,26 @@ impl DirigentApp {
         if let Some(idx) = delete_idx {
             let name = self.settings.lsp_servers[idx].name.clone();
             self.lsp.stop_server(&name);
+            self.lsp.failed_servers.remove(&name);
             self.settings.lsp_servers.remove(idx);
         }
         if let Some(name) = stop_name {
             self.lsp.stop_server(&name);
         }
         if let Some(idx) = start_idx {
-            let configs = vec![self.settings.lsp_servers[idx].clone()];
-            self.lsp.start_servers(&configs);
+            let cfg = self.settings.lsp_servers[idx].clone();
+            self.lsp.start_single(&cfg);
+        }
+        if let Some(name) = install_server_name {
+            let hint = lsp_install_hint(&name);
+            let prompt = format!(
+                "Install the `{}` language server so it is available on PATH.\n\n{}",
+                name, hint
+            );
+            if let Ok(cue_id) = self.db.insert_cue(&prompt, "", 0, None, &[]) {
+                self.reload_cues();
+                self.set_status_message(format!("Created install cue for {} (#{cue_id})", name));
+            }
         }
 
         // Language initialization dropdown
