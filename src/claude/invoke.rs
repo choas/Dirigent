@@ -51,10 +51,11 @@ pub(crate) fn invoke_claude_streaming(
         skip_permissions,
     );
 
+    // Run pre-run script first so it can modify .Dirigent/.env before we read it.
+    run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
+
     // Inject .Dirigent/.env overrides so AI runs use dev credentials.
     apply_dirigent_env(&mut cmd, project_root);
-
-    run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
 
     let mut child = cmd
         .current_dir(project_root)
