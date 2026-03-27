@@ -142,6 +142,20 @@ fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
             if let Some(file) = extract_kv(line, "file") {
                 on_log(&format!("\u{2192} format: {}\n", file));
             }
+        } else if line.contains("service=session") && line.contains("created") {
+            if let Some(slug) = extract_kv(line, "slug") {
+                on_log(&format!("\u{2192} session: {}\n", slug));
+            }
+        } else if line.contains("service=vcs") {
+            if let Some(branch) = extract_kv(line, "branch") {
+                on_log(&format!("\u{2192} branch: {}\n", branch));
+            }
+        } else if line.contains("service=session.prompt") {
+            if line.contains("exiting loop") {
+                on_log("\u{2192} loop done\n");
+            } else if let Some(step) = extract_kv(line, "step") {
+                on_log(&format!("\u{2192} step {}\n", step));
+            }
         }
         // Everything else (INFO/DEBUG) is noise — drop it.
         return;
