@@ -85,6 +85,79 @@ fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
     }
 }
 
+/// Load all KEY=VALUE pairs from `.Dirigent/.env` (relative to `project_root`)
+/// and set them on the command's environment. This allows users to maintain a
+/// separate `.env` for AI CLI tools without touching the real `.env` used for
+/// manual testing and production.
+///
+/// Lines that are empty, start with `#`, or lack an `=` sign are skipped.
+/// Values may be optionally quoted with `"` or `'`.
+pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
+    let env_path = project_root.join(".Dirigent").join(".env");
+    let content = match std::fs::read_to_string(&env_path) {
+        Ok(c) => c,
+        Err(_) => return, // file doesn't exist or unreadable — silently skip
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = match line.split_once('=') {
+            Some((k, v)) => (k.trim(), v.trim()),
+            None => continue,
+        };
+        if key.is_empty() {
+            continue;
+        }
+        // Strip surrounding quotes if present.
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+            .unwrap_or(value);
+        cmd.env(key, value);
+    }
+}
+
+/// Load a single variable from `.Dirigent/.env`, falling back to `.env`.
+///
+/// This is the unified lookup used by source integrations (SonarQube, Slack, etc.)
+/// so that AI-driven runs and manual runs can use different tokens.
+pub(crate) fn load_env_var_with_dirigent_fallback(
+    project_root: &Path,
+    key: &str,
+) -> Option<String> {
+    // 1. Try .Dirigent/.env first
+    if let Some(v) = load_env_file_var(&project_root.join(".Dirigent").join(".env"), key) {
+        return Some(v);
+    }
+    // 2. Fall back to .env
+    load_env_file_var(&project_root.join(".env"), key)
+}
+
+/// Parse a single key from a dotenv-style file.
+fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let prefix = format!("{}=", key);
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix(&prefix) {
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .unwrap_or(value);
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
 /// Run a lifecycle script (pre-run or post-run).
 ///
 /// Returns `Err` for pre-run failures (abort the run), logs but ignores

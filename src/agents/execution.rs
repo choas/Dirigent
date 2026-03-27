@@ -65,6 +65,8 @@ pub(crate) fn run_agent(
         .env("PROMPT", prompt)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Inject .Dirigent/.env overrides so agent commands use dev credentials.
+    crate::claude::apply_dirigent_env(&mut cmd, project_root);
 
     // On Unix, create a new process group so we can kill the entire tree on timeout
     #[cfg(unix)]

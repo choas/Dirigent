@@ -322,6 +322,8 @@ fn build_opencode_command(
         }
     }
     apply_env_vars(&mut cmd, config.env_vars);
+    // Inject .Dirigent/.env overrides so AI runs use dev credentials.
+    crate::claude::apply_dirigent_env(&mut cmd, project_root);
     cmd.current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

@@ -5,6 +5,7 @@ mod prompt;
 mod stream;
 mod types;
 
+pub(crate) use cli::{apply_dirigent_env, load_env_var_with_dirigent_fallback};
 pub(crate) use diff_parser::parse_diff_from_response;
 pub(crate) use invoke::invoke_claude_streaming;
 pub(crate) use prompt::{
