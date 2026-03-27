@@ -228,11 +228,38 @@ fn run_claude_provider(
     }
 }
 
+/// Compute a working-tree diff scoped to only files that were *newly* changed
+/// since a pre-run baseline snapshot. This avoids capturing pre-existing local
+/// modifications in the fallback diff path.
+fn scoped_working_diff(
+    project_root: &Path,
+    baseline_dirty: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let current_dirty = git::get_dirty_files(project_root);
+    let new_files: Vec<String> = current_dirty
+        .keys()
+        .filter(|f| !baseline_dirty.contains(f.as_str()))
+        .cloned()
+        .collect();
+    if new_files.is_empty() {
+        return None;
+    }
+    git::get_working_diff(project_root, &new_files)
+}
+
 fn run_opencode_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
+    // Snapshot dirty files before the run so we can scope the fallback diff
+    // to only files newly changed by this run, avoiding the risk of
+    // committing pre-existing local modifications.
+    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
+        .keys()
+        .cloned()
+        .collect();
+
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
         cli_path: &req.config.cli_path,
@@ -252,6 +279,7 @@ fn run_opencode_provider(
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
+                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
             } else {
                 git::get_working_diff(req.project_root, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
@@ -287,39 +315,30 @@ impl DirigentApp {
     fn build_initial_prompt(&self, effective_text: &str, cue: &Cue) -> String {
         let want_file = self.settings.auto_context_file;
         let want_diff = self.settings.auto_context_git_diff;
-        let auto_context =
-            if (want_file || want_diff) && self.settings.cli_provider == CliProvider::Claude {
-                claude::gather_auto_context(
-                    &self.project_root,
-                    &cue.file_path,
-                    cue.line_number,
-                    cue.line_number_end,
-                    want_file,
-                    want_diff,
-                )
-            } else {
-                String::new()
-            };
+        let auto_context = if want_file || want_diff {
+            claude::gather_auto_context(
+                &self.project_root,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                want_file,
+                want_diff,
+            )
+        } else {
+            String::new()
+        };
 
         let effective_text = build_pr_hint_text(effective_text, cue.source_ref.as_deref());
 
-        match self.settings.cli_provider {
-            CliProvider::Claude => claude::build_prompt_with_auto_context(
-                &effective_text,
-                &cue.file_path,
-                cue.line_number,
-                cue.line_number_end,
-                &cue.attached_images,
-                &auto_context,
-            ),
-            CliProvider::OpenCode => opencode::build_prompt(
-                &effective_text,
-                &cue.file_path,
-                cue.line_number,
-                cue.line_number_end,
-                &cue.attached_images,
-            ),
-        }
+        // Both providers use the same prompt structure with auto-context.
+        claude::build_prompt_with_auto_context(
+            &effective_text,
+            &cue.file_path,
+            cue.line_number,
+            cue.line_number_end,
+            &cue.attached_images,
+            &auto_context,
+        )
     }
 
     /// Spawn a background thread to run the CLI provider and return the task handle.
@@ -342,7 +361,7 @@ impl DirigentApp {
             let on_log = |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
-                    text: text.to_string(),
+                    text: super::util::strip_ansi(text),
                     provider: provider_for_log.clone(),
                 });
             };
@@ -455,27 +474,17 @@ impl DirigentApp {
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
 
-        let prompt = match self.settings.cli_provider {
-            CliProvider::Claude => claude::build_reply_prompt(
-                &original_text,
-                &cue.file_path,
-                cue.line_number,
-                cue.line_number_end,
-                &previous_diff,
-                reply,
-                &all_images,
-                Some(&self.project_root),
-            ),
-            CliProvider::OpenCode => opencode::build_reply_prompt(
-                &original_text,
-                &cue.file_path,
-                cue.line_number,
-                cue.line_number_end,
-                &previous_diff,
-                reply,
-                &all_images,
-            ),
-        };
+        // Both providers use the same reply prompt structure.
+        let prompt = claude::build_reply_prompt(
+            &original_text,
+            &cue.file_path,
+            cue.line_number,
+            cue.line_number_end,
+            &previous_diff,
+            reply,
+            &all_images,
+            Some(&self.project_root),
+        );
 
         let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
         self.claude.expand_running = true;
@@ -684,6 +693,11 @@ impl DirigentApp {
             "Claude completed but no file changes detected for \"{}\"",
             preview
         ));
+        // Moving to Done even when Claude produced no file changes is intentional:
+        // the AI examined the cue, decided nothing needed changing, and that
+        // counts as "addressed."  The cue should not stay in Review or loop
+        // back to Inbox — the human can always re-open it from Done if they
+        // disagree with the AI's assessment.
         let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
         let _ = self
             .db

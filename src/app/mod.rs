@@ -127,6 +127,7 @@ pub struct DirigentApp {
     // Repo picker
     pub show_repo_picker: bool,
     repo_path_input: String,
+    cached_existing_repos: Vec<String>,
 
     // Inline cue editing
     pub(super) editing_cue: Option<EditingCue>,
@@ -452,6 +453,7 @@ impl DirigentApp {
             global_prompt_images: Vec::new(),
             show_repo_picker: false,
             repo_path_input: String::new(),
+            cached_existing_repos: Vec::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
             conversation_reply: String::new(),

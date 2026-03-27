@@ -157,6 +157,7 @@ impl DirigentApp {
             self.git.show_worktree_panel = false;
         } else if self.show_repo_picker {
             self.show_repo_picker = false;
+            self.cached_existing_repos.clear();
         }
     }
 

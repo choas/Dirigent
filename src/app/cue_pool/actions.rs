@@ -225,6 +225,10 @@ impl DirigentApp {
             Err(e) => {
                 let msg = format!("{}", e);
                 if msg.contains("nothing to commit") {
+                    // Intentional: if there is nothing to commit the work is
+                    // already on disk (e.g. committed in an earlier step or by
+                    // the AI itself).  Moving to Done is correct — do not leave
+                    // the cue stuck in Review.
                     self.set_status_message("Nothing to commit \u{2014} moved to Done".into());
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
                     let _ = self

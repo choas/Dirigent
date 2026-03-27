@@ -283,11 +283,7 @@ impl DirigentApp {
         ui.end_row();
 
         ui.label("Font Size:");
-        ui.add(
-            egui::DragValue::new(&mut self.settings.font_size)
-                .range(8.0..=32.0)
-                .speed(0.5),
-        );
+        ui.add(egui::Slider::new(&mut self.settings.font_size, 8.0..=32.0).step_by(0.5));
         ui.end_row();
     }
 

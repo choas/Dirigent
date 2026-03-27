@@ -200,30 +200,27 @@ impl DirigentApp {
         }
 
         // ---- hit-test for hovering file refs (cursor icon) ----
-        if response.hovered() {
-            if let Some(pos) = response.hover_pos() {
-                let local = pos - rect.min;
-                let cc = galley.cursor_from_pos(local);
-                if refs.iter().any(|r| r.char_range.contains(&cc.index)) {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-            }
+        let hovering_ref = response
+            .hover_pos()
+            .map(|pos| {
+                let cc = galley.cursor_from_pos(pos - rect.min);
+                refs.iter().any(|r| r.char_range.contains(&cc.index))
+            })
+            .unwrap_or(false);
+        if hovering_ref {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
 
         // ---- detect click on a file ref ----
-        let mut clicked_nav = None;
-        if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let local = pos - rect.min;
-                let cc = galley.cursor_from_pos(local);
-                for r in refs {
-                    if r.char_range.contains(&cc.index) {
-                        clicked_nav = Some((r.file_path.clone(), r.line));
-                        break;
-                    }
-                }
-            }
-        }
+        let clicked_nav = response
+            .interact_pointer_pos()
+            .filter(|_| response.clicked())
+            .and_then(|pos| {
+                let cc = galley.cursor_from_pos(pos - rect.min);
+                refs.iter()
+                    .find(|r| r.char_range.contains(&cc.index))
+                    .map(|r| (r.file_path.clone(), r.line))
+            });
 
         (response, clicked_nav)
     }

@@ -37,6 +37,8 @@ pub(crate) fn parse_command_prefix(text: &str) -> Option<(&str, &str)> {
 /// The `_project_root` parameter is intentionally reserved for API consistency
 /// with [`gather_auto_context`] and future auto-context features. The leading
 /// underscore suppresses the unused-variable warning and should not be removed.
+/// Used by tests; the main app uses `build_prompt_with_auto_context` directly.
+#[cfg(test)]
 pub(crate) fn build_prompt(
     cue_text: &str,
     file_path: &str,
