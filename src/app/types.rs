@@ -395,6 +395,12 @@ pub(crate) struct GitState {
     pub(super) importing_pr: bool,
     pub(super) importing_pr_start: Option<Instant>,
     pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
+    /// Fetched PR findings awaiting user filtering before import.
+    pub(super) pr_findings_pending: Vec<crate::sources::PrFinding>,
+    /// Indices of findings the user has excluded from import.
+    pub(super) pr_findings_excluded: std::collections::HashSet<usize>,
+    /// Whether the PR findings filter dialog is open.
+    pub(super) show_pr_filter: bool,
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,

@@ -184,6 +184,7 @@ impl DirigentApp {
         self.render_pull_unmerged_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
+        self.render_filter_pr_dialog(ctx);
     }
 
     /// Render project-wide search panel as a left side panel (replaces file tree).

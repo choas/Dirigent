@@ -226,7 +226,19 @@ impl DirigentApp {
         self.git.importing_pr_start = None;
         self.git.import_pr_rx = None;
         match result {
-            Ok(findings) => self.handle_pr_findings(findings),
+            Ok(findings) => {
+                if findings.is_empty() {
+                    self.set_status_message("No actionable findings found in PR".to_string());
+                } else {
+                    self.set_status_message(format!(
+                        "Fetched {} findings – review and filter before importing",
+                        findings.len()
+                    ));
+                    self.git.pr_findings_pending = findings;
+                    self.git.pr_findings_excluded.clear();
+                    self.git.show_pr_filter = true;
+                }
+            }
             Err(e) => self.set_status_message(format!("PR import failed: {}", e)),
         }
     }
