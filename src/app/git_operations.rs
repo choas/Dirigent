@@ -253,6 +253,7 @@ impl DirigentApp {
         let tag = format!("PR{}", pr_number);
         let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
         let has_changes = new_count > 0 || updated_count > 0;
+        self.reload_cues();
         if error_count > 0 && !has_changes {
             self.set_status_message(format!(
                 "PR #{}: import failed ({} DB errors across {} findings)",
@@ -261,19 +262,17 @@ impl DirigentApp {
                 findings.len()
             ));
         } else if error_count > 0 {
-            self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!(
                 "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
                 pr_number, summary, tag, error_count
             ));
         } else if has_changes {
-            self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
         } else {
             self.set_status_message(format!(
-                "PR #{}: all {} findings still in progress",
+                "PR #{}: all {} findings already imported",
                 pr_number,
                 findings.len()
             ));

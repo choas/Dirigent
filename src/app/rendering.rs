@@ -111,7 +111,8 @@ impl DirigentApp {
             || self.git.show_pull_diverged
             || self.git.show_pull_unmerged
             || self.git.show_merge_conflicts
-            || self.git.show_import_pr;
+            || self.git.show_import_pr
+            || self.git.show_pr_filter;
         if !has_modal {
             return;
         }
@@ -154,6 +155,10 @@ impl DirigentApp {
             self.git.show_pull_diverged = false;
         } else if self.git.show_pull_unmerged {
             self.git.show_pull_unmerged = false;
+        } else if self.git.show_pr_filter {
+            self.git.show_pr_filter = false;
+            self.git.pr_findings_pending.clear();
+            self.git.pr_findings_excluded.clear();
         } else if self.git.show_import_pr {
             self.git.show_import_pr = false;
         } else if self.git.show_create_pr {
