@@ -26,6 +26,8 @@ pub(crate) enum SourceKind {
     Slack,
     SonarQube,
     Notion,
+    Trello,
+    Asana,
     Mcp,
     Custom,
 }
@@ -37,6 +39,8 @@ impl SourceKind {
             SourceKind::Slack => "Slack",
             SourceKind::SonarQube => "SonarQube",
             SourceKind::Notion => "Notion",
+            SourceKind::Trello => "Trello",
+            SourceKind::Asana => "Asana",
             SourceKind::Mcp => "MCP",
             SourceKind::Custom => "Custom",
         }
@@ -48,6 +52,8 @@ impl SourceKind {
             SourceKind::Slack => "slack",
             SourceKind::SonarQube => "sonar",
             SourceKind::Notion => "notion",
+            SourceKind::Trello => "trello",
+            SourceKind::Asana => "asana",
             SourceKind::Mcp => "mcp",
             SourceKind::Custom => "custom",
         }
@@ -59,6 +65,8 @@ impl SourceKind {
             SourceKind::Slack,
             SourceKind::SonarQube,
             SourceKind::Notion,
+            SourceKind::Trello,
+            SourceKind::Asana,
             SourceKind::Mcp,
             SourceKind::Custom,
         ]
@@ -84,6 +92,8 @@ pub(crate) struct SourceConfig {
     pub host_url: String,
     #[serde(default)]
     pub project_key: String,
+    #[serde(default)]
+    pub api_key: String,
 }
 
 impl Default for SourceConfig {
@@ -100,6 +110,7 @@ impl Default for SourceConfig {
             channel: String::new(),
             host_url: String::new(),
             project_key: String::new(),
+            api_key: String::new(),
         }
     }
 }

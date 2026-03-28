@@ -144,6 +144,8 @@ fn resolve_source_token(source: &settings::SourceConfig, project_root: &Path) ->
     let env_key = match source.kind {
         SourceKind::Slack => "SLACK_BOT_TOKEN",
         SourceKind::SonarQube => "SONAR_TOKEN",
+        SourceKind::Trello => "TRELLO_TOKEN",
+        SourceKind::Asana => "ASANA_TOKEN",
         _ => return String::new(),
     };
     std::env::var(env_key)
@@ -184,6 +186,35 @@ fn fetch_source_items(
             };
             let token = resolve_source_token(source, project_root);
             sources::fetch_sonarqube_issues(host, &source.project_key, &token, &source.label)
+                .unwrap_or_else(err)
+        }
+        SourceKind::Trello => {
+            let api_key = if !source.api_key.is_empty() {
+                source.api_key.clone()
+            } else {
+                std::env::var("TRELLO_API_KEY")
+                    .ok()
+                    .or_else(|| sources::load_env_var(project_root, "TRELLO_API_KEY"))
+                    .unwrap_or_default()
+            };
+            let token = resolve_source_token(source, project_root);
+            let list_filter = if source.filter.is_empty() {
+                None
+            } else {
+                Some(source.filter.as_str())
+            };
+            sources::fetch_trello_cards(
+                &api_key,
+                &token,
+                &source.project_key,
+                list_filter,
+                &source.label,
+            )
+            .unwrap_or_else(err)
+        }
+        SourceKind::Asana => {
+            let token = resolve_source_token(source, project_root);
+            sources::fetch_asana_tasks(&token, &source.project_key, &source.label)
                 .unwrap_or_else(err)
         }
         SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {

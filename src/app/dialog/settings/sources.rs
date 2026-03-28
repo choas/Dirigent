@@ -55,7 +55,7 @@ impl DirigentApp {
 
         if self.settings.sources.is_empty() {
             ui.label(
-                egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, SonarQube, Notion, MCP, or custom commands.")
+                egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Trello, Asana, SonarQube, Notion, MCP, or custom commands.")
                     .italics()
                     .color(self.semantic.tertiary_text),
             );
@@ -225,6 +225,65 @@ impl DirigentApp {
                         .desired_width(200.0)
                         .hint_text("from env SONAR_TOKEN or .env")
                         .password(true)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+            }
+            SourceKind::Trello => {
+                ui.label("API Key:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].api_key)
+                        .desired_width(200.0)
+                        .hint_text("from env TRELLO_API_KEY or .env")
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                        .desired_width(200.0)
+                        .hint_text("from env TRELLO_TOKEN or .env")
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Board ID:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                        .desired_width(200.0)
+                        .hint_text("e.g. 60d5ecXXXXX")
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("List Filter:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
+                        .desired_width(120.0)
+                        .hint_text("e.g. To Do (optional)")
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+            }
+            SourceKind::Asana => {
+                ui.label("Token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                        .desired_width(200.0)
+                        .hint_text("from env ASANA_TOKEN or .env")
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Project GID:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                        .desired_width(200.0)
+                        .hint_text("e.g. 120345678901234")
                         .font(egui::TextStyle::Monospace),
                 );
                 ui.end_row();
