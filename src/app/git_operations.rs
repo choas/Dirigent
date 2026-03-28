@@ -227,14 +227,38 @@ impl DirigentApp {
         self.git.import_pr_rx = None;
         match result {
             Ok(findings) => {
+                let total_fetched = findings.len();
+                eprintln!(
+                    "[PR Import] Fetched {} findings from PR #{}",
+                    total_fetched,
+                    self.git.import_pr_number.trim()
+                );
                 if findings.is_empty() {
                     self.set_status_message("No actionable findings found in PR".to_string());
                 } else {
+                    // Filter out findings that are already imported (exist in DB by source_ref)
+                    let new_findings: Vec<_> = findings
+                        .into_iter()
+                        .filter(|f| {
+                            match self.db.cue_exists_by_source_ref(&f.external_id) {
+                                Ok(true) => false, // already imported
+                                _ => true,         // new or DB error → show it
+                            }
+                        })
+                        .collect();
+                    let skipped = total_fetched - new_findings.len();
+
+                    let skip_note = if skipped > 0 {
+                        format!(" ({} already imported)", skipped)
+                    } else {
+                        String::new()
+                    };
                     self.set_status_message(format!(
-                        "Fetched {} findings – review and filter before importing",
-                        findings.len()
+                        "Fetched {} new findings – review and filter before importing{}",
+                        new_findings.len(),
+                        skip_note
                     ));
-                    self.git.pr_findings_pending = findings;
+                    self.git.pr_findings_pending = new_findings;
                     self.git.pr_findings_excluded.clear();
                     self.git.show_import_pr = false;
                     self.git.show_pr_filter = true;
@@ -246,6 +270,11 @@ impl DirigentApp {
 
     /// Process successfully fetched PR findings: upsert cues and report results.
     pub(super) fn handle_pr_findings(&mut self, findings: Vec<crate::sources::PrFinding>) {
+        eprintln!(
+            "[PR Import] handle_pr_findings called with {} findings, pr_number='{}'",
+            findings.len(),
+            self.git.import_pr_number.trim()
+        );
         if findings.is_empty() {
             self.set_status_message("No actionable findings found in PR".to_string());
             return;
@@ -253,8 +282,16 @@ impl DirigentApp {
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
         let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
+        eprintln!(
+            "[PR Import] upsert results: new={}, updated={}, errors={}",
+            new_count, updated_count, error_count
+        );
         let has_changes = new_count > 0 || updated_count > 0;
         self.reload_cues();
+        eprintln!(
+            "[PR Import] reload_cues done, total cues={}",
+            self.cues.len()
+        );
         if error_count > 0 && !has_changes {
             self.set_status_message(format!(
                 "PR #{}: import failed ({} DB errors across {} findings)",
