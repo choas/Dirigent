@@ -191,6 +191,7 @@ impl DirigentApp {
             .collect();
 
         self.git.show_pr_filter = false;
+        self.git.show_import_pr = false;
         self.git.pr_findings_pending.clear();
         self.git.pr_findings_excluded.clear();
 

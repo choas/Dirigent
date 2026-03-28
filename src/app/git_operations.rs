@@ -236,6 +236,7 @@ impl DirigentApp {
                     ));
                     self.git.pr_findings_pending = findings;
                     self.git.pr_findings_excluded.clear();
+                    self.git.show_import_pr = false;
                     self.git.show_pr_filter = true;
                 }
             }
