@@ -8,9 +8,6 @@ impl DirigentApp {
             return;
         }
 
-        let mut dismiss = false;
-        let mut do_import = false;
-
         let total = self.git.pr_findings_pending.len();
         let excluded = self.git.pr_findings_excluded.len();
         let included = total - excluded;
@@ -26,6 +23,10 @@ impl DirigentApp {
             egui::Color32::from_gray(220)
         };
 
+        // Track actions via self fields to avoid closure capture issues
+        let mut do_import = false;
+        let mut dismiss = false;
+
         egui::Window::new("Filter PR Findings")
             .collapsible(false)
             .resizable(true)
@@ -36,7 +37,7 @@ impl DirigentApp {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label(format!(
-                    "Review {} findings from PR #{}. Exclude items you don't want imported.",
+                    "Review {} new findings from PR #{}. Exclude items you don't want imported.",
                     total,
                     self.git.import_pr_number.trim()
                 ));
@@ -50,9 +51,9 @@ impl DirigentApp {
                 ui.add_space(SPACE_SM);
 
                 // Scrollable list of findings
-                let available = ui.available_height() - 40.0;
+                let available = ui.available_height() - 50.0;
                 egui::ScrollArea::vertical()
-                    .max_height(available.max(200.0))
+                    .max_height(available.max(150.0))
                     .show(ui, |ui| {
                         let findings: Vec<(usize, String, String, usize)> = self
                             .git
@@ -169,9 +170,15 @@ impl DirigentApp {
                         dismiss = true;
                     }
                 });
+
+                // Enter key shortcut for import
+                if included > 0 && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    do_import = true;
+                }
             });
 
         if do_import {
+            eprintln!("[PR Filter] Import triggered ({} included)", included);
             self.import_filtered_pr_findings();
         } else if dismiss {
             self.git.show_pr_filter = false;
@@ -181,6 +188,13 @@ impl DirigentApp {
     }
 
     fn import_filtered_pr_findings(&mut self) {
+        let pending_count = self.git.pr_findings_pending.len();
+        let excluded_count = self.git.pr_findings_excluded.len();
+        eprintln!(
+            "[PR Filter] import_filtered_pr_findings: {} pending, {} excluded",
+            pending_count, excluded_count
+        );
+
         let findings: Vec<crate::sources::PrFinding> = self
             .git
             .pr_findings_pending
@@ -190,10 +204,19 @@ impl DirigentApp {
             .map(|(_, f)| f.clone())
             .collect();
 
+        eprintln!(
+            "[PR Filter] After filtering: {} findings to import",
+            findings.len()
+        );
+
+        // Close dialogs and clear state
         self.git.show_pr_filter = false;
         self.git.show_import_pr = false;
         self.git.pr_findings_pending.clear();
         self.git.pr_findings_excluded.clear();
+
+        // Clear source filter so newly imported cues are visible in the pool
+        self.sources.filter = None;
 
         self.handle_pr_findings(findings);
     }
