@@ -151,6 +151,48 @@ fn setup_macos_about_panel() {
     }
 }
 
+/// Compute a centered window position using NSScreen, so the window is created
+/// at the right spot and macOS does not emit "Window move completed without
+/// beginning" when winit repositions it after creation.
+#[cfg(target_os = "macos")]
+fn screen_center_position(win_width: f32, win_height: f32) -> Option<egui::Pos2> {
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
+
+    unsafe {
+        use objc::runtime::{Class, Object};
+        use objc::{msg_send, sel, sel_impl};
+
+        let ns_screen = Class::get("NSScreen")?;
+        let main_screen: *mut Object = msg_send![ns_screen, mainScreen];
+        if main_screen.is_null() {
+            return None;
+        }
+
+        let frame: CGRect = msg_send![main_screen, frame];
+        let x = ((frame.size.width as f32) - win_width) / 2.0;
+        let y = ((frame.size.height as f32) - win_height) / 2.0;
+
+        Some(egui::pos2(x.max(0.0), y.max(0.0)))
+    }
+}
+
 fn load_logo_icon() -> egui::IconData {
     let png_bytes = include_bytes!("../assets/logo.png");
     let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
@@ -231,17 +273,24 @@ fn main() -> eframe::Result {
         (project_root, false)
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1200.0, 800.0])
+        .with_title(format!(
+            "Dirigent - {}",
+            project_root
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_else(|| project_root.to_string_lossy())
+        ))
+        .with_icon(std::sync::Arc::new(load_logo_icon()));
+
+    #[cfg(target_os = "macos")]
+    if let Some(pos) = screen_center_position(1200.0, 800.0) {
+        viewport = viewport.with_position(pos);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_title(format!(
-                "Dirigent - {}",
-                project_root
-                    .file_name()
-                    .map(|n| n.to_string_lossy())
-                    .unwrap_or_else(|| project_root.to_string_lossy())
-            ))
-            .with_icon(std::sync::Arc::new(load_logo_icon())),
+        viewport,
         ..Default::default()
     };
 
