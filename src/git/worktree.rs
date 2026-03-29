@@ -22,7 +22,7 @@ fn build_worktree_info(
 ) -> WorktreeInfo {
     let canon_wt = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
     let name = branch
-        .and_then(|b| b.rsplit('/').next().map(|s| s.to_string()))
+        .and_then(|b| b.strip_prefix("refs/heads/").map(|s| s.to_string()))
         .unwrap_or_else(|| {
             p.file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -102,12 +102,28 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     let parent = workdir
         .parent()
         .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
-    let wt_path = parent.join(name);
 
-    let output = Command::new("git")
-        .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
-        .current_dir(repo_path)
-        .output()?;
+    // Use the last path component for the directory name to avoid nested dirs
+    // when the branch name contains slashes (e.g. "claude/feature-xyz").
+    let dir_name = name.rsplit('/').next().unwrap_or(name);
+    let wt_path = parent.join(dir_name);
+
+    // Check if the branch already exists (local or remote tracking).
+    let branch_exists = repo.find_branch(name, git2::BranchType::Local).is_ok();
+
+    let output = if branch_exists {
+        // Branch exists — check it out in the new worktree.
+        Command::new("git")
+            .args(["worktree", "add", &wt_path.to_string_lossy(), name])
+            .current_dir(repo_path)
+            .output()?
+    } else {
+        // Branch doesn't exist — create it with -b.
+        Command::new("git")
+            .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
+            .current_dir(repo_path)
+            .output()?
+    };
 
     if !output.status.success() {
         return Err(DirigentError::GitCommand(
