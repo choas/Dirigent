@@ -93,6 +93,7 @@ pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
     let archives_dir = main_repo_path.join(".Dirigent").join("archives");
     let entries = match std::fs::read_dir(&archives_dir) {
         Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(e) => {
             eprintln!(
                 "failed to read archives dir {}: {e}",
