@@ -99,6 +99,7 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
         .workdir()
         .ok_or_else(|| DirigentError::GitCommand("no workdir".into()))?
         .to_path_buf();
+    drop(repo);
     let parent = workdir
         .parent()
         .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
@@ -108,27 +109,26 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     let dir_name = name.rsplit('/').next().unwrap_or(name);
     let wt_path = parent.join(dir_name);
 
-    // Check if the branch already exists (local or remote tracking).
-    let branch_exists = repo.find_branch(name, git2::BranchType::Local).is_ok();
+    // First try without -b: this works for local branches AND remote-tracking
+    // branches (git auto-creates a local tracking branch from e.g.
+    // origin/claude/add-deno-support-brnCw).
+    let output = Command::new("git")
+        .args(["worktree", "add", &wt_path.to_string_lossy(), name])
+        .current_dir(repo_path)
+        .output()?;
 
-    let output = if branch_exists {
-        // Branch exists — check it out in the new worktree.
-        Command::new("git")
-            .args(["worktree", "add", &wt_path.to_string_lossy(), name])
-            .current_dir(repo_path)
-            .output()?
-    } else {
-        // Branch doesn't exist — create it with -b.
-        Command::new("git")
+    // If the branch didn't exist at all, fall back to creating it with -b.
+    if !output.status.success() {
+        let output = Command::new("git")
             .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
             .current_dir(repo_path)
-            .output()?
-    };
+            .output()?;
 
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+        if !output.status.success() {
+            return Err(DirigentError::GitCommand(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
     }
 
     Ok(wt_path)
