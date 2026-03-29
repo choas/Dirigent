@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use super::super::{icon_small, DirigentApp};
+use crate::git;
 
 impl DirigentApp {
     // Feature 4: Repo bar at top
@@ -17,6 +18,8 @@ impl DirigentApp {
                 }
                 if ui.small_button("Worktrees").clicked() {
                     self.reload_worktrees();
+                    self.git.available_branches =
+                        git::list_branches(&self.project_root).unwrap_or_default();
                     self.git.show_worktree_panel = true;
                 }
             });

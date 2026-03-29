@@ -91,6 +91,60 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
     Ok(worktrees)
 }
 
+/// List branch names available for worktree creation (local + remote-tracking),
+/// excluding branches already checked out in an existing worktree.
+pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
+    use std::collections::BTreeSet;
+    use std::process::Command;
+
+    // Collect branches already checked out in worktrees so we can exclude them.
+    let checked_out: std::collections::HashSet<String> = list_worktrees(repo_path)?
+        .iter()
+        .map(|wt| wt.name.clone())
+        .collect();
+
+    let mut branches = BTreeSet::new();
+
+    // Local branches.
+    let output = Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let name = line.trim().to_string();
+            if !name.is_empty() && !checked_out.contains(&name) {
+                branches.insert(name);
+            }
+        }
+    }
+
+    // Remote-tracking branches (strip the remote prefix, e.g. "origin/foo" -> "foo").
+    let output = Command::new("git")
+        .args(["branch", "-r", "--format=%(refname:short)"])
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let full = line.trim();
+            if full.is_empty() || full.contains("HEAD") {
+                continue;
+            }
+            // Strip "origin/" (or any remote name) prefix.
+            let name = if let Some(pos) = full.find('/') {
+                &full[pos + 1..]
+            } else {
+                full
+            };
+            if !name.is_empty() && !checked_out.contains(name) {
+                branches.insert(name.to_string());
+            }
+        }
+    }
+
+    Ok(branches.into_iter().collect())
+}
+
 pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
     use std::process::Command;
 

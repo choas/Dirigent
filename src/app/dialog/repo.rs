@@ -274,10 +274,43 @@ impl DirigentApp {
         });
     }
 
-    /// Input field and Create button for new worktrees.
+    /// Input field, branch picker, and Create button for new worktrees.
     fn render_create_worktree_input(&mut self, ui: &mut egui::Ui, actions: &mut WorktreeActions) {
         ui.add_space(SPACE_SM);
         ui.label("Create new worktree:");
+
+        // Show available branches as a scrollable list when there are any.
+        if !self.git.available_branches.is_empty() {
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("Pick an existing branch:")
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("branch_picker")
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    for branch in &self.git.available_branches.clone() {
+                        if ui
+                            .selectable_label(
+                                self.git.new_worktree_name == *branch,
+                                egui::RichText::new(branch).monospace(),
+                            )
+                            .clicked()
+                        {
+                            self.git.new_worktree_name = branch.clone();
+                        }
+                    }
+                });
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("Or type a new branch name:")
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+        }
+
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.git.new_worktree_name)

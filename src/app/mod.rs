@@ -424,6 +424,7 @@ impl DirigentApp {
                 worktrees,
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
+                available_branches: Vec::new(),
                 pushing: false,
                 push_rx: None,
                 pulling: false,

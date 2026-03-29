@@ -361,6 +361,8 @@ pub(crate) struct GitState {
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,
+    /// Branches available for worktree creation (local + remote, excluding checked-out).
+    pub(super) available_branches: Vec<String>,
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
