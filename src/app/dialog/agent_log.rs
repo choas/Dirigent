@@ -184,7 +184,8 @@ impl DirigentApp {
                             .color(self.semantic.tertiary_text),
                     );
                 } else {
-                    ui.label(egui::RichText::new(&run.output).monospace().small());
+                    let cleaned = crate::app::util::strip_ansi(&run.output);
+                    ui.label(egui::RichText::new(&cleaned).monospace().small());
                 }
             });
     }

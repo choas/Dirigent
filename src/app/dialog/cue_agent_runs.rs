@@ -217,11 +217,12 @@ impl DirigentApp {
                             .color(self.semantic.tertiary_text),
                     );
                 } else {
+                    let cleaned = crate::app::util::strip_ansi(&run.output);
                     egui::ScrollArea::vertical()
                         .id_salt(("agent_run_output", idx))
                         .max_height(300.0)
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new(&run.output).monospace().small());
+                            ui.label(egui::RichText::new(&cleaned).monospace().small());
                         });
                 }
             });

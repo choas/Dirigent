@@ -70,18 +70,19 @@ pub(in crate::app) fn detect_agent_kind(event: &str) -> Option<String> {
         .map(|k| k.to_string())
 }
 
-/// Format agent output, truncating if necessary.
+/// Format agent output, stripping ANSI codes and truncating if necessary.
 pub(in crate::app) fn format_agent_output(output: &str) -> String {
-    if output.len() > 2000 {
+    let clean = crate::app::util::strip_ansi(output);
+    if clean.len() > 2000 {
         format!(
             "{}...\n(truncated, {} bytes total)",
-            crate::app::truncate_str(output, 2000),
-            output.len()
+            crate::app::truncate_str(&clean, 2000),
+            clean.len()
         )
-    } else if output.trim().is_empty() {
+    } else if clean.trim().is_empty() {
         "(no output)".to_string()
     } else {
-        output.to_string()
+        clean
     }
 }
 
