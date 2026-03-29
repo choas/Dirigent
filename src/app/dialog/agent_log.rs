@@ -206,13 +206,8 @@ impl DirigentApp {
                 run.output.trim(),
             );
             match self.db.insert_cue(&cue_text, "", 0, None, &[]) {
-                Ok(id) => {
+                Ok(_id) => {
                     self.reload_cues();
-                    self.editing_cue = Some(super::super::EditingCue {
-                        id,
-                        text: cue_text.clone(),
-                        focus_requested: true,
-                    });
                     // Close the agent log so the user lands on the cue pool
                     self.agent_state.show_output = None;
                 }
