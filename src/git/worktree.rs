@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use git2::Repository;
-
 use crate::error::DirigentError;
 
 #[derive(Debug, Clone)]
@@ -148,12 +146,14 @@ pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String
 pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
     use std::process::Command;
 
-    let repo = Repository::discover(repo_path)?;
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| DirigentError::GitCommand("no workdir".into()))?
-        .to_path_buf();
-    drop(repo);
+    // Always resolve the *main* worktree so new worktrees are created as
+    // siblings of it, even when called from a linked (secondary) worktree.
+    let worktrees = list_worktrees(repo_path)?;
+    let main_wt = worktrees
+        .iter()
+        .find(|wt| wt.is_main)
+        .ok_or_else(|| DirigentError::GitCommand("no main worktree found".into()))?;
+    let workdir = main_wt.path.clone();
     let parent = workdir
         .parent()
         .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
@@ -185,7 +185,45 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
         }
     }
 
+    // Copy .claude/ settings from the main worktree so the new worktree
+    // inherits Claude Code permissions, hooks, and project configuration.
+    copy_claude_settings(&workdir, &wt_path);
+
     Ok(wt_path)
+}
+
+/// Recursively copy the `.claude/` directory from `src_root` to `dst_root`,
+/// skipping the `worktrees/` subdirectory (Claude Code manages that itself).
+fn copy_claude_settings(src_root: &Path, dst_root: &Path) {
+    let src_dir = src_root.join(".claude");
+    if !src_dir.is_dir() {
+        return;
+    }
+    let dst_dir = dst_root.join(".claude");
+    if let Err(e) = copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
+        eprintln!("warning: failed to copy .claude/ settings to worktree: {e}");
+    }
+}
+
+/// Recursively copy `src` to `dst`, skipping entries whose file name matches
+/// any entry in `skip`.
+fn copy_dir_recursive(src: &Path, dst: &Path, skip: &[&str]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if skip.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path, &[])?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn remove_worktree(
