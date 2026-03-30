@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use chrono::Local;
 use rusqlite::params;
 
@@ -50,10 +50,11 @@ impl Database {
         pattern: &str,
         match_field: &str,
     ) -> Result<()> {
-        self.conn.execute(
+        let changed = self.conn.execute(
             "UPDATE pr_filter_patterns SET pattern = ?1, match_field = ?2 WHERE id = ?3",
             params![pattern, match_field, id],
         )?;
+        ensure!(changed > 0, "pr_filter_patterns row with id {id} not found");
         Ok(())
     }
 
