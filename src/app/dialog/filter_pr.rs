@@ -158,37 +158,22 @@ impl DirigentApp {
     }
 
     fn render_findings_list(&mut self, ui: &mut egui::Ui) -> Option<(String, String)> {
-        let (card_bg, card_bg_excluded) = self.card_backgrounds();
         let available = ui.available_height() - 50.0;
         let mut create_pattern_from: Option<(String, String)> = None;
 
-        let findings: Vec<(usize, String, String, usize)> = self
+        let findings: Vec<(usize, crate::sources::PrFinding)> = self
             .git
             .pr_findings_pending
             .iter()
             .enumerate()
-            .map(|(i, f)| (i, f.file_path.clone(), f.text.clone(), f.line_number))
+            .map(|(i, f)| (i, f.clone()))
             .collect();
 
         egui::ScrollArea::vertical()
             .max_height(available.max(150.0))
             .show(ui, |ui| {
-                for (idx, file_path, text, line_number) in &findings {
-                    let is_excluded = self.git.pr_findings_excluded.contains(idx);
-                    let fill = if is_excluded {
-                        card_bg_excluded
-                    } else {
-                        card_bg
-                    };
-                    if let Some(pattern) = self.render_finding_card(
-                        ui,
-                        *idx,
-                        file_path,
-                        text,
-                        *line_number,
-                        is_excluded,
-                        fill,
-                    ) {
+                for (idx, finding) in &findings {
+                    if let Some(pattern) = self.render_finding_card(ui, *idx, finding) {
                         create_pattern_from = Some(pattern);
                     }
                 }
@@ -201,12 +186,16 @@ impl DirigentApp {
         &mut self,
         ui: &mut egui::Ui,
         idx: usize,
-        file_path: &str,
-        text: &str,
-        line_number: usize,
-        is_excluded: bool,
-        fill: egui::Color32,
+        finding: &crate::sources::PrFinding,
     ) -> Option<(String, String)> {
+        let is_excluded = self.git.pr_findings_excluded.contains(&idx);
+        let (card_bg, card_bg_excluded) = self.card_backgrounds();
+        let fill = if is_excluded {
+            card_bg_excluded
+        } else {
+            card_bg
+        };
+
         let mut result = None;
         ui.push_id(idx, |ui| {
             egui::Frame::new()
@@ -217,9 +206,15 @@ impl DirigentApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         self.render_finding_toggle(ui, idx, is_excluded);
-                        self.render_finding_body(ui, file_path, text, line_number, is_excluded);
+                        self.render_finding_body(
+                            ui,
+                            &finding.file_path,
+                            &finding.text,
+                            finding.line_number,
+                            is_excluded,
+                        );
                         if is_excluded {
-                            result = self.render_ignore_button(ui, text);
+                            result = self.render_ignore_button(ui, &finding.text);
                         }
                     });
                 });
