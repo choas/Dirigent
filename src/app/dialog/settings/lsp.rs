@@ -244,11 +244,11 @@ impl DirigentApp {
                         ui.end_row();
 
                         ui.label("Env Vars:");
-                        let mut env_str = self.settings.lsp_servers[i].env.join("\n");
+                        let mut env_str = self.settings.lsp_servers[i].env.join(", ");
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut env_str)
                                 .desired_width(250.0)
-                                .hint_text("KEY=VALUE (comma-separated)")
+                                .hint_text("KEY=VALUE, KEY2=VALUE2")
                                 .font(egui::TextStyle::Monospace),
                         );
                         if resp.changed() {
