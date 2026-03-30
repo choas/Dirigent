@@ -257,7 +257,7 @@ impl DirigentApp {
                         );
                         if resp.changed() {
                             self.settings.lsp_servers[i].env = env_str
-                                .split(',')
+                                .split([',', '\n'])
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty())
                                 .collect();
