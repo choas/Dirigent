@@ -322,8 +322,11 @@ impl DirigentApp {
                     .hint_text("branch-name")
                     .font(egui::TextStyle::Monospace),
             );
-            if ui.button("Create").clicked() && !self.git.new_worktree_name.is_empty() {
-                actions.create_name = Some(self.git.new_worktree_name.clone());
+            if ui.button("Create").clicked() {
+                let name = self.git.new_worktree_name.trim();
+                if !name.is_empty() {
+                    actions.create_name = Some(name.to_string());
+                }
             }
         });
     }
