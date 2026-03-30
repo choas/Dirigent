@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 /// User-configurable language server entry (persisted in settings.json).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LspServerConfig {
+    /// Stable, non-editable identifier used as the manager key.
+    /// Generated once when the config is created; never changes afterward.
+    #[serde(default = "generate_id")]
+    pub id: String,
     /// Human-readable label shown in the UI (e.g. "rust-analyzer").
     pub name: String,
     /// File extensions this server handles (e.g. ["rs"]).
@@ -22,6 +26,10 @@ pub(crate) struct LspServerConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +96,7 @@ impl LspLanguage {
 fn base_lsp_server_configs() -> Vec<LspServerConfig> {
     vec![
         LspServerConfig {
+            id: generate_id(),
             name: "rust-analyzer".into(),
             extensions: vec!["rs".into()],
             command: "rust-analyzer".into(),
@@ -96,14 +105,23 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "typescript-language-server".into(),
-            extensions: vec!["ts".into(), "tsx".into(), "js".into(), "jsx".into()],
+            extensions: vec![
+                "ts".into(),
+                "tsx".into(),
+                "js".into(),
+                "jsx".into(),
+                "mjs".into(),
+                "mts".into(),
+            ],
             command: "typescript-language-server".into(),
             args: vec!["--stdio".into()],
             env: vec![],
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "pylsp".into(),
             extensions: vec!["py".into()],
             command: "pylsp".into(),
@@ -112,6 +130,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "gopls".into(),
             extensions: vec!["go".into()],
             command: "gopls".into(),
@@ -120,6 +139,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "jdtls".into(),
             extensions: vec!["java".into()],
             command: "jdtls".into(),
@@ -128,6 +148,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "omnisharp".into(),
             extensions: vec!["cs".into()],
             command: "OmniSharp".into(),
@@ -136,14 +157,24 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "clangd".into(),
-            extensions: vec!["c".into(), "cpp".into(), "h".into(), "hpp".into()],
+            extensions: vec![
+                "c".into(),
+                "cpp".into(),
+                "cc".into(),
+                "cxx".into(),
+                "h".into(),
+                "hpp".into(),
+                "hxx".into(),
+            ],
             command: "clangd".into(),
             args: vec![],
             env: vec![],
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "solargraph".into(),
             extensions: vec!["rb".into()],
             command: "solargraph".into(),
@@ -152,6 +183,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "sourcekit-lsp".into(),
             extensions: vec!["swift".into()],
             command: "sourcekit-lsp".into(),
@@ -160,6 +192,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "kotlin-language-server".into(),
             extensions: vec!["kt".into(), "kts".into()],
             command: "kotlin-language-server".into(),
@@ -168,6 +201,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "elixir-ls".into(),
             extensions: vec!["ex".into(), "exs".into()],
             command: "elixir-ls".into(),
@@ -176,6 +210,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "zls".into(),
             extensions: vec!["zig".into()],
             command: "zls".into(),
@@ -184,6 +219,7 @@ fn base_lsp_server_configs() -> Vec<LspServerConfig> {
             enabled: true,
         },
         LspServerConfig {
+            id: generate_id(),
             name: "lua-language-server".into(),
             extensions: vec!["lua".into()],
             command: "lua-language-server".into(),
