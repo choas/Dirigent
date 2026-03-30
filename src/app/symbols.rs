@@ -75,7 +75,8 @@ fn lsp_symbol_kind_to_internal(kind: lsp_types::SymbolKind) -> SymbolKind {
     match kind {
         lsp_types::SymbolKind::FUNCTION | lsp_types::SymbolKind::METHOD => SymbolKind::Function,
         lsp_types::SymbolKind::STRUCT => SymbolKind::Struct,
-        lsp_types::SymbolKind::ENUM | lsp_types::SymbolKind::ENUM_MEMBER => SymbolKind::Enum,
+        lsp_types::SymbolKind::ENUM => SymbolKind::Enum,
+        lsp_types::SymbolKind::ENUM_MEMBER => SymbolKind::Constant,
         lsp_types::SymbolKind::INTERFACE => SymbolKind::Interface,
         lsp_types::SymbolKind::CLASS => SymbolKind::Class,
         lsp_types::SymbolKind::CONSTANT => SymbolKind::Constant,
