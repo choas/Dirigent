@@ -500,6 +500,28 @@ fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) -> Option<std::proces
     }
 }
 
+/// Check the child process exit status and log stderr on failure.
+fn check_exit_status<F: FnMut(&str)>(
+    exit_status: Option<std::process::ExitStatus>,
+    stderr: &str,
+    on_log: &Arc<Mutex<F>>,
+) -> Result<(), OpenCodeError> {
+    let Some(status) = exit_status.filter(|s| !s.success()) else {
+        return Ok(());
+    };
+    if !stderr.is_empty() {
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            eprintln!(
+                "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
+                e
+            );
+            e.into_inner()
+        });
+        log(&format!("\nError: {}\n", stderr));
+    }
+    Err(OpenCodeError::NonZeroExit(status))
+}
+
 pub(crate) fn invoke_opencode_streaming(
     prompt: &str,
     project_root: &Path,
@@ -587,21 +609,7 @@ pub(crate) fn invoke_opencode_streaming(
         return Err(OpenCodeError::Cancelled);
     }
 
-    if let Some(status) = exit_status {
-        if !status.success() {
-            if !stderr.is_empty() {
-                let mut log = on_log.lock().unwrap_or_else(|e| {
-                    eprintln!(
-                        "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
-                        e
-                    );
-                    e.into_inner()
-                });
-                log(&format!("\nError: {}\n", stderr));
-            }
-            return Err(OpenCodeError::NonZeroExit(status));
-        }
-    }
+    check_exit_status(exit_status, &stderr, &on_log)?;
 
     if final_result.is_empty() && !stderr.is_empty() {
         let mut log = on_log.lock().unwrap_or_else(|e| {
@@ -636,17 +644,9 @@ pub(crate) fn invoke_opencode_streaming(
     Ok(OpenCodeResponse {
         stdout: final_result,
         edited_files,
-        cost_usd: if stream_metrics.cost_usd > 0.0 {
-            Some(stream_metrics.cost_usd)
-        } else {
-            None
-        },
+        cost_usd: (stream_metrics.cost_usd > 0.0).then_some(stream_metrics.cost_usd),
         duration_ms: Some(elapsed_ms),
-        num_turns: if stream_metrics.num_turns > 0 {
-            Some(stream_metrics.num_turns)
-        } else {
-            None
-        },
+        num_turns: (stream_metrics.num_turns > 0).then_some(stream_metrics.num_turns),
     })
 }
 
