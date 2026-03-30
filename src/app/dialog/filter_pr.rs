@@ -178,7 +178,6 @@ impl DirigentApp {
             });
 
         if do_import {
-            eprintln!("[PR Filter] Import triggered ({} included)", included);
             self.import_filtered_pr_findings();
         } else if dismiss {
             self.git.show_pr_filter = false;
@@ -188,13 +187,6 @@ impl DirigentApp {
     }
 
     fn import_filtered_pr_findings(&mut self) {
-        let pending_count = self.git.pr_findings_pending.len();
-        let excluded_count = self.git.pr_findings_excluded.len();
-        eprintln!(
-            "[PR Filter] import_filtered_pr_findings: {} pending, {} excluded",
-            pending_count, excluded_count
-        );
-
         let findings: Vec<crate::sources::PrFinding> = self
             .git
             .pr_findings_pending
@@ -203,11 +195,6 @@ impl DirigentApp {
             .filter(|(i, _)| !self.git.pr_findings_excluded.contains(i))
             .map(|(_, f)| f.clone())
             .collect();
-
-        eprintln!(
-            "[PR Filter] After filtering: {} findings to import",
-            findings.len()
-        );
 
         // Close dialogs and clear state
         self.git.show_pr_filter = false;

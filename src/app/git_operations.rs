@@ -228,11 +228,6 @@ impl DirigentApp {
         match result {
             Ok(findings) => {
                 let total_fetched = findings.len();
-                eprintln!(
-                    "[PR Import] Fetched {} findings from PR #{}",
-                    total_fetched,
-                    self.git.import_pr_number.trim()
-                );
                 if findings.is_empty() {
                     self.set_status_message("No actionable findings found in PR".to_string());
                 } else {
@@ -270,11 +265,6 @@ impl DirigentApp {
 
     /// Process successfully fetched PR findings: upsert cues and report results.
     pub(super) fn handle_pr_findings(&mut self, findings: Vec<crate::sources::PrFinding>) {
-        eprintln!(
-            "[PR Import] handle_pr_findings called with {} findings, pr_number='{}'",
-            findings.len(),
-            self.git.import_pr_number.trim()
-        );
         if findings.is_empty() {
             self.set_status_message("No actionable findings found in PR".to_string());
             return;
@@ -282,16 +272,8 @@ impl DirigentApp {
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
         let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
-        eprintln!(
-            "[PR Import] upsert results: new={}, updated={}, errors={}",
-            new_count, updated_count, error_count
-        );
         let has_changes = new_count > 0 || updated_count > 0;
         self.reload_cues();
-        eprintln!(
-            "[PR Import] reload_cues done, total cues={}",
-            self.cues.len()
-        );
         if error_count > 0 && !has_changes {
             self.set_status_message(format!(
                 "PR #{}: import failed ({} DB errors across {} findings)",
