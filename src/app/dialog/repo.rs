@@ -287,11 +287,12 @@ impl DirigentApp {
                     .small()
                     .color(self.semantic.secondary_text),
             );
+            let mut selected_branch: Option<String> = None;
             egui::ScrollArea::vertical()
                 .id_salt("branch_picker")
                 .max_height(120.0)
                 .show(ui, |ui| {
-                    for branch in &self.git.available_branches.clone() {
+                    for branch in self.git.available_branches.iter() {
                         if ui
                             .selectable_label(
                                 self.git.new_worktree_name == *branch,
@@ -299,10 +300,13 @@ impl DirigentApp {
                             )
                             .clicked()
                         {
-                            self.git.new_worktree_name = branch.clone();
+                            selected_branch = Some(branch.clone());
                         }
                     }
                 });
+            if let Some(branch) = selected_branch {
+                self.git.new_worktree_name = branch;
+            }
             ui.add_space(2.0);
             ui.label(
                 egui::RichText::new("Or type a new branch name:")
