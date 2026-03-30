@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // -- Timing constants --
 const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -201,8 +201,8 @@ pub struct DirigentApp {
     // Follow-up prompts queued for currently running cues (cue_id -> FIFO list of prompts)
     follow_up_queue: HashMap<i64, Vec<String>>,
 
-    // Scheduled runs: cue_id -> when to trigger
-    scheduled_runs: HashMap<i64, Instant>,
+    // Scheduled runs: cue_id -> when to trigger (wall-clock so sleep doesn't delay)
+    scheduled_runs: HashMap<i64, SystemTime>,
 
     // Schedule input text per cue (visible when toggled)
     schedule_inputs: HashMap<i64, String>,
@@ -616,7 +616,7 @@ impl DirigentApp {
 
     /// Process scheduled runs: trigger any cue whose scheduled time has arrived.
     fn process_scheduled_runs(&mut self) {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let ready: Vec<i64> = self
             .scheduled_runs
             .iter()

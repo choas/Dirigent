@@ -357,7 +357,7 @@ impl DirigentApp {
 
     fn process_schedule_run(&mut self, id: i64, input: &str) {
         if let Some(duration) = parse_schedule_duration(input) {
-            let when = Instant::now() + duration;
+            let when = std::time::SystemTime::now() + duration;
             self.scheduled_runs.insert(id, when);
             self.schedule_inputs.remove(&id);
             let _ = self.db.log_activity(id, &format!("Scheduled ({})", input));

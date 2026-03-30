@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
 use eframe::egui;
 
@@ -26,14 +26,16 @@ pub(in crate::app) fn compute_display_text(cue: &Cue, is_expanded: bool) -> Stri
 /// Format queue/schedule label for display.
 pub(in crate::app) fn format_queue_label(
     is_queued: bool,
-    scheduled_when: Option<Instant>,
+    scheduled_when: Option<SystemTime>,
 ) -> String {
     if is_queued {
         return "\u{23F3} Queued".to_string();
     }
     if let Some(when) = scheduled_when {
-        let remaining = when.saturating_duration_since(Instant::now());
-        let secs = remaining.as_secs();
+        let secs = when
+            .duration_since(SystemTime::now())
+            .unwrap_or_default()
+            .as_secs();
         if secs < 60 {
             return format!("\u{23F2} {}s", secs);
         }
