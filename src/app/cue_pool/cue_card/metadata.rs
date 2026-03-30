@@ -11,7 +11,7 @@ impl DirigentApp {
             ui.horizontal(|ui| {
                 let badge = egui::RichText::new(format!("\u{26A0} {}", warning))
                     .small()
-                    .color(egui::Color32::from_rgb(180, 60, 30));
+                    .color(ui.visuals().warn_fg_color);
                 ui.label(badge);
             });
         }
