@@ -31,6 +31,20 @@ fn format_location(file_path: &str, line_number: usize) -> Option<String> {
     }
 }
 
+/// Render a combo box for selecting the match field ("text" or "file_path").
+fn field_combo(ui: &mut egui::Ui, salt: &str, field: &mut String) {
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(match field.as_str() {
+            "file_path" => "File path",
+            _ => "Text",
+        })
+        .width(80.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(field, "text".into(), "Text");
+            ui.selectable_value(field, "file_path".into(), "File path");
+        });
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_filter_pr_dialog(&mut self, ctx: &egui::Context) {
         if !self.git.show_pr_filter {
@@ -315,7 +329,20 @@ impl DirigentApp {
         ui.label("Patterns auto-exclude matching PR findings on import.");
         ui.add_space(SPACE_XS);
 
-        // Add new pattern form
+        self.render_add_pattern_form(ui);
+        ui.add_space(SPACE_SM);
+
+        let (delete_id, save_edit) = self.render_pattern_list(ui);
+
+        if let Some(id) = delete_id {
+            self.handle_pattern_delete(id);
+        }
+        if let Some((id, text, field)) = save_edit {
+            self.handle_pattern_save(id, text, field);
+        }
+    }
+
+    fn render_add_pattern_form(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Pattern:");
             let te = egui::TextEdit::singleline(&mut self.git.new_pattern_text)
@@ -323,20 +350,7 @@ impl DirigentApp {
                 .hint_text("substring to match…");
             ui.add(te);
             ui.label("in");
-            egui::ComboBox::from_id_salt("new_pattern_field")
-                .selected_text(match self.git.new_pattern_field.as_str() {
-                    "file_path" => "File path",
-                    _ => "Text",
-                })
-                .width(80.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.git.new_pattern_field, "text".into(), "Text");
-                    ui.selectable_value(
-                        &mut self.git.new_pattern_field,
-                        "file_path".into(),
-                        "File path",
-                    );
-                });
+            field_combo(ui, "new_pattern_field", &mut self.git.new_pattern_field);
             let can_add = !self.git.new_pattern_text.trim().is_empty();
             if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
                 let pat = self.git.new_pattern_text.trim().to_string();
@@ -354,11 +368,13 @@ impl DirigentApp {
                 }
             }
         });
-        ui.add_space(SPACE_SM);
+    }
 
-        // Existing patterns list
+    fn render_pattern_list(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> (Option<i64>, Option<(i64, String, String)>) {
         let (card_bg, _) = self.card_backgrounds();
-
         let available = ui.available_height() - 10.0;
         let mut delete_id: Option<i64> = None;
         let mut save_edit: Option<(i64, String, String)> = None;
@@ -372,6 +388,7 @@ impl DirigentApp {
                             .small()
                             .color(self.semantic.tertiary_text),
                     );
+                    return;
                 }
 
                 let patterns: Vec<(i64, String, String)> = self
@@ -382,147 +399,154 @@ impl DirigentApp {
                     .collect();
 
                 for (id, pattern, match_field) in patterns {
-                    ui.push_id(id, |ui| {
-                        egui::Frame::new()
-                            .fill(card_bg)
-                            .corner_radius(4.0)
-                            .inner_margin(6.0)
-                            .outer_margin(egui::Margin::symmetric(0, 2))
-                            .show(ui, |ui| {
-                                let is_editing = self
-                                    .git
-                                    .editing_pattern
-                                    .as_ref()
-                                    .map_or(false, |(eid, _, _)| *eid == id);
-
-                                if is_editing {
-                                    // Extract editing state to avoid borrow conflicts
-                                    let mut edit_text = self.git.editing_pattern.as_ref().unwrap().1.clone();
-                                    let mut edit_field = self.git.editing_pattern.as_ref().unwrap().2.clone();
-                                    let mut cancel_edit = false;
-                                    ui.horizontal(|ui| {
-                                        let te =
-                                            egui::TextEdit::singleline(&mut edit_text)
-                                                .desired_width(280.0);
-                                        ui.add(te);
-                                        egui::ComboBox::from_id_salt(format!("edit_field_{}", id))
-                                            .selected_text(match edit_field.as_str() {
-                                                "file_path" => "File path",
-                                                _ => "Text",
-                                            })
-                                            .width(80.0)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut edit_field,
-                                                    "text".into(),
-                                                    "Text",
-                                                );
-                                                ui.selectable_value(
-                                                    &mut edit_field,
-                                                    "file_path".into(),
-                                                    "File path",
-                                                );
-                                            });
-                                        if ui.button("Save").clicked() {
-                                            save_edit = Some((
-                                                id,
-                                                edit_text.clone(),
-                                                edit_field.clone(),
-                                            ));
-                                        }
-                                        if ui.button("Cancel").clicked() {
-                                            cancel_edit = true;
-                                        }
-                                    });
-                                    // Write back edited values
-                                    if cancel_edit {
-                                        self.git.editing_pattern = None;
-                                    } else if self.git.editing_pattern.is_some() {
-                                        self.git.editing_pattern = Some((id, edit_text, edit_field));
-                                    }
-                                } else {
-                                    ui.horizontal(|ui| {
-                                        let field_label = match match_field.as_str() {
-                                            "file_path" => "file path",
-                                            _ => "text",
-                                        };
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "\"{}\" in {}",
-                                                pattern, field_label
-                                            ))
-                                            .small(),
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui
-                                                    .button(
-                                                        egui::RichText::new("\u{2716}")
-                                                            .small()
-                                                            .color(self.semantic.danger),
-                                                    )
-                                                    .on_hover_text("Delete pattern")
-                                                    .clicked()
-                                                {
-                                                    delete_id = Some(id);
-                                                }
-                                                if ui
-                                                    .button(
-                                                        egui::RichText::new("\u{270E}")
-                                                            .small(),
-                                                    )
-                                                    .on_hover_text("Edit pattern")
-                                                    .clicked()
-                                                {
-                                                    self.git.editing_pattern = Some((
-                                                        id,
-                                                        pattern.clone(),
-                                                        match_field.clone(),
-                                                    ));
-                                                }
-                                            },
-                                        );
-                                    });
-                                }
-                            });
-                    });
+                    let (del, save) =
+                        self.render_pattern_card(ui, id, &pattern, &match_field, card_bg);
+                    if del {
+                        delete_id = Some(id);
+                    }
+                    if let Some(s) = save {
+                        save_edit = Some(s);
+                    }
                 }
             });
 
-        // Handle deferred mutations
-        if let Some(id) = delete_id {
-            match self.db.delete_pr_filter_pattern(id) {
-                Ok(()) => {
-                    self.git.pr_filter_patterns.retain(|p| p.id != id);
-                    self.reapply_pr_filter_patterns();
+        (delete_id, save_edit)
+    }
+
+    fn render_pattern_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: i64,
+        pattern: &str,
+        match_field: &str,
+        card_bg: egui::Color32,
+    ) -> (bool, Option<(i64, String, String)>) {
+        let mut delete = false;
+        let mut save = None;
+
+        ui.push_id(id, |ui| {
+            egui::Frame::new()
+                .fill(card_bg)
+                .corner_radius(4.0)
+                .inner_margin(6.0)
+                .outer_margin(egui::Margin::symmetric(0, 2))
+                .show(ui, |ui| {
+                    let is_editing = self
+                        .git
+                        .editing_pattern
+                        .as_ref()
+                        .map_or(false, |(eid, _, _)| *eid == id);
+
+                    if is_editing {
+                        save = self.render_editing_pattern(ui, id);
+                    } else {
+                        delete = self.render_display_pattern(ui, id, pattern, match_field);
+                    }
+                });
+        });
+
+        (delete, save)
+    }
+
+    fn render_editing_pattern(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: i64,
+    ) -> Option<(i64, String, String)> {
+        let mut edit_text = self.git.editing_pattern.as_ref().unwrap().1.clone();
+        let mut edit_field = self.git.editing_pattern.as_ref().unwrap().2.clone();
+        let mut cancel = false;
+        let mut save = None;
+
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut edit_text).desired_width(280.0));
+            field_combo(ui, &format!("edit_field_{}", id), &mut edit_field);
+            if ui.button("Save").clicked() {
+                save = Some((id, edit_text.clone(), edit_field.clone()));
+            }
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
+        });
+
+        if cancel {
+            self.git.editing_pattern = None;
+        } else {
+            self.git.editing_pattern = Some((id, edit_text, edit_field));
+        }
+        save
+    }
+
+    fn render_display_pattern(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: i64,
+        pattern: &str,
+        match_field: &str,
+    ) -> bool {
+        let mut delete = false;
+        ui.horizontal(|ui| {
+            let field_label = match match_field {
+                "file_path" => "file path",
+                _ => "text",
+            };
+            ui.label(egui::RichText::new(format!("\"{}\" in {}", pattern, field_label)).small());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(
+                        egui::RichText::new("\u{2716}")
+                            .small()
+                            .color(self.semantic.danger),
+                    )
+                    .on_hover_text("Delete pattern")
+                    .clicked()
+                {
+                    delete = true;
                 }
-                Err(e) => {
-                    eprintln!("Failed to delete PR filter pattern {}: {}", id, e);
-                    self.set_status_message(format!("Failed to delete filter pattern: {}", e));
+                if ui
+                    .button(egui::RichText::new("\u{270E}").small())
+                    .on_hover_text("Edit pattern")
+                    .clicked()
+                {
+                    self.git.editing_pattern =
+                        Some((id, pattern.to_string(), match_field.to_string()));
                 }
+            });
+        });
+        delete
+    }
+
+    fn handle_pattern_delete(&mut self, id: i64) {
+        match self.db.delete_pr_filter_pattern(id) {
+            Ok(()) => {
+                self.git.pr_filter_patterns.retain(|p| p.id != id);
+                self.reapply_pr_filter_patterns();
+            }
+            Err(e) => {
+                eprintln!("Failed to delete PR filter pattern {}: {}", id, e);
+                self.set_status_message(format!("Failed to delete filter pattern: {}", e));
             }
         }
-        if let Some((id, text, field)) = save_edit {
-            let trimmed = text.trim().to_string();
-            if !trimmed.is_empty() {
-                match self.db.update_pr_filter_pattern(id, &trimmed, &field) {
-                    Ok(()) => {
-                        if let Some(p) = self.git.pr_filter_patterns.iter_mut().find(|p| p.id == id)
-                        {
-                            p.pattern = trimmed;
-                            p.match_field = field;
-                        }
-                        self.reapply_pr_filter_patterns();
-                        self.git.editing_pattern = None;
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to update PR filter pattern {}: {}", id, e);
-                        self.set_status_message(format!("Failed to update filter pattern: {}", e));
-                    }
+    }
+
+    fn handle_pattern_save(&mut self, id: i64, text: String, field: String) {
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            self.git.editing_pattern = None;
+            return;
+        }
+        match self.db.update_pr_filter_pattern(id, &trimmed, &field) {
+            Ok(()) => {
+                if let Some(p) = self.git.pr_filter_patterns.iter_mut().find(|p| p.id == id) {
+                    p.pattern = trimmed;
+                    p.match_field = field;
                 }
-            } else {
+                self.reapply_pr_filter_patterns();
                 self.git.editing_pattern = None;
+            }
+            Err(e) => {
+                eprintln!("Failed to update PR filter pattern {}: {}", id, e);
+                self.set_status_message(format!("Failed to update filter pattern: {}", e));
             }
         }
     }
