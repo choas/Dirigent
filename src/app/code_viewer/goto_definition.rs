@@ -4,6 +4,25 @@ use crate::app::{symbols, DirigentApp};
 use crate::file_tree::FileEntry;
 
 impl DirigentApp {
+    /// Try LSP go-to-definition first, fall back to regex-based search.
+    pub(in crate::app) fn lsp_goto_definition(
+        &mut self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+        word: &str,
+    ) {
+        if self.settings.lsp_enabled && self.lsp.has_initialized_server_for(file_path) {
+            // Send LSP definition request — result will be polled in process_lsp_results
+            self.lsp.definition(file_path, line, character);
+            // Store fallback word so we can fall back to regex if LSP returns no result
+            self.lsp_goto_def_fallback_word = Some(word.to_string());
+            self.set_status_message(format!("LSP: looking up `{}`...", word));
+        } else {
+            self.goto_definition(word);
+        }
+    }
+
     /// Go to definition of a symbol: search project files for definition patterns.
     pub(in crate::app) fn goto_definition(&mut self, word: &str) {
         if word.is_empty() || word.len() < 2 {

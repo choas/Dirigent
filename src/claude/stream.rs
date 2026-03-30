@@ -201,6 +201,39 @@ fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+/// Extract a Claude Code plan file path from a log that contains "ExitPlanMode".
+/// Looks for a "→ Write ~/.claude/plans/..." line preceding "ExitPlanMode".
+/// Returns the expanded absolute path (~ replaced with the home directory).
+pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
+    if !log.contains("ExitPlanMode") {
+        return None;
+    }
+    // Scan lines in reverse from ExitPlanMode to find the Write line with the plan path.
+    let lines: Vec<&str> = log.lines().collect();
+    let exit_idx = lines.iter().rposition(|l| l.contains("ExitPlanMode"))?;
+    // Look up to 10 lines before ExitPlanMode for the Write line.
+    let start = exit_idx.saturating_sub(10);
+    for i in (start..exit_idx).rev() {
+        let line = lines[i].trim();
+        // Match "→ Write ~/.claude/plans/..." pattern
+        let rest = match line.strip_prefix("\u{2192} Write ") {
+            Some(r) => r,
+            None => continue,
+        };
+        if rest.contains(".claude/plans/") {
+            let path = rest.trim();
+            // Expand ~ to home directory
+            if let Some(suffix) = path.strip_prefix("~/") {
+                if let Some(home) = dirs::home_dir() {
+                    return Some(home.join(suffix).to_string_lossy().to_string());
+                }
+            }
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
 /// Route a single parsed JSON event to the correct handler.
 fn dispatch_stream_event(
     event: &serde_json::Value,
@@ -342,6 +375,26 @@ fn extract_metrics(event: &serde_json::Value) -> RunMetrics {
     }
 }
 
+/// Detect a usage-limit / hard rate-limit message in Claude output.
+/// Returns the first matching line (trimmed) if found.
+pub(crate) fn detect_usage_limit(text: &str) -> Option<&str> {
+    // Patterns that indicate the user's quota or extra-usage budget is exhausted.
+    // These are *final* errors — not the transient "rate_limit_event" retries.
+    const PATTERNS: &[&str] = &[
+        "out of extra usage",
+        "out of usage",
+        "usage limit",
+        "token limit reached",
+    ];
+    for line in text.lines() {
+        let lower = line.to_lowercase();
+        if PATTERNS.iter().any(|p| lower.contains(p)) {
+            return Some(line.trim());
+        }
+    }
+    None
+}
+
 /// Handle a "rate_limit_event": log the retry delay if present.
 fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&str)) {
     if let Some(seconds) = event
@@ -353,5 +406,79 @@ fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&st
             "\u{23f3} Rate limited, retrying in {:.0}s\n",
             seconds
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_plan_path_typical_log() {
+        let log = "Now let me write the final plan file.\n\
+                    \u{2192} Write ~/.claude/plans/binary-tinkering-gray.md\n\
+                    \u{2192} ToolSearch\n\
+                    \u{2192} ExitPlanMode\n";
+        let result = extract_plan_path(log);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.ends_with(".claude/plans/binary-tinkering-gray.md"));
+        // Should be expanded (not start with ~)
+        assert!(!path.starts_with('~'));
+    }
+
+    #[test]
+    fn extract_plan_path_no_exit_plan_mode() {
+        let log = "\u{2192} Write ~/.claude/plans/foo.md\n\u{2192} ToolSearch\n";
+        assert!(extract_plan_path(log).is_none());
+    }
+
+    #[test]
+    fn extract_plan_path_no_write_line() {
+        let log = "some text\n\u{2192} ExitPlanMode\n";
+        assert!(extract_plan_path(log).is_none());
+    }
+
+    #[test]
+    fn extract_plan_path_write_too_far_above() {
+        // Write line more than 10 lines above ExitPlanMode
+        let mut log = "\u{2192} Write ~/.claude/plans/old.md\n".to_string();
+        for _ in 0..12 {
+            log.push_str("some other line\n");
+        }
+        log.push_str("\u{2192} ExitPlanMode\n");
+        assert!(extract_plan_path(&log).is_none());
+    }
+
+    #[test]
+    fn detect_usage_limit_matches_all_patterns() {
+        let cases: &[(&str, Option<&str>)] = &[
+            (
+                "You are out of extra usage",
+                Some("You are out of extra usage"),
+            ),
+            ("Out of usage", Some("Out of usage")),
+            (
+                "Your usage limit has been reached",
+                Some("Your usage limit has been reached"),
+            ),
+            ("Token limit reached.", Some("Token limit reached.")),
+            // Leading/trailing whitespace should be trimmed
+            ("  Out of usage  ", Some("Out of usage")),
+            // Sentence containing a known pattern
+            (
+                "You are out of usage for today",
+                Some("You are out of usage for today"),
+            ),
+            // Multiline input where no line matches
+            ("all good\nretrying in 5s\n", None),
+            // Non-matching input
+            ("Everything is fine", None),
+            ("rate_limit_event retry", None),
+            ("", None),
+        ];
+        for &(input, expected) in cases {
+            assert_eq!(detect_usage_limit(input), expected, "input: {input:?}");
+        }
     }
 }

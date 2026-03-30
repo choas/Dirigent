@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // -- Timing constants --
 const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -69,6 +69,7 @@ use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
 use crate::git;
+use crate::lsp::LspManager;
 use crate::settings::{self, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
@@ -118,7 +119,11 @@ pub struct DirigentApp {
     sources_expanded: bool,
     agents_expanded: bool,
     commands_expanded: bool,
+    lsp_expanded: bool,
+    /// Per-server-id warning when shlex fails to parse the arguments field.
+    lsp_args_parse_warnings: std::collections::HashMap<String, String>,
     agents_init_language: crate::agents::AgentLanguage,
+    lsp_init_language: crate::lsp::LspLanguage,
 
     // Global prompt
     global_prompt_input: String,
@@ -164,6 +169,11 @@ pub struct DirigentApp {
     // Agent system (format, lint, build, test)
     pub(super) agent_state: AgentRunState,
 
+    // LSP integration
+    pub(super) lsp: LspManager,
+    /// Fallback word for LSP go-to-definition (used when LSP returns no result).
+    pub(super) lsp_goto_def_fallback_word: Option<String>,
+
     // Animation: highlight flash when cue moves between kanban columns
     cue_move_flash: HashMap<i64, Instant>,
 
@@ -193,8 +203,8 @@ pub struct DirigentApp {
     // Follow-up prompts queued for currently running cues (cue_id -> FIFO list of prompts)
     follow_up_queue: HashMap<i64, Vec<String>>,
 
-    // Scheduled runs: cue_id -> when to trigger
-    scheduled_runs: HashMap<i64, Instant>,
+    // Scheduled runs: cue_id -> when to trigger (wall-clock so sleep doesn't delay)
+    scheduled_runs: HashMap<i64, SystemTime>,
 
     // Schedule input text per cue (visible when toggled)
     schedule_inputs: HashMap<i64, String>,
@@ -230,6 +240,9 @@ pub struct DirigentApp {
 
     // Cached latest execution metrics per cue (avoids DB reads during repaint)
     latest_exec_cache: HashMap<i64, crate::db::ExecutionMetrics>,
+
+    // Per-cue warning messages (e.g. rate limit hit), shown on the cue card
+    cue_warnings: HashMap<i64, String>,
 
     // Pending file/directory delete confirmation (path, is_dir)
     pending_file_delete: Option<(PathBuf, bool)>,
@@ -375,6 +388,14 @@ impl DirigentApp {
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
+        let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
+        if settings.lsp_enabled {
+            if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
+                eprintln!("[lsp] Failed to start servers: {}", e);
+                lsp_manager.status_log.push(e);
+            }
+        }
+
         DirigentApp {
             project_root,
             db,
@@ -411,6 +432,7 @@ impl DirigentApp {
                 worktrees,
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
+                available_branches: Vec::new(),
                 pushing: false,
                 push_rx: None,
                 pulling: false,
@@ -432,6 +454,9 @@ impl DirigentApp {
                 importing_pr: false,
                 importing_pr_start: None,
                 import_pr_rx: None,
+                pr_findings_pending: Vec::new(),
+                pr_findings_excluded: std::collections::HashSet::new(),
+                show_pr_filter: false,
                 notifying_pr: false,
                 pr_notify_rx: None,
                 archived_dbs: Vec::new(),
@@ -439,6 +464,11 @@ impl DirigentApp {
                 pending_force_remove: None,
                 pending_archive_msg: None,
                 pending_delete_archive: None,
+                pr_filter_patterns_page: false,
+                pr_filter_patterns: Vec::new(),
+                new_pattern_text: String::new(),
+                new_pattern_field: "text".to_string(),
+                editing_pattern: None,
             },
             settings,
             semantic,
@@ -448,7 +478,10 @@ impl DirigentApp {
             sources_expanded: false,
             agents_expanded: false,
             commands_expanded: false,
+            lsp_expanded: false,
+            lsp_args_parse_warnings: std::collections::HashMap::new(),
             agents_init_language: crate::agents::AgentLanguage::Rust,
+            lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
             show_repo_picker: false,
@@ -481,6 +514,8 @@ impl DirigentApp {
             },
             task_handles: Vec::new(),
             agent_state: AgentRunState::new(),
+            lsp: lsp_manager,
+            lsp_goto_def_fallback_word: None,
             cue_move_flash: HashMap::new(),
             cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
@@ -510,6 +545,8 @@ impl DirigentApp {
 
             cached_total_cost: initial_total_cost,
             latest_exec_cache: initial_exec_cache,
+
+            cue_warnings: HashMap::new(),
 
             pending_file_delete: None,
 
@@ -595,7 +632,7 @@ impl DirigentApp {
 
     /// Process scheduled runs: trigger any cue whose scheduled time has arrived.
     fn process_scheduled_runs(&mut self) {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let ready: Vec<i64> = self
             .scheduled_runs
             .iter()
@@ -692,6 +729,12 @@ impl eframe::App for DirigentApp {
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
+
+        // Poll LSP servers for responses and notifications
+        self.lsp.poll();
+
+        // Process LSP results (definition, document symbols)
+        self.process_lsp_results();
 
         // Poll external sources for new cues
         self.poll_sources();

@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use git2::Repository;
-
 use crate::error::DirigentError;
 
 #[derive(Debug, Clone)]
@@ -22,7 +20,7 @@ fn build_worktree_info(
 ) -> WorktreeInfo {
     let canon_wt = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
     let name = branch
-        .and_then(|b| b.rsplit('/').next().map(|s| s.to_string()))
+        .and_then(|b| b.strip_prefix("refs/heads/").map(|s| s.to_string()))
         .unwrap_or_else(|| {
             p.file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -91,31 +89,141 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
     Ok(worktrees)
 }
 
+/// List branch names available for worktree creation (local + remote-tracking),
+/// excluding branches already checked out in an existing worktree.
+pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
+    use std::collections::BTreeSet;
+    use std::process::Command;
+
+    // Collect branches already checked out in worktrees so we can exclude them.
+    let checked_out: std::collections::HashSet<String> = list_worktrees(repo_path)?
+        .iter()
+        .map(|wt| wt.name.clone())
+        .collect();
+
+    let mut branches = BTreeSet::new();
+
+    // Local branches.
+    let output = Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let name = line.trim().to_string();
+            if !name.is_empty() && !checked_out.contains(&name) {
+                branches.insert(name);
+            }
+        }
+    }
+
+    // Remote-tracking branches (strip the remote prefix, e.g. "origin/foo" -> "foo").
+    let output = Command::new("git")
+        .args(["branch", "-r", "--format=%(refname:short)"])
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let full = line.trim();
+            if full.is_empty() || full.contains("HEAD") {
+                continue;
+            }
+            // Strip "origin/" (or any remote name) prefix.
+            let name = if let Some(pos) = full.find('/') {
+                &full[pos + 1..]
+            } else {
+                full
+            };
+            if !name.is_empty() && !checked_out.contains(name) {
+                branches.insert(name.to_string());
+            }
+        }
+    }
+
+    Ok(branches.into_iter().collect())
+}
+
 pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
     use std::process::Command;
 
-    let repo = Repository::discover(repo_path)?;
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| DirigentError::GitCommand("no workdir".into()))?
-        .to_path_buf();
+    // Always resolve the *main* worktree so new worktrees are created as
+    // siblings of it, even when called from a linked (secondary) worktree.
+    let worktrees = list_worktrees(repo_path)?;
+    let main_wt = worktrees
+        .iter()
+        .find(|wt| wt.is_main)
+        .ok_or_else(|| DirigentError::GitCommand("no main worktree found".into()))?;
+    let workdir = main_wt.path.clone();
     let parent = workdir
         .parent()
         .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
-    let wt_path = parent.join(name);
 
+    // Use the last path component for the directory name to avoid nested dirs
+    // when the branch name contains slashes (e.g. "claude/feature-xyz").
+    let dir_name = name.rsplit('/').next().unwrap_or(name);
+    let wt_path = parent.join(dir_name);
+
+    // First try without -b: this works for local branches AND remote-tracking
+    // branches (git auto-creates a local tracking branch from e.g.
+    // origin/claude/add-deno-support-brnCw).
     let output = Command::new("git")
-        .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
+        .args(["worktree", "add", &wt_path.to_string_lossy(), name])
         .current_dir(repo_path)
         .output()?;
 
+    // If the branch didn't exist at all, fall back to creating it with -b.
     if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+        let output = Command::new("git")
+            .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(DirigentError::GitCommand(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
     }
 
+    // Copy .claude/ settings from the main worktree so the new worktree
+    // inherits Claude Code permissions, hooks, and project configuration.
+    copy_claude_settings(&workdir, &wt_path);
+
     Ok(wt_path)
+}
+
+/// Recursively copy the `.claude/` directory from `src_root` to `dst_root`,
+/// skipping the `worktrees/` subdirectory (Claude Code manages that itself).
+fn copy_claude_settings(src_root: &Path, dst_root: &Path) {
+    let src_dir = src_root.join(".claude");
+    if !src_dir.is_dir() {
+        return;
+    }
+    let dst_dir = dst_root.join(".claude");
+    if let Err(e) = copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
+        eprintln!("warning: failed to copy .claude/ settings to worktree: {e}");
+    }
+}
+
+/// Recursively copy `src` to `dst`, skipping entries whose file name matches
+/// any entry in `skip`.
+fn copy_dir_recursive(src: &Path, dst: &Path, skip: &[&str]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if skip.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path, &[])?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn remove_worktree(

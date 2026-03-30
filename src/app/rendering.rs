@@ -51,6 +51,13 @@ impl DirigentApp {
             crate::spawn_new_instance();
         }
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
+            // Notify LSP before closing
+            if self.settings.lsp_enabled {
+                if let Some(tab) = self.viewer.active() {
+                    let path = tab.file_path.clone();
+                    self.lsp.notify_file_closed(&path);
+                }
+            }
             self.viewer.close_active_tab();
         }
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
@@ -104,7 +111,8 @@ impl DirigentApp {
             || self.git.show_pull_diverged
             || self.git.show_pull_unmerged
             || self.git.show_merge_conflicts
-            || self.git.show_import_pr;
+            || self.git.show_import_pr
+            || self.git.show_pr_filter;
         if !has_modal {
             return;
         }
@@ -147,6 +155,10 @@ impl DirigentApp {
             self.git.show_pull_diverged = false;
         } else if self.git.show_pull_unmerged {
             self.git.show_pull_unmerged = false;
+        } else if self.git.show_pr_filter {
+            self.git.show_pr_filter = false;
+            self.git.pr_findings_pending.clear();
+            self.git.pr_findings_excluded.clear();
         } else if self.git.show_import_pr {
             self.git.show_import_pr = false;
         } else if self.git.show_create_pr {
@@ -177,6 +189,7 @@ impl DirigentApp {
         self.render_pull_unmerged_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
+        self.render_filter_pr_dialog(ctx);
     }
 
     /// Render project-wide search panel as a left side panel (replaces file tree).

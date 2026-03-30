@@ -3,6 +3,7 @@ mod create_pr;
 mod cue_agent_runs;
 mod diff_review;
 mod file_ops;
+mod filter_pr;
 mod git_init;
 mod import_pr;
 mod merge_conflicts;

@@ -177,6 +177,7 @@ impl DirigentApp {
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
+                // run.output is already ANSI-stripped by build_completed_result
                 if run.output.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("(no output)")
@@ -206,13 +207,8 @@ impl DirigentApp {
                 run.output.trim(),
             );
             match self.db.insert_cue(&cue_text, "", 0, None, &[]) {
-                Ok(id) => {
+                Ok(_id) => {
                     self.reload_cues();
-                    self.editing_cue = Some(super::super::EditingCue {
-                        id,
-                        text: cue_text.clone(),
-                        focus_requested: true,
-                    });
                     // Close the agent log so the user lands on the cue pool
                     self.agent_state.show_output = None;
                 }

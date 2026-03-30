@@ -180,13 +180,7 @@ fn render_code_block_body(ui: &mut egui::Ui, language: Option<&str>, code: &str,
     let ext = language.unwrap_or("");
     if !ext.is_empty() {
         for line in code.lines() {
-            let job = egui_extras::syntax_highlighting::highlight(
-                ui.ctx(),
-                ui.style(),
-                ctx.syntax_theme,
-                line,
-                ext,
-            );
+            let job = crate::syntax::highlight(ui.ctx(), ui.style(), ctx.syntax_theme, line, ext);
             ui.label(job);
         }
     } else {

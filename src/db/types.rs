@@ -105,6 +105,8 @@ pub(crate) struct Cue {
     pub attached_images: Vec<String>,
     /// Optional user-assigned tag for grouping/labeling cues.
     pub tag: Option<String>,
+    /// Path to a Claude Code plan file (set when ExitPlanMode is detected in output).
+    pub plan_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

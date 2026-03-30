@@ -198,6 +198,7 @@ impl Database {
         self.add_column("cues", "source_ref", "TEXT")?;
         self.add_column("cues", "attached_images", "TEXT")?;
         self.add_column("cues", "tag", "TEXT")?;
+        self.add_column("cues", "plan_path", "TEXT")?;
 
         // Column migrations — executions
         self.rename_column("executions", "comment_id", "cue_id")?;
@@ -232,6 +233,16 @@ impl Database {
                 finished_at   TEXT
             );",
         )?;
+        // PR filter patterns – reusable ignore rules for PR findings
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pr_filter_patterns (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern    TEXT NOT NULL,
+                match_field TEXT NOT NULL DEFAULT 'text',
+                created_at TEXT NOT NULL
+            );",
+        )?;
+
         // Indexes
         self.conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_cues_status ON cues(status);")?;

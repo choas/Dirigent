@@ -234,6 +234,247 @@ pub(crate) fn fetch_sonarqube_issues(
         .collect())
 }
 
+/// Fetch cards from a Trello board using the Trello REST API.
+/// Requires an API key and a token (generated at trello.com/power-ups/admin).
+pub(crate) fn fetch_trello_cards(
+    api_key: &str,
+    token: &str,
+    board_id: &str,
+    list_filter: Option<&str>,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if api_key.is_empty() {
+        return Err(DirigentError::Source("Trello API key is empty".to_string()));
+    }
+    if token.is_empty() {
+        return Err(DirigentError::Source("Trello token is empty".to_string()));
+    }
+    if board_id.is_empty() {
+        return Err(DirigentError::Source(
+            "Trello board ID is empty".to_string(),
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+
+    // Fetch cards with their list info so we can filter by list name.
+    let url = format!(
+        "https://api.trello.com/1/boards/{}/cards?key={}&token={}&fields=name,desc,shortUrl,idList&limit=100",
+        board_id, api_key, token,
+    );
+
+    let resp = client.get(&url).send().map_err(|e| {
+        DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Trello API error ({}): {body}",
+            status
+        )));
+    }
+
+    let parsed: serde_json::Value = resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
+
+    // Trello may return a plain string error message instead of JSON.
+    if let Some(err_str) = parsed.as_str() {
+        return Err(DirigentError::Source(format!(
+            "Trello API error: {err_str}"
+        )));
+    }
+
+    // Trello may return an error object instead of the expected array.
+    if let Some(err_msg) = parsed.get("error").and_then(|v| v.as_str()) {
+        let detail = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(DirigentError::Source(format!(
+            "Trello API error: {err_msg}: {detail}"
+        )));
+    }
+
+    let cards: Vec<serde_json::Value> = serde_json::from_value(parsed)
+        .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
+
+    // If a list filter is provided, resolve list names to IDs for filtering.
+    let allowed_list_ids: Option<Vec<String>> = if let Some(filter) = list_filter {
+        let lists_url = format!(
+            "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
+            board_id, api_key, token,
+        );
+        let lists_resp = client.get(&lists_url).send().map_err(|e| {
+            DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
+        })?;
+
+        if !lists_resp.status().is_success() {
+            let status = lists_resp.status();
+            let body = lists_resp.text().unwrap_or_default();
+            return Err(DirigentError::Source(format!(
+                "Trello lists API error ({status}): {body}"
+            )));
+        }
+
+        let lists: Vec<serde_json::Value> = lists_resp
+            .json()
+            .map_err(|e| DirigentError::Source(format!("Trello lists parse error: {e}")))?;
+
+        let filter_lower = filter.to_lowercase();
+        let ids: Vec<String> = lists
+            .iter()
+            .filter_map(|l| {
+                let name = l.get("name")?.as_str()?;
+                if name.to_lowercase().contains(&filter_lower) {
+                    Some(l.get("id")?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Some(ids)
+    } else {
+        None
+    };
+
+    Ok(cards
+        .iter()
+        .filter_map(|card| {
+            let name = card.get("name")?.as_str()?;
+            let url = card.get("shortUrl")?.as_str()?;
+            let desc = card.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+
+            // Apply list filter if present.
+            if let Some(ref ids) = allowed_list_ids {
+                let id_list = card.get("idList")?.as_str()?;
+                if !ids.iter().any(|id| id == id_list) {
+                    return None;
+                }
+            }
+
+            let text = if desc.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}\n\n{}", name, desc)
+            };
+
+            Some(SourceItem {
+                external_id: url.to_string(),
+                text,
+                source_label: source_label.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Fetch incomplete tasks from an Asana project using the Asana REST API.
+/// Requires a personal access token.
+pub(crate) fn fetch_asana_tasks(
+    token: &str,
+    project_gid: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if token.is_empty() {
+        return Err(DirigentError::Source("Asana token is empty".to_string()));
+    }
+    if project_gid.is_empty() {
+        return Err(DirigentError::Source(
+            "Asana project GID is empty".to_string(),
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+
+    let url = format!(
+        "https://app.asana.com/api/1.0/projects/{}/tasks?opt_fields=name,notes,permalink_url,completed&limit=100",
+        project_gid,
+    );
+
+    let resp_raw = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Asana request failed: {e}")))?;
+
+    if !resp_raw.status().is_success() {
+        let status = resp_raw.status();
+        let body = resp_raw.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Asana API error ({status}): {body}"
+        )));
+    }
+
+    let resp: serde_json::Value = resp_raw
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Asana response parse error: {e}")))?;
+
+    if let Some(errors) = resp.get("errors").and_then(|v| v.as_array()) {
+        let msgs: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.get("message").and_then(|m| m.as_str()).map(String::from))
+            .collect();
+        return Err(DirigentError::Source(format!(
+            "Asana API error: {}",
+            if msgs.is_empty() {
+                "unknown error".to_string()
+            } else {
+                msgs.join("; ")
+            }
+        )));
+    }
+
+    let tasks = resp
+        .get("data")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(tasks
+        .iter()
+        .filter_map(|task| {
+            // Skip completed tasks.
+            if task.get("completed").and_then(|c| c.as_bool()) == Some(true) {
+                return None;
+            }
+
+            let gid = task.get("gid")?.as_str()?;
+            let name = task.get("name")?.as_str()?;
+            if name.trim().is_empty() {
+                return None;
+            }
+            let notes = task.get("notes").and_then(|n| n.as_str()).unwrap_or("");
+            let permalink = task
+                .get("permalink_url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("");
+
+            let text = if notes.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}\n\n{}", name, notes)
+            };
+
+            let external_id = if permalink.is_empty() {
+                format!("asana:{}", gid)
+            } else {
+                permalink.to_string()
+            };
+
+            Some(SourceItem {
+                external_id,
+                text,
+                source_label: source_label.to_string(),
+            })
+        })
+        .collect())
+}
+
 /// Load a variable from `.Dirigent/.env` (preferred) or `.env` (fallback).
 /// Returns `None` if neither file contains the key.
 pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {

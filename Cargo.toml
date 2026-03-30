@@ -7,6 +7,7 @@ edition = "2021"
 dirs = "6"
 eframe = "0.34"
 egui_extras = { version = "0.34", features = ["syntect"] }
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 git2 = "0.20"
 anyhow = "1"
@@ -23,9 +24,12 @@ pulldown-cmark = "0.13"
 which = "8.0.2"
 shlex = "1"
 strip-ansi-escapes = "0.2"
+lsp-types = "0.97"
+url = "2"
 tempfile = "3"
 libc = "0.2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+sentry = "0.47.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

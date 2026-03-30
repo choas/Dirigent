@@ -192,9 +192,13 @@ fn run_before_hook(
 
     match result {
         WaitResult::Completed(output) if !output.status.success() => {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let combined = if stderr.is_empty() { stdout } else { stderr };
+            let stderr = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stderr));
+            let stdout = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stdout));
+            let combined = match (stderr.is_empty(), stdout.is_empty()) {
+                (true, _) => stdout,
+                (_, true) => stderr,
+                _ => format!("{}\n{}", stderr, stdout),
+            };
             Err(format!(
                 "before_run failed (exit {}):\n{}",
                 output.status, combined
@@ -243,8 +247,8 @@ fn build_completed_result(
     output: &std::process::Output,
     duration_ms: u64,
 ) -> AgentResult {
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stderr));
     let combined = if stderr.is_empty() {
         stdout.clone()
     } else if stdout.is_empty() {

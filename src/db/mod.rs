@@ -4,11 +4,13 @@ mod converters;
 mod cue_ops;
 mod execution_ops;
 mod migrations;
+mod pattern_ops;
 mod source_ops;
 mod types;
 
 pub(crate) use agent_runs::{AgentRunEntry, AgentRunRecord};
 pub(crate) use migrations::Database;
+pub(crate) use pattern_ops::PrFilterPattern;
 #[allow(unused_imports)]
 pub(crate) use types::{
     ActivityEntry, Cue, CueHistoryRow, CueStatus, Execution, ExecutionMetrics, ExecutionStatus,
@@ -29,7 +31,7 @@ impl Database {
         use rusqlite::params;
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag FROM cues WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag, plan_path FROM cues WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(converters::row_to_cue(row)?))

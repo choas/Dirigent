@@ -40,6 +40,7 @@ impl DirigentApp {
 
     /// Reload content of all open tabs from disk.
     pub(super) fn reload_open_tabs(&mut self) {
+        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
             let content = match std::fs::read_to_string(&tab.file_path) {
                 Ok(c) => c,
@@ -55,6 +56,13 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             tab.symbols = symbols::parse_symbols(&tab.content, ext);
+            changed_paths.push(tab.file_path.clone());
+        }
+        // Notify LSP of file changes
+        if self.settings.lsp_enabled {
+            for path in &changed_paths {
+                self.lsp.notify_file_changed(path);
+            }
         }
     }
 
@@ -70,6 +78,44 @@ impl DirigentApp {
         }
         if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
             self.apply_goto_def_result(gen, file_path, target_line, msg);
+        }
+    }
+
+    /// Process LSP results: definition navigation, document symbol refresh.
+    pub(super) fn process_lsp_results(&mut self) {
+        // Handle LSP definition result
+        if let Some((def_path, def_line)) = self.lsp.definition_result.take() {
+            self.lsp_goto_def_fallback_word = None;
+            self.push_nav_history();
+            self.load_file(def_path);
+            self.viewer.scroll_to_line = Some(def_line);
+            self.set_status_message(format!("LSP: definition at line {}", def_line));
+        } else if !self.lsp.definition_pending {
+            // If definition completed with no result, fall back to regex
+            if let Some(word) = self.lsp_goto_def_fallback_word.take() {
+                self.goto_definition(&word);
+            }
+        }
+
+        // Request document symbols for the active file when LSP is available
+        if self.settings.lsp_enabled {
+            if let Some(active_idx) = self.viewer.active_tab {
+                if active_idx < self.viewer.tabs.len() {
+                    let file_path = self.viewer.tabs[active_idx].file_path.clone();
+                    if self.lsp.has_initialized_server_for(&file_path) {
+                        if let Some(lsp_syms) = self.lsp.document_symbols.get(&file_path) {
+                            // Update tab symbols from LSP (more accurate than regex)
+                            let converted = symbols::from_lsp_symbols(lsp_syms);
+                            if !converted.is_empty() {
+                                self.viewer.tabs[active_idx].symbols = converted;
+                            }
+                        } else {
+                            // Request once if we don't have symbols cached yet
+                            self.lsp.request_document_symbols(&file_path);
+                        }
+                    }
+                }
+            }
         }
     }
 

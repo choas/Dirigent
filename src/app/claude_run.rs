@@ -401,6 +401,7 @@ impl DirigentApp {
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
+        self.cue_warnings.remove(&cue_id);
 
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
@@ -574,9 +575,23 @@ impl DirigentApp {
             return;
         }
 
-        let is_error = result.error.is_some();
+        // Detect usage-limit messages in the response or log before deciding
+        // which handler to use.  When a hard rate/usage limit is hit, Claude
+        // exits without changes and we must NOT treat it as "no changes needed".
+        let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
+            .or_else(|| {
+                self.claude
+                    .running_logs
+                    .get(&result.cue_id)
+                    .and_then(|(log, _)| claude::detect_usage_limit(log))
+            })
+            .map(|s| s.to_string());
+
+        let is_error = result.error.is_some() || usage_limit_msg.is_some();
         if let Some(ref error) = result.error {
             self.handle_run_error(&result, error);
+        } else if let Some(ref limit_line) = usage_limit_msg {
+            self.handle_rate_limit(&result, limit_line);
         } else if result.diff.is_some() {
             self.handle_run_with_diff(&result);
         } else {
@@ -587,6 +602,16 @@ impl DirigentApp {
         // commits made by Claude Code (or any other file changes) are visible
         // immediately in the UI — git log, dirty-file markers, tab contents.
         if !is_error {
+            // Detect Claude Code plan (ExitPlanMode) in the log output.
+            let plan_path = self
+                .claude
+                .running_logs
+                .get(&result.cue_id)
+                .and_then(|(log, _)| claude::extract_plan_path(log));
+            let _ = self
+                .db
+                .update_cue_plan_path(result.cue_id, plan_path.as_deref());
+
             self.refresh_open_tabs();
             self.reload_git_info();
             self.reload_commit_history();
@@ -642,6 +667,17 @@ impl DirigentApp {
         let _ = self.db.fail_execution(result.exec_id, error);
         let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
         let _ = self.db.log_activity(result.cue_id, "Run failed");
+    }
+
+    fn handle_rate_limit(&mut self, result: &ClaudeResult, limit_line: &str) {
+        let preview = self.cue_preview(result.cue_id);
+        self.set_status_message(format!("Rate limited: \"{}\" — {}", preview, limit_line));
+        let _ = self.db.fail_execution(result.exec_id, limit_line);
+        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+        let activity = format!("Rate limited — {}", limit_line);
+        let _ = self.db.log_activity(result.cue_id, &activity);
+        self.cue_warnings
+            .insert(result.cue_id, limit_line.to_string());
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {

@@ -80,6 +80,10 @@ pub(super) enum CueAction {
     RefreshPR,
     /// Queue a follow-up prompt for a currently running cue.
     QueueFollowUp(i64, String),
+    /// Open a Claude Code plan file in the code viewer.
+    ViewPlan(i64),
+    /// Execute a Claude Code plan by sending it back to Claude.
+    RunPlan(i64),
 }
 
 /// State for a single open file tab.
@@ -357,6 +361,8 @@ pub(crate) struct GitState {
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,
+    /// Branches available for worktree creation (local + remote, excluding checked-out).
+    pub(super) available_branches: Vec<String>,
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -391,6 +397,12 @@ pub(crate) struct GitState {
     pub(super) importing_pr: bool,
     pub(super) importing_pr_start: Option<Instant>,
     pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
+    /// Fetched PR findings awaiting user filtering before import.
+    pub(super) pr_findings_pending: Vec<crate::sources::PrFinding>,
+    /// Indices of findings the user has excluded from import.
+    pub(super) pr_findings_excluded: std::collections::HashSet<usize>,
+    /// Whether the PR findings filter dialog is open.
+    pub(super) show_pr_filter: bool,
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -404,4 +416,14 @@ pub(crate) struct GitState {
     pub(super) pending_archive_msg: Option<String>,
     /// Pending archived DB deletion that needs user confirmation.
     pub(super) pending_delete_archive: Option<PathBuf>,
+    /// Whether the filter dialog is showing the "Patterns" page (true) or "Findings" page (false).
+    pub(super) pr_filter_patterns_page: bool,
+    /// Cached list of PR filter patterns loaded from the DB.
+    pub(super) pr_filter_patterns: Vec<crate::db::PrFilterPattern>,
+    /// Input field for adding a new pattern.
+    pub(super) new_pattern_text: String,
+    /// Match field for new pattern: "text" or "file_path".
+    pub(super) new_pattern_field: String,
+    /// Pattern id currently being edited (None = not editing).
+    pub(super) editing_pattern: Option<(i64, String, String)>,
 }

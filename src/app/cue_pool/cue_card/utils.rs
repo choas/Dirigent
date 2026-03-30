@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
 use eframe::egui;
 
@@ -26,14 +26,17 @@ pub(in crate::app) fn compute_display_text(cue: &Cue, is_expanded: bool) -> Stri
 /// Format queue/schedule label for display.
 pub(in crate::app) fn format_queue_label(
     is_queued: bool,
-    scheduled_when: Option<Instant>,
+    scheduled_when: Option<SystemTime>,
 ) -> String {
     if is_queued {
         return "\u{23F3} Queued".to_string();
     }
     if let Some(when) = scheduled_when {
-        let remaining = when.saturating_duration_since(Instant::now());
-        let secs = remaining.as_secs();
+        let now = SystemTime::now();
+        if when <= now {
+            return "\u{23F2} Due now".to_string();
+        }
+        let secs = when.duration_since(now).unwrap_or_default().as_secs();
         if secs < 60 {
             return format!("\u{23F2} {}s", secs);
         }
@@ -71,15 +74,16 @@ pub(in crate::app) fn detect_agent_kind(event: &str) -> Option<String> {
 }
 
 /// Format agent output, truncating if necessary.
+/// Note: ANSI codes are already stripped by `build_completed_result` before persistence.
 pub(in crate::app) fn format_agent_output(output: &str) -> String {
-    if output.len() > 2000 {
+    if output.trim().is_empty() {
+        "(no output)".to_string()
+    } else if output.len() > 2000 {
         format!(
             "{}...\n(truncated, {} bytes total)",
             crate::app::truncate_str(output, 2000),
             output.len()
         )
-    } else if output.trim().is_empty() {
-        "(no output)".to_string()
     } else {
         output.to_string()
     }

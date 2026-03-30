@@ -226,7 +226,60 @@ impl DirigentApp {
         self.git.importing_pr_start = None;
         self.git.import_pr_rx = None;
         match result {
-            Ok(findings) => self.handle_pr_findings(findings),
+            Ok(findings) => {
+                let total_fetched = findings.len();
+                if findings.is_empty() {
+                    self.set_status_message("No actionable findings found in PR".to_string());
+                } else {
+                    // Filter out findings that are already imported (exist in DB by source_ref)
+                    let new_findings: Vec<_> = findings
+                        .into_iter()
+                        .filter(|f| {
+                            match self.db.cue_exists_by_source_ref(&f.external_id) {
+                                Ok(true) => false, // already imported
+                                _ => true,         // new or DB error → show it
+                            }
+                        })
+                        .collect();
+                    let skipped = total_fetched - new_findings.len();
+
+                    let skip_note = if skipped > 0 {
+                        format!(" ({} already imported)", skipped)
+                    } else {
+                        String::new()
+                    };
+                    self.set_status_message(format!(
+                        "Fetched {} new findings – review and filter before importing{}",
+                        new_findings.len(),
+                        skip_note
+                    ));
+                    self.git.pr_findings_pending = new_findings;
+                    self.git.pr_findings_excluded.clear();
+                    self.git.pr_filter_patterns_page = false;
+
+                    // Load patterns and auto-exclude matching findings
+                    self.git.pr_filter_patterns =
+                        self.db.list_pr_filter_patterns().unwrap_or_default();
+                    for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
+                        for pat in &self.git.pr_filter_patterns {
+                            let haystack = match pat.match_field.as_str() {
+                                "file_path" => &finding.file_path,
+                                _ => &finding.text,
+                            };
+                            if haystack
+                                .to_lowercase()
+                                .contains(&pat.pattern.to_lowercase())
+                            {
+                                self.git.pr_findings_excluded.insert(idx);
+                                break;
+                            }
+                        }
+                    }
+
+                    self.git.show_import_pr = false;
+                    self.git.show_pr_filter = true;
+                }
+            }
             Err(e) => self.set_status_message(format!("PR import failed: {}", e)),
         }
     }
@@ -241,6 +294,7 @@ impl DirigentApp {
         let tag = format!("PR{}", pr_number);
         let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
         let has_changes = new_count > 0 || updated_count > 0;
+        self.reload_cues();
         if error_count > 0 && !has_changes {
             self.set_status_message(format!(
                 "PR #{}: import failed ({} DB errors across {} findings)",
@@ -249,19 +303,17 @@ impl DirigentApp {
                 findings.len()
             ));
         } else if error_count > 0 {
-            self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!(
                 "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
                 pr_number, summary, tag, error_count
             ));
         } else if has_changes {
-            self.reload_cues();
             let summary = Self::build_findings_summary(new_count, updated_count);
             self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
         } else {
             self.set_status_message(format!(
-                "PR #{}: all {} findings still in progress",
+                "PR #{}: all {} findings already imported",
                 pr_number,
                 findings.len()
             ));

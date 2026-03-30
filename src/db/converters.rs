@@ -40,6 +40,7 @@ pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         source_ref: row.get(7)?,
         attached_images,
         tag: row.get(9)?,
+        plan_path: row.get(10)?,
     })
 }
 

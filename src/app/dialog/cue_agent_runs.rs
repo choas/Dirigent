@@ -210,6 +210,7 @@ impl DirigentApp {
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
+                // run.output is already ANSI-stripped by build_completed_result
                 if run.output.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("(no output)")
