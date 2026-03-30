@@ -216,10 +216,7 @@ pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
     for i in (start..exit_idx).rev() {
         let line = lines[i].trim();
         // Match "→ Write ~/.claude/plans/..." pattern
-        let rest = match line
-            .strip_prefix("\u{2192} Write ")
-            .or_else(|| line.strip_prefix("\u{2192} Write "))
-        {
+        let rest = match line.strip_prefix("\u{2192} Write ") {
             Some(r) => r,
             None => continue,
         };
@@ -451,5 +448,30 @@ mod tests {
         }
         log.push_str("\u{2192} ExitPlanMode\n");
         assert!(extract_plan_path(&log).is_none());
+    }
+
+    #[test]
+    fn detect_usage_limit_matches_all_patterns() {
+        let cases: &[(&str, Option<&str>)] = &[
+            (
+                "You are out of extra usage",
+                Some("You are out of extra usage"),
+            ),
+            ("Out of usage", Some("Out of usage")),
+            (
+                "Your usage limit has been reached",
+                Some("Your usage limit has been reached"),
+            ),
+            ("Token limit reached.", Some("Token limit reached.")),
+            // Leading/trailing whitespace should be trimmed
+            ("  Out of usage  ", Some("Out of usage")),
+            // Non-matching input
+            ("Everything is fine", None),
+            ("rate_limit_event retry", None),
+            ("", None),
+        ];
+        for &(input, expected) in cases {
+            assert_eq!(detect_usage_limit(input), expected, "input: {input:?}");
+        }
     }
 }
