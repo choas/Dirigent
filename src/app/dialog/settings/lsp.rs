@@ -52,7 +52,10 @@ impl DirigentApp {
                     .changed()
                 {
                     if self.settings.lsp_enabled {
-                        self.lsp.start_servers(&self.settings.lsp_servers);
+                        if let Err(e) = self.lsp.start_servers(&self.settings.lsp_servers) {
+                            eprintln!("[lsp] {}", e);
+                            self.lsp.status_log.push(e);
+                        }
                     } else {
                         self.lsp.stop_all();
                     }
@@ -78,7 +81,10 @@ impl DirigentApp {
             if ui.small_button("Reset Defaults").clicked() {
                 self.settings.lsp_servers = default_lsp_servers();
                 if self.settings.lsp_enabled {
-                    self.lsp.reconcile(&self.settings.lsp_servers);
+                    if let Err(e) = self.lsp.reconcile(&self.settings.lsp_servers) {
+                        eprintln!("[lsp] {}", e);
+                        self.lsp.status_log.push(e);
+                    }
                 }
             }
             if self.settings.lsp_enabled {
@@ -87,7 +93,10 @@ impl DirigentApp {
                     .on_hover_text("Stop and restart all enabled servers")
                     .clicked()
                 {
-                    self.lsp.restart_all(&self.settings.lsp_servers);
+                    if let Err(e) = self.lsp.restart_all(&self.settings.lsp_servers) {
+                        eprintln!("[lsp] {}", e);
+                        self.lsp.status_log.push(e);
+                    }
                 }
             }
         });
@@ -284,7 +293,10 @@ impl DirigentApp {
         }
         if let Some(idx) = start_idx {
             let cfg = self.settings.lsp_servers[idx].clone();
-            self.lsp.start_single(&cfg);
+            if let Err(e) = self.lsp.start_single(&cfg) {
+                eprintln!("[lsp] {}", e);
+                self.lsp.status_log.push(e);
+            }
         }
         if let Some(name) = install_server_name {
             let hint = lsp_install_hint(&name);
@@ -312,7 +324,10 @@ impl DirigentApp {
             if ui.button("Initialize").clicked() {
                 self.settings.lsp_servers = lsp_servers_for_language(self.lsp_init_language);
                 if self.settings.lsp_enabled {
-                    self.lsp.reconcile(&self.settings.lsp_servers);
+                    if let Err(e) = self.lsp.reconcile(&self.settings.lsp_servers) {
+                        eprintln!("[lsp] {}", e);
+                        self.lsp.status_log.push(e);
+                    }
                 }
             }
         });

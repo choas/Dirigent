@@ -81,8 +81,10 @@ pub(crate) struct LspManager {
     shell_init: String,
 
     // -- Shared state for UI consumption --
-    /// Pending requests: request_id -> kind. Used to route responses.
-    pending_requests: HashMap<u64, PendingRequestKind>,
+    /// Pending requests keyed per server: server_id -> (request_id -> kind).
+    /// Per-server keying prevents request-ID collisions across servers and
+    /// allows cleanup when a server is torn down.
+    pending_requests: HashMap<String, HashMap<u64, PendingRequestKind>>,
 
     /// Latest hover result (markdown/plaintext). Cleared when a new hover is requested.
     pub hover_result: Option<String>,
@@ -145,16 +147,25 @@ impl LspManager {
     /// Start language servers from the provided configs.
     /// Only starts servers that are enabled and not already running.
     /// Rebuilds the full extension map from all configs.
-    pub fn start_servers(&mut self, configs: &[LspServerConfig]) {
-        // Build extension map from all enabled configs
-        self.extension_map.clear();
+    /// Returns an error if two enabled configs claim the same file extension.
+    pub fn start_servers(&mut self, configs: &[LspServerConfig]) -> Result<(), String> {
+        // Build extension map from all enabled configs, detecting duplicates
+        let mut new_map: HashMap<String, String> = HashMap::new();
         for cfg in configs {
             if cfg.enabled {
                 for ext in &cfg.extensions {
-                    self.extension_map.insert(ext.clone(), cfg.id.clone());
+                    if let Some(existing_id) = new_map.get(ext) {
+                        return Err(format!(
+                            "Extension \".{}\" is claimed by both server \"{}\" and \"{}\"; \
+                             disable one or remove the overlapping extension",
+                            ext, existing_id, cfg.id,
+                        ));
+                    }
+                    new_map.insert(ext.clone(), cfg.id.clone());
                 }
             }
         }
+        self.extension_map = new_map;
 
         for cfg in configs {
             if !cfg.enabled {
@@ -165,19 +176,34 @@ impl LspManager {
             }
             self.start_one(cfg);
         }
+        Ok(())
     }
 
     /// Start a single server without clearing the extension map.
     /// Use this when the user clicks "Start" on one server card.
-    pub fn start_single(&mut self, cfg: &LspServerConfig) {
+    /// Returns an error if any of this server's extensions conflict with an already-mapped server.
+    pub fn start_single(&mut self, cfg: &LspServerConfig) -> Result<(), String> {
         if !cfg.enabled || self.clients.contains_key(&cfg.id) {
-            return;
+            return Ok(());
+        }
+        // Check for conflicts before inserting
+        for ext in &cfg.extensions {
+            if let Some(existing_id) = self.extension_map.get(ext) {
+                if existing_id != &cfg.id {
+                    return Err(format!(
+                        "Extension \".{}\" is already claimed by server \"{}\"; \
+                         cannot start \"{}\" with the same extension",
+                        ext, existing_id, cfg.id,
+                    ));
+                }
+            }
         }
         // Add this server's extensions to the map (don't clear others)
         for ext in &cfg.extensions {
             self.extension_map.insert(ext.clone(), cfg.id.clone());
         }
         self.start_one(cfg);
+        Ok(())
     }
 
     /// Start a single language server.
@@ -251,7 +277,7 @@ impl LspManager {
     /// Reconcile running servers with the desired configuration.
     /// Force-stops servers not present (or not enabled) in the new config,
     /// then starts servers that are missing from clients.
-    pub fn reconcile(&mut self, configs: &[LspServerConfig]) {
+    pub fn reconcile(&mut self, configs: &[LspServerConfig]) -> Result<(), String> {
         let desired: HashSet<String> = configs
             .iter()
             .filter(|c| c.enabled)
@@ -270,16 +296,16 @@ impl LspManager {
         }
 
         // Start new/missing servers (start_servers skips those already in clients)
-        self.start_servers(configs);
+        self.start_servers(configs)
     }
 
     /// Force-stop all servers and restart from configs.
-    pub fn restart_all(&mut self, configs: &[LspServerConfig]) {
+    pub fn restart_all(&mut self, configs: &[LspServerConfig]) -> Result<(), String> {
         let names: Vec<String> = self.clients.keys().cloned().collect();
         for name in names {
             self.force_stop_server(&name);
         }
-        self.start_servers(configs);
+        self.start_servers(configs)
     }
 
     /// Poll all running clients for new messages. Call this each frame.
@@ -332,6 +358,27 @@ impl LspManager {
             self.clients.remove(&name);
             self.initialized.remove(&name);
             self.pending_init.remove(&name);
+        }
+    }
+
+    /// Clear all pending request state owned by the given server.
+    /// Unwinds associated UI state (hover_pending, definition_pending, pending_doc_symbols).
+    fn cleanup_server_requests(&mut self, server_name: &str) {
+        if let Some(reqs) = self.pending_requests.remove(server_name) {
+            for (_id, kind) in reqs {
+                match kind {
+                    PendingRequestKind::Hover => {
+                        self.hover_pending = false;
+                    }
+                    PendingRequestKind::Definition => {
+                        self.definition_pending = false;
+                    }
+                    PendingRequestKind::DocumentSymbol(path) => {
+                        self.pending_doc_symbols.remove(&path);
+                    }
+                    PendingRequestKind::References => {}
+                }
+            }
         }
     }
 
@@ -402,9 +449,11 @@ impl LspManager {
                 }
 
                 // Route tracked responses to shared state
-                if let Some(kind) = self.pending_requests.remove(id) {
-                    self.handle_tracked_response(kind, result, error);
-                    return;
+                if let Some(server_map) = self.pending_requests.get_mut(server_name) {
+                    if let Some(kind) = server_map.remove(id) {
+                        self.handle_tracked_response(kind, result, error);
+                        return;
+                    }
                 }
 
                 // Forward other responses to event channel
@@ -722,7 +771,10 @@ impl LspManager {
         }
         let client = self.clients.get(&server_name)?;
         let id = client.hover(file_path, line, character);
-        self.pending_requests.insert(id, PendingRequestKind::Hover);
+        self.pending_requests
+            .entry(server_name)
+            .or_default()
+            .insert(id, PendingRequestKind::Hover);
         self.hover_pending = true;
         self.hover_result = None;
         self.hover_file = Some(file_path.to_path_buf());
@@ -740,6 +792,8 @@ impl LspManager {
         let client = self.clients.get(&server_name)?;
         let id = client.definition(file_path, line, character);
         self.pending_requests
+            .entry(server_name)
+            .or_default()
             .insert(id, PendingRequestKind::Definition);
         self.definition_pending = true;
         self.definition_result = None;
@@ -755,6 +809,8 @@ impl LspManager {
         let client = self.clients.get(&server_name)?;
         let id = client.references(file_path, line, character);
         self.pending_requests
+            .entry(server_name)
+            .or_default()
             .insert(id, PendingRequestKind::References);
         Some(id)
     }
@@ -771,10 +827,10 @@ impl LspManager {
         }
         let client = self.clients.get(&server_name)?;
         let id = client.document_symbols(file_path);
-        self.pending_requests.insert(
-            id,
-            PendingRequestKind::DocumentSymbol(file_path.to_path_buf()),
-        );
+        self.pending_requests
+            .entry(server_name)
+            .or_default()
+            .insert(id, PendingRequestKind::DocumentSymbol(file_path.to_path_buf()));
         self.pending_doc_symbols.insert(file_path.to_path_buf(), id);
         Some(id)
     }

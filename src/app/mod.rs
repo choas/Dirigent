@@ -388,7 +388,10 @@ impl DirigentApp {
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
-            lsp_manager.start_servers(&settings.lsp_servers);
+            if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
+                eprintln!("[lsp] Failed to start servers: {}", e);
+                lsp_manager.status_log.push(e);
+            }
         }
 
         DirigentApp {
