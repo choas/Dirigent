@@ -230,16 +230,20 @@ impl DirigentApp {
                         ui.end_row();
 
                         ui.label("Arguments:");
-                        let mut args_str = self.settings.lsp_servers[i].args.join(" ");
+                        let mut args_str = shlex::join(
+                            self.settings.lsp_servers[i].args.iter().map(|s| s.as_str()),
+                        );
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut args_str)
                                 .desired_width(250.0)
-                                .hint_text("e.g. --stdio")
+                                .hint_text("e.g. --stdio (quoting supported)")
                                 .font(egui::TextStyle::Monospace),
                         );
                         if resp.changed() {
-                            self.settings.lsp_servers[i].args =
-                                args_str.split_whitespace().map(|s| s.to_string()).collect();
+                            self.settings.lsp_servers[i].args = shlex::split(&args_str)
+                                .unwrap_or_else(|| {
+                                    args_str.split_whitespace().map(|s| s.to_string()).collect()
+                                });
                         }
                         ui.end_row();
 
