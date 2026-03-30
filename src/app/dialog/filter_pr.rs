@@ -457,6 +457,7 @@ impl DirigentApp {
                 }
                 Err(e) => {
                     eprintln!("Failed to delete PR filter pattern {}: {}", id, e);
+                    self.set_status_message(format!("Failed to delete filter pattern: {}", e));
                 }
             }
         }
@@ -471,13 +472,16 @@ impl DirigentApp {
                             p.match_field = field;
                         }
                         self.reapply_pr_filter_patterns();
+                        self.git.editing_pattern = None;
                     }
                     Err(e) => {
                         eprintln!("Failed to update PR filter pattern {}: {}", id, e);
+                        self.set_status_message(format!("Failed to update filter pattern: {}", e));
                     }
                 }
+            } else {
+                self.git.editing_pattern = None;
             }
-            self.git.editing_pattern = None;
         }
     }
 
