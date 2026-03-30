@@ -8,7 +8,16 @@ use std::thread::JoinHandle;
 
 use std::process::ChildStderr;
 
-use lsp_types::*;
+use lsp_types::{
+    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolClientCapabilities, DocumentSymbolParams,
+    DynamicRegistrationClientCapabilities, GotoCapability, GotoDefinitionParams,
+    HoverClientCapabilities, HoverParams, InitializeParams, MarkupKind, Position,
+    PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams, ServerCapabilities,
+    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncClientCapabilities, Uri,
+    VersionedTextDocumentIdentifier, WorkspaceFolder,
+};
 use std::str::FromStr;
 
 /// A message received from the language server.
