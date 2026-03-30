@@ -277,12 +277,21 @@ impl LspClient {
         let uri = file_uri(file_path);
         let uri_str = uri.as_str().to_string();
 
+        // Ensure didOpen has been sent before any didChange
+        if !self.open_files.contains_key(&uri_str) {
+            self.did_open(file_path);
+            // did_open may fail (e.g. unreadable file) — check again
+            if !self.open_files.contains_key(&uri_str) {
+                return;
+            }
+        }
+
         let content = match std::fs::read_to_string(file_path) {
             Ok(c) => c,
             Err(_) => return,
         };
 
-        let version = self.open_files.entry(uri_str).or_insert(0);
+        let version = self.open_files.get_mut(&uri_str).unwrap();
         *version += 1;
         let ver = *version;
 
@@ -419,11 +428,24 @@ impl LspClient {
 
     fn write_message(&self, msg: &serde_json::Value) {
         let body = serde_json::to_string(msg).unwrap();
-        if let Ok(mut writer) = self.writer.lock() {
-            let header = format!("Content-Length: {}\r\n\r\n", body.len());
-            let _ = writer.write_all(header.as_bytes());
-            let _ = writer.write_all(body.as_bytes());
-            let _ = writer.flush();
+        let mut writer = match self.writer.lock() {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[lsp] failed to acquire writer lock: {e}");
+                return;
+            }
+        };
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        if let Err(e) = writer.write_all(header.as_bytes()) {
+            eprintln!("[lsp] failed to write header: {e}");
+            return;
+        }
+        if let Err(e) = writer.write_all(body.as_bytes()) {
+            eprintln!("[lsp] failed to write body: {e}");
+            return;
+        }
+        if let Err(e) = writer.flush() {
+            eprintln!("[lsp] failed to flush: {e}");
         }
     }
 }
