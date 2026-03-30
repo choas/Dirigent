@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::Instant;
 
 use super::client::{LspClient, LspMessage};
 use super::types::LspServerConfig;
@@ -74,6 +75,8 @@ pub(crate) struct LspManager {
     pub status_log: Vec<String>,
     /// Per-server error messages (server_name -> error string). Cleared on successful start.
     pub failed_servers: HashMap<String, String>,
+    /// Servers pending graceful shutdown: name -> (shutdown_request_id, when_initiated).
+    pending_shutdowns: HashMap<String, (u64, Instant)>,
     /// Shell init snippet for resolving commands in macOS GUI context.
     shell_init: String,
 
@@ -122,6 +125,7 @@ impl LspManager {
             initialized: HashMap::new(),
             status_log: Vec::new(),
             failed_servers: HashMap::new(),
+            pending_shutdowns: HashMap::new(),
             shell_init: shell_init.to_string(),
             pending_requests: HashMap::new(),
             hover_result: None,
@@ -205,17 +209,17 @@ impl LspManager {
         }
     }
 
-    /// Stop a specific language server.
+    /// Stop a specific language server (non-blocking).
+    /// Sends `shutdown` and registers for deferred cleanup in `poll()`.
     pub fn stop_server(&mut self, name: &str) {
-        if let Some(client) = self.clients.remove(name) {
-            let _ = client.shutdown();
-            // Give it a moment, then exit
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            client.exit();
-            client.kill();
-            self.initialized.remove(name);
-            self.pending_init.remove(name);
-            let msg = format!("Stopped LSP: {}", name);
+        if self.pending_shutdowns.contains_key(name) {
+            return; // already shutting down
+        }
+        if let Some(client) = self.clients.get(name) {
+            let shutdown_id = client.shutdown();
+            self.pending_shutdowns
+                .insert(name.to_string(), (shutdown_id, Instant::now()));
+            let msg = format!("Stopping LSP: {}", name);
             eprintln!("[lsp] {}", msg);
             self.status_log.push(msg);
         }
@@ -246,6 +250,19 @@ impl LspManager {
             }
         }
 
+        // Complete pending shutdowns that have timed out (graceful window: 500ms)
+        let timed_out: Vec<String> = self
+            .pending_shutdowns
+            .iter()
+            .filter(|(_, (_, initiated))| {
+                initiated.elapsed() >= std::time::Duration::from_millis(500)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in timed_out {
+            self.finish_shutdown(&name);
+        }
+
         // Remove dead clients
         let dead: Vec<String> = self
             .clients
@@ -254,6 +271,11 @@ impl LspManager {
             .map(|(k, _)| k.clone())
             .collect();
         for name in dead {
+            // If it was pending shutdown, just finish that
+            if self.pending_shutdowns.contains_key(&name) {
+                self.finish_shutdown(&name);
+                continue;
+            }
             let msg = format!("LSP server exited: {}", name);
             eprintln!("[lsp] {}", msg);
             self.status_log.push(msg.clone());
@@ -264,10 +286,32 @@ impl LspManager {
         }
     }
 
+    /// Complete a pending shutdown: send exit, kill, and clean up state.
+    fn finish_shutdown(&mut self, name: &str) {
+        self.pending_shutdowns.remove(name);
+        if let Some(client) = self.clients.remove(name) {
+            client.exit();
+            client.kill();
+        }
+        self.initialized.remove(name);
+        self.pending_init.remove(name);
+        let msg = format!("Stopped LSP: {}", name);
+        eprintln!("[lsp] {}", msg);
+        self.status_log.push(msg);
+    }
+
     /// Handle a message from a specific server.
     fn handle_message(&mut self, server_name: &str, msg: LspMessage) {
         match &msg {
             LspMessage::Response { id, result, error } => {
+                // Check if this is a shutdown response for a pending shutdown
+                if let Some((shutdown_id, _)) = self.pending_shutdowns.get(server_name) {
+                    if id == shutdown_id {
+                        self.finish_shutdown(server_name);
+                        return;
+                    }
+                }
+
                 // Check if this is an initialize response
                 if let Some(init_id) = self.pending_init.get(server_name) {
                     if id == init_id {
@@ -721,6 +765,11 @@ fn uri_to_path(uri: &lsp_types::Uri) -> Option<PathBuf> {
 
 impl Drop for LspManager {
     fn drop(&mut self) {
-        self.stop_all();
+        // Force-kill all servers immediately on drop (no poll loop available).
+        for (_, client) in self.clients.drain() {
+            let _ = client.shutdown();
+            client.exit();
+            client.kill();
+        }
     }
 }
