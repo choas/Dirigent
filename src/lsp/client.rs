@@ -544,10 +544,12 @@ fn file_uri(path: &Path) -> Uri {
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
-    let uri_string = url::Url::from_file_path(&abs)
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| format!("file://{}", abs.to_string_lossy()));
-    Uri::from_str(&uri_string).unwrap_or_else(|_| Uri::from_str("file:///").unwrap())
+    // Canonicalize to resolve `.`, `..`, and duplicate separators.
+    // Fall back to the absolute path if canonicalize fails (e.g. file doesn't exist yet).
+    let canonical = abs.canonicalize().unwrap_or(abs);
+    let url = url::Url::from_file_path(&canonical)
+        .expect("Url::from_file_path should not fail for an absolute path");
+    Uri::from_str(url.as_str()).expect("a valid file:// URL should parse as Uri")
 }
 
 /// Map a file extension to an LSP language identifier.
