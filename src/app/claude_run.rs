@@ -587,16 +587,19 @@ impl DirigentApp {
             })
             .map(|s| s.to_string());
 
-        let is_error = result.error.is_some() || usage_limit_msg.is_some();
-        if let Some(ref error) = result.error {
+        let is_error = if let Some(ref error) = result.error {
             self.handle_run_error(&result, error);
+            true
         } else if let Some(ref limit_line) = usage_limit_msg {
             self.handle_rate_limit(&result, limit_line);
+            true
         } else if result.diff.is_some() {
             self.handle_run_with_diff(&result);
+            false
         } else {
             self.handle_run_no_changes(&result);
-        }
+            false
+        };
 
         // After every successful run, refresh git state and open tabs so that
         // commits made by Claude Code (or any other file changes) are visible
