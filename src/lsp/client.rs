@@ -22,6 +22,7 @@ pub(crate) enum LspMessage {
     Request {
         id: u64,
         method: String,
+        #[allow(dead_code)]
         params: serde_json::Value,
     },
     /// A notification from the server (no id).

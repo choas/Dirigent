@@ -26,28 +26,34 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 - **File tree & code viewer** — Browse any Git repository with syntax highlighting (via [syntect](https://crates.io/crates/syntect)); lines with active cues are marked with a yellow dot
 - **Code symbols** — Multi-language symbol parsing (functions, structs, enums, traits, classes) for 11+ languages with definition lookup
+- **LSP integration** — Built-in Language Server Protocol client with presets for 13 languages (Rust, TypeScript, Python, Go, Java, C#, C/C++, Ruby, Swift, Kotlin, Elixir, Zig, Lua); provides diagnostics, hover info, goto definition, find references, and document symbols
+- **Quick Open** — Fuzzy file finder (Cmd+P) for fast navigation across the project
+- **Tabs & navigation** — Open multiple files in tabs; breadcrumb path bar; back/forward navigation history
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
-- **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items
+- **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items; bulk actions on Review and Done columns
 - **Claude Code integration** — Sends prompts to Claude Code CLI and streams progress in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments
 - **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
-- **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes)
+- **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
 - **Prompt quality hints** — Heuristic analysis flags vague, too-short, or missing-context prompts before sending to AI
 - **Image attachments** — Attach images to cues for Claude to reference during execution
 - **Diff view** — Review AI-generated changes inline or side-by-side before accepting; collapsible per-file diffs with +/- statistics and in-diff search
 - **Git integration** — View commit history (last 50 commits), create commits, manage worktrees, see dirty-file indicators in the file tree; merge conflict resolution dialog, diverged-branch handling, and `git init` for non-repo directories
-- **Pull requests** — Create GitHub PRs directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues
+- **Pull requests** — Create GitHub PRs directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues with a filter dialog for selective import
 - **Search** — In-file search (Cmd+F) with match navigation; project-wide search (Cmd+Shift+F) with clickable results
-- **Source integration** — Import cues from GitHub Issues, Notion, MCP, or custom shell commands with automatic deduplication and configurable polling
+- **Source integration** — Import cues from GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, or custom shell commands with automatic deduplication and configurable polling
 - **Markdown import** — Import cues from a Markdown document (headings become cue titles); supports upsert to avoid duplicates
 - **Playbook** — Predefined prompts (e.g. "Update README", "Security audit", "Add tests", "Commit changes") that can be run as global cues; supports template variables with free-text and dropdown inputs
 - **Themes** — 20 themes: 10 dark (Nord, Dracula, Solarized, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Dark) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night, Light)
+- **Extended syntax** — Custom syntax definitions for Kotlin and Dart on top of syntect defaults
 - **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
+- **File operations** — Rename files directly from the code viewer
 - **Notifications** — macOS notifications with three-tier fallback (UNUserNotificationCenter → NSUserNotificationCenter → osascript) and configurable sound/popup
 - **Lava lamp** — Retro pixelated lava lamp animation while a cue is running
-- **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history and dedicated log viewer
+- **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history, dedicated log viewer, and cargo diagnostic parsing
 - **Task management** — Background task lifecycle with cancellation support; running Claude tasks can be stopped mid-execution
-- **Settings** — Configure theme, CLI backend and model, font family and size, notification preferences, sources, playbook, and agent commands/triggers
+- **Error tracking** — Optional Sentry integration for crash reporting
+- **Settings** — Configure theme, CLI backend and model, font family and size, notification preferences, sources, playbook, agent commands/triggers, and LSP servers
 - **Repository picker** — Switch between projects and track recent repositories
 - **macOS native** — Custom About panel, dock icon, notification integration, .app bundle with code signing and notarization
 
@@ -116,71 +122,108 @@ Dirigent stores its database (`Dirigent.db`) and settings (`settings.json`) in a
 
 ```
 src/
-├── main.rs                — Entry point, window setup, macOS integration
-├── agents.rs              — Post-run agents (Format, Lint, Build, Test)
+├── main.rs                   — Entry point, window setup, macOS integration
+├── agents/                   — Post-run agents (Format, Lint, Build, Test)
+│   ├── diagnostics.rs        — Cargo JSON diagnostic parser
+│   ├── execution.rs          — Agent execution logic
+│   ├── presets.rs             — Built-in agent presets
+│   ├── run_state.rs           — Agent run state tracking
+│   ├── trigger.rs             — Agent trigger types
+│   └── types.rs               — Agent data types
 ├── app/
-│   ├── mod.rs             — App state, update loop, panel orchestration
-│   ├── agents_poll.rs     — Agent result processing and state management
-│   ├── claude_run.rs      — Claude/OpenCode execution, streaming, conversation history
-│   ├── code_viewer.rs     — Syntax-highlighted code display with cue markers
-│   ├── lava_lamp.rs       — Retro pixelated lava lamp animation overlay
-│   ├── markdown_parser.rs — Markdown-to-block parsing (headings, code, tables, lists)
-│   ├── markdown_viewer.rs — Rendered Markdown display with syntax-highlighted code
-│   ├── symbols.rs         — Multi-language code symbol parsing and definition lookup
+│   ├── mod.rs                — App state, update loop, panel orchestration
+│   ├── agents_poll.rs        — Agent result processing and state management
+│   ├── background.rs         — Background task orchestration
+│   ├── claude_run.rs         — Claude/OpenCode execution, streaming, conversation history
+│   ├── file_navigation.rs    — File open, tab management, navigation history
+│   ├── git_operations.rs     — Git operation handlers
+│   ├── lava_lamp.rs          — Retro pixelated lava lamp animation overlay
+│   ├── markdown_parser.rs    — Markdown-to-block parsing (headings, code, tables, lists)
+│   ├── markdown_viewer.rs    — Rendered Markdown display with syntax-highlighted code
+│   ├── repo_management.rs    — Repository switching and management
+│   ├── search.rs             — In-file and project-wide search
+│   ├── sources_poll.rs       — Background polling of external cue sources
+│   ├── symbols.rs            — Multi-language code symbol parsing and definition lookup
+│   ├── tasks.rs              — Background task lifecycle and cancellation
+│   ├── theme.rs              — Theme system, semantic colors, font loading
+│   ├── code_viewer/
+│   │   ├── breadcrumb.rs     — Breadcrumb path bar with navigation
+│   │   ├── cue_input.rs      — Inline cue creation from code selection
+│   │   ├── goto_definition.rs — LSP-powered go-to-definition
+│   │   ├── line_rendering.rs — Line-level rendering with diagnostics
+│   │   ├── quick_open.rs     — Fuzzy file finder overlay (Cmd+P)
+│   │   └── tab_bar.rs        — Multi-file tab bar
 │   ├── cue_pool/
-│   │   ├── mod.rs         — Kanban columns and cue card rendering
-│   │   ├── cue_card.rs    — Cue card rendering logic
-│   │   └── markdown_import.rs — Markdown import for batch cue creation
+│   │   ├── mod.rs            — Kanban columns and cue card rendering
+│   │   ├── bulk_actions.rs   — Bulk operations on cue sections
+│   │   ├── history.rs        — Searchable prompt history
+│   │   ├── markdown_import.rs — Markdown import for batch cue creation
+│   │   └── cue_card/         — Cue card rendering (activity, buttons, inputs, etc.)
 │   ├── dialog/
-│   │   ├── mod.rs         — Dialog submodule imports
-│   │   ├── agent_log.rs   — Agent execution log viewer
-│   │   ├── create_pr.rs   — GitHub pull request creation dialog
+│   │   ├── agent_log.rs      — Agent execution log viewer
+│   │   ├── create_pr.rs      — GitHub pull request creation dialog
 │   │   ├── cue_agent_runs.rs — Per-cue agent run history
-│   │   ├── diff_review.rs — Diff review with reply, search, accept/reject
-│   │   ├── git_init.rs    — Git init confirmation for non-repo directories
-│   │   ├── import_pr.rs   — Import PR review findings as cues
+│   │   ├── diff_review.rs    — Diff review with reply, search, accept/reject
+│   │   ├── file_ops.rs       — File rename dialog
+│   │   ├── filter_pr.rs      — PR findings filter dialog
+│   │   ├── git_init.rs       — Git init confirmation for non-repo directories
+│   │   ├── import_pr.rs      — Import PR review findings as cues
 │   │   ├── merge_conflicts.rs — Merge conflict resolution dialog
 │   │   ├── play_variables.rs — Playbook template variable input dialog
-│   │   ├── pull_diverged.rs — Diverged branch merge/rebase strategy picker
-│   │   ├── pull_unmerged.rs — Unmerged files guidance dialog
-│   │   ├── repo.rs        — Repository picker and recent repos
-│   │   ├── running_log.rs — Live conversation viewer for Claude/OpenCode output
-│   │   └── settings.rs   — Settings panel (theme, model, fonts, sources, agents)
-│   ├── notifications.rs   — macOS notifications (three-tier fallback)
-│   ├── panels.rs          — Menu bar, repo bar, file tree, status bar, prompt field
-│   ├── search.rs          — In-file and project-wide search
-│   ├── sources_poll.rs    — Background polling of external cue sources
-│   ├── tasks.rs           — Background task lifecycle and cancellation
-│   └── theme.rs           — Theme system, semantic colors, font loading
-├── claude.rs              — Claude Code CLI invocation and stream parsing
-├── opencode.rs            — OpenCode CLI support (multi-provider backend)
-├── db.rs                  — SQLite persistence (cues, executions, agent runs, migrations)
-├── diff_view.rs           — Unified diff parsing, inline and side-by-side rendering
-├── error.rs               — Unified error types (DirigentError, Result alias)
-├── file_tree.rs           — Recursive directory scanning with ignore patterns
-├── git.rs                 — Git status, history, commit, worktree operations
-├── prompt_hints.rs        — Heuristic prompt quality analysis and warnings
-├── prompt_suggestions.rs  — Prompt improvement suggestions (context, specificity)
-├── settings.rs            — Themes, fonts, model, sources, agents, playbook
-└── sources.rs             — External cue sources (GitHub Issues, custom commands)
+│   │   ├── pull_diverged.rs  — Diverged branch merge/rebase strategy picker
+│   │   ├── pull_unmerged.rs  — Unmerged files guidance dialog
+│   │   ├── repo.rs           — Repository picker and recent repos
+│   │   ├── running_log.rs    — Live conversation viewer for Claude/OpenCode output
+│   │   └── settings/         — Settings panel (general, LSP, sources, agents, playbook)
+│   └── panels/
+│       ├── menu_bar.rs       — Application menu bar
+│       ├── repo_bar.rs       — Repository and branch bar
+│       ├── file_tree.rs      — File tree panel
+│       ├── prompt_field.rs   — Prompt input field
+│       └── status_bar.rs     — Status bar
+├── claude/                   — Claude Code CLI invocation and stream parsing
+│   ├── cli.rs                — CLI detection and invocation
+│   ├── diff_parser.rs        — Diff extraction from Claude output
+│   ├── invoke.rs             — Prompt building and execution
+│   ├── prompt.rs             — Prompt construction
+│   ├── stream.rs             — Streaming output parser
+│   └── types.rs              — Claude-specific data types
+├── db/                       — SQLite persistence (cues, executions, agent runs, migrations)
+├── git/                      — Git operations (status, history, commit, worktrees, PRs, merge)
+├── lsp/                      — Language Server Protocol client
+│   ├── client.rs             — LSP JSON-RPC client
+│   ├── manager.rs            — Multi-server lifecycle and routing
+│   └── types.rs              — Server configs, language presets (13 languages)
+├── settings/                 — App settings, themes, providers, playbook
+├── sources/                  — External cue sources (GitHub Issues, Slack, SonarQube, etc.)
+├── syntax.rs                 — Extended syntax highlighting (Kotlin, Dart)
+├── opencode.rs               — OpenCode CLI support (multi-provider backend)
+├── diff_view.rs              — Unified diff parsing, inline and side-by-side rendering
+├── error.rs                  — Unified error types (DirigentError, Result alias)
+├── file_tree.rs              — Recursive directory scanning with ignore patterns
+├── prompt_hints.rs           — Heuristic prompt quality analysis and warnings
+└── prompt_suggestions.rs     — Prompt improvement suggestions (context, specificity)
 ```
 
 **Key dependencies:**
 
 | Crate | Purpose |
 |-------|---------|
-| [eframe](https://crates.io/crates/eframe) 0.33 / [egui](https://crates.io/crates/egui) | Cross-platform immediate-mode GUI |
+| [eframe](https://crates.io/crates/eframe) 0.34 / [egui](https://crates.io/crates/egui) | Cross-platform immediate-mode GUI |
 | [egui_extras](https://crates.io/crates/egui_extras) (syntect) | Syntax highlighting |
-| [rusqlite](https://crates.io/crates/rusqlite) 0.38 | SQLite (bundled) |
+| [rusqlite](https://crates.io/crates/rusqlite) 0.39 | SQLite (bundled) |
 | [git2](https://crates.io/crates/git2) 0.20 | Git operations via libgit2 |
+| [lsp-types](https://crates.io/crates/lsp-types) 0.97 | Language Server Protocol types |
 | [notify](https://crates.io/crates/notify) | Cross-platform filesystem watching |
 | [pulldown-cmark](https://crates.io/crates/pulldown-cmark) | Markdown parsing for conversation and import rendering |
+| [reqwest](https://crates.io/crates/reqwest) | HTTP client for source integrations |
 | [rfd](https://crates.io/crates/rfd) | Native file dialogs |
+| [sentry](https://crates.io/crates/sentry) | Error tracking and crash reporting |
 | [thiserror](https://crates.io/crates/thiserror) | Ergonomic error type definitions |
 
 ## Status
 
-Dirigent is in active development (v0.3.1, 311 commits). Core features work — file browsing, code symbols, cue management, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import, git operations with merge conflict resolution, search, source integration, image attachments, prompt quality hints, post-run agents, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.3.4, 640 commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments, prompt quality hints, post-run agents with diagnostic parsing, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 

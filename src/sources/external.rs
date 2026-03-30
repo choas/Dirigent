@@ -266,10 +266,9 @@ pub(crate) fn fetch_trello_cards(
         board_id, api_key, token,
     );
 
-    let resp = client
-        .get(&url)
-        .send()
-        .map_err(|e| DirigentError::Source(format!("Trello request failed: {e}")))?;
+    let resp = client.get(&url).send().map_err(|e| {
+        DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -308,10 +307,9 @@ pub(crate) fn fetch_trello_cards(
             "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
             board_id, api_key, token,
         );
-        let lists_resp = client
-            .get(&lists_url)
-            .send()
-            .map_err(|e| DirigentError::Source(format!("Trello lists request failed: {e}")))?;
+        let lists_resp = client.get(&lists_url).send().map_err(|e| {
+            DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
+        })?;
 
         if !lists_resp.status().is_success() {
             let status = lists_resp.status();

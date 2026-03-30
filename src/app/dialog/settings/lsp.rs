@@ -242,9 +242,10 @@ impl DirigentApp {
                         ui.end_row();
 
                         ui.label("Arguments:");
-                        let mut args_str = shlex::join(
+                        let mut args_str = shlex::try_join(
                             self.settings.lsp_servers[i].args.iter().map(|s| s.as_str()),
-                        );
+                        )
+                        .unwrap_or_default();
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut args_str)
                                 .desired_width(250.0)
