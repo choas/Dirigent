@@ -318,6 +318,14 @@ impl LspManager {
                     message: msg,
                 });
             }
+            LspMessage::Request { id, method, .. } => {
+                // Server-initiated requests — forward to event channel so callers can respond
+                eprintln!("[lsp] server request: {} (id={})", method, id);
+                let _ = self.event_tx.send(LspEvent {
+                    server_name: server_name.to_string(),
+                    message: msg,
+                });
+            }
             LspMessage::Notification { method, params } => {
                 // Parse and store diagnostics
                 if method == "textDocument/publishDiagnostics" {

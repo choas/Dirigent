@@ -18,6 +18,12 @@ pub(crate) enum LspMessage {
         result: Option<serde_json::Value>,
         error: Option<serde_json::Value>,
     },
+    /// A server-initiated request (has id and method, expects a response).
+    Request {
+        id: u64,
+        method: String,
+        params: serde_json::Value,
+    },
     /// A notification from the server (no id).
     Notification {
         method: String,
@@ -468,8 +474,9 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     if let Some(id) = json.get("id") {
         // It's a response (has "id" and either "result" or "error")
         if json.get("method").is_some() {
-            // Server-initiated request (e.g. window/showMessage) — treat as notification
-            Ok(Some(LspMessage::Notification {
+            // Server-initiated request (e.g. window/showMessageRequest) — preserve id so callers can respond
+            Ok(Some(LspMessage::Request {
+                id: id.as_u64().unwrap_or(0),
                 method: json["method"].as_str().unwrap_or("").to_string(),
                 params: json
                     .get("params")
