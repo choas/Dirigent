@@ -130,10 +130,18 @@ impl LspClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // Apply environment variables
+        // Apply environment variables.
+        // Split on newlines to handle legacy entries where multiple KEY=VALUE
+        // pairs were collapsed into a single string (join/split mismatch bug).
         for pair in env {
-            if let Some((k, v)) = pair.split_once('=') {
-                cmd.env(k.trim(), v.trim());
+            for line in pair.split('\n') {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    cmd.env(k.trim(), v.trim());
+                }
             }
         }
 

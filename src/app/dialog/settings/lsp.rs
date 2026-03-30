@@ -357,6 +357,17 @@ impl DirigentApp {
                 ui.end_row();
 
                 ui.label("Env Vars:");
+                // Normalize: flatten any entries that contain embedded newlines
+                // (legacy corruption from join/split mismatch).
+                let env = &mut self.settings.lsp_servers[i].env;
+                if env.iter().any(|s| s.contains('\n')) {
+                    *env = env
+                        .iter()
+                        .flat_map(|s| s.split('\n'))
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
                 let mut env_str = self.settings.lsp_servers[i].env.join(", ");
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut env_str)
