@@ -127,30 +127,7 @@ impl DirigentApp {
 
         // Merge LSP diagnostics into the lookup
         if let Some(lsp_diags) = self.lsp.diagnostics.get(file_path) {
-            use crate::agents::Severity;
-            use crate::lsp::LspDiagSeverity;
-            for d in lsp_diags {
-                let sev = match d.severity {
-                    LspDiagSeverity::Error => Severity::Error,
-                    LspDiagSeverity::Warning => Severity::Warning,
-                    LspDiagSeverity::Info | LspDiagSeverity::Hint => Severity::Info,
-                };
-                let entry = diag_lines.entry(d.line).or_insert(Severity::Info);
-                match (&*entry, &sev) {
-                    (Severity::Info, Severity::Warning | Severity::Error) => *entry = sev,
-                    (Severity::Warning, Severity::Error) => *entry = sev,
-                    _ => {}
-                }
-                let source_prefix = if d.source.is_empty() {
-                    String::new()
-                } else {
-                    format!("[{}] ", d.source)
-                };
-                diag_messages
-                    .entry(d.line)
-                    .or_default()
-                    .push(format!("{}{}", source_prefix, d.message));
-            }
+            merge_lsp_diagnostics(lsp_diags, &mut diag_lines, &mut diag_messages);
         }
         let ext = file_path
             .extension()
@@ -426,5 +403,37 @@ fn lsp_symbol_kind_label(kind: lsp_types::SymbolKind) -> &'static str {
         lsp_types::SymbolKind::CONSTRUCTOR => "constructor",
         lsp_types::SymbolKind::ENUM_MEMBER => "variant",
         _ => "",
+    }
+}
+
+/// Merge LSP diagnostics into the agent-based diagnostic lookups.
+fn merge_lsp_diagnostics(
+    lsp_diags: &[crate::lsp::manager::LspDiagnostic],
+    diag_lines: &mut HashMap<usize, crate::agents::Severity>,
+    diag_messages: &mut HashMap<usize, Vec<String>>,
+) {
+    use crate::agents::Severity;
+    use crate::lsp::LspDiagSeverity;
+    for d in lsp_diags {
+        let sev = match d.severity {
+            LspDiagSeverity::Error => Severity::Error,
+            LspDiagSeverity::Warning => Severity::Warning,
+            LspDiagSeverity::Info | LspDiagSeverity::Hint => Severity::Info,
+        };
+        let entry = diag_lines.entry(d.line).or_insert(Severity::Info);
+        match (&*entry, &sev) {
+            (Severity::Info, Severity::Warning | Severity::Error) => *entry = sev,
+            (Severity::Warning, Severity::Error) => *entry = sev,
+            _ => {}
+        }
+        let source_prefix = if d.source.is_empty() {
+            String::new()
+        } else {
+            format!("[{}] ", d.source)
+        };
+        diag_messages
+            .entry(d.line)
+            .or_default()
+            .push(format!("{}{}", source_prefix, d.message));
     }
 }

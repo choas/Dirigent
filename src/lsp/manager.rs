@@ -404,90 +404,17 @@ impl LspManager {
     fn handle_message(&mut self, server_name: &str, msg: LspMessage) {
         match &msg {
             LspMessage::Response { id, result, error } => {
-                // Check if this is a shutdown response for a pending shutdown
-                if let Some((shutdown_id, _)) = self.pending_shutdowns.get(server_name) {
-                    if id == shutdown_id {
-                        self.finish_shutdown(server_name);
-                        return;
-                    }
-                }
-
-                // Check if this is an initialize response
-                if let Some(init_id) = self.pending_init.get(server_name) {
-                    if id == init_id {
-                        self.pending_init.remove(&server_name.to_string());
-                        if error.is_some() {
-                            let msg = format!("LSP {} initialize failed: {:?}", server_name, error);
-                            eprintln!("[lsp] {}", msg);
-                            self.status_log.push(msg.clone());
-                            self.failed_servers.insert(server_name.to_string(), msg);
-                            // Teardown the partially-started server so start_single() can retry
-                            if let Some(client) = self.clients.remove(server_name) {
-                                client.kill();
-                            }
-                            self.initialized.remove(server_name);
-                        } else {
-                            // Parse server capabilities
-                            if let Some(result_val) = result {
-                                if let Ok(init_result) =
-                                    serde_json::from_value::<lsp_types::InitializeResult>(
-                                        result_val.clone(),
-                                    )
-                                {
-                                    if let Some(client) = self.clients.get_mut(server_name) {
-                                        client.capabilities = Some(init_result.capabilities);
-                                    }
-                                }
-                            }
-                            // Send initialized notification
-                            if let Some(client) = self.clients.get(server_name) {
-                                client.initialized();
-                            }
-                            self.initialized.insert(server_name.to_string(), true);
-                            let msg = format!("LSP {} initialized", server_name);
-                            eprintln!("[lsp] {}", msg);
-                            self.status_log.push(msg);
-                        }
-                        return;
-                    }
-                }
-
-                // Route tracked responses to shared state
-                if let Some(server_map) = self.pending_requests.get_mut(server_name) {
-                    if let Some(kind) = server_map.remove(id) {
-                        self.handle_tracked_response(kind, result, error);
-                        return;
-                    }
-                }
-
-                // Forward other responses to event channel
-                let _ = self.event_tx.send(LspEvent {
-                    server_name: server_name.to_string(),
-                    message: msg,
-                });
+                self.handle_response(server_name, msg.clone(), id, result, error);
             }
             LspMessage::Request { id, method, .. } => {
-                // Server-initiated requests — forward to event channel so callers can respond
                 eprintln!("[lsp] server request: {} (id={})", method, id);
-                let _ = self.event_tx.send(LspEvent {
-                    server_name: server_name.to_string(),
-                    message: msg,
-                });
+                self.forward_event(server_name, msg);
             }
             LspMessage::Notification { method, params } => {
-                // Parse and store diagnostics
                 if method == "textDocument/publishDiagnostics" {
                     self.handle_diagnostics_notification(server_name, params);
                 }
-
-                // Forward all notifications
-                let _ = self.event_tx.send(LspEvent {
-                    server_name: server_name.to_string(),
-                    message: LspMessage::Notification {
-                        method: method.clone(),
-                        params: params.clone(),
-                    },
-                });
+                self.forward_event(server_name, msg);
             }
             LspMessage::ServerExited(reason) => {
                 let msg = format!("LSP {}: {}", server_name, reason);
@@ -495,6 +422,103 @@ impl LspManager {
                 self.status_log.push(msg);
             }
         }
+    }
+
+    /// Forward a message as an event to the event channel.
+    fn forward_event(&self, server_name: &str, message: LspMessage) {
+        let _ = self.event_tx.send(LspEvent {
+            server_name: server_name.to_string(),
+            message,
+        });
+    }
+
+    /// Handle an LSP response message.
+    fn handle_response(
+        &mut self,
+        server_name: &str,
+        msg: LspMessage,
+        id: &u64,
+        result: &Option<serde_json::Value>,
+        error: &Option<serde_json::Value>,
+    ) {
+        // Check if this is a shutdown response
+        if let Some((shutdown_id, _)) = self.pending_shutdowns.get(server_name) {
+            if id == shutdown_id {
+                self.finish_shutdown(server_name);
+                return;
+            }
+        }
+
+        // Check if this is an initialize response
+        if self.try_handle_initialize_response(server_name, id, result, error) {
+            return;
+        }
+
+        // Route tracked responses to shared state
+        if let Some(server_map) = self.pending_requests.get_mut(server_name) {
+            if let Some(kind) = server_map.remove(id) {
+                self.handle_tracked_response(kind, result, error);
+                return;
+            }
+        }
+
+        self.forward_event(server_name, msg);
+    }
+
+    /// Try to handle an initialize response. Returns true if this was an init response.
+    fn try_handle_initialize_response(
+        &mut self,
+        server_name: &str,
+        id: &u64,
+        result: &Option<serde_json::Value>,
+        error: &Option<serde_json::Value>,
+    ) -> bool {
+        let matches = self
+            .pending_init
+            .get(server_name)
+            .is_some_and(|init_id| init_id == id);
+        if !matches {
+            return false;
+        }
+        self.pending_init.remove(&server_name.to_string());
+
+        if error.is_some() {
+            self.handle_initialize_failure(server_name, error);
+        } else {
+            self.handle_initialize_success(server_name, result);
+        }
+        true
+    }
+
+    /// Handle a failed initialize response.
+    fn handle_initialize_failure(&mut self, server_name: &str, error: &Option<serde_json::Value>) {
+        let msg = format!("LSP {} initialize failed: {:?}", server_name, error);
+        eprintln!("[lsp] {}", msg);
+        self.status_log.push(msg.clone());
+        self.failed_servers.insert(server_name.to_string(), msg);
+        if let Some(client) = self.clients.remove(server_name) {
+            client.kill();
+        }
+        self.initialized.remove(server_name);
+    }
+
+    /// Handle a successful initialize response.
+    fn handle_initialize_success(&mut self, server_name: &str, result: &Option<serde_json::Value>) {
+        if let Some(caps) = result
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<lsp_types::InitializeResult>(v.clone()).ok())
+        {
+            if let Some(client) = self.clients.get_mut(server_name) {
+                client.capabilities = Some(caps.capabilities);
+            }
+        }
+        if let Some(client) = self.clients.get(server_name) {
+            client.initialized();
+        }
+        self.initialized.insert(server_name.to_string(), true);
+        let msg = format!("LSP {} initialized", server_name);
+        eprintln!("[lsp] {}", msg);
+        self.status_log.push(msg);
     }
 
     /// Handle a tracked response (hover, definition, references, documentSymbol).

@@ -117,53 +117,56 @@ pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str))
 /// Handle a line that isn't valid JSON — either an OpenCode structured log line
 /// or plain text from another CLI.
 fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
-    // OpenCode structured log lines: "INFO  2026-03-27T10:56:41 ..." or "DEBUG ...".
-    // Detect by matching INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO timestamp.
-    if is_opencode_log_line(line) {
-        // Always pass WARN/ERROR through — these are important.
-        if line.starts_with("WARN") || line.starts_with("ERROR") {
-            on_log(line);
-            on_log("\n");
-            return;
-        }
-        // Extract useful bits from specific services.
-        if line.contains("service=llm") {
-            let model = extract_kv(line, "modelID").unwrap_or("?");
-            let provider = extract_kv(line, "providerID").unwrap_or("?");
-            on_log(&format!("\u{2192} {} ({})\n", model, provider));
-        } else if line.contains("service=permission") {
-            let perm = extract_kv(line, "permission").unwrap_or("?");
-            let pattern = extract_kv(line, "pattern").unwrap_or("?");
-            on_log(&format!("\u{2192} {} \u{2014} {}\n", perm, pattern));
-        } else if line.contains("service=format") {
-            if let Some(file) = extract_kv(line, "file") {
-                on_log(&format!("\u{2192} format: {}\n", file));
-            }
-        } else if line.contains("service=session") && line.contains("created") {
-            if let Some(slug) = extract_kv(line, "slug") {
-                on_log(&format!("\u{2192} session: {}\n", slug));
-            }
-        } else if line.contains("service=vcs") {
-            if let Some(branch) = extract_kv(line, "branch") {
-                on_log(&format!("\u{2192} branch: {}\n", branch));
-            }
-        } else if line.contains("service=lsp") {
-            if let Some(method) = extract_kv(line, "method") {
-                on_log(&format!("\u{2192} lsp: {}\n", method));
-            }
-        } else if line.contains("service=session.prompt") {
-            if line.contains("exiting loop") {
-                on_log("\u{2192} loop done\n");
-            } else if let Some(step) = extract_kv(line, "step") {
-                on_log(&format!("\u{2192} step {}\n", step));
-            }
-        }
-        // Everything else (INFO/DEBUG) is noise — drop it.
+    // Not a structured log line — pass through as plain text.
+    if !is_opencode_log_line(line) {
+        on_log(line);
+        on_log("\n");
         return;
     }
-    // Pass through everything else (plain text output).
-    on_log(line);
-    on_log("\n");
+    // Always pass WARN/ERROR through — these are important.
+    if line.starts_with("WARN") || line.starts_with("ERROR") {
+        on_log(line);
+        on_log("\n");
+        return;
+    }
+    // Extract useful bits from specific services; drop everything else (INFO/DEBUG noise).
+    if let Some(formatted) = format_opencode_service(line) {
+        on_log(&formatted);
+    }
+}
+
+/// Format an OpenCode INFO log line by extracting the relevant detail from known services.
+/// Returns `None` for unrecognised services (the caller drops those).
+fn format_opencode_service(line: &str) -> Option<String> {
+    if line.contains("service=llm") {
+        let model = extract_kv(line, "modelID").unwrap_or("?");
+        let provider = extract_kv(line, "providerID").unwrap_or("?");
+        return Some(format!("\u{2192} {} ({})\n", model, provider));
+    }
+    if line.contains("service=permission") {
+        let perm = extract_kv(line, "permission").unwrap_or("?");
+        let pattern = extract_kv(line, "pattern").unwrap_or("?");
+        return Some(format!("\u{2192} {} \u{2014} {}\n", perm, pattern));
+    }
+    if line.contains("service=format") {
+        return extract_kv(line, "file").map(|f| format!("\u{2192} format: {}\n", f));
+    }
+    if line.contains("service=session") && line.contains("created") {
+        return extract_kv(line, "slug").map(|s| format!("\u{2192} session: {}\n", s));
+    }
+    if line.contains("service=vcs") {
+        return extract_kv(line, "branch").map(|b| format!("\u{2192} branch: {}\n", b));
+    }
+    if line.contains("service=lsp") {
+        return extract_kv(line, "method").map(|m| format!("\u{2192} lsp: {}\n", m));
+    }
+    if line.contains("service=session.prompt") {
+        if line.contains("exiting loop") {
+            return Some("\u{2192} loop done\n".to_string());
+        }
+        return extract_kv(line, "step").map(|s| format!("\u{2192} step {}\n", s));
+    }
+    None
 }
 
 /// Returns true if `line` looks like an OpenCode structured log line

@@ -6,11 +6,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
-use lsp_types::*;
+use std::process::ChildStderr;
+
+use lsp_types::{
+    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolClientCapabilities, DocumentSymbolParams,
+    DynamicRegistrationClientCapabilities, GotoCapability, GotoDefinitionParams,
+    HoverClientCapabilities, HoverParams, InitializeParams, MarkupKind, Position,
+    PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams, ServerCapabilities,
+    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncClientCapabilities, Uri,
+    VersionedTextDocumentIdentifier, WorkspaceFolder,
+};
 use std::str::FromStr;
 
 /// A message received from the language server.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum LspMessage {
     /// A response to a request we sent.
     Response {
@@ -57,6 +68,45 @@ pub(crate) struct LspClient {
     open_files: HashMap<String, i32>,
 }
 
+/// Read and log stderr lines from an LSP server process.
+fn drain_stderr(name: String, stderr: ChildStderr) {
+    let reader = BufReader::new(stderr);
+    for line in reader.lines() {
+        match line {
+            Ok(l) => eprintln!("[lsp:{}:stderr] {}", name, l),
+            Err(_) => break,
+        }
+    }
+}
+
+/// Read JSON-RPC messages from stdout and forward them via the channel.
+fn drain_stdout(name: String, stdout: std::process::ChildStdout, tx: mpsc::Sender<LspMessage>) {
+    let mut reader = BufReader::new(stdout);
+    loop {
+        match read_lsp_message(&mut reader) {
+            Ok(Some(msg)) => {
+                if tx.send(msg).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {
+                let _ = tx.send(LspMessage::ServerExited(format!(
+                    "{} exited normally",
+                    name
+                )));
+                break;
+            }
+            Err(e) => {
+                let _ = tx.send(LspMessage::ServerExited(format!(
+                    "{} read error: {}",
+                    name, e
+                )));
+                break;
+            }
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl LspClient {
     /// Spawn a language server process and start the reader thread.
@@ -80,10 +130,18 @@ impl LspClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // Apply environment variables
+        // Apply environment variables.
+        // Split on newlines to handle legacy entries where multiple KEY=VALUE
+        // pairs were collapsed into a single string (join/split mismatch bug).
         for pair in env {
-            if let Some((k, v)) = pair.split_once('=') {
-                cmd.env(k.trim(), v.trim());
+            for line in pair.split('\n') {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    cmd.env(k.trim(), v.trim());
+                }
             }
         }
 
@@ -104,47 +162,13 @@ impl LspClient {
         // Spawn stderr reader (just log to eprintln for now)
         if let Some(stderr) = child.stderr.take() {
             let name_clone = server_name.clone();
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    match line {
-                        Ok(l) => eprintln!("[lsp:{}:stderr] {}", name_clone, l),
-                        Err(_) => break,
-                    }
-                }
-            });
+            std::thread::spawn(move || drain_stderr(name_clone, stderr));
         }
 
         // Spawn stdout reader: parse JSON-RPC messages
         let reader_thread = {
             let name_clone = server_name.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stdout);
-                loop {
-                    match read_lsp_message(&mut reader) {
-                        Ok(Some(msg)) => {
-                            if tx.send(msg).is_err() {
-                                break; // receiver dropped
-                            }
-                        }
-                        Ok(None) => {
-                            // EOF
-                            let _ = tx.send(LspMessage::ServerExited(format!(
-                                "{} exited normally",
-                                name_clone
-                            )));
-                            break;
-                        }
-                        Err(e) => {
-                            let _ = tx.send(LspMessage::ServerExited(format!(
-                                "{} read error: {}",
-                                name_clone, e
-                            )));
-                            break;
-                        }
-                    }
-                }
-            })
+            std::thread::spawn(move || drain_stdout(name_clone, stdout, tx))
         };
 
         let process = Arc::new(Mutex::new(Some(child)));

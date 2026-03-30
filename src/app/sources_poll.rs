@@ -165,11 +165,7 @@ fn fetch_source_items(
     };
     match source.kind {
         SourceKind::GitHubIssues => {
-            let label_filter = if source.filter.is_empty() {
-                None
-            } else {
-                Some(source.filter.as_str())
-            };
+            let label_filter = (!source.filter.is_empty()).then(|| source.filter.as_str());
             sources::fetch_github_issues(project_root, label_filter, None, &source.label)
                 .unwrap_or_else(err)
         }
