@@ -266,7 +266,7 @@ src/
 
 ## Status
 
-Dirigent is in active development (v0.3.4, 640+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, post-run agents with diagnostic parsing, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.3.4, 600+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, post-run agents with diagnostic parsing, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
