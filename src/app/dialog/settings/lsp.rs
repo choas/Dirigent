@@ -256,19 +256,25 @@ impl DirigentApp {
                             match shlex::split(&args_str) {
                                 Some(parsed) => {
                                     self.settings.lsp_servers[i].args = parsed;
-                                    self.lsp_args_parse_warnings.remove(&i);
+                                    self.lsp_args_parse_warnings
+                                        .remove(&self.settings.lsp_servers[i].id);
                                 }
                                 None => {
                                     self.settings.lsp_servers[i].args = args_str
                                         .split_whitespace()
                                         .map(|s| s.to_string())
                                         .collect();
-                                    self.lsp_args_parse_warnings
-                                        .insert(i, "Malformed quoting in arguments".to_string());
+                                    self.lsp_args_parse_warnings.insert(
+                                        self.settings.lsp_servers[i].id.clone(),
+                                        "Malformed quoting in arguments".to_string(),
+                                    );
                                 }
                             }
                         }
-                        if let Some(warning) = self.lsp_args_parse_warnings.get(&i) {
+                        if let Some(warning) = self
+                            .lsp_args_parse_warnings
+                            .get(&self.settings.lsp_servers[i].id)
+                        {
                             ui.end_row();
                             ui.label("");
                             ui.label(
@@ -306,6 +312,7 @@ impl DirigentApp {
             let id = self.settings.lsp_servers[idx].id.clone();
             self.lsp.stop_server(&id);
             self.lsp.failed_servers.remove(&id);
+            self.lsp_args_parse_warnings.remove(&id);
             self.settings.lsp_servers.remove(idx);
         }
         if let Some(id) = stop_id {

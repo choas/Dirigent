@@ -120,8 +120,8 @@ pub struct DirigentApp {
     agents_expanded: bool,
     commands_expanded: bool,
     lsp_expanded: bool,
-    /// Per-server-index warning when shlex fails to parse the arguments field.
-    lsp_args_parse_warnings: std::collections::HashMap<usize, String>,
+    /// Per-server-id warning when shlex fails to parse the arguments field.
+    lsp_args_parse_warnings: std::collections::HashMap<String, String>,
     agents_init_language: crate::agents::AgentLanguage,
     lsp_init_language: crate::lsp::LspLanguage,
 
