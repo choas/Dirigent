@@ -62,14 +62,10 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     };
     // Auto-detect CLI paths on first launch (when paths are empty)
     if settings.claude_cli_path.is_empty() {
-        if let Some(path) = which("claude") {
-            settings.claude_cli_path = path;
-        }
+        settings.claude_cli_path = which("claude").unwrap_or_default();
     }
     if settings.opencode_cli_path.is_empty() {
-        if let Some(path) = which("opencode") {
-            settings.opencode_cli_path = path;
-        }
+        settings.opencode_cli_path = which("opencode").unwrap_or_default();
     }
     // Append any new default plays that aren't already in the user's playbook
     for default_play in default_playbook() {
