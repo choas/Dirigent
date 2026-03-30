@@ -4,6 +4,9 @@ use rusqlite::params;
 
 use super::Database;
 
+/// Allowed values for the `match_field` column in `pr_filter_patterns`.
+const ALLOWED_MATCH_FIELDS: &[&str] = &["text", "file_path"];
+
 /// A persisted PR filter pattern.
 #[derive(Debug, Clone)]
 pub(crate) struct PrFilterPattern {
@@ -13,9 +16,20 @@ pub(crate) struct PrFilterPattern {
     pub match_field: String,
 }
 
+fn validate_match_field(match_field: &str) -> Result<()> {
+    ensure!(
+        ALLOWED_MATCH_FIELDS.contains(&match_field),
+        "invalid match_field {:?}: must be one of {:?}",
+        match_field,
+        ALLOWED_MATCH_FIELDS,
+    );
+    Ok(())
+}
+
 impl Database {
     /// Insert a new PR filter pattern. Returns the new row id.
     pub fn insert_pr_filter_pattern(&self, pattern: &str, match_field: &str) -> Result<i64> {
+        validate_match_field(match_field)?;
         let now = Local::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO pr_filter_patterns (pattern, match_field, created_at) VALUES (?1, ?2, ?3)",
@@ -50,6 +64,7 @@ impl Database {
         pattern: &str,
         match_field: &str,
     ) -> Result<()> {
+        validate_match_field(match_field)?;
         let changed = self.conn.execute(
             "UPDATE pr_filter_patterns SET pattern = ?1, match_field = ?2 WHERE id = ?3",
             params![pattern, match_field, id],
