@@ -262,6 +262,7 @@ impl LspManager {
     /// Force-stop a server immediately (synchronous teardown, no deferred shutdown).
     fn force_stop_server(&mut self, name: &str) {
         self.pending_shutdowns.remove(name);
+        self.cleanup_server_requests(name);
         if let Some(client) = self.clients.remove(name) {
             let _ = client.shutdown();
             client.exit();
@@ -351,6 +352,7 @@ impl LspManager {
                 self.finish_shutdown(&name);
                 continue;
             }
+            self.cleanup_server_requests(&name);
             let msg = format!("LSP server exited: {}", name);
             eprintln!("[lsp] {}", msg);
             self.status_log.push(msg.clone());
@@ -385,6 +387,7 @@ impl LspManager {
     /// Complete a pending shutdown: send exit, kill, and clean up state.
     fn finish_shutdown(&mut self, name: &str) {
         self.pending_shutdowns.remove(name);
+        self.cleanup_server_requests(name);
         if let Some(client) = self.clients.remove(name) {
             client.exit();
             client.kill();
@@ -830,7 +833,10 @@ impl LspManager {
         self.pending_requests
             .entry(server_name)
             .or_default()
-            .insert(id, PendingRequestKind::DocumentSymbol(file_path.to_path_buf()));
+            .insert(
+                id,
+                PendingRequestKind::DocumentSymbol(file_path.to_path_buf()),
+            );
         self.pending_doc_symbols.insert(file_path.to_path_buf(), id);
         Some(id)
     }
