@@ -390,13 +390,13 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             } else {
-                let cleaned = crate::app::util::strip_ansi(current_running_log);
-                ui.label(egui::RichText::new(&cleaned).monospace().small());
+                // ANSI already stripped upstream: streaming callback (claude_run.rs)
+                // and build_completed_result (execution.rs) both strip before persistence.
+                ui.label(egui::RichText::new(current_running_log).monospace().small());
             }
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
-                let cleaned = crate::app::util::strip_ansi(log_text);
-                ui.label(egui::RichText::new(&cleaned).monospace().small());
+                ui.label(egui::RichText::new(log_text.as_str()).monospace().small());
             } else {
                 ui.label(
                     egui::RichText::new("(no output)")
