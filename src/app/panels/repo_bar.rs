@@ -18,8 +18,16 @@ impl DirigentApp {
                 }
                 if ui.small_button("Worktrees").clicked() {
                     self.reload_worktrees();
-                    self.git.available_branches =
-                        git::list_branches(&self.project_root).unwrap_or_default();
+                    match git::list_branches(&self.project_root) {
+                        Ok(branches) => self.git.available_branches = branches,
+                        Err(e) => {
+                            eprintln!(
+                                "Failed to list branches for {}: {e}",
+                                self.project_root.display()
+                            );
+                            self.git.available_branches = Default::default();
+                        }
+                    }
                     self.git.show_worktree_panel = true;
                 }
             });
