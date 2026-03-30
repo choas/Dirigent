@@ -14,6 +14,7 @@ mod prompt_hints;
 mod prompt_suggestions;
 mod settings;
 mod sources;
+mod syntax;
 
 use eframe::egui;
 use std::path::PathBuf;

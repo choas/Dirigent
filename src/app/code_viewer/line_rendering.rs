@@ -110,7 +110,7 @@ pub(crate) fn render_code_line(
                 .color(app.semantic.tertiary_text),
         );
 
-        let layout_job = egui_extras::syntax_highlighting::highlight(
+        let layout_job = crate::syntax::highlight(
             ui.ctx(),
             ui.style(),
             &app.viewer.syntax_theme,

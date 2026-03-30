@@ -7,6 +7,7 @@ edition = "2021"
 dirs = "6"
 eframe = "0.34"
 egui_extras = { version = "0.34", features = ["syntect"] }
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 git2 = "0.20"
 anyhow = "1"
