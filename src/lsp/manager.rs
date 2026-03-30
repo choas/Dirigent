@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Instant;
@@ -60,9 +60,9 @@ pub(crate) struct LspDocumentSymbol {
 pub(crate) struct LspManager {
     /// The project root all servers share.
     project_root: PathBuf,
-    /// Running clients keyed by server config name.
+    /// Running clients keyed by server config id.
     clients: HashMap<String, LspClient>,
-    /// Extension -> server name mapping (built from configs).
+    /// Extension -> server id mapping (built from configs).
     extension_map: HashMap<String, String>,
     /// Aggregated event channel: all servers forward here.
     pub event_tx: mpsc::Sender<LspEvent>,
@@ -151,7 +151,7 @@ impl LspManager {
         for cfg in configs {
             if cfg.enabled {
                 for ext in &cfg.extensions {
-                    self.extension_map.insert(ext.clone(), cfg.name.clone());
+                    self.extension_map.insert(ext.clone(), cfg.id.clone());
                 }
             }
         }
@@ -160,7 +160,7 @@ impl LspManager {
             if !cfg.enabled {
                 continue;
             }
-            if self.clients.contains_key(&cfg.name) {
+            if self.clients.contains_key(&cfg.id) {
                 continue; // already running
             }
             self.start_one(cfg);
@@ -170,12 +170,12 @@ impl LspManager {
     /// Start a single server without clearing the extension map.
     /// Use this when the user clicks "Start" on one server card.
     pub fn start_single(&mut self, cfg: &LspServerConfig) {
-        if !cfg.enabled || self.clients.contains_key(&cfg.name) {
+        if !cfg.enabled || self.clients.contains_key(&cfg.id) {
             return;
         }
         // Add this server's extensions to the map (don't clear others)
         for ext in &cfg.extensions {
-            self.extension_map.insert(ext.clone(), cfg.name.clone());
+            self.extension_map.insert(ext.clone(), cfg.id.clone());
         }
         self.start_one(cfg);
     }
@@ -185,7 +185,7 @@ impl LspManager {
         let msg = format!("Starting LSP: {} ({})", cfg.name, cfg.command);
         eprintln!("[lsp] {}", msg);
         self.status_log.push(msg);
-        self.failed_servers.remove(&cfg.name);
+        self.failed_servers.remove(&cfg.id);
 
         match LspClient::spawn(
             &cfg.name,
@@ -197,14 +197,14 @@ impl LspManager {
         ) {
             Ok(client) => {
                 let init_id = client.initialize();
-                self.pending_init.insert(cfg.name.clone(), init_id);
-                self.clients.insert(cfg.name.clone(), client);
+                self.pending_init.insert(cfg.id.clone(), init_id);
+                self.clients.insert(cfg.id.clone(), client);
             }
             Err(e) => {
                 let msg = format!("Failed to start {}: {}", cfg.name, e);
                 eprintln!("[lsp] {}", msg);
                 self.status_log.push(msg.clone());
-                self.failed_servers.insert(cfg.name.clone(), msg);
+                self.failed_servers.insert(cfg.id.clone(), msg);
             }
         }
     }
@@ -231,6 +231,55 @@ impl LspManager {
         for name in names {
             self.stop_server(&name);
         }
+    }
+
+    /// Force-stop a server immediately (synchronous teardown, no deferred shutdown).
+    fn force_stop_server(&mut self, name: &str) {
+        self.pending_shutdowns.remove(name);
+        if let Some(client) = self.clients.remove(name) {
+            let _ = client.shutdown();
+            client.exit();
+            client.kill();
+        }
+        self.initialized.remove(name);
+        self.pending_init.remove(name);
+        let msg = format!("Force-stopped LSP: {}", name);
+        eprintln!("[lsp] {}", msg);
+        self.status_log.push(msg);
+    }
+
+    /// Reconcile running servers with the desired configuration.
+    /// Force-stops servers not present (or not enabled) in the new config,
+    /// then starts servers that are missing from clients.
+    pub fn reconcile(&mut self, configs: &[LspServerConfig]) {
+        let desired: HashSet<String> = configs
+            .iter()
+            .filter(|c| c.enabled)
+            .map(|c| c.id.clone())
+            .collect();
+
+        // Force-stop servers no longer in the desired set
+        let to_stop: Vec<String> = self
+            .clients
+            .keys()
+            .filter(|name| !desired.contains(*name))
+            .cloned()
+            .collect();
+        for name in to_stop {
+            self.force_stop_server(&name);
+        }
+
+        // Start new/missing servers (start_servers skips those already in clients)
+        self.start_servers(configs);
+    }
+
+    /// Force-stop all servers and restart from configs.
+    pub fn restart_all(&mut self, configs: &[LspServerConfig]) {
+        let names: Vec<String> = self.clients.keys().cloned().collect();
+        for name in names {
+            self.force_stop_server(&name);
+        }
+        self.start_servers(configs);
     }
 
     /// Poll all running clients for new messages. Call this each frame.
@@ -321,6 +370,11 @@ impl LspManager {
                             eprintln!("[lsp] {}", msg);
                             self.status_log.push(msg.clone());
                             self.failed_servers.insert(server_name.to_string(), msg);
+                            // Teardown the partially-started server so start_single() can retry
+                            if let Some(client) = self.clients.remove(server_name) {
+                                client.kill();
+                            }
+                            self.initialized.remove(server_name);
                         } else {
                             // Parse server capabilities
                             if let Some(result_val) = result {
@@ -402,6 +456,9 @@ impl LspManager {
             match kind {
                 PendingRequestKind::Hover => self.hover_pending = false,
                 PendingRequestKind::Definition => self.definition_pending = false,
+                PendingRequestKind::DocumentSymbol(ref path) => {
+                    self.pending_doc_symbols.remove(path);
+                }
                 _ => {}
             }
             return;
@@ -418,6 +475,9 @@ impl LspManager {
                     PendingRequestKind::Definition => {
                         self.definition_pending = false;
                         self.definition_result = None;
+                    }
+                    PendingRequestKind::DocumentSymbol(ref path) => {
+                        self.pending_doc_symbols.remove(path);
                     }
                     _ => {}
                 }
@@ -472,11 +532,11 @@ impl LspManager {
     fn parse_definition_result(val: &serde_json::Value) -> Option<(PathBuf, usize)> {
         // Definition can be a single Location, Vec<Location>, or Vec<LocationLink>
         if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(val.clone()) {
-            return Some(Self::location_to_path_line(&loc));
+            return Self::location_to_path_line(&loc);
         }
         if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(val.clone()) {
             if let Some(loc) = locs.first() {
-                return Some(Self::location_to_path_line(loc));
+                return Self::location_to_path_line(loc);
             }
         }
         if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(val.clone()) {
@@ -550,10 +610,10 @@ impl LspManager {
         }
     }
 
-    fn location_to_path_line(loc: &lsp_types::Location) -> (PathBuf, usize) {
-        let path = uri_to_path(&loc.uri).unwrap_or_default();
+    fn location_to_path_line(loc: &lsp_types::Location) -> Option<(PathBuf, usize)> {
+        let path = uri_to_path(&loc.uri)?;
         let line = loc.range.start.line as usize + 1;
-        (path, line)
+        Some((path, line))
     }
 
     /// Handle publishDiagnostics notification: parse and store.
