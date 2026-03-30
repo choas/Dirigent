@@ -87,6 +87,19 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
             settings.commands.push(default_cmd);
         }
     }
+    // Normalize LSP env vars: flatten any entries with embedded newlines
+    // (legacy corruption from join/split mismatch).
+    for server in &mut settings.lsp_servers {
+        if server.env.iter().any(|s| s.contains('\n')) {
+            server.env = server
+                .env
+                .iter()
+                .flat_map(|s| s.split('\n'))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
     settings
 }
 
