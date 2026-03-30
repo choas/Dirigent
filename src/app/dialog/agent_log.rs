@@ -177,15 +177,15 @@ impl DirigentApp {
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
-                let cleaned = crate::app::util::strip_ansi(&run.output);
-                if cleaned.trim().is_empty() {
+                // run.output is already ANSI-stripped by build_completed_result
+                if run.output.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("(no output)")
                             .italics()
                             .color(self.semantic.tertiary_text),
                     );
                 } else {
-                    ui.label(egui::RichText::new(&cleaned).monospace().small());
+                    ui.label(egui::RichText::new(&run.output).monospace().small());
                 }
             });
     }
