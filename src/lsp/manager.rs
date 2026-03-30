@@ -458,6 +458,7 @@ impl LspManager {
                 PendingRequestKind::Definition => self.definition_pending = false,
                 PendingRequestKind::DocumentSymbol(ref path) => {
                     self.pending_doc_symbols.remove(path);
+                    self.document_symbols.remove(path);
                 }
                 _ => {}
             }
@@ -478,6 +479,7 @@ impl LspManager {
                     }
                     PendingRequestKind::DocumentSymbol(ref path) => {
                         self.pending_doc_symbols.remove(path);
+                        self.document_symbols.remove(path);
                     }
                     _ => {}
                 }
