@@ -301,73 +301,89 @@ pub(crate) fn fetch_trello_cards(
     let cards: Vec<serde_json::Value> = serde_json::from_value(parsed)
         .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
 
-    // If a list filter is provided, resolve list names to IDs for filtering.
-    let allowed_list_ids: Option<Vec<String>> = if let Some(filter) = list_filter {
-        let lists_url = format!(
-            "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
-            board_id, api_key, token,
-        );
-        let lists_resp = client.get(&lists_url).send().map_err(|e| {
-            DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
-        })?;
-
-        if !lists_resp.status().is_success() {
-            let status = lists_resp.status();
-            let body = lists_resp.text().unwrap_or_default();
-            return Err(DirigentError::Source(format!(
-                "Trello lists API error ({status}): {body}"
-            )));
-        }
-
-        let lists: Vec<serde_json::Value> = lists_resp
-            .json()
-            .map_err(|e| DirigentError::Source(format!("Trello lists parse error: {e}")))?;
-
-        let filter_lower = filter.to_lowercase();
-        let ids: Vec<String> = lists
-            .iter()
-            .filter_map(|l| {
-                let name = l.get("name")?.as_str()?;
-                if name.to_lowercase().contains(&filter_lower) {
-                    Some(l.get("id")?.as_str()?.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        Some(ids)
-    } else {
-        None
+    let allowed_list_ids = match list_filter {
+        Some(filter) => Some(resolve_trello_list_ids(
+            &client, board_id, api_key, token, filter,
+        )?),
+        None => None,
     };
 
     Ok(cards
         .iter()
-        .filter_map(|card| {
-            let name = card.get("name")?.as_str()?;
-            let url = card.get("shortUrl")?.as_str()?;
-            let desc = card.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        .filter_map(|card| trello_card_to_item(card, allowed_list_ids.as_deref(), source_label))
+        .collect())
+}
 
-            // Apply list filter if present.
-            if let Some(ref ids) = allowed_list_ids {
-                let id_list = card.get("idList")?.as_str()?;
-                if !ids.iter().any(|id| id == id_list) {
-                    return None;
-                }
-            }
+/// Resolve Trello list names to IDs for filtering cards by list.
+fn resolve_trello_list_ids(
+    client: &reqwest::blocking::Client,
+    board_id: &str,
+    api_key: &str,
+    token: &str,
+    filter: &str,
+) -> crate::error::Result<Vec<String>> {
+    let lists_url = format!(
+        "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
+        board_id, api_key, token,
+    );
+    let lists_resp = client.get(&lists_url).send().map_err(|e| {
+        DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
+    })?;
 
-            let text = if desc.is_empty() {
-                name.to_string()
+    if !lists_resp.status().is_success() {
+        let status = lists_resp.status();
+        let body = lists_resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Trello lists API error ({status}): {body}"
+        )));
+    }
+
+    let lists: Vec<serde_json::Value> = lists_resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Trello lists parse error: {e}")))?;
+
+    let filter_lower = filter.to_lowercase();
+    Ok(lists
+        .iter()
+        .filter_map(|l| {
+            let name = l.get("name")?.as_str()?;
+            if name.to_lowercase().contains(&filter_lower) {
+                Some(l.get("id")?.as_str()?.to_string())
             } else {
-                format!("{}\n\n{}", name, desc)
-            };
-
-            Some(SourceItem {
-                external_id: url.to_string(),
-                text,
-                source_label: source_label.to_string(),
-            })
+                None
+            }
         })
         .collect())
+}
+
+/// Convert a Trello card JSON value to a `SourceItem`, applying an optional list filter.
+fn trello_card_to_item(
+    card: &serde_json::Value,
+    allowed_list_ids: Option<&[String]>,
+    source_label: &str,
+) -> Option<SourceItem> {
+    let name = card.get("name")?.as_str()?;
+    let url = card.get("shortUrl")?.as_str()?;
+    let desc = card.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+
+    if let Some(ids) = allowed_list_ids {
+        let id_list = card.get("idList")?.as_str()?;
+        if !ids.iter().any(|id| id == id_list) {
+            return None;
+        }
+    }
+
+    let text = if desc.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}\n\n{}", name, desc)
+    };
+
+    Some(SourceItem {
+        external_id: url.to_string(),
+        text,
+        source_label: source_label.to_string(),
+    })
 }
 
 /// Fetch incomplete tasks from an Asana project using the Asana REST API.
