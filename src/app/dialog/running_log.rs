@@ -394,6 +394,8 @@ impl DirigentApp {
                 // and build_completed_result (execution.rs) both strip before persistence.
                 ui.label(egui::RichText::new(current_running_log).monospace().small());
             }
+        // Completed execution log is already ANSI-stripped upstream
+        // (build_completed_result in execution.rs), no further stripping needed.
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
                 ui.label(egui::RichText::new(log_text.as_str()).monospace().small());

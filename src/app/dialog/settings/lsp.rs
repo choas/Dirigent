@@ -8,7 +8,7 @@ use crate::lsp::{
 #[derive(Default)]
 struct LspCardActions {
     delete_idx: Option<usize>,
-    start_idx: Option<usize>,
+    start_id: Option<String>,
     stop_id: Option<String>,
     install_server_name: Option<String>,
 }
@@ -255,7 +255,7 @@ impl DirigentApp {
             self.render_lsp_failed_server_actions(ui, i, actions);
         } else if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
             if ui.small_button("Start").clicked() {
-                actions.start_idx = Some(i);
+                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
             }
         }
     }
@@ -279,7 +279,7 @@ impl DirigentApp {
                 .on_hover_text("Try starting the server again")
                 .clicked()
             {
-                actions.start_idx = Some(i);
+                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
             }
         }
     }
@@ -397,10 +397,17 @@ impl DirigentApp {
         if let Some(id) = actions.stop_id {
             self.lsp.stop_server(&id);
         }
-        if let Some(idx) = actions.start_idx {
-            let cfg = self.settings.lsp_servers[idx].clone();
-            let result = self.lsp.start_single(&cfg);
-            self.log_lsp_error(result);
+        if let Some(start_id) = actions.start_id {
+            if let Some(cfg) = self
+                .settings
+                .lsp_servers
+                .iter()
+                .find(|s| s.id == start_id)
+                .cloned()
+            {
+                let result = self.lsp.start_single(&cfg);
+                self.log_lsp_error(result);
+            }
         }
         if let Some(name) = actions.install_server_name {
             let hint = lsp_install_hint(&name);
