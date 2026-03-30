@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::Instant;
 
 use super::client::{LspClient, LspMessage};
 use super::types::LspServerConfig;
@@ -107,7 +106,6 @@ pub(crate) struct LspManager {
     pub hover_file: Option<PathBuf>,
     pub hover_line: u32,
     pub hover_char: u32,
-    hover_requested_at: Option<Instant>,
 }
 
 #[allow(dead_code)]
@@ -137,7 +135,6 @@ impl LspManager {
             hover_file: None,
             hover_line: 0,
             hover_char: 0,
-            hover_requested_at: None,
         }
     }
 
@@ -625,7 +622,6 @@ impl LspManager {
         self.hover_file = Some(file_path.to_path_buf());
         self.hover_line = line;
         self.hover_char = character;
-        self.hover_requested_at = Some(Instant::now());
         Some(id)
     }
 
