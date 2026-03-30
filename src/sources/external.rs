@@ -398,11 +398,21 @@ pub(crate) fn fetch_asana_tasks(
         project_gid,
     );
 
-    let resp: serde_json::Value = client
+    let resp_raw = client
         .get(&url)
         .header("Authorization", format!("Bearer {}", token))
         .send()
-        .map_err(|e| DirigentError::Source(format!("Asana request failed: {e}")))?
+        .map_err(|e| DirigentError::Source(format!("Asana request failed: {e}")))?;
+
+    if !resp_raw.status().is_success() {
+        let status = resp_raw.status();
+        let body = resp_raw.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Asana API error ({status}): {body}"
+        )));
+    }
+
+    let resp: serde_json::Value = resp_raw
         .json()
         .map_err(|e| DirigentError::Source(format!("Asana response parse error: {e}")))?;
 
