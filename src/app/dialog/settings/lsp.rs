@@ -66,6 +66,7 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             if ui.small_button("+ Add Server").clicked() {
                 self.settings.lsp_servers.push(LspServerConfig {
+                    id: uuid::Uuid::new_v4().to_string(),
                     name: "new-server".into(),
                     extensions: vec![],
                     command: String::new(),
@@ -76,6 +77,9 @@ impl DirigentApp {
             }
             if ui.small_button("Reset Defaults").clicked() {
                 self.settings.lsp_servers = default_lsp_servers();
+                if self.settings.lsp_enabled {
+                    self.lsp.reconcile(&self.settings.lsp_servers);
+                }
             }
             if self.settings.lsp_enabled {
                 if ui
@@ -83,8 +87,7 @@ impl DirigentApp {
                     .on_hover_text("Stop and restart all enabled servers")
                     .clicked()
                 {
-                    self.lsp.stop_all();
-                    self.lsp.start_servers(&self.settings.lsp_servers);
+                    self.lsp.restart_all(&self.settings.lsp_servers);
                 }
             }
         });
@@ -95,17 +98,17 @@ impl DirigentApp {
         let card_width = ui.available_width();
         let mut delete_idx: Option<usize> = None;
         let mut start_idx: Option<usize> = None;
-        let mut stop_name: Option<String> = None;
+        let mut stop_id: Option<String> = None;
         let mut install_server_name: Option<String> = None;
         let num_servers = self.settings.lsp_servers.len();
 
         for i in 0..num_servers {
             let running_servers = self.lsp.running_servers();
             let starting_servers = self.lsp.starting_servers();
-            let server_name = &self.settings.lsp_servers[i].name;
-            let is_running = running_servers.contains(server_name);
-            let is_starting = starting_servers.contains(server_name);
-            let server_error = self.lsp.failed_servers.get(server_name).cloned();
+            let server_id = &self.settings.lsp_servers[i].id;
+            let is_running = running_servers.contains(server_id);
+            let is_starting = starting_servers.contains(server_id);
+            let server_error = self.lsp.failed_servers.get(server_id).cloned();
             let has_error = server_error.is_some();
 
             let mut frame = self.semantic.card_frame();
@@ -159,7 +162,7 @@ impl DirigentApp {
                         }
                         if is_running {
                             if ui.small_button("Stop").clicked() {
-                                stop_name = Some(self.settings.lsp_servers[i].name.clone());
+                                stop_id = Some(self.settings.lsp_servers[i].id.clone());
                             }
                         } else if has_error {
                             if ui
@@ -271,13 +274,13 @@ impl DirigentApp {
 
         // Apply deferred actions
         if let Some(idx) = delete_idx {
-            let name = self.settings.lsp_servers[idx].name.clone();
-            self.lsp.stop_server(&name);
-            self.lsp.failed_servers.remove(&name);
+            let id = self.settings.lsp_servers[idx].id.clone();
+            self.lsp.stop_server(&id);
+            self.lsp.failed_servers.remove(&id);
             self.settings.lsp_servers.remove(idx);
         }
-        if let Some(name) = stop_name {
-            self.lsp.stop_server(&name);
+        if let Some(id) = stop_id {
+            self.lsp.stop_server(&id);
         }
         if let Some(idx) = start_idx {
             let cfg = self.settings.lsp_servers[idx].clone();
@@ -308,6 +311,9 @@ impl DirigentApp {
                 });
             if ui.button("Initialize").clicked() {
                 self.settings.lsp_servers = lsp_servers_for_language(self.lsp_init_language);
+                if self.settings.lsp_enabled {
+                    self.lsp.reconcile(&self.settings.lsp_servers);
+                }
             }
         });
 
