@@ -4,11 +4,13 @@ mod converters;
 mod cue_ops;
 mod execution_ops;
 mod migrations;
+mod pattern_ops;
 mod source_ops;
 mod types;
 
 pub(crate) use agent_runs::{AgentRunEntry, AgentRunRecord};
 pub(crate) use migrations::Database;
+pub(crate) use pattern_ops::PrFilterPattern;
 #[allow(unused_imports)]
 pub(crate) use types::{
     ActivityEntry, Cue, CueHistoryRow, CueStatus, Execution, ExecutionMetrics, ExecutionStatus,

@@ -255,6 +255,27 @@ impl DirigentApp {
                     ));
                     self.git.pr_findings_pending = new_findings;
                     self.git.pr_findings_excluded.clear();
+                    self.git.pr_filter_patterns_page = false;
+
+                    // Load patterns and auto-exclude matching findings
+                    self.git.pr_filter_patterns =
+                        self.db.list_pr_filter_patterns().unwrap_or_default();
+                    for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
+                        for pat in &self.git.pr_filter_patterns {
+                            let haystack = match pat.match_field.as_str() {
+                                "file_path" => &finding.file_path,
+                                _ => &finding.text,
+                            };
+                            if haystack
+                                .to_lowercase()
+                                .contains(&pat.pattern.to_lowercase())
+                            {
+                                self.git.pr_findings_excluded.insert(idx);
+                                break;
+                            }
+                        }
+                    }
+
                     self.git.show_import_pr = false;
                     self.git.show_pr_filter = true;
                 }

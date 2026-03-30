@@ -416,4 +416,14 @@ pub(crate) struct GitState {
     pub(super) pending_archive_msg: Option<String>,
     /// Pending archived DB deletion that needs user confirmation.
     pub(super) pending_delete_archive: Option<PathBuf>,
+    /// Whether the filter dialog is showing the "Patterns" page (true) or "Findings" page (false).
+    pub(super) pr_filter_patterns_page: bool,
+    /// Cached list of PR filter patterns loaded from the DB.
+    pub(super) pr_filter_patterns: Vec<crate::db::PrFilterPattern>,
+    /// Input field for adding a new pattern.
+    pub(super) new_pattern_text: String,
+    /// Match field for new pattern: "text" or "file_path".
+    pub(super) new_pattern_field: String,
+    /// Pattern id currently being edited (None = not editing).
+    pub(super) editing_pattern: Option<(i64, String, String)>,
 }
