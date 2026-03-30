@@ -378,6 +378,26 @@ fn extract_metrics(event: &serde_json::Value) -> RunMetrics {
     }
 }
 
+/// Detect a usage-limit / hard rate-limit message in Claude output.
+/// Returns the first matching line (trimmed) if found.
+pub(crate) fn detect_usage_limit(text: &str) -> Option<&str> {
+    // Patterns that indicate the user's quota or extra-usage budget is exhausted.
+    // These are *final* errors — not the transient "rate_limit_event" retries.
+    const PATTERNS: &[&str] = &[
+        "out of extra usage",
+        "out of usage",
+        "usage limit",
+        "token limit reached",
+    ];
+    for line in text.lines() {
+        let lower = line.to_lowercase();
+        if PATTERNS.iter().any(|p| lower.contains(p)) {
+            return Some(line.trim());
+        }
+    }
+    None
+}
+
 /// Handle a "rate_limit_event": log the retry delay if present.
 fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&str)) {
     if let Some(seconds) = event

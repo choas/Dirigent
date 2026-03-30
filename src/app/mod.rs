@@ -239,6 +239,9 @@ pub struct DirigentApp {
     // Cached latest execution metrics per cue (avoids DB reads during repaint)
     latest_exec_cache: HashMap<i64, crate::db::ExecutionMetrics>,
 
+    // Per-cue warning messages (e.g. rate limit hit), shown on the cue card
+    cue_warnings: HashMap<i64, String>,
+
     // Pending file/directory delete confirmation (path, is_dir)
     pending_file_delete: Option<(PathBuf, bool)>,
 
@@ -536,6 +539,8 @@ impl DirigentApp {
 
             cached_total_cost: initial_total_cost,
             latest_exec_cache: initial_exec_cache,
+
+            cue_warnings: HashMap::new(),
 
             pending_file_delete: None,
 

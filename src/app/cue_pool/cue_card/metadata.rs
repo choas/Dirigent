@@ -6,6 +6,16 @@ use crate::db::{Cue, CueStatus};
 
 impl DirigentApp {
     pub(in crate::app) fn render_badge_row(&self, ui: &mut egui::Ui, cue: &Cue) {
+        // Show rate-limit / usage-limit warning prominently.
+        if let Some(warning) = self.cue_warnings.get(&cue.id) {
+            ui.horizontal(|ui| {
+                let badge = egui::RichText::new(format!("\u{26A0} {}", warning))
+                    .small()
+                    .color(egui::Color32::from_rgb(180, 60, 30));
+                ui.label(badge);
+            });
+        }
+
         let has_badge =
             cue.source_label.is_some() || cue.tag.is_some() || !cue.attached_images.is_empty();
         if !has_badge {
