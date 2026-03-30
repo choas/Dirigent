@@ -266,11 +266,33 @@ pub(crate) fn fetch_trello_cards(
         board_id, api_key, token,
     );
 
-    let cards: Vec<serde_json::Value> = client
+    let resp = client
         .get(&url)
         .send()
-        .map_err(|e| DirigentError::Source(format!("Trello request failed: {e}")))?
+        .map_err(|e| DirigentError::Source(format!("Trello request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Trello API error ({}): {body}",
+            status
+        )));
+    }
+
+    let parsed: serde_json::Value = resp
         .json()
+        .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
+
+    // Trello may return an error object instead of the expected array.
+    if let Some(err_msg) = parsed.get("error").and_then(|v| v.as_str()) {
+        let detail = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(DirigentError::Source(format!(
+            "Trello API error: {err_msg}: {detail}"
+        )));
+    }
+
+    let cards: Vec<serde_json::Value> = serde_json::from_value(parsed)
         .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
 
     // If a list filter is provided, resolve list names to IDs for filtering.
