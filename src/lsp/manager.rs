@@ -245,6 +245,7 @@ impl LspManager {
             let shutdown_id = client.shutdown();
             self.pending_shutdowns
                 .insert(name.to_string(), (shutdown_id, Instant::now()));
+            self.extension_map.retain(|_, v| v != name);
             let msg = format!("Stopping LSP: {}", name);
             eprintln!("[lsp] {}", msg);
             self.status_log.push(msg);
