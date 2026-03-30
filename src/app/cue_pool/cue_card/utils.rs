@@ -32,17 +32,18 @@ pub(in crate::app) fn format_queue_label(
         return "\u{23F3} Queued".to_string();
     }
     if let Some(when) = scheduled_when {
-        let secs = when
-            .duration_since(SystemTime::now())
-            .unwrap_or_default()
-            .as_secs();
-        if secs < 60 {
-            return format!("\u{23F2} {}s", secs);
+        let now = SystemTime::now();
+        if let Ok(remaining) = when.duration_since(now) {
+            let secs = remaining.as_secs();
+            if secs < 60 {
+                return format!("\u{23F2} {}s", secs);
+            }
+            if secs < 3600 {
+                return format!("\u{23F2} {}:{:02}", secs / 60, secs % 60);
+            }
+            return format!("\u{23F2} {}h{}m", secs / 3600, (secs % 3600) / 60);
         }
-        if secs < 3600 {
-            return format!("\u{23F2} {}:{:02}", secs / 60, secs % 60);
-        }
-        return format!("\u{23F2} {}h{}m", secs / 3600, (secs % 3600) / 60);
+        return "\u{23F2} overdue".to_string();
     }
     "\u{23F3} Pending".to_string()
 }
