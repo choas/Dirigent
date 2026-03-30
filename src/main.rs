@@ -207,6 +207,21 @@ fn load_logo_icon() -> egui::IconData {
     }
 }
 
+fn expand_tilde(arg: &str) -> PathBuf {
+    if arg == "~" || arg.starts_with("~/") {
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/"));
+        if arg == "~" {
+            home
+        } else {
+            home.join(&arg[2..])
+        }
+    } else {
+        PathBuf::from(arg)
+    }
+}
+
 fn main() -> eframe::Result {
     let sentry_dsn = std::env::var("SENTRY_DSN")
         .ok()
@@ -232,20 +247,7 @@ fn main() -> eframe::Result {
         .filter(|a| !a.starts_with("-psn"))
         .collect();
 
-    let explicit_path = args.first().map(|arg| {
-        if arg == "~" || arg.starts_with("~/") {
-            let home = std::env::var("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("/"));
-            if arg == "~" {
-                home
-            } else {
-                home.join(&arg[2..])
-            }
-        } else {
-            PathBuf::from(arg)
-        }
-    });
+    let explicit_path = args.first().map(|arg| expand_tilde(arg));
 
     // Detect Finder launch: no explicit path and running from inside an .app bundle
     let launched_from_app_bundle = explicit_path.is_none()
