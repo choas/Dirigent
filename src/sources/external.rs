@@ -308,10 +308,20 @@ pub(crate) fn fetch_trello_cards(
             "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
             board_id, api_key, token,
         );
-        let lists: Vec<serde_json::Value> = client
+        let lists_resp = client
             .get(&lists_url)
             .send()
-            .map_err(|e| DirigentError::Source(format!("Trello lists request failed: {e}")))?
+            .map_err(|e| DirigentError::Source(format!("Trello lists request failed: {e}")))?;
+
+        if !lists_resp.status().is_success() {
+            let status = lists_resp.status();
+            let body = lists_resp.text().unwrap_or_default();
+            return Err(DirigentError::Source(format!(
+                "Trello lists API error ({status}): {body}"
+            )));
+        }
+
+        let lists: Vec<serde_json::Value> = lists_resp
             .json()
             .map_err(|e| DirigentError::Source(format!("Trello lists parse error: {e}")))?;
 
