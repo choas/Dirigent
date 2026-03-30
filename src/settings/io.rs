@@ -89,6 +89,7 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     }
     // Normalize LSP env vars: flatten any entries with embedded newlines
     // (legacy corruption from join/split mismatch).
+    let mut env_changed = false;
     for server in &mut settings.lsp_servers {
         if server.env.iter().any(|s| s.contains('\n')) {
             server.env = server
@@ -98,7 +99,11 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+            env_changed = true;
         }
+    }
+    if env_changed {
+        save_settings(project_root, &settings);
     }
     settings
 }
