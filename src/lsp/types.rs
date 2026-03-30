@@ -83,113 +83,137 @@ impl LspLanguage {
     }
 }
 
-pub(crate) fn lsp_servers_for_language(lang: LspLanguage) -> Vec<LspServerConfig> {
-    match lang {
-        LspLanguage::Rust => vec![LspServerConfig {
+/// Canonical server definitions for all supported languages.
+/// Each entry has `enabled: true` by default.
+fn base_lsp_server_configs() -> Vec<LspServerConfig> {
+    vec![
+        LspServerConfig {
             name: "rust-analyzer".into(),
             extensions: vec!["rs".into()],
             command: "rust-analyzer".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::TypeScript => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "typescript-language-server".into(),
             extensions: vec!["ts".into(), "tsx".into(), "js".into(), "jsx".into()],
             command: "typescript-language-server".into(),
             args: vec!["--stdio".into()],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Python => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "pylsp".into(),
             extensions: vec!["py".into()],
             command: "pylsp".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Go => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "gopls".into(),
             extensions: vec!["go".into()],
             command: "gopls".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Java => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "jdtls".into(),
             extensions: vec!["java".into()],
             command: "jdtls".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::CSharp => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "omnisharp".into(),
             extensions: vec!["cs".into()],
             command: "OmniSharp".into(),
             args: vec!["--languageserver".into()],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Cpp => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "clangd".into(),
             extensions: vec!["c".into(), "cpp".into(), "h".into(), "hpp".into()],
             command: "clangd".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Ruby => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "solargraph".into(),
             extensions: vec!["rb".into()],
             command: "solargraph".into(),
             args: vec!["stdio".into()],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Swift => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "sourcekit-lsp".into(),
             extensions: vec!["swift".into()],
             command: "sourcekit-lsp".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Kotlin => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "kotlin-language-server".into(),
             extensions: vec!["kt".into(), "kts".into()],
             command: "kotlin-language-server".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Elixir => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "elixir-ls".into(),
             extensions: vec!["ex".into(), "exs".into()],
             command: "elixir-ls".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Zig => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "zls".into(),
             extensions: vec!["zig".into()],
             command: "zls".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-        LspLanguage::Lua => vec![LspServerConfig {
+        },
+        LspServerConfig {
             name: "lua-language-server".into(),
             extensions: vec!["lua".into()],
             command: "lua-language-server".into(),
             args: vec![],
             env: vec![],
             enabled: true,
-        }],
-    }
+        },
+    ]
+}
+
+pub(crate) fn lsp_servers_for_language(lang: LspLanguage) -> Vec<LspServerConfig> {
+    let server_name = match lang {
+        LspLanguage::Rust => "rust-analyzer",
+        LspLanguage::TypeScript => "typescript-language-server",
+        LspLanguage::Python => "pylsp",
+        LspLanguage::Go => "gopls",
+        LspLanguage::Java => "jdtls",
+        LspLanguage::CSharp => "omnisharp",
+        LspLanguage::Cpp => "clangd",
+        LspLanguage::Ruby => "solargraph",
+        LspLanguage::Swift => "sourcekit-lsp",
+        LspLanguage::Kotlin => "kotlin-language-server",
+        LspLanguage::Elixir => "elixir-ls",
+        LspLanguage::Zig => "zls",
+        LspLanguage::Lua => "lua-language-server",
+    };
+    base_lsp_server_configs()
+        .into_iter()
+        .filter(|s| s.name == server_name)
+        .collect()
 }
 
 /// Return an install hint for a known LSP server name.
@@ -310,56 +334,22 @@ pub(crate) fn lsp_install_hint(server_name: &str) -> String {
     }
 }
 
-/// Well-known language server presets.
+/// Well-known language server presets (all disabled by default for settings).
 pub(crate) fn default_lsp_servers() -> Vec<LspServerConfig> {
-    vec![
-        LspServerConfig {
-            name: "rust-analyzer".into(),
-            extensions: vec!["rs".into()],
-            command: "rust-analyzer".into(),
-            args: vec![],
-            env: vec![],
-            enabled: false,
-        },
-        LspServerConfig {
-            name: "typescript-language-server".into(),
-            extensions: vec!["ts".into(), "tsx".into(), "js".into(), "jsx".into()],
-            command: "typescript-language-server".into(),
-            args: vec!["--stdio".into()],
-            env: vec![],
-            enabled: false,
-        },
-        LspServerConfig {
-            name: "pylsp".into(),
-            extensions: vec!["py".into()],
-            command: "pylsp".into(),
-            args: vec![],
-            env: vec![],
-            enabled: false,
-        },
-        LspServerConfig {
-            name: "gopls".into(),
-            extensions: vec!["go".into()],
-            command: "gopls".into(),
-            args: vec![],
-            env: vec![],
-            enabled: false,
-        },
-        LspServerConfig {
-            name: "jdtls".into(),
-            extensions: vec!["java".into()],
-            command: "jdtls".into(),
-            args: vec![],
-            env: vec![],
-            enabled: false,
-        },
-        LspServerConfig {
-            name: "clangd".into(),
-            extensions: vec!["c".into(), "cpp".into(), "h".into(), "hpp".into()],
-            command: "clangd".into(),
-            args: vec![],
-            env: vec![],
-            enabled: false,
-        },
-    ]
+    let defaults = [
+        "rust-analyzer",
+        "typescript-language-server",
+        "pylsp",
+        "gopls",
+        "jdtls",
+        "clangd",
+    ];
+    base_lsp_server_configs()
+        .into_iter()
+        .filter(|s| defaults.contains(&s.name.as_str()))
+        .map(|mut s| {
+            s.enabled = false;
+            s
+        })
+        .collect()
 }
