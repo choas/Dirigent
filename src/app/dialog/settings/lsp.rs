@@ -253,10 +253,29 @@ impl DirigentApp {
                                 .font(egui::TextStyle::Monospace),
                         );
                         if resp.changed() {
-                            self.settings.lsp_servers[i].args = shlex::split(&args_str)
-                                .unwrap_or_else(|| {
-                                    args_str.split_whitespace().map(|s| s.to_string()).collect()
-                                });
+                            match shlex::split(&args_str) {
+                                Some(parsed) => {
+                                    self.settings.lsp_servers[i].args = parsed;
+                                    self.lsp_args_parse_warnings.remove(&i);
+                                }
+                                None => {
+                                    self.settings.lsp_servers[i].args = args_str
+                                        .split_whitespace()
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                    self.lsp_args_parse_warnings
+                                        .insert(i, "Malformed quoting in arguments".to_string());
+                                }
+                            }
+                        }
+                        if let Some(warning) = self.lsp_args_parse_warnings.get(&i) {
+                            ui.end_row();
+                            ui.label("");
+                            ui.label(
+                                egui::RichText::new(format!("\u{26A0} {}", warning))
+                                    .color(egui::Color32::from_rgb(255, 180, 0))
+                                    .small(),
+                            );
                         }
                         ui.end_row();
 
