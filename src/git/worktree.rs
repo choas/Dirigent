@@ -93,7 +93,6 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
 /// excluding branches already checked out in an existing worktree.
 pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
     use std::collections::BTreeSet;
-    use std::process::Command;
 
     // Collect branches already checked out in worktrees so we can exclude them.
     let checked_out: std::collections::HashSet<String> = list_worktrees(repo_path)?
@@ -102,45 +101,60 @@ pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String
         .collect();
 
     let mut branches = BTreeSet::new();
+    collect_local_branches(repo_path, &checked_out, &mut branches)?;
+    collect_remote_branches(repo_path, &checked_out, &mut branches)?;
+    Ok(branches.into_iter().collect())
+}
 
-    // Local branches.
+fn collect_local_branches(
+    repo_path: &Path,
+    checked_out: &std::collections::HashSet<String>,
+    branches: &mut std::collections::BTreeSet<String>,
+) -> crate::error::Result<()> {
+    use std::process::Command;
+
     let output = Command::new("git")
         .args(["branch", "--format=%(refname:short)"])
         .current_dir(repo_path)
         .output()?;
-    if output.status.success() {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let name = line.trim().to_string();
-            if !name.is_empty() && !checked_out.contains(&name) {
-                branches.insert(name);
-            }
+    if !output.status.success() {
+        return Ok(());
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let name = line.trim().to_string();
+        if !name.is_empty() && !checked_out.contains(&name) {
+            branches.insert(name);
         }
     }
+    Ok(())
+}
 
-    // Remote-tracking branches (strip the remote prefix, e.g. "origin/foo" -> "foo").
+fn collect_remote_branches(
+    repo_path: &Path,
+    checked_out: &std::collections::HashSet<String>,
+    branches: &mut std::collections::BTreeSet<String>,
+) -> crate::error::Result<()> {
+    use std::process::Command;
+
     let output = Command::new("git")
         .args(["branch", "-r", "--format=%(refname:short)"])
         .current_dir(repo_path)
         .output()?;
-    if output.status.success() {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let full = line.trim();
-            if full.is_empty() || full.contains("HEAD") {
-                continue;
-            }
-            // Strip "origin/" (or any remote name) prefix.
-            let name = if let Some(pos) = full.find('/') {
-                &full[pos + 1..]
-            } else {
-                full
-            };
-            if !name.is_empty() && !checked_out.contains(name) {
-                branches.insert(name.to_string());
-            }
+    if !output.status.success() {
+        return Ok(());
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let full = line.trim();
+        if full.is_empty() || full.contains("HEAD") {
+            continue;
+        }
+        // Strip "origin/" (or any remote name) prefix.
+        let short = full.find('/').map_or(full, |pos| &full[pos + 1..]);
+        if !short.is_empty() && !checked_out.contains(short) {
+            branches.insert(short.to_string());
         }
     }
-
-    Ok(branches.into_iter().collect())
+    Ok(())
 }
 
 pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
