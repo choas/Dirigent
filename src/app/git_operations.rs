@@ -204,7 +204,6 @@ impl DirigentApp {
         };
         let result = match rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Update status with elapsed time so user knows it's still running
                 if let Some(start) = self.git.importing_pr_start {
                     let secs = start.elapsed().as_secs();
                     let pr = self.git.import_pr_number.trim();
@@ -213,7 +212,6 @@ impl DirigentApp {
                 return;
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                // Thread panicked or was dropped
                 self.git.importing_pr = false;
                 self.git.importing_pr_start = None;
                 self.git.import_pr_rx = None;
@@ -225,62 +223,71 @@ impl DirigentApp {
         self.git.importing_pr = false;
         self.git.importing_pr_start = None;
         self.git.import_pr_rx = None;
-        match result {
-            Ok(findings) => {
-                let total_fetched = findings.len();
-                if findings.is_empty() {
-                    self.set_status_message("No actionable findings found in PR".to_string());
-                } else {
-                    // Filter out findings that are already imported (exist in DB by source_ref)
-                    let new_findings: Vec<_> = findings
-                        .into_iter()
-                        .filter(|f| {
-                            match self.db.cue_exists_by_source_ref(&f.external_id) {
-                                Ok(true) => false, // already imported
-                                _ => true,         // new or DB error → show it
-                            }
-                        })
-                        .collect();
-                    let skipped = total_fetched - new_findings.len();
 
-                    let skip_note = if skipped > 0 {
-                        format!(" ({} already imported)", skipped)
-                    } else {
-                        String::new()
-                    };
-                    self.set_status_message(format!(
-                        "Fetched {} new findings – review and filter before importing{}",
-                        new_findings.len(),
-                        skip_note
-                    ));
-                    self.git.pr_findings_pending = new_findings;
-                    self.git.pr_findings_excluded.clear();
-                    self.git.pr_filter_patterns_page = false;
-
-                    // Load patterns and auto-exclude matching findings
-                    self.git.pr_filter_patterns =
-                        self.db.list_pr_filter_patterns().unwrap_or_default();
-                    for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
-                        for pat in &self.git.pr_filter_patterns {
-                            let haystack = match pat.match_field.as_str() {
-                                "file_path" => &finding.file_path,
-                                _ => &finding.text,
-                            };
-                            if haystack
-                                .to_lowercase()
-                                .contains(&pat.pattern.to_lowercase())
-                            {
-                                self.git.pr_findings_excluded.insert(idx);
-                                break;
-                            }
-                        }
-                    }
-
-                    self.git.show_import_pr = false;
-                    self.git.show_pr_filter = true;
-                }
+        let findings = match result {
+            Ok(f) => f,
+            Err(e) => {
+                self.set_status_message(format!("PR import failed: {}", e));
+                return;
             }
-            Err(e) => self.set_status_message(format!("PR import failed: {}", e)),
+        };
+
+        if findings.is_empty() {
+            self.set_status_message("No actionable findings found in PR".to_string());
+            return;
+        }
+
+        let total_fetched = findings.len();
+        let new_findings = self.filter_already_imported(findings);
+        let skipped = total_fetched - new_findings.len();
+
+        let skip_note = if skipped > 0 {
+            format!(" ({} already imported)", skipped)
+        } else {
+            String::new()
+        };
+        self.set_status_message(format!(
+            "Fetched {} new findings – review and filter before importing{}",
+            new_findings.len(),
+            skip_note
+        ));
+        self.git.pr_findings_pending = new_findings;
+        self.git.pr_findings_excluded.clear();
+        self.git.pr_filter_patterns_page = false;
+
+        self.auto_exclude_by_patterns();
+
+        self.git.show_import_pr = false;
+        self.git.show_pr_filter = true;
+    }
+
+    /// Filter out findings that are already imported (exist in DB by source_ref).
+    fn filter_already_imported(
+        &self,
+        findings: Vec<crate::sources::PrFinding>,
+    ) -> Vec<crate::sources::PrFinding> {
+        findings
+            .into_iter()
+            .filter(|f| !matches!(self.db.cue_exists_by_source_ref(&f.external_id), Ok(true)))
+            .collect()
+    }
+
+    /// Load filter patterns and auto-exclude matching findings.
+    fn auto_exclude_by_patterns(&mut self) {
+        self.git.pr_filter_patterns = self.db.list_pr_filter_patterns().unwrap_or_default();
+        for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
+            let dominated = self.git.pr_filter_patterns.iter().any(|pat| {
+                let haystack = match pat.match_field.as_str() {
+                    "file_path" => &finding.file_path,
+                    _ => &finding.text,
+                };
+                haystack
+                    .to_lowercase()
+                    .contains(&pat.pattern.to_lowercase())
+            });
+            if dominated {
+                self.git.pr_findings_excluded.insert(idx);
+            }
         }
     }
 
