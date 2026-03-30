@@ -194,7 +194,11 @@ fn run_before_hook(
         WaitResult::Completed(output) if !output.status.success() => {
             let stderr = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stderr));
             let stdout = crate::app::util::strip_ansi(&String::from_utf8_lossy(&output.stdout));
-            let combined = if stderr.is_empty() { stdout } else { stderr };
+            let combined = match (stderr.is_empty(), stdout.is_empty()) {
+                (true, _) => stdout,
+                (_, true) => stderr,
+                _ => format!("{}\n{}", stderr, stdout),
+            };
             Err(format!(
                 "before_run failed (exit {}):\n{}",
                 output.status, combined

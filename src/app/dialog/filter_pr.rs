@@ -450,21 +450,34 @@ impl DirigentApp {
 
         // Handle deferred mutations
         if let Some(id) = delete_id {
-            let _ = self.db.delete_pr_filter_pattern(id);
-            self.git.pr_filter_patterns.retain(|p| p.id != id);
-            self.reapply_pr_filter_patterns();
+            match self.db.delete_pr_filter_pattern(id) {
+                Ok(()) => {
+                    self.git.pr_filter_patterns.retain(|p| p.id != id);
+                    self.reapply_pr_filter_patterns();
+                }
+                Err(e) => {
+                    eprintln!("Failed to delete PR filter pattern {}: {}", id, e);
+                }
+            }
         }
         if let Some((id, text, field)) = save_edit {
             let trimmed = text.trim().to_string();
             if !trimmed.is_empty() {
-                let _ = self.db.update_pr_filter_pattern(id, &trimmed, &field);
-                if let Some(p) = self.git.pr_filter_patterns.iter_mut().find(|p| p.id == id) {
-                    p.pattern = trimmed;
-                    p.match_field = field;
+                match self.db.update_pr_filter_pattern(id, &trimmed, &field) {
+                    Ok(()) => {
+                        if let Some(p) = self.git.pr_filter_patterns.iter_mut().find(|p| p.id == id)
+                        {
+                            p.pattern = trimmed;
+                            p.match_field = field;
+                        }
+                        self.reapply_pr_filter_patterns();
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to update PR filter pattern {}: {}", id, e);
+                    }
                 }
             }
             self.git.editing_pattern = None;
-            self.reapply_pr_filter_patterns();
         }
     }
 

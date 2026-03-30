@@ -284,6 +284,13 @@ pub(crate) fn fetch_trello_cards(
         .json()
         .map_err(|e| DirigentError::Source(format!("Trello response parse error: {e}")))?;
 
+    // Trello may return a plain string error message instead of JSON.
+    if let Some(err_str) = parsed.as_str() {
+        return Err(DirigentError::Source(format!(
+            "Trello API error: {err_str}"
+        )));
+    }
+
     // Trello may return an error object instead of the expected array.
     if let Some(err_msg) = parsed.get("error").and_then(|v| v.as_str()) {
         let detail = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");

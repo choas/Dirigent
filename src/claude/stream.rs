@@ -465,6 +465,13 @@ mod tests {
             ("Token limit reached.", Some("Token limit reached.")),
             // Leading/trailing whitespace should be trimmed
             ("  Out of usage  ", Some("Out of usage")),
+            // Sentence containing a known pattern
+            (
+                "You are out of usage for today",
+                Some("You are out of usage for today"),
+            ),
+            // Multiline input where no line matches
+            ("all good\nretrying in 5s\n", None),
             // Non-matching input
             ("Everything is fine", None),
             ("rate_limit_event retry", None),

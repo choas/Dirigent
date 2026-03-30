@@ -716,11 +716,7 @@ impl LspManager {
 /// Convert an LSP URI to a file system path.
 fn uri_to_path(uri: &lsp_types::Uri) -> Option<PathBuf> {
     let s = uri.as_str();
-    if let Some(path_str) = s.strip_prefix("file://") {
-        Some(PathBuf::from(path_str))
-    } else {
-        None
-    }
+    url::Url::parse(s).ok().and_then(|u| u.to_file_path().ok())
 }
 
 impl Drop for LspManager {

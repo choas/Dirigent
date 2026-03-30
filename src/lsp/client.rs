@@ -544,7 +544,9 @@ fn file_uri(path: &Path) -> Uri {
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
-    let uri_string = format!("file://{}", abs.to_string_lossy());
+    let uri_string = url::Url::from_file_path(&abs)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", abs.to_string_lossy()));
     Uri::from_str(&uri_string).unwrap_or_else(|_| Uri::from_str("file:///").unwrap())
 }
 

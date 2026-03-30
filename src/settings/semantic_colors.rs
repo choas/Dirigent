@@ -24,41 +24,41 @@ impl SemanticColors {
 
     pub fn selection_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(60, 60, 120, 80)
+            egui::Color32::from_rgba_unmultiplied(60, 60, 120, 80)
         } else {
-            egui::Color32::from_rgba_premultiplied(60, 100, 180, 50)
+            egui::Color32::from_rgba_unmultiplied(60, 100, 180, 50)
         }
     }
 
     pub fn addition_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(25, 80, 35, 70)
+            egui::Color32::from_rgba_unmultiplied(25, 80, 35, 70)
         } else {
-            egui::Color32::from_rgba_premultiplied(30, 120, 30, 35)
+            egui::Color32::from_rgba_unmultiplied(30, 120, 30, 35)
         }
     }
 
     pub fn deletion_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(80, 25, 25, 70)
+            egui::Color32::from_rgba_unmultiplied(80, 25, 25, 70)
         } else {
-            egui::Color32::from_rgba_premultiplied(120, 30, 30, 35)
+            egui::Color32::from_rgba_unmultiplied(120, 30, 30, 35)
         }
     }
 
     pub fn search_current_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(100, 80, 0, 80)
+            egui::Color32::from_rgba_unmultiplied(100, 80, 0, 80)
         } else {
-            egui::Color32::from_rgba_premultiplied(180, 150, 0, 60)
+            egui::Color32::from_rgba_unmultiplied(180, 150, 0, 60)
         }
     }
 
     pub fn search_match_bg(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(80, 80, 0, 40)
+            egui::Color32::from_rgba_unmultiplied(80, 80, 0, 40)
         } else {
-            egui::Color32::from_rgba_premultiplied(160, 130, 20, 28)
+            egui::Color32::from_rgba_unmultiplied(160, 130, 20, 28)
         }
     }
 
@@ -66,23 +66,23 @@ impl SemanticColors {
         if self.is_dark {
             egui::Color32::from_rgb(180, 140, 0)
         } else {
-            egui::Color32::from_rgba_premultiplied(180, 120, 40, 90)
+            egui::Color32::from_rgba_unmultiplied(180, 120, 40, 90)
         }
     }
 
     pub fn code_search_current(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(200, 120, 0, 60)
+            egui::Color32::from_rgba_unmultiplied(200, 120, 0, 60)
         } else {
-            egui::Color32::from_rgba_premultiplied(200, 140, 40, 65)
+            egui::Color32::from_rgba_unmultiplied(200, 140, 40, 65)
         }
     }
 
     pub fn code_search_match(&self) -> egui::Color32 {
         if self.is_dark {
-            egui::Color32::from_rgba_premultiplied(180, 160, 0, 35)
+            egui::Color32::from_rgba_unmultiplied(180, 160, 0, 35)
         } else {
-            egui::Color32::from_rgba_premultiplied(180, 150, 40, 30)
+            egui::Color32::from_rgba_unmultiplied(180, 150, 40, 30)
         }
     }
 

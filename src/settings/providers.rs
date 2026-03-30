@@ -92,7 +92,7 @@ pub(crate) struct SourceConfig {
     pub host_url: String,
     #[serde(default)]
     pub project_key: String,
-    #[serde(default)]
+    #[serde(skip)]
     pub api_key: String,
 }
 

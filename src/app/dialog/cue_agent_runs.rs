@@ -210,14 +210,14 @@ impl DirigentApp {
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
-                if run.output.trim().is_empty() {
+                let cleaned = crate::app::util::strip_ansi(&run.output);
+                if cleaned.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("(no output)")
                             .italics()
                             .color(self.semantic.tertiary_text),
                     );
                 } else {
-                    let cleaned = crate::app::util::strip_ansi(&run.output);
                     egui::ScrollArea::vertical()
                         .id_salt(("agent_run_output", idx))
                         .max_height(300.0)
