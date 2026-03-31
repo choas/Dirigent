@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Local;
 use rusqlite::params;
 
-use super::converters::row_to_cue;
+use super::converters::{row_to_cue, CUE_COLUMNS};
 use super::types::{Cue, CueStatus};
 use super::Database;
 
@@ -105,16 +105,16 @@ impl Database {
     /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
         let mut cues = Vec::new();
-        let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path FROM cues WHERE status != 'archived' ORDER BY id",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CUE_COLUMNS} FROM cues WHERE status != 'archived' ORDER BY id"
+        ))?;
         let rows = stmt.query_map([], row_to_cue)?;
         for row in rows {
             cues.push(row?);
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CUE_COLUMNS} FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1"
+        ))?;
         let rows = stmt.query_map(params![archived_limit as i64], row_to_cue)?;
         for row in rows {
             cues.push(row?);

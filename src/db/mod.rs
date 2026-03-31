@@ -29,9 +29,10 @@ impl Database {
 
     pub fn get_cue(&self, id: i64) -> anyhow::Result<Option<Cue>> {
         use rusqlite::params;
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path FROM cues WHERE id = ?1")?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {} FROM cues WHERE id = ?1",
+            converters::CUE_COLUMNS
+        ))?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(converters::row_to_cue(row)?))
