@@ -176,12 +176,19 @@ impl DirigentApp {
             };
             let color = self.semantic.status_message_with_alpha(alpha);
             ui.separator();
-            ui.label(
-                egui::RichText::new(msg.as_str())
-                    .monospace()
-                    .small()
-                    .color(color),
+            let resp = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(msg.as_str())
+                        .monospace()
+                        .small()
+                        .color(color),
+                )
+                .sense(egui::Sense::click()),
             );
+            resp.clone().on_hover_text("Click to copy");
+            if resp.clicked() {
+                ui.ctx().copy_text(msg.clone());
+            }
             if elapsed > 4.0 {
                 ctx.request_repaint();
             }
