@@ -227,6 +227,7 @@ fn fetch_source_items(
                 &source.notion_page_type,
                 inbox_status,
                 &source.notion_done_value,
+                &source.notion_status_property,
                 &source.label,
             )
             .unwrap_or_else(err)

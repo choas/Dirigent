@@ -452,6 +452,11 @@ impl DirigentApp {
     }
 
     fn process_notion_done(&mut self, cue_id: i64) {
+        if self.notion_done_in_progress {
+            self.set_status_message("Notion update already in progress".into());
+            return;
+        }
+
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
             None => return,
@@ -488,9 +493,47 @@ impl DirigentApp {
         let page_ref = source_ref.clone();
         let page_type = source.notion_page_type.clone();
         let done_value = source.notion_done_value.clone();
+        let status_property = source.notion_status_property.clone();
 
-        match crate::sources::mark_notion_done(&token, &page_ref, &page_type, &done_value) {
-            Ok(()) => {
+        self.notion_done_in_progress = true;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.notion_done_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = crate::sources::mark_notion_done(
+                &token,
+                &page_ref,
+                &page_type,
+                &done_value,
+                &status_property,
+            )
+            .map(|()| cue_id)
+            .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+
+        self.set_status_message("Updating Notion...".into());
+    }
+
+    pub(in crate::app) fn process_notion_done_result(&mut self) {
+        let rx = match self.notion_done_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.notion_done_in_progress = false;
+                self.notion_done_rx = None;
+                self.set_status_message("Notion update failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.notion_done_in_progress = false;
+        self.notion_done_rx = None;
+        match result {
+            Ok(cue_id) => {
                 self.set_status_message("Marked done in Notion".into());
                 let _ = self.db.log_activity(cue_id, "Marked done in Notion");
             }

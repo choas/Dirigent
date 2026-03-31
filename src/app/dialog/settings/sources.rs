@@ -310,11 +310,7 @@ impl DirigentApp {
 
                 ui.label("Page Type:");
                 egui::ComboBox::from_id_salt(format!("notion_page_type_{}", i))
-                    .selected_text(
-                        self.settings.sources[i]
-                            .notion_page_type
-                            .display_name(),
-                    )
+                    .selected_text(self.settings.sources[i].notion_page_type.display_name())
                     .show_ui(ui, |ui| {
                         for pt in NotionPageType::all() {
                             ui.selectable_value(
@@ -335,6 +331,17 @@ impl DirigentApp {
                             .font(egui::TextStyle::Monospace),
                     );
                     ui.end_row();
+
+                    ui.label("Status Property:");
+                    ui.add(
+                        egui::TextEdit::singleline(
+                            &mut self.settings.sources[i].notion_status_property,
+                        )
+                        .desired_width(120.0)
+                        .hint_text("default: Status")
+                        .font(egui::TextStyle::Monospace),
+                    );
+                    ui.end_row();
                 }
 
                 let done_hint = match self.settings.sources[i].notion_page_type {
@@ -343,12 +350,10 @@ impl DirigentApp {
                 };
                 ui.label("Done Value:");
                 ui.add(
-                    egui::TextEdit::singleline(
-                        &mut self.settings.sources[i].notion_done_value,
-                    )
-                    .desired_width(120.0)
-                    .hint_text(done_hint)
-                    .font(egui::TextStyle::Monospace),
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].notion_done_value)
+                        .desired_width(120.0)
+                        .hint_text(done_hint)
+                        .font(egui::TextStyle::Monospace),
                 );
                 ui.end_row();
             }

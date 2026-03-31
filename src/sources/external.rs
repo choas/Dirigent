@@ -506,6 +506,7 @@ pub(crate) fn fetch_notion_tasks(
     page_type: &crate::settings::NotionPageType,
     inbox_status: Option<&str>,
     done_property: &str,
+    status_property: &str,
     source_label: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
     use crate::settings::NotionPageType;
@@ -526,10 +527,7 @@ pub(crate) fn fetch_notion_tasks(
         .build()
         .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
 
-    let url = format!(
-        "https://api.notion.com/v1/databases/{}/query",
-        database_id,
-    );
+    let url = format!("https://api.notion.com/v1/databases/{}/query", database_id,);
 
     // Build a filter to exclude completed items.
     let filter = match page_type {
@@ -548,10 +546,15 @@ pub(crate) fn fetch_notion_tasks(
             })
         }
         NotionPageType::KanbanBoard => {
+            let status_prop = if status_property.is_empty() {
+                "Status"
+            } else {
+                status_property
+            };
             if let Some(status) = inbox_status.filter(|s| !s.is_empty()) {
                 serde_json::json!({
                     "filter": {
-                        "property": "Status",
+                        "property": status_prop,
                         "status": { "equals": status }
                     },
                     "page_size": 100
@@ -565,7 +568,7 @@ pub(crate) fn fetch_notion_tasks(
                 };
                 serde_json::json!({
                     "filter": {
-                        "property": "Status",
+                        "property": status_prop,
                         "status": { "does_not_equal": done_val }
                     },
                     "page_size": 100
@@ -650,6 +653,7 @@ pub(crate) fn mark_notion_done(
     page_id: &str,
     page_type: &crate::settings::NotionPageType,
     done_value: &str,
+    status_property: &str,
 ) -> crate::error::Result<()> {
     use crate::settings::NotionPageType;
 
@@ -686,9 +690,14 @@ pub(crate) fn mark_notion_done(
             })
         }
         NotionPageType::KanbanBoard => {
+            let status_prop = if status_property.is_empty() {
+                "Status"
+            } else {
+                status_property
+            };
             serde_json::json!({
                 "properties": {
-                    "Status": {
+                    status_prop: {
                         "status": { "name": done_val }
                     }
                 }
