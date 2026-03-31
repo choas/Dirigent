@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use chrono::Local;
 use rusqlite::params;
@@ -70,6 +72,20 @@ impl Database {
             results.push(row?);
         }
         Ok(results)
+    }
+
+    /// Get all cue IDs that have at least one activity event matching a prefix.
+    pub fn get_cue_ids_with_activity_prefix(&self, prefix: &str) -> Result<HashSet<i64>> {
+        let pattern = format!("{}%", prefix);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT cue_id FROM cue_activity_log WHERE event LIKE ?1")?;
+        let rows = stmt.query_map(params![pattern], |row| row.get::<_, i64>(0))?;
+        let mut ids = HashSet::new();
+        for row in rows {
+            ids.insert(row?);
+        }
+        Ok(ids)
     }
 
     /// Get the last activity event matching a prefix for a cue.

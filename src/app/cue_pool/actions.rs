@@ -474,7 +474,11 @@ impl DirigentApp {
             .settings
             .sources
             .iter()
-            .find(|s| s.kind == SourceKind::Notion && cue.source_label.as_deref() == Some(&s.label))
+            .find(|s| {
+                s.kind == SourceKind::Notion
+                    && (cue.source_id.as_deref() == Some(&s.id)
+                        || cue.source_label.as_deref() == Some(&s.label))
+            })
             .cloned();
         let Some(source) = notion_source else {
             self.set_status_message("Notion source config not found for this cue".into());
@@ -536,6 +540,7 @@ impl DirigentApp {
             Ok(cue_id) => {
                 self.set_status_message("Marked done in Notion".into());
                 let _ = self.db.log_activity(cue_id, "Marked done in Notion");
+                self.notion_done_cache.insert(cue_id);
             }
             Err(e) => {
                 self.set_status_message(format!("Notion done failed: {}", e));

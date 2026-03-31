@@ -255,6 +255,9 @@ pub struct DirigentApp {
     // Notion "mark done" async state
     notion_done_in_progress: bool,
     notion_done_rx: Option<mpsc::Receiver<Result<i64, String>>>,
+
+    // Cache of cue IDs that have been marked done in Notion (avoids DB reads during repaint)
+    notion_done_cache: HashSet<i64>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -559,6 +562,7 @@ impl DirigentApp {
             rename_focus_requested: false,
             notion_done_in_progress: false,
             notion_done_rx: None,
+            notion_done_cache: HashSet::new(),
         }
     }
 
@@ -633,6 +637,10 @@ impl DirigentApp {
         self.latest_exec_cache = self
             .db
             .get_all_latest_execution_metrics()
+            .unwrap_or_default();
+        self.notion_done_cache = self
+            .db
+            .get_cue_ids_with_activity_prefix("Marked done in Notion")
             .unwrap_or_default();
     }
 

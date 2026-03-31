@@ -411,23 +411,23 @@ impl DirigentApp {
         fs: f32,
     ) {
         // Only show for cues sourced from a Notion integration.
-        let is_notion_sourced = cue.source_label.as_ref().map_or(false, |label| {
-            self.settings
-                .sources
-                .iter()
-                .any(|s| s.kind == SourceKind::Notion && s.label == *label)
+        let is_notion_sourced = self.settings.sources.iter().any(|s| {
+            s.kind == SourceKind::Notion
+                && (cue
+                    .source_id
+                    .as_ref()
+                    .map_or(false, |sid| *sid == s.id)
+                    || cue
+                        .source_label
+                        .as_ref()
+                        .map_or(false, |label| *label == s.label))
         });
         if !is_notion_sourced {
             return;
         }
 
-        // Check if already marked done in Notion.
-        let already_done = self
-            .db
-            .get_last_activity_matching(cue.id, "Marked done in Notion")
-            .ok()
-            .flatten()
-            .is_some();
+        // Check if already marked done in Notion (from cache, no DB hit).
+        let already_done = self.notion_done_cache.contains(&cue.id);
 
         if already_done {
             ui.label(
