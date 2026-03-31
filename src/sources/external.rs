@@ -577,34 +577,60 @@ pub(crate) fn fetch_notion_tasks(
         }
     };
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Notion-Version", "2022-06-28")
-        .header("Content-Type", "application/json")
-        .json(&filter)
-        .send()
-        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+    let mut all_results: Vec<serde_json::Value> = Vec::new();
+    let mut cursor: Option<String> = None;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Notion API error ({status}): {body}"
-        )));
+    loop {
+        let mut body = filter.clone();
+        if let Some(ref c) = cursor {
+            body["start_cursor"] = serde_json::json!(c);
+        }
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Notion-Version", "2022-06-28")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let resp_body = resp.text().unwrap_or_default();
+            return Err(DirigentError::Source(format!(
+                "Notion API error ({status}): {resp_body}"
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+
+        if let Some(page_results) = json.get("results").and_then(|v| v.as_array()) {
+            all_results.extend(page_results.iter().cloned());
+        }
+
+        let has_more = json
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !has_more {
+            break;
+        }
+
+        cursor = json
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if cursor.is_none() {
+            break;
+        }
     }
 
-    let json: serde_json::Value = resp
-        .json()
-        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
-
-    let results = json
-        .get("results")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    Ok(results
+    Ok(all_results
         .iter()
         .filter_map(|page| notion_page_to_item(page, source_label))
         .collect())
