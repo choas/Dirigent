@@ -64,6 +64,7 @@ pub(crate) fn fetch_github_issues(
                 external_id: url.to_string(),
                 text,
                 source_label: source_label.to_string(),
+                source_id: String::new(),
             })
         })
         .collect())
@@ -129,6 +130,7 @@ pub(crate) fn fetch_slack_messages(
                 external_id: format!("{}/{}", channel, ts),
                 text: format!("[{}] {}", user, text),
                 source_label: source_label.to_string(),
+                source_id: String::new(),
             })
         })
         .collect())
@@ -229,6 +231,7 @@ pub(crate) fn fetch_sonarqube_issues(
                 external_id: key.to_string(),
                 text,
                 source_label: source_label.to_string(),
+                source_id: String::new(),
             })
         })
         .collect())
@@ -383,6 +386,7 @@ fn trello_card_to_item(
         external_id: url.to_string(),
         text,
         source_label: source_label.to_string(),
+        source_id: String::new(),
     })
 }
 
@@ -639,7 +643,6 @@ pub(crate) fn fetch_notion_tasks(
 /// Extract a `SourceItem` from a Notion page object.
 fn notion_page_to_item(page: &serde_json::Value, source_label: &str) -> Option<SourceItem> {
     let id = page.get("id")?.as_str()?;
-    let url = page.get("url").and_then(|u| u.as_str()).unwrap_or(id);
 
     // Extract title from the first "title" type property.
     let properties = page.get("properties")?.as_object()?;
@@ -664,7 +667,7 @@ fn notion_page_to_item(page: &serde_json::Value, source_label: &str) -> Option<S
     }
 
     Some(SourceItem {
-        external_id: url.to_string(),
+        external_id: id.to_string(),
         text: title,
         source_label: source_label.to_string(),
     })
