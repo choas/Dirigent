@@ -218,6 +218,7 @@ pub(super) fn parse_source_object(
         external_id: id.to_string(),
         text: text.to_string(),
         source_label: source_label.to_string(),
+        source_id: String::new(),
     })
 }
 

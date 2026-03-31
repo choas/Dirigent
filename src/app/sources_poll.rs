@@ -121,7 +121,14 @@ impl DirigentApp {
             }
             if self
                 .db
-                .insert_cue_from_source(&item.text, &item.source_label, &item.external_id, "", 0)
+                .insert_cue_from_source(
+                    &item.text,
+                    &item.source_label,
+                    &item.source_id,
+                    &item.external_id,
+                    "",
+                    0,
+                )
                 .is_ok()
             {
                 new_count += 1;
@@ -164,7 +171,7 @@ fn fetch_source_items(
         let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
         Vec::new()
     };
-    match source.kind {
+    let mut items = match source.kind {
         SourceKind::GitHubIssues => {
             let label_filter = (!source.filter.is_empty()).then(|| source.filter.as_str());
             sources::fetch_github_issues(project_root, label_filter, None, &source.label)
@@ -240,5 +247,10 @@ fn fetch_source_items(
                     .unwrap_or_else(err)
             }
         }
+    };
+    // Stamp the stable source identifier on every item.
+    for item in &mut items {
+        item.source_id = source.id.clone();
     }
+    items
 }

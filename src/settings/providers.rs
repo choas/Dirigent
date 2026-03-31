@@ -96,8 +96,15 @@ impl SourceKind {
     }
 }
 
+fn generate_source_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SourceConfig {
+    /// Stable unique identifier (UUID); survives label/name renames.
+    #[serde(default = "generate_source_id")]
+    pub id: String,
     pub name: String,
     pub kind: SourceKind,
     pub label: String,
@@ -132,6 +139,7 @@ pub(crate) struct SourceConfig {
 impl Default for SourceConfig {
     fn default() -> Self {
         SourceConfig {
+            id: generate_source_id(),
             name: "New Source".to_string(),
             kind: SourceKind::GitHubIssues,
             label: SourceKind::GitHubIssues.default_label().to_string(),

@@ -4,6 +4,8 @@ pub(crate) struct SourceItem {
     pub external_id: String,
     pub text: String,
     pub source_label: String,
+    /// Stable source identifier (matches SourceConfig.id).
+    pub source_id: String,
 }
 
 /// A finding extracted from a PR review comment.

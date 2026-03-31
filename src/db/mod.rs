@@ -31,7 +31,7 @@ impl Database {
         use rusqlite::params;
         let mut stmt = self
             .conn
-            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_ref, attached_images, tag, plan_path FROM cues WHERE id = ?1")?;
+            .prepare("SELECT id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path FROM cues WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(converters::row_to_cue(row)?))
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn insert_cue_from_source_and_find_by_ref() {
         let db = test_db();
-        db.insert_cue_from_source("issue title", "GitHub", "gh#42", "", 0)
+        db.insert_cue_from_source("issue title", "GitHub", "", "gh#42", "", 0)
             .unwrap();
         assert!(db.cue_exists_by_source_ref("gh#42").unwrap());
         assert!(!db.cue_exists_by_source_ref("gh#99").unwrap());
@@ -251,7 +251,7 @@ mod tests {
     fn update_cue_by_source_ref() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("old title", "GitHub", "gh#1", "", 0)
+            .insert_cue_from_source("old title", "GitHub", "", "gh#1", "", 0)
             .unwrap();
         db.update_cue_by_source_ref("gh#1", "new title", "src/main.rs", 42)
             .unwrap();
@@ -265,7 +265,7 @@ mod tests {
     fn source_cue_has_correct_fields() {
         let db = test_db();
         let id = db
-            .insert_cue_from_source("body", "Notion", "notion:abc", "", 0)
+            .insert_cue_from_source("body", "Notion", "src-id-1", "notion:abc", "", 0)
             .unwrap();
         let cue = db.get_cue(id).unwrap().unwrap();
         assert_eq!(cue.file_path, "");

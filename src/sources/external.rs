@@ -490,6 +490,7 @@ pub(crate) fn fetch_asana_tasks(
                 external_id,
                 text,
                 source_label: source_label.to_string(),
+                source_id: String::new(),
             })
         })
         .collect())
@@ -670,6 +671,7 @@ fn notion_page_to_item(page: &serde_json::Value, source_label: &str) -> Option<S
         external_id: id.to_string(),
         text: title,
         source_label: source_label.to_string(),
+        source_id: String::new(),
     })
 }
 

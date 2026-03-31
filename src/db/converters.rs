@@ -25,7 +25,7 @@ fn try_i64_to_u64(v: i64) -> rusqlite::Result<u64> {
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(5)?;
     let line_end: Option<i64> = row.get(4)?;
-    let images_json: Option<String> = row.get(8)?;
+    let images_json: Option<String> = row.get(9)?;
     let attached_images: Vec<String> = images_json
         .and_then(|j| serde_json::from_str(&j).ok())
         .unwrap_or_default();
@@ -37,10 +37,11 @@ pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         line_number_end: line_end.map(try_i64_to_usize).transpose()?,
         status: CueStatus::from_str(&status_str).unwrap_or(CueStatus::Inbox),
         source_label: row.get(6)?,
-        source_ref: row.get(7)?,
+        source_id: row.get(7)?,
+        source_ref: row.get(8)?,
         attached_images,
-        tag: row.get(9)?,
-        plan_path: row.get(10)?,
+        tag: row.get(10)?,
+        plan_path: row.get(11)?,
     })
 }
 
