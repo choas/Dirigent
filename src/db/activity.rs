@@ -76,10 +76,14 @@ impl Database {
 
     /// Get all cue IDs that have at least one activity event matching a prefix.
     pub fn get_cue_ids_with_activity_prefix(&self, prefix: &str) -> Result<HashSet<i64>> {
-        let pattern = format!("{}%", prefix);
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT cue_id FROM cue_activity_log WHERE event LIKE ?1")?;
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("{}%", escaped);
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT cue_id FROM cue_activity_log WHERE event LIKE ?1 ESCAPE '\\'",
+        )?;
         let rows = stmt.query_map(params![pattern], |row| row.get::<_, i64>(0))?;
         let mut ids = HashSet::new();
         for row in rows {
@@ -90,9 +94,13 @@ impl Database {
 
     /// Get the last activity event matching a prefix for a cue.
     pub fn get_last_activity_matching(&self, cue_id: i64, prefix: &str) -> Result<Option<String>> {
-        let pattern = format!("{}%", prefix);
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("{}%", escaped);
         let mut stmt = self.conn.prepare(
-            "SELECT event FROM cue_activity_log WHERE cue_id = ?1 AND event LIKE ?2 ORDER BY id DESC LIMIT 1",
+            "SELECT event FROM cue_activity_log WHERE cue_id = ?1 AND event LIKE ?2 ESCAPE '\\' ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id, pattern])?;
         if let Some(row) = rows.next()? {
