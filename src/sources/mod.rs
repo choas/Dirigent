@@ -9,8 +9,8 @@ mod types;
 
 pub(crate) use custom::fetch_custom_command;
 pub(crate) use external::{
-    fetch_asana_tasks, fetch_github_issues, fetch_slack_messages, fetch_sonarqube_issues,
-    fetch_trello_cards, load_env_var,
+    fetch_asana_tasks, fetch_github_issues, fetch_notion_tasks, fetch_slack_messages,
+    fetch_sonarqube_issues, fetch_trello_cards, load_env_var, mark_notion_done,
 };
 pub(crate) use html::strip_html_tags;
 pub(crate) use pr_feedback::notify_pr_finding_fixed;

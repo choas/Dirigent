@@ -84,6 +84,8 @@ pub(super) enum CueAction {
     ViewPlan(i64),
     /// Execute a Claude Code plan by sending it back to Claude.
     RunPlan(i64),
+    /// Mark a Notion-sourced cue as done in Notion.
+    NotionDone(i64),
 }
 
 /// State for a single open file tab.

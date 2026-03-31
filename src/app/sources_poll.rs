@@ -146,6 +146,7 @@ fn resolve_source_token(source: &settings::SourceConfig, project_root: &Path) ->
         SourceKind::SonarQube => "SONAR_TOKEN",
         SourceKind::Trello => "TRELLO_TOKEN",
         SourceKind::Asana => "ASANA_TOKEN",
+        SourceKind::Notion => "NOTION_TOKEN",
         _ => return String::new(),
     };
     std::env::var(env_key)
@@ -213,7 +214,24 @@ fn fetch_source_items(
             sources::fetch_asana_tasks(&token, &source.project_key, &source.label)
                 .unwrap_or_else(err)
         }
-        SourceKind::Custom | SourceKind::Notion | SourceKind::Mcp => {
+        SourceKind::Notion => {
+            let token = resolve_source_token(source, project_root);
+            let inbox_status = if source.filter.is_empty() {
+                None
+            } else {
+                Some(source.filter.as_str())
+            };
+            sources::fetch_notion_tasks(
+                &token,
+                &source.project_key,
+                &source.notion_page_type,
+                inbox_status,
+                &source.notion_done_value,
+                &source.label,
+            )
+            .unwrap_or_else(err)
+        }
+        SourceKind::Custom | SourceKind::Mcp => {
             if source.command.is_empty() {
                 Vec::new()
             } else {

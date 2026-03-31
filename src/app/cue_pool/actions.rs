@@ -5,7 +5,7 @@ use super::super::{CueAction, DirigentApp};
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::CliProvider;
+use crate::settings::{CliProvider, SourceKind};
 
 use super::helpers::{build_commit_all_subject, parse_schedule_duration};
 
@@ -116,6 +116,9 @@ impl DirigentApp {
             }
             CueAction::RunPlan(cue_id) => {
                 self.process_run_plan(cue_id);
+            }
+            CueAction::NotionDone(cue_id) => {
+                self.process_notion_done(cue_id);
             }
         }
         self.reload_cues();
@@ -446,5 +449,54 @@ impl DirigentApp {
             plural,
             tag
         ));
+    }
+
+    fn process_notion_done(&mut self, cue_id: i64) {
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let source_ref = match &cue.source_ref {
+            Some(r) => r.clone(),
+            None => {
+                self.set_status_message("No Notion page reference on this cue".into());
+                return;
+            }
+        };
+
+        // Find the matching Notion source config to get token and page type.
+        let notion_source = self
+            .settings
+            .sources
+            .iter()
+            .find(|s| s.kind == SourceKind::Notion && cue.source_label.as_deref() == Some(&s.label))
+            .cloned();
+        let Some(source) = notion_source else {
+            self.set_status_message("Notion source config not found for this cue".into());
+            return;
+        };
+
+        let token = if !source.token.is_empty() {
+            source.token.clone()
+        } else {
+            std::env::var("NOTION_TOKEN")
+                .ok()
+                .or_else(|| crate::sources::load_env_var(&self.project_root, "NOTION_TOKEN"))
+                .unwrap_or_default()
+        };
+
+        let page_ref = source_ref.clone();
+        let page_type = source.notion_page_type.clone();
+        let done_value = source.notion_done_value.clone();
+
+        match crate::sources::mark_notion_done(&token, &page_ref, &page_type, &done_value) {
+            Ok(()) => {
+                self.set_status_message("Marked done in Notion".into());
+                let _ = self.db.log_activity(cue_id, "Marked done in Notion");
+            }
+            Err(e) => {
+                self.set_status_message(format!("Notion done failed: {}", e));
+            }
+        }
     }
 }

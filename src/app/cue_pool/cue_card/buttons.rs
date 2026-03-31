@@ -3,6 +3,7 @@ use eframe::egui;
 use super::super::super::{icon, CueAction, DirigentApp};
 use super::utils::{format_queue_label, toggle_reply_input};
 use crate::db::{Cue, CueStatus};
+use crate::settings::SourceKind;
 
 impl DirigentApp {
     pub(in crate::app) fn render_status_buttons(
@@ -252,6 +253,7 @@ impl DirigentApp {
         if cue.plan_path.is_some() {
             self.render_plan_buttons(ui, cue, actions, fs);
         }
+        self.render_notion_done_button(ui, cue, actions, fs);
         self.render_push_button(ui, cue, actions, fs);
         self.render_log_and_agents_buttons(ui, cue, actions, fs);
         if ui
@@ -398,6 +400,53 @@ impl DirigentApp {
                     .small()
                     .color(self.semantic.success),
             );
+        }
+    }
+
+    fn render_notion_done_button(
+        &self,
+        ui: &mut egui::Ui,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+        fs: f32,
+    ) {
+        // Only show for cues sourced from a Notion integration.
+        let is_notion_sourced = cue.source_label.as_ref().map_or(false, |label| {
+            self.settings
+                .sources
+                .iter()
+                .any(|s| s.kind == SourceKind::Notion && s.label == *label)
+        });
+        if !is_notion_sourced {
+            return;
+        }
+
+        // Check if already marked done in Notion.
+        let already_done = self
+            .db
+            .get_last_activity_matching(cue.id, "Marked done in Notion")
+            .ok()
+            .flatten()
+            .is_some();
+
+        if already_done {
+            ui.label(
+                egui::RichText::new("\u{2713} Notion done")
+                    .small()
+                    .color(self.semantic.success),
+            );
+        } else {
+            let btn = egui::Button::new(
+                icon("\u{2713} Notion Done", fs).color(self.semantic.badge_text),
+            )
+            .fill(self.semantic.accent);
+            if ui
+                .add(btn)
+                .on_hover_text("Mark this task as done in Notion")
+                .clicked()
+            {
+                actions.push((cue.id, CueAction::NotionDone(cue.id)));
+            }
         }
     }
 

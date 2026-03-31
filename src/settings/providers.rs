@@ -1,5 +1,28 @@
 use serde::{Deserialize, Serialize};
 
+/// The type of Notion page/database being used as a source.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum NotionPageType {
+    /// A database with a checkbox property (e.g. "Done") for completion.
+    #[default]
+    TodoList,
+    /// A database with a Status/Select property used as Kanban columns.
+    KanbanBoard,
+}
+
+impl NotionPageType {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            NotionPageType::TodoList => "Todo List",
+            NotionPageType::KanbanBoard => "Kanban Board",
+        }
+    }
+
+    pub fn all() -> &'static [NotionPageType] {
+        &[NotionPageType::TodoList, NotionPageType::KanbanBoard]
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum CliProvider {
     #[default]
@@ -94,6 +117,12 @@ pub(crate) struct SourceConfig {
     pub project_key: String,
     #[serde(skip)]
     pub api_key: String,
+    /// Notion-specific: the type of page/database (Todo List or Kanban Board).
+    #[serde(default)]
+    pub notion_page_type: NotionPageType,
+    /// Notion-specific: the name of the Kanban column that maps to "Done".
+    #[serde(default)]
+    pub notion_done_value: String,
 }
 
 impl Default for SourceConfig {
@@ -111,6 +140,8 @@ impl Default for SourceConfig {
             host_url: String::new(),
             project_key: String::new(),
             api_key: String::new(),
+            notion_page_type: NotionPageType::default(),
+            notion_done_value: "Done".to_string(),
         }
     }
 }

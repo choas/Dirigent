@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::settings::{SourceConfig, SourceKind};
+use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_sources_section(
@@ -285,6 +285,70 @@ impl DirigentApp {
                         .desired_width(200.0)
                         .hint_text("e.g. 120345678901234")
                         .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+            }
+            SourceKind::Notion => {
+                ui.label("Token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                        .desired_width(200.0)
+                        .hint_text("from env NOTION_TOKEN or .env")
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Database ID:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                        .desired_width(200.0)
+                        .hint_text("e.g. 8a3b5c…  (from the Notion page URL)")
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Page Type:");
+                egui::ComboBox::from_id_salt(format!("notion_page_type_{}", i))
+                    .selected_text(
+                        self.settings.sources[i]
+                            .notion_page_type
+                            .display_name(),
+                    )
+                    .show_ui(ui, |ui| {
+                        for pt in NotionPageType::all() {
+                            ui.selectable_value(
+                                &mut self.settings.sources[i].notion_page_type,
+                                pt.clone(),
+                                pt.display_name(),
+                            );
+                        }
+                    });
+                ui.end_row();
+
+                if self.settings.sources[i].notion_page_type == NotionPageType::KanbanBoard {
+                    ui.label("Inbox Status:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
+                            .desired_width(120.0)
+                            .hint_text("e.g. Not started")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.end_row();
+                }
+
+                let done_hint = match self.settings.sources[i].notion_page_type {
+                    NotionPageType::TodoList => "checkbox property name, e.g. Done",
+                    NotionPageType::KanbanBoard => "target status, e.g. Done",
+                };
+                ui.label("Done Value:");
+                ui.add(
+                    egui::TextEdit::singleline(
+                        &mut self.settings.sources[i].notion_done_value,
+                    )
+                    .desired_width(120.0)
+                    .hint_text(done_hint)
+                    .font(egui::TextStyle::Monospace),
                 );
                 ui.end_row();
             }

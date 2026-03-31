@@ -491,6 +491,252 @@ pub(crate) fn fetch_asana_tasks(
         .collect())
 }
 
+/// Fetch tasks from a Notion database using the Notion API.
+///
+/// For **Todo List** databases: fetches pages where the checkbox property
+/// (named by `done_property`) is *not* checked.
+///
+/// For **Kanban Board** databases: fetches pages whose Status property
+/// matches `inbox_status` (e.g. "Not started").
+///
+/// The Notion API version used is `2022-06-28`.
+pub(crate) fn fetch_notion_tasks(
+    token: &str,
+    database_id: &str,
+    page_type: &crate::settings::NotionPageType,
+    inbox_status: Option<&str>,
+    done_property: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    use crate::settings::NotionPageType;
+
+    if token.is_empty() {
+        return Err(DirigentError::Source(
+            "Notion token is empty (set in source config or NOTION_TOKEN in .env)".to_string(),
+        ));
+    }
+    if database_id.is_empty() {
+        return Err(DirigentError::Source(
+            "Notion database ID is empty".to_string(),
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+
+    let url = format!(
+        "https://api.notion.com/v1/databases/{}/query",
+        database_id,
+    );
+
+    // Build a filter to exclude completed items.
+    let filter = match page_type {
+        NotionPageType::TodoList => {
+            let prop = if done_property.is_empty() {
+                "Done"
+            } else {
+                done_property
+            };
+            serde_json::json!({
+                "filter": {
+                    "property": prop,
+                    "checkbox": { "equals": false }
+                },
+                "page_size": 100
+            })
+        }
+        NotionPageType::KanbanBoard => {
+            if let Some(status) = inbox_status.filter(|s| !s.is_empty()) {
+                serde_json::json!({
+                    "filter": {
+                        "property": "Status",
+                        "status": { "equals": status }
+                    },
+                    "page_size": 100
+                })
+            } else {
+                // No filter — fetch all non-done items.
+                let done_val = if done_property.is_empty() {
+                    "Done"
+                } else {
+                    done_property
+                };
+                serde_json::json!({
+                    "filter": {
+                        "property": "Status",
+                        "status": { "does_not_equal": done_val }
+                    },
+                    "page_size": 100
+                })
+            }
+        }
+    };
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .header("Content-Type", "application/json")
+        .json(&filter)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Notion API error ({status}): {body}"
+        )));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+
+    let results = json
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(results
+        .iter()
+        .filter_map(|page| notion_page_to_item(page, source_label))
+        .collect())
+}
+
+/// Extract a `SourceItem` from a Notion page object.
+fn notion_page_to_item(page: &serde_json::Value, source_label: &str) -> Option<SourceItem> {
+    let id = page.get("id")?.as_str()?;
+    let url = page.get("url").and_then(|u| u.as_str()).unwrap_or(id);
+
+    // Extract title from the first "title" type property.
+    let properties = page.get("properties")?.as_object()?;
+    let title = properties.values().find_map(|prop| {
+        if prop.get("type")?.as_str()? != "title" {
+            return None;
+        }
+        let title_arr = prop.get("title")?.as_array()?;
+        let parts: Vec<&str> = title_arr
+            .iter()
+            .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(""))
+        }
+    })?;
+
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    Some(SourceItem {
+        external_id: url.to_string(),
+        text: title,
+        source_label: source_label.to_string(),
+    })
+}
+
+/// Mark a Notion page as done via the Notion API.
+///
+/// For **Todo List** pages: sets the checkbox property to `true`.
+/// For **Kanban Board** pages: sets the Status property to the given value.
+pub(crate) fn mark_notion_done(
+    token: &str,
+    page_id: &str,
+    page_type: &crate::settings::NotionPageType,
+    done_value: &str,
+) -> crate::error::Result<()> {
+    use crate::settings::NotionPageType;
+
+    if token.is_empty() {
+        return Err(DirigentError::Source("Notion token is empty".to_string()));
+    }
+    if page_id.is_empty() {
+        return Err(DirigentError::Source("Notion page ID is empty".to_string()));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+
+    // The page_id from source_ref may be a URL like "https://www.notion.so/...{id}".
+    // Extract the actual UUID if needed.
+    let actual_id = extract_notion_page_id(page_id);
+
+    let url = format!("https://api.notion.com/v1/pages/{}", actual_id);
+
+    let done_val = if done_value.is_empty() {
+        "Done"
+    } else {
+        done_value
+    };
+
+    let body = match page_type {
+        NotionPageType::TodoList => {
+            serde_json::json!({
+                "properties": {
+                    done_val: { "checkbox": true }
+                }
+            })
+        }
+        NotionPageType::KanbanBoard => {
+            serde_json::json!({
+                "properties": {
+                    "Status": {
+                        "status": { "name": done_val }
+                    }
+                }
+            })
+        }
+    };
+
+    let resp = client
+        .patch(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Notion API error ({status}): {body}"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Extract a Notion page UUID from either a raw UUID or a Notion URL.
+fn extract_notion_page_id(id_or_url: &str) -> &str {
+    // Notion URLs look like: https://www.notion.so/Page-Title-<32-hex-id>
+    // or https://www.notion.so/<32-hex-id>
+    if let Some(last_segment) = id_or_url.rsplit('/').next() {
+        // The id is the last 32 hex chars (possibly with hyphens)
+        if let Some(pos) = last_segment.rfind('-') {
+            let candidate = &last_segment[pos + 1..];
+            if candidate.len() == 32 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+                return candidate;
+            }
+        }
+        // Maybe the whole last segment is the id
+        let clean = last_segment.replace('-', "");
+        if clean.len() == 32 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+            return last_segment;
+        }
+    }
+    id_or_url
+}
+
 /// Load a variable from `.Dirigent/.env` (preferred) or `.env` (fallback).
 /// Returns `None` if neither file contains the key.
 pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
