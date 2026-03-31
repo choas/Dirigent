@@ -272,6 +272,7 @@ mod tests {
         assert_eq!(cue.line_number, 0);
         assert_eq!(cue.source_label.as_deref(), Some("Notion"));
         assert_eq!(cue.source_ref.as_deref(), Some("notion:abc"));
+        assert_eq!(cue.source_id.as_deref(), Some("src-id-1"));
         assert_eq!(cue.status, CueStatus::Inbox);
     }
 
