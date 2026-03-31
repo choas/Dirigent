@@ -120,7 +120,11 @@ pub(crate) struct SourceConfig {
     /// Notion-specific: the type of page/database (Todo List or Kanban Board).
     #[serde(default)]
     pub notion_page_type: NotionPageType,
-    /// Notion-specific: the name of the Kanban column that maps to "Done".
+    /// Notion-specific: the Kanban status property name (defaults to "Status").
+    #[serde(default)]
+    pub notion_status_property: String,
+    /// Notion-specific: the checkbox property name (`TodoList`) or target status
+    /// value (`KanbanBoard`) for marking items done (see [`NotionPageType`]).
     #[serde(default)]
     pub notion_done_value: String,
 }
@@ -141,6 +145,7 @@ impl Default for SourceConfig {
             project_key: String::new(),
             api_key: String::new(),
             notion_page_type: NotionPageType::default(),
+            notion_status_property: String::new(),
             notion_done_value: "Done".to_string(),
         }
     }
