@@ -251,6 +251,10 @@ pub struct DirigentApp {
     rename_target: Option<PathBuf>,
     rename_buffer: String,
     rename_focus_requested: bool,
+
+    // Notion "mark done" async state
+    notion_done_in_progress: bool,
+    notion_done_rx: Option<mpsc::Receiver<Result<i64, String>>>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -553,6 +557,8 @@ impl DirigentApp {
             rename_target: None,
             rename_buffer: String::new(),
             rename_focus_requested: false,
+            notion_done_in_progress: false,
+            notion_done_rx: None,
         }
     }
 
@@ -726,6 +732,9 @@ impl eframe::App for DirigentApp {
         self.process_pr_result();
         self.process_import_pr_result();
         self.process_pr_notify_result();
+
+        // Poll for Notion done result
+        self.process_notion_done_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();
