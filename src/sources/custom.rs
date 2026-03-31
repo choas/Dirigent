@@ -137,6 +137,7 @@ pub(crate) fn fetch_custom_command(
     project_root: &Path,
     command: &str,
     source_label: &str,
+    source_id: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
     if let Err(e) = validate_command(command) {
         return Err(DirigentError::Source(format!(
@@ -163,17 +164,17 @@ pub(crate) fn fetch_custom_command(
     }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    parse_source_json(&json_str, source_label)
+    parse_source_json(&json_str, source_label, source_id)
 }
 
 /// Parse newline-delimited JSON objects into source items.
-fn parse_ndjson_items(json_str: &str, source_label: &str) -> Vec<SourceItem> {
+fn parse_ndjson_items(json_str: &str, source_label: &str, source_id: &str) -> Vec<SourceItem> {
     json_str
         .lines()
         .filter(|line| !line.trim().is_empty())
         .filter_map(|line| {
             let obj: serde_json::Value = serde_json::from_str(line).ok()?;
-            parse_source_object(&obj, source_label)
+            parse_source_object(&obj, source_label, source_id)
         })
         .collect()
 }
@@ -184,19 +185,20 @@ fn parse_ndjson_items(json_str: &str, source_label: &str) -> Vec<SourceItem> {
 pub(super) fn parse_source_json(
     json_str: &str,
     source_label: &str,
+    source_id: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
     // Try paginated (possibly concatenated) JSON arrays first
     match parse_paginated_json(json_str) {
         Ok(paginated) if !paginated.is_empty() => {
             return Ok(paginated
                 .iter()
-                .filter_map(|obj| parse_source_object(obj, source_label))
+                .filter_map(|obj| parse_source_object(obj, source_label, source_id))
                 .collect());
         }
         Ok(_) => {} // empty result, fall through to NDJSON
         Err(paginated_err) => {
             // Paginated parsing failed; try NDJSON before propagating the error
-            let ndjson_items = parse_ndjson_items(json_str, source_label);
+            let ndjson_items = parse_ndjson_items(json_str, source_label, source_id);
             if !ndjson_items.is_empty() {
                 return Ok(ndjson_items);
             }
@@ -205,12 +207,13 @@ pub(super) fn parse_source_json(
     }
 
     // Try newline-delimited JSON
-    Ok(parse_ndjson_items(json_str, source_label))
+    Ok(parse_ndjson_items(json_str, source_label, source_id))
 }
 
 pub(super) fn parse_source_object(
     obj: &serde_json::Value,
     source_label: &str,
+    source_id: &str,
 ) -> Option<SourceItem> {
     let id = obj.get("id")?.as_str()?;
     let text = obj.get("text")?.as_str()?;
@@ -218,7 +221,7 @@ pub(super) fn parse_source_object(
         external_id: id.to_string(),
         text: text.to_string(),
         source_label: source_label.to_string(),
-        source_id: String::new(),
+        source_id: source_id.to_string(),
     })
 }
 
@@ -279,31 +282,32 @@ mod tests {
     #[test]
     fn parse_json_array() {
         let json = r#"[{"id":"1","text":"first"},{"id":"2","text":"second"}]"#;
-        let items = parse_source_json(json, "test").unwrap();
+        let items = parse_source_json(json, "test", "src-1").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].external_id, "1");
         assert_eq!(items[0].text, "first");
         assert_eq!(items[0].source_label, "test");
+        assert_eq!(items[0].source_id, "src-1");
     }
 
     #[test]
     fn parse_ndjson() {
         let json = "{\"id\":\"a\",\"text\":\"alpha\"}\n{\"id\":\"b\",\"text\":\"beta\"}\n";
-        let items = parse_source_json(json, "src").unwrap();
+        let items = parse_source_json(json, "src", "src-2").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].external_id, "b");
     }
 
     #[test]
     fn parse_empty_json() {
-        let items = parse_source_json("[]", "test").unwrap();
+        let items = parse_source_json("[]", "test", "src-3").unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
     fn parse_missing_fields_skipped() {
         let json = r#"[{"id":"1"},{"id":"2","text":"ok"}]"#;
-        let items = parse_source_json(json, "test").unwrap();
+        let items = parse_source_json(json, "test", "src-4").unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].external_id, "2");
     }
@@ -311,7 +315,7 @@ mod tests {
     #[test]
     fn parse_concatenated_arrays() {
         let json = r#"[{"id":"1","text":"first"}][{"id":"2","text":"second"}]"#;
-        let items = parse_source_json(json, "test").unwrap();
+        let items = parse_source_json(json, "test", "src-5").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].external_id, "1");
         assert_eq!(items[1].external_id, "2");
@@ -320,7 +324,7 @@ mod tests {
     #[test]
     fn parse_malformed_concatenated_arrays_returns_error() {
         let json = r#"[{"id":"1","text":"first"}][{"id":"2","text":}]"#;
-        assert!(parse_source_json(json, "test").is_err());
+        assert!(parse_source_json(json, "test", "src-6").is_err());
     }
 
     // -- parse_source_object --
@@ -328,23 +332,24 @@ mod tests {
     #[test]
     fn parse_source_object_valid() {
         let obj: serde_json::Value = serde_json::from_str(r#"{"id":"x","text":"hello"}"#).unwrap();
-        let item = parse_source_object(&obj, "lbl").unwrap();
+        let item = parse_source_object(&obj, "lbl", "sid").unwrap();
         assert_eq!(item.external_id, "x");
         assert_eq!(item.text, "hello");
         assert_eq!(item.source_label, "lbl");
+        assert_eq!(item.source_id, "sid");
     }
 
     #[test]
     fn parse_source_object_missing_id() {
         let obj: serde_json::Value = serde_json::from_str(r#"{"text":"hello"}"#).unwrap();
-        assert!(parse_source_object(&obj, "lbl").is_none());
+        assert!(parse_source_object(&obj, "lbl", "sid").is_none());
     }
 
     #[test]
     fn parse_concatenated_arrays_with_brackets_in_strings() {
         // Brackets inside JSON strings must not confuse the parser
         let json = r#"[{"id":"1","text":"has ] bracket"}][{"id":"2","text":"has [ bracket"}]"#;
-        let items = parse_source_json(json, "test").unwrap();
+        let items = parse_source_json(json, "test", "src-7").unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].text, "has ] bracket");
         assert_eq!(items[1].text, "has [ bracket");

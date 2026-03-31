@@ -243,8 +243,13 @@ fn fetch_source_items(
             if source.command.is_empty() {
                 Vec::new()
             } else {
-                sources::fetch_custom_command(project_root, &source.command, &source.label)
-                    .unwrap_or_else(err)
+                sources::fetch_custom_command(
+                    project_root,
+                    &source.command,
+                    &source.label,
+                    &source.id,
+                )
+                .unwrap_or_else(err)
             }
         }
     };
