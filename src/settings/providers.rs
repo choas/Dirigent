@@ -100,6 +100,14 @@ fn generate_source_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+fn default_notion_status_property() -> String {
+    "Status".into()
+}
+
+fn default_notion_done_value() -> String {
+    "Done".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SourceConfig {
     /// Stable unique identifier (UUID); survives label/name renames.
@@ -128,11 +136,11 @@ pub(crate) struct SourceConfig {
     #[serde(default)]
     pub notion_page_type: NotionPageType,
     /// Notion-specific: the Kanban status property name (defaults to "Status").
-    #[serde(default)]
+    #[serde(default = "default_notion_status_property")]
     pub notion_status_property: String,
     /// Notion-specific: the checkbox property name (`TodoList`) or target status
     /// value (`KanbanBoard`) for marking items done (see [`NotionPageType`]).
-    #[serde(default)]
+    #[serde(default = "default_notion_done_value")]
     pub notion_done_value: String,
 }
 
@@ -153,8 +161,8 @@ impl Default for SourceConfig {
             project_key: String::new(),
             api_key: String::new(),
             notion_page_type: NotionPageType::default(),
-            notion_status_property: String::new(),
-            notion_done_value: "Done".to_string(),
+            notion_status_property: default_notion_status_property(),
+            notion_done_value: default_notion_done_value(),
         }
     }
 }
