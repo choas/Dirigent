@@ -716,7 +716,7 @@ pub(crate) fn mark_notion_done(
         NotionPageType::TodoList => {
             serde_json::json!({
                 "properties": {
-                    done_val: { "checkbox": true }
+                    (done_val): { "checkbox": true }
                 }
             })
         }
@@ -728,7 +728,7 @@ pub(crate) fn mark_notion_done(
             };
             serde_json::json!({
                 "properties": {
-                    status_prop: {
+                    (status_prop): {
                         "status": { "name": done_val }
                     }
                 }
@@ -768,7 +768,7 @@ pub(crate) fn mark_notion_done(
 }
 
 /// Extract a Notion page UUID from either a raw UUID or a Notion URL.
-fn extract_notion_page_id(id_or_url: &str) -> &str {
+fn extract_notion_page_id(id_or_url: &str) -> String {
     // Notion URLs look like: https://www.notion.so/Page-Title-<32-hex-id>
     // or https://www.notion.so/<32-hex-id>
     if let Some(last_segment) = id_or_url.rsplit('/').next() {
@@ -776,16 +776,16 @@ fn extract_notion_page_id(id_or_url: &str) -> &str {
         if let Some(pos) = last_segment.rfind('-') {
             let candidate = &last_segment[pos + 1..];
             if candidate.len() == 32 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
-                return candidate;
+                return candidate.to_string();
             }
         }
         // Maybe the whole last segment is the id
         let clean = last_segment.replace('-', "");
         if clean.len() == 32 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
-            return last_segment;
+            return clean;
         }
     }
-    id_or_url
+    id_or_url.to_string()
 }
 
 /// Load a variable from `.Dirigent/.env` (preferred) or `.env` (fallback).
