@@ -247,7 +247,7 @@ fn fetch_source_items(
                     project_root,
                     &source.command,
                     &source.label,
-                    &source.id,
+                    source.id.as_deref().unwrap_or(""),
                 )
                 .unwrap_or_else(err)
             }
@@ -255,7 +255,7 @@ fn fetch_source_items(
     };
     // Stamp the stable source identifier on every item.
     for item in &mut items {
-        item.source_id = source.id.clone();
+        item.source_id = source.id.clone().unwrap_or_default();
     }
     items
 }

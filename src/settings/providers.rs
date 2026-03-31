@@ -111,8 +111,9 @@ fn default_notion_done_value() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SourceConfig {
     /// Stable unique identifier (UUID); survives label/name renames.
-    #[serde(default = "generate_source_id")]
-    pub id: String,
+    /// `None` for legacy configs that were saved without an id.
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub kind: SourceKind,
     pub label: String,
@@ -147,7 +148,7 @@ pub(crate) struct SourceConfig {
 impl Default for SourceConfig {
     fn default() -> Self {
         SourceConfig {
-            id: generate_source_id(),
+            id: Some(generate_source_id()),
             name: "New Source".to_string(),
             kind: SourceKind::GitHubIssues,
             label: SourceKind::GitHubIssues.default_label().to_string(),

@@ -413,10 +413,10 @@ impl DirigentApp {
         // Only show for cues sourced from a Notion integration.
         let is_notion_sourced = self.settings.sources.iter().any(|s| {
             s.kind == SourceKind::Notion
-                && (cue
-                    .source_id
+                && (s
+                    .id
                     .as_ref()
-                    .map_or(false, |sid| *sid == s.id)
+                    .map_or(false, |sid| cue.source_id.as_deref() == Some(sid.as_str()))
                     || cue
                         .source_label
                         .as_ref()
