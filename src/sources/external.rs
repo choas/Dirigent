@@ -748,9 +748,20 @@ pub(crate) fn mark_notion_done(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Notion API error ({status}): {body}"
-        )));
+        // Parse the Notion error JSON for a readable message.
+        let message = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("message")?.as_str().map(|s| s.to_string()));
+        return Err(DirigentError::Source(match message {
+            Some(msg) if status == reqwest::StatusCode::NOT_FOUND => {
+                format!(
+                    "Notion page not found — share the page (or its parent database) \
+                     with your Notion integration. ({msg})"
+                )
+            }
+            Some(msg) => format!("Notion API error ({status}): {msg}"),
+            None => format!("Notion API error ({status}): {body}"),
+        }));
     }
 
     Ok(())
