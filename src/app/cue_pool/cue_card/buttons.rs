@@ -436,10 +436,9 @@ impl DirigentApp {
                     .color(self.semantic.success),
             );
         } else {
-            let btn = egui::Button::new(
-                icon("\u{2713} Notion Done", fs).color(self.semantic.badge_text),
-            )
-            .fill(self.semantic.accent);
+            let btn =
+                egui::Button::new(icon("\u{2713} Notion Done", fs).color(self.semantic.badge_text))
+                    .fill(self.semantic.accent);
             if ui
                 .add(btn)
                 .on_hover_text("Mark this task as done in Notion")
