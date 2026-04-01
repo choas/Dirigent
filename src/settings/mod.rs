@@ -15,7 +15,7 @@ pub(crate) use io::{load_settings, save_settings};
 pub(crate) use playbook::{
     default_playbook, parse_play_variables, substitute_play_variables, Play, PlayVariable,
 };
-pub(crate) use providers::{CliProvider, SourceConfig, SourceKind};
+pub(crate) use providers::{CliProvider, NotionPageType, SourceConfig, SourceKind};
 pub(crate) use recent::{add_global_recent_project, add_recent_repo, load_global_recent_projects};
 pub(crate) use semantic_colors::SemanticColors;
 pub(crate) use theme::ThemeChoice;

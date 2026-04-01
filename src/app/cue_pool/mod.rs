@@ -210,7 +210,7 @@ impl DirigentApp {
                 Ok(false) => {
                     if self
                         .db
-                        .insert_cue_from_source(&text, stem, &source_ref, "", 0)
+                        .insert_cue_from_source(&text, stem, "", &source_ref, "", 0)
                         .is_ok()
                     {
                         new_count += 1;

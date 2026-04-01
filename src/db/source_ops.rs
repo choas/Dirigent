@@ -57,19 +57,40 @@ impl Database {
         Ok(())
     }
 
+    /// Backfill source_id (and source_label) on an existing cue identified by
+    /// source_ref, but only when the stored source_id is currently NULL.
+    pub fn backfill_source_id(
+        &self,
+        source_ref: &str,
+        source_id: &str,
+        source_label: &str,
+    ) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE cues SET source_id = ?1, source_label = ?2 WHERE source_ref = ?3 AND source_id IS NULL",
+            params![source_id, source_label, source_ref],
+        )?;
+        Ok(updated > 0)
+    }
+
     /// Insert a cue from an external source with optional file location.
     pub fn insert_cue_from_source(
         &self,
         text: &str,
         source_label: &str,
+        source_id: &str,
         source_ref: &str,
         file_path: &str,
         line_number: usize,
     ) -> Result<i64> {
         let text = Self::clamp_cue_text(text);
+        let source_id_val = if source_id.is_empty() {
+            None
+        } else {
+            Some(source_id)
+        };
         self.conn.execute(
-            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_ref) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![text, file_path, line_number as i64, CueStatus::Inbox.as_str(), source_label, source_ref],
+            "INSERT INTO cues (text, file_path, line_number, status, source_label, source_id, source_ref) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![text, file_path, line_number as i64, CueStatus::Inbox.as_str(), source_label, source_id_val, source_ref],
         )?;
         let id = self.conn.last_insert_rowid();
         let _ = self.log_activity(id, &format!("Created from {}", source_label));
@@ -180,6 +201,7 @@ mod tests {
                 .insert_cue_from_source(
                     &finding.text,
                     "PR Review",
+                    "",
                     &finding.external_id,
                     &finding.file_path,
                     finding.line_number,
@@ -228,6 +250,7 @@ mod tests {
                 .insert_cue_from_source(
                     &finding.text,
                     "PR Review",
+                    "",
                     &finding.external_id,
                     &finding.file_path,
                     finding.line_number,
@@ -279,6 +302,7 @@ mod tests {
         db.insert_cue_from_source(
             &finding.text,
             "PR Review",
+            "",
             &finding.external_id,
             &finding.file_path,
             finding.line_number,
@@ -303,6 +327,7 @@ mod tests {
             .insert_cue_from_source(
                 &finding.text,
                 "PR Review",
+                "",
                 &finding.external_id,
                 &finding.file_path,
                 finding.line_number,

@@ -195,6 +195,7 @@ impl Database {
         // Column migrations — cues
         self.add_column("cues", "line_number_end", "INTEGER")?;
         self.add_column("cues", "source_label", "TEXT")?;
+        self.add_column("cues", "source_id", "TEXT")?;
         self.add_column("cues", "source_ref", "TEXT")?;
         self.add_column("cues", "attached_images", "TEXT")?;
         self.add_column("cues", "tag", "TEXT")?;

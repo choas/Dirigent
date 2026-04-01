@@ -375,6 +375,7 @@ impl DirigentApp {
             match self.db.insert_cue_from_source(
                 &finding.text,
                 "PR Review",
+                "",
                 &finding.external_id,
                 &finding.file_path,
                 finding.line_number,
