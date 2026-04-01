@@ -325,7 +325,7 @@ impl DirigentApp {
                             })
                             .unwrap_or_else(|| {
                                 if current_id.is_empty() {
-                                    "Select…".to_string()
+                                    "Select\u{2026}".to_string()
                                 } else {
                                     current_id.clone()
                                 }
@@ -354,19 +354,37 @@ impl DirigentApp {
                                     }
                                 }
                             });
-                    } else {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                                .desired_width(200.0)
-                                .hint_text("click Load to list databases & pages")
-                                .font(egui::TextStyle::Monospace),
-                        );
                     }
 
                     if is_loading {
                         ui.spinner();
                     } else if ui.small_button("Load").clicked() {
                         self.start_notion_objects_fetch(i);
+                    }
+                });
+                ui.end_row();
+
+                // Always show a text field for manual ID / URL entry.
+                ui.label("");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                            .desired_width(200.0)
+                            .hint_text("ID or Notion URL")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    if has_objects {
+                        ui.label(
+                            egui::RichText::new("(or pick from dropdown above)")
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("(click Load to list databases & pages)")
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        );
                     }
                 });
                 ui.end_row();
