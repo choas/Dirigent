@@ -480,7 +480,7 @@ impl LspManager {
         if !matches {
             return false;
         }
-        self.pending_init.remove(&server_name.to_string());
+        self.pending_init.remove(server_name);
 
         if error.is_some() {
             self.handle_initialize_failure(server_name, error);

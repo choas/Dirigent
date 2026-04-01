@@ -94,21 +94,74 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
 pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
     use std::collections::BTreeSet;
 
+    // Fetch latest remote state and prune stale remote-tracking branches
+    // so the list reflects what actually exists on the remote.
+    fetch_and_prune(repo_path);
+
     // Collect branches already checked out in worktrees so we can exclude them.
     let checked_out: std::collections::HashSet<String> = list_worktrees(repo_path)?
         .iter()
         .map(|wt| wt.name.clone())
         .collect();
 
+    // Collect local branches whose upstream was deleted (e.g. after PR merge).
+    let gone = collect_gone_branches(repo_path);
+
     let mut branches = BTreeSet::new();
-    collect_local_branches(repo_path, &checked_out, &mut branches)?;
+    collect_local_branches(repo_path, &checked_out, &gone, &mut branches)?;
     collect_remote_branches(repo_path, &checked_out, &mut branches)?;
     Ok(branches.into_iter().collect())
+}
+
+/// Fetch latest remote refs and prune stale remote-tracking branches.
+/// Best-effort / fire-and-forget: the process is spawned in the background
+/// so callers on the UI thread are not blocked by network I/O.
+fn fetch_and_prune(repo_path: &Path) {
+    use std::process::{Command, Stdio};
+    let _ = Command::new("git")
+        .args(["fetch", "--prune"])
+        .current_dir(repo_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn(); // fire-and-forget — avoids blocking the UI thread
+}
+
+/// Return the set of local branch names whose upstream tracking branch has
+/// been deleted (marked `[gone]`), e.g. after a PR was merged and the remote
+/// branch removed.
+fn collect_gone_branches(repo_path: &Path) -> std::collections::HashSet<String> {
+    use std::process::Command;
+    let mut gone = std::collections::HashSet::new();
+    let Ok(output) = Command::new("git")
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short) %(upstream:track)",
+            "refs/heads/",
+        ])
+        .current_dir(repo_path)
+        .output()
+    else {
+        return gone;
+    };
+    if !output.status.success() {
+        return gone;
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        // The format is "branchname [gone]" — match the trailing tracking status,
+        // not an arbitrary substring (avoids false positives on branch names).
+        if line.trim_end().ends_with("[gone]") {
+            if let Some(name) = line.split_whitespace().next() {
+                gone.insert(name.to_string());
+            }
+        }
+    }
+    gone
 }
 
 fn collect_local_branches(
     repo_path: &Path,
     checked_out: &std::collections::HashSet<String>,
+    gone: &std::collections::HashSet<String>,
     branches: &mut std::collections::BTreeSet<String>,
 ) -> crate::error::Result<()> {
     use std::process::Command;
@@ -122,7 +175,7 @@ fn collect_local_branches(
     }
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let name = line.trim().to_string();
-        if !name.is_empty() && !checked_out.contains(&name) {
+        if !name.is_empty() && !checked_out.contains(&name) && !gone.contains(&name) {
             branches.insert(name);
         }
     }

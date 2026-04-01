@@ -10,12 +10,8 @@ pub(super) fn resolve_claude_binary(cli_path: &str) -> Result<&str, ClaudeError>
     } else {
         cli_path
     };
-    let which_result = Command::new("which").arg(claude_bin).output();
-    match which_result {
-        Ok(output) if !output.status.success() => Err(ClaudeError::NotFound),
-        Err(_) => Err(ClaudeError::NotFound),
-        _ => Ok(claude_bin),
-    }
+    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
+    Ok(claude_bin)
 }
 
 /// Build the `Command` with prompt, flags, extra args, and env vars.
@@ -44,9 +40,16 @@ pub(super) fn build_claude_command(
     cmd
 }
 
-/// Append whitespace-separated extra arguments to the command.
+/// Append extra arguments to the command, respecting shell quoting.
+/// Falls back to whitespace splitting if quotes are malformed.
 fn append_extra_args(cmd: &mut Command, extra_args: &str) {
-    for arg in extra_args.split_whitespace() {
+    let args = shlex::split(extra_args).unwrap_or_else(|| {
+        eprintln!(
+            "warning: extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
+        );
+        extra_args.split_whitespace().map(String::from).collect()
+    });
+    for arg in args {
         if !arg.is_empty() {
             cmd.arg(arg);
         }

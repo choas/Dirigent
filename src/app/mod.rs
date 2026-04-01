@@ -65,6 +65,11 @@ pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+type NotionObjectsReceiver = (
+    usize,
+    mpsc::Receiver<Result<Vec<crate::sources::NotionObject>, String>>,
+);
+
 use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
@@ -258,6 +263,11 @@ pub struct DirigentApp {
 
     // Cache of cue IDs that have been marked done in Notion (avoids DB reads during repaint)
     notion_done_cache: HashSet<i64>,
+
+    // Notion object listing for settings dropdown (source index → objects)
+    notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
+    notion_objects_rx: Option<NotionObjectsReceiver>,
+    notion_objects_error: HashMap<usize, String>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -563,6 +573,9 @@ impl DirigentApp {
             notion_done_in_progress: false,
             notion_done_rx: None,
             notion_done_cache: HashSet::new(),
+            notion_objects: HashMap::new(),
+            notion_objects_rx: None,
+            notion_objects_error: HashMap::new(),
         }
     }
 
@@ -743,6 +756,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for Notion done result
         self.process_notion_done_result();
+
+        // Poll for Notion objects listing result (settings dropdown)
+        self.process_notion_objects_result();
 
         // Poll for agent results (format, lint, build, test)
         self.process_agent_results();

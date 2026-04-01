@@ -5,6 +5,12 @@ use crate::lsp::{
     default_lsp_servers, lsp_install_hint, lsp_servers_for_language, LspLanguage, LspServerConfig,
 };
 
+struct LspServerStatus {
+    is_running: bool,
+    is_starting: bool,
+    has_error: bool,
+}
+
 #[derive(Default)]
 struct LspCardActions {
     delete_idx: Option<usize>,
@@ -111,15 +117,14 @@ impl DirigentApp {
                     self.log_lsp_error(result);
                 }
             }
-            if self.settings.lsp_enabled {
-                if ui
+            if self.settings.lsp_enabled
+                && ui
                     .small_button("\u{21BB} Restart All")
                     .on_hover_text("Stop and restart all enabled servers")
                     .clicked()
-                {
-                    let result = self.lsp.restart_all(&self.settings.lsp_servers);
-                    self.log_lsp_error(result);
-                }
+            {
+                let result = self.lsp.restart_all(&self.settings.lsp_servers);
+                self.log_lsp_error(result);
             }
         });
     }
@@ -146,29 +151,23 @@ impl DirigentApp {
         let running_servers = self.lsp.running_servers();
         let starting_servers = self.lsp.starting_servers();
         let server_id = &self.settings.lsp_servers[i].id;
-        let is_running = running_servers.contains(server_id);
-        let is_starting = starting_servers.contains(server_id);
         let server_error = self.lsp.failed_servers.get(server_id).cloned();
-        let has_error = server_error.is_some();
+        let status = LspServerStatus {
+            is_running: running_servers.contains(server_id),
+            is_starting: starting_servers.contains(server_id),
+            has_error: server_error.is_some(),
+        };
 
         let mut frame = self.semantic.card_frame();
-        if is_running {
+        if status.is_running {
             frame = frame.fill(self.semantic.addition_bg());
-        } else if has_error {
+        } else if status.has_error {
             frame = frame.fill(self.semantic.deletion_bg());
         }
 
         frame.show(ui, |ui| {
             ui.set_width(card_width - SPACE_MD - 20.0);
-            self.render_lsp_server_header_row(
-                ui,
-                i,
-                is_running,
-                is_starting,
-                has_error,
-                fs,
-                actions,
-            );
+            self.render_lsp_server_header_row(ui, i, &status, fs, actions);
             if let Some(ref err) = server_error {
                 ui.add_space(SPACE_XS);
                 ui.label(egui::RichText::new(err).small().color(self.semantic.danger));
@@ -182,9 +181,7 @@ impl DirigentApp {
         &mut self,
         ui: &mut egui::Ui,
         i: usize,
-        is_running: bool,
-        is_starting: bool,
-        has_error: bool,
+        status: &LspServerStatus,
         fs: f32,
         actions: &mut LspCardActions,
     ) {
@@ -195,34 +192,28 @@ impl DirigentApp {
                     .desired_width(140.0)
                     .font(egui::TextStyle::Monospace),
             );
-            self.render_lsp_server_status(ui, is_running, is_starting, has_error);
+            self.render_lsp_server_status(ui, status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.render_lsp_server_action_buttons(ui, i, is_running, has_error, fs, actions);
+                self.render_lsp_server_action_buttons(ui, i, status, fs, actions);
             });
         });
     }
 
-    fn render_lsp_server_status(
-        &self,
-        ui: &mut egui::Ui,
-        is_running: bool,
-        is_starting: bool,
-        has_error: bool,
-    ) {
-        if is_running {
+    fn render_lsp_server_status(&self, ui: &mut egui::Ui, status: &LspServerStatus) {
+        if status.is_running {
             ui.label(
                 egui::RichText::new("\u{25CF} running")
                     .small()
                     .color(self.semantic.success),
             );
-        } else if is_starting {
+        } else if status.is_starting {
             ui.spinner();
             ui.label(
                 egui::RichText::new("starting...")
                     .small()
                     .color(self.semantic.secondary_text),
             );
-        } else if has_error {
+        } else if status.has_error {
             ui.label(
                 egui::RichText::new("\u{25CF} failed")
                     .small()
@@ -235,8 +226,7 @@ impl DirigentApp {
         &mut self,
         ui: &mut egui::Ui,
         i: usize,
-        is_running: bool,
-        has_error: bool,
+        status: &LspServerStatus,
         fs: f32,
         actions: &mut LspCardActions,
     ) {
@@ -247,16 +237,17 @@ impl DirigentApp {
         {
             actions.delete_idx = Some(i);
         }
-        if is_running {
+        if status.is_running {
             if ui.small_button("Stop").clicked() {
                 actions.stop_id = Some(self.settings.lsp_servers[i].id.clone());
             }
-        } else if has_error {
+        } else if status.has_error {
             self.render_lsp_failed_server_actions(ui, i, actions);
-        } else if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
-            if ui.small_button("Start").clicked() {
-                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
-            }
+        } else if self.settings.lsp_enabled
+            && self.settings.lsp_servers[i].enabled
+            && ui.small_button("Start").clicked()
+        {
+            actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
         }
     }
 
@@ -273,14 +264,14 @@ impl DirigentApp {
         {
             actions.install_server_name = Some(self.settings.lsp_servers[i].name.clone());
         }
-        if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
-            if ui
+        if self.settings.lsp_enabled
+            && self.settings.lsp_servers[i].enabled
+            && ui
                 .small_button("\u{21BB} Retry")
                 .on_hover_text("Try starting the server again")
                 .clicked()
-            {
-                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
-            }
+        {
+            actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
         }
     }
 

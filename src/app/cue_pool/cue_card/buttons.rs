@@ -416,11 +416,11 @@ impl DirigentApp {
                 && (s
                     .id
                     .as_ref()
-                    .map_or(false, |sid| cue.source_id.as_deref() == Some(sid.as_str()))
+                    .is_some_and(|sid| cue.source_id.as_deref() == Some(sid.as_str()))
                     || cue
                         .source_label
                         .as_ref()
-                        .map_or(false, |label| *label == s.label))
+                        .is_some_and(|label| *label == s.label))
         });
         if !is_notion_sourced {
             return;

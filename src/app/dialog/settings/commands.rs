@@ -39,6 +39,7 @@ impl DirigentApp {
                     prompt: "{task}".to_string(),
                     pre_agent: String::new(),
                     post_agent: String::new(),
+                    cli_args: String::new(),
                 });
             }
             if ui.small_button("Reset Defaults").clicked() {
@@ -133,6 +134,15 @@ impl DirigentApp {
                         egui::TextEdit::singleline(&mut self.settings.commands[i].post_agent)
                             .desired_width(250.0)
                             .hint_text("shell command (empty = use provider default)")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.end_row();
+
+                    ui.label("CLI args:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.commands[i].cli_args)
+                            .desired_width(250.0)
+                            .hint_text("extra CLI flags (e.g. --plan)")
                             .font(egui::TextStyle::Monospace),
                     );
                     ui.end_row();

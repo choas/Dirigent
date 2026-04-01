@@ -479,7 +479,7 @@ impl DirigentApp {
                     s.kind == SourceKind::Notion
                         && s.id
                             .as_ref()
-                            .map_or(false, |sid| cue.source_id.as_deref() == Some(sid.as_str()))
+                            .is_some_and(|sid| cue.source_id.as_deref() == Some(sid.as_str()))
                 })
                 .cloned()
         } else {

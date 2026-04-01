@@ -8,6 +8,15 @@ pub(crate) struct SourceItem {
     pub source_id: String,
 }
 
+/// A Notion database or page visible to the integration token.
+#[derive(Debug, Clone)]
+pub(crate) struct NotionObject {
+    pub id: String,
+    pub title: String,
+    /// "database" or "page"
+    pub object_type: String,
+}
+
 /// A finding extracted from a PR review comment.
 #[derive(Debug, Clone)]
 pub(crate) struct PrFinding {
