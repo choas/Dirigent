@@ -667,7 +667,9 @@ pub(crate) fn fetch_notion_tasks(
         .build()
         .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
 
-    let url = format!("https://api.notion.com/v1/databases/{}/query", database_id,);
+    // The database_id may be a Notion URL — extract the actual UUID.
+    let actual_id = extract_notion_page_id(database_id);
+    let url = format!("https://api.notion.com/v1/databases/{}/query", actual_id);
 
     // Build a filter to exclude completed items.
     let filter = match page_type {
@@ -946,9 +948,13 @@ fn extract_notion_page_title(obj: &serde_json::Value) -> String {
 
 /// Extract a Notion page UUID from either a raw UUID or a Notion URL.
 fn extract_notion_page_id(id_or_url: &str) -> String {
-    // Notion URLs look like: https://www.notion.so/Page-Title-<32-hex-id>
-    // or https://www.notion.so/<32-hex-id>
-    if let Some(last_segment) = id_or_url.rsplit('/').next() {
+    // Notion URLs look like: https://www.notion.so/Page-Title-<32-hex-id>?pvs=4
+    // or https://www.notion.so/<32-hex-id>?v=...
+    // Strip query parameters and fragment first.
+    let clean_input = id_or_url.split('?').next().unwrap_or(id_or_url);
+    let clean_input = clean_input.split('#').next().unwrap_or(clean_input);
+
+    if let Some(last_segment) = clean_input.rsplit('/').next() {
         // The id is the last 32 hex chars (possibly with hyphens)
         if let Some(pos) = last_segment.rfind('-') {
             let candidate = &last_segment[pos + 1..];
