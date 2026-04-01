@@ -122,7 +122,7 @@ fn build_provider_config(
     provider: &CliProvider,
     matched_command: &Option<CueCommand>,
 ) -> ProviderConfig {
-    let (model, cli_path, extra_args, env_vars, default_pre, default_post) = match provider {
+    let (model, cli_path, mut extra_args, env_vars, default_pre, default_post) = match provider {
         CliProvider::Claude => (
             settings.claude_model.clone(),
             settings.claude_cli_path.clone(),
@@ -150,6 +150,17 @@ fn build_provider_config(
         .filter(|cmd| !cmd.post_agent.is_empty())
         .map(|cmd| cmd.post_agent.clone())
         .unwrap_or(default_post);
+    // Append command-specific CLI args (e.g. --plan) to the provider extra_args.
+    if let Some(cmd) = matched_command.as_ref() {
+        let cmd_args = cmd.cli_args.trim();
+        if !cmd_args.is_empty() {
+            if extra_args.is_empty() {
+                extra_args = cmd_args.to_string();
+            } else {
+                extra_args = format!("{} {}", extra_args, cmd_args);
+            }
+        }
+    }
     ProviderConfig {
         model,
         cli_path,
