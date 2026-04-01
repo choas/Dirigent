@@ -430,7 +430,7 @@ impl DirigentApp {
                         .git
                         .editing_pattern
                         .as_ref()
-                        .map_or(false, |(eid, _, _)| *eid == id);
+                        .is_some_and(|(eid, _, _)| *eid == id);
 
                     if is_editing {
                         save = self.render_editing_pattern(ui, id);

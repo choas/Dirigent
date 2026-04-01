@@ -117,15 +117,14 @@ impl DirigentApp {
                     self.log_lsp_error(result);
                 }
             }
-            if self.settings.lsp_enabled {
-                if ui
+            if self.settings.lsp_enabled
+                && ui
                     .small_button("\u{21BB} Restart All")
                     .on_hover_text("Stop and restart all enabled servers")
                     .clicked()
-                {
-                    let result = self.lsp.restart_all(&self.settings.lsp_servers);
-                    self.log_lsp_error(result);
-                }
+            {
+                let result = self.lsp.restart_all(&self.settings.lsp_servers);
+                self.log_lsp_error(result);
             }
         });
     }
@@ -244,10 +243,11 @@ impl DirigentApp {
             }
         } else if status.has_error {
             self.render_lsp_failed_server_actions(ui, i, actions);
-        } else if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
-            if ui.small_button("Start").clicked() {
-                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
-            }
+        } else if self.settings.lsp_enabled
+            && self.settings.lsp_servers[i].enabled
+            && ui.small_button("Start").clicked()
+        {
+            actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
         }
     }
 
@@ -264,14 +264,14 @@ impl DirigentApp {
         {
             actions.install_server_name = Some(self.settings.lsp_servers[i].name.clone());
         }
-        if self.settings.lsp_enabled && self.settings.lsp_servers[i].enabled {
-            if ui
+        if self.settings.lsp_enabled
+            && self.settings.lsp_servers[i].enabled
+            && ui
                 .small_button("\u{21BB} Retry")
                 .on_hover_text("Try starting the server again")
                 .clicked()
-            {
-                actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
-            }
+        {
+            actions.start_id = Some(self.settings.lsp_servers[i].id.clone());
         }
     }
 

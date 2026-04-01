@@ -512,11 +512,7 @@ pub(crate) fn fetch_notion_objects(
         ));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
-
+    let client = notion_client()?;
     let mut all: Vec<NotionObject> = Vec::new();
     let mut cursor: Option<String> = None;
 
@@ -526,95 +522,22 @@ pub(crate) fn fetch_notion_objects(
             body["start_cursor"] = serde_json::json!(c);
         }
 
-        let resp = client
-            .post("https://api.notion.com/v1/search")
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Notion-Version", "2022-06-28")
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .map_err(|e| DirigentError::Source(format!("Notion search request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let resp_body = resp.text().unwrap_or_default();
-            return Err(DirigentError::Source(format!(
-                "Notion Search API error ({status}): {resp_body}"
-            )));
-        }
-
-        let json: serde_json::Value = resp
-            .json()
-            .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+        let json = notion_post(&client, "https://api.notion.com/v1/search", token, &body)
+            .map_err(|e| DirigentError::Source(format!("Notion Search API: {e}")))?;
 
         if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
             for obj in results {
-                let object_type = obj
-                    .get("object")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let id = obj
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let title = match object_type.as_str() {
-                    "database" => {
-                        // Database title is a top-level "title" array of rich-text objects.
-                        obj.get("title")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
-                                    .collect::<Vec<_>>()
-                                    .join("")
-                            })
-                            .unwrap_or_default()
-                    }
-                    "page" => extract_notion_page_title(obj),
-                    _ => continue,
-                };
-
-                if id.is_empty() {
-                    continue;
+                if let Some(notion_obj) = parse_notion_search_result(obj) {
+                    all.push(notion_obj);
                 }
-
-                // Use a fallback for pages/databases whose title couldn't be
-                // extracted (e.g. the Search API returned truncated properties).
-                let title = if title.is_empty() {
-                    let short_id = if id.len() > 8 { &id[..8] } else { &id };
-                    format!("Untitled ({}…)", short_id)
-                } else {
-                    title
-                };
-
-                all.push(NotionObject {
-                    id,
-                    title,
-                    object_type,
-                });
             }
         }
 
-        let has_more = json
-            .get("has_more")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !has_more {
-            break;
-        }
-        cursor = json
-            .get("next_cursor")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        if cursor.is_none() {
+        if !notion_has_more(&json, &mut cursor) {
             break;
         }
     }
 
-    // Sort databases first, then pages, alphabetically within each group.
     all.sort_by(|a, b| {
         let type_order = |t: &str| -> u8 {
             if t == "database" {
@@ -629,6 +552,96 @@ pub(crate) fn fetch_notion_objects(
     });
 
     Ok(all)
+}
+
+fn notion_client() -> crate::error::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))
+}
+
+fn notion_post(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+    body: &serde_json::Value,
+) -> crate::error::Result<serde_json::Value> {
+    let resp = client
+        .post(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let resp_body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Notion API error ({status}): {resp_body}"
+        )));
+    }
+
+    resp.json()
+        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))
+}
+
+fn notion_has_more(json: &serde_json::Value, cursor: &mut Option<String>) -> bool {
+    let has_more = json
+        .get("has_more")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !has_more {
+        return false;
+    }
+    *cursor = json
+        .get("next_cursor")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    cursor.is_some()
+}
+
+fn parse_notion_search_result(obj: &serde_json::Value) -> Option<super::types::NotionObject> {
+    use super::types::NotionObject;
+
+    let object_type = obj.get("object")?.as_str()?.to_string();
+    let id = obj.get("id")?.as_str()?.to_string();
+    if id.is_empty() {
+        return None;
+    }
+
+    let title = match object_type.as_str() {
+        "database" => extract_database_title(obj),
+        "page" => extract_notion_page_title(obj),
+        _ => return None,
+    };
+
+    let title = if title.is_empty() {
+        let short_id = if id.len() > 8 { &id[..8] } else { &id };
+        format!("Untitled ({}…)", short_id)
+    } else {
+        title
+    };
+
+    Some(NotionObject {
+        id,
+        title,
+        object_type,
+    })
+}
+
+fn extract_database_title(obj: &serde_json::Value) -> String {
+    obj.get("title")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
 }
 
 /// Fetch tasks from a Notion database using the Notion API.
@@ -649,8 +662,6 @@ pub(crate) fn fetch_notion_tasks(
     status_property: &str,
     source_label: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
-    use crate::settings::NotionPageType;
-
     if token.is_empty() {
         return Err(DirigentError::Source(
             "Notion token is empty (set in source config or NOTION_TOKEN in .env)".to_string(),
@@ -662,16 +673,8 @@ pub(crate) fn fetch_notion_tasks(
         ));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
-
-    // The database_id may be a Notion URL — extract the actual UUID.
+    let client = notion_client()?;
     let actual_id = extract_notion_page_id(database_id);
-
-    // Resolve the actual ID: the user may have pasted a page URL instead of a
-    // database URL.  If it's a standalone page, fetch it directly.
     let resolved = resolve_notion_id(&client, token, &actual_id)?;
 
     let resolved_id = match resolved {
@@ -682,54 +685,7 @@ pub(crate) fn fetch_notion_tasks(
     };
 
     let url = format!("https://api.notion.com/v1/databases/{}/query", resolved_id);
-
-    // Build a filter to exclude completed items.
-    let filter = match page_type {
-        NotionPageType::TodoList => {
-            let prop = if done_property.is_empty() {
-                "Done"
-            } else {
-                done_property
-            };
-            serde_json::json!({
-                "filter": {
-                    "property": prop,
-                    "checkbox": { "equals": false }
-                },
-                "page_size": 100
-            })
-        }
-        NotionPageType::KanbanBoard => {
-            let status_prop = if status_property.is_empty() {
-                "Status"
-            } else {
-                status_property
-            };
-            if let Some(status) = inbox_status.filter(|s| !s.is_empty()) {
-                serde_json::json!({
-                    "filter": {
-                        "property": status_prop,
-                        "status": { "equals": status }
-                    },
-                    "page_size": 100
-                })
-            } else {
-                // No filter — fetch all non-done items.
-                let done_val = if done_property.is_empty() {
-                    "Done"
-                } else {
-                    done_property
-                };
-                serde_json::json!({
-                    "filter": {
-                        "property": status_prop,
-                        "status": { "does_not_equal": done_val }
-                    },
-                    "page_size": 100
-                })
-            }
-        }
-    };
+    let filter = build_notion_query_filter(page_type, inbox_status, done_property, status_property);
 
     let mut all_results: Vec<serde_json::Value> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -740,46 +696,13 @@ pub(crate) fn fetch_notion_tasks(
             body["start_cursor"] = serde_json::json!(c);
         }
 
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Notion-Version", "2022-06-28")
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let resp_body = resp.text().unwrap_or_default();
-            return Err(DirigentError::Source(format!(
-                "Notion API error ({status}): {resp_body}"
-            )));
-        }
-
-        let json: serde_json::Value = resp
-            .json()
-            .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+        let json = notion_post(&client, &url, token, &body)?;
 
         if let Some(page_results) = json.get("results").and_then(|v| v.as_array()) {
             all_results.extend(page_results.iter().cloned());
         }
 
-        let has_more = json
-            .get("has_more")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        if !has_more {
-            break;
-        }
-
-        cursor = json
-            .get("next_cursor")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        if cursor.is_none() {
+        if !notion_has_more(&json, &mut cursor) {
             break;
         }
     }
@@ -788,6 +711,60 @@ pub(crate) fn fetch_notion_tasks(
         .iter()
         .filter_map(|page| notion_page_to_item(page, source_label))
         .collect())
+}
+
+fn build_notion_query_filter(
+    page_type: &crate::settings::NotionPageType,
+    inbox_status: Option<&str>,
+    done_property: &str,
+    status_property: &str,
+) -> serde_json::Value {
+    use crate::settings::NotionPageType;
+
+    match page_type {
+        NotionPageType::TodoList => {
+            let prop = if done_property.is_empty() {
+                "Done"
+            } else {
+                done_property
+            };
+            serde_json::json!({
+                "filter": { "property": prop, "checkbox": { "equals": false } },
+                "page_size": 100
+            })
+        }
+        NotionPageType::KanbanBoard => {
+            let status_prop = if status_property.is_empty() {
+                "Status"
+            } else {
+                status_property
+            };
+            build_kanban_filter(status_prop, inbox_status, done_property)
+        }
+    }
+}
+
+fn build_kanban_filter(
+    status_prop: &str,
+    inbox_status: Option<&str>,
+    done_property: &str,
+) -> serde_json::Value {
+    if let Some(status) = inbox_status.filter(|s| !s.is_empty()) {
+        serde_json::json!({
+            "filter": { "property": status_prop, "status": { "equals": status } },
+            "page_size": 100
+        })
+    } else {
+        let done_val = if done_property.is_empty() {
+            "Done"
+        } else {
+            done_property
+        };
+        serde_json::json!({
+            "filter": { "property": status_prop, "status": { "does_not_equal": done_val } },
+            "page_size": 100
+        })
+    }
 }
 
 /// Extract a `SourceItem` from a Notion page object.
@@ -934,7 +911,7 @@ fn resolve_notion_id(
 ) -> crate::error::Result<NotionIdKind> {
     // Quick check: try to retrieve the database metadata.
     let db_resp = client
-        .get(&format!("https://api.notion.com/v1/databases/{}", id))
+        .get(format!("https://api.notion.com/v1/databases/{}", id))
         .header("Authorization", format!("Bearer {}", token))
         .header("Notion-Version", "2022-06-28")
         .send()
@@ -1005,7 +982,7 @@ fn fetch_notion_single_page(
     source_label: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
     let resp = client
-        .get(&format!("https://api.notion.com/v1/pages/{}", page_id))
+        .get(format!("https://api.notion.com/v1/pages/{}", page_id))
         .header("Authorization", format!("Bearer {}", token))
         .header("Notion-Version", "2022-06-28")
         .send()
@@ -1033,15 +1010,31 @@ fn fetch_notion_single_page(
         return Ok(vec![]);
     }
 
-    // Fetch the page's block children as individual lines.
     let lines = fetch_notion_block_lines(client, token, page_id).unwrap_or_default();
+    let sections = split_h3_sections(&lines);
 
-    // Split lines into sections at h3 (`### `) boundaries.
-    let mut sections: Vec<(Option<String>, Vec<String>)> = Vec::new();
-    // Start with a preamble section (no heading).
-    sections.push((None, Vec::new()));
+    let items = sections_to_items(sections, &id, &title, source_label);
+    if !items.is_empty() {
+        return Ok(items);
+    }
 
-    for line in &lines {
+    let body = lines.join("\n").trim().to_string();
+    let text = if body.is_empty() {
+        title
+    } else {
+        format!("{}\n\n{}", title, body)
+    };
+    Ok(vec![SourceItem {
+        external_id: id,
+        text,
+        source_label: source_label.to_string(),
+        source_id: String::new(),
+    }])
+}
+
+fn split_h3_sections(lines: &[String]) -> Vec<(Option<String>, Vec<String>)> {
+    let mut sections: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
+    for line in lines {
         if line.starts_with("### ") {
             let heading = line.trim_start_matches("### ").to_string();
             sections.push((Some(heading), Vec::new()));
@@ -1049,33 +1042,20 @@ fn fetch_notion_single_page(
             last.1.push(line.clone());
         }
     }
+    sections
+}
 
-    let mut items: Vec<SourceItem> = Vec::new();
+fn sections_to_items(
+    sections: Vec<(Option<String>, Vec<String>)>,
+    id: &str,
+    title: &str,
+    source_label: &str,
+) -> Vec<SourceItem> {
+    let mut items = Vec::new();
     for (idx, (heading, body_lines)) in sections.into_iter().enumerate() {
-        let body = body_lines
-            .into_iter()
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-
-        let text = match heading {
-            None => {
-                // Preamble section: use the page title.
-                if body.is_empty() {
-                    continue;
-                }
-                format!("{}\n\n{}", title, body)
-            }
-            Some(h) => {
-                if body.is_empty() {
-                    format!("### {}", h)
-                } else {
-                    format!("### {}\n{}", h, body)
-                }
-            }
-        };
-
+        let body = body_lines.join("\n").trim().to_string();
+        let text = section_text(heading.as_deref(), &body, title);
+        let Some(text) = text else { continue };
         items.push(SourceItem {
             external_id: format!("{}-{}", id, idx),
             text,
@@ -1083,24 +1063,26 @@ fn fetch_notion_single_page(
             source_id: String::new(),
         });
     }
+    items
+}
 
-    // If no h3 sections were found, fall back to a single item.
-    if items.is_empty() {
-        let body = lines.join("\n").trim().to_string();
-        let text = if body.is_empty() {
-            title
-        } else {
-            format!("{}\n\n{}", title, body)
-        };
-        items.push(SourceItem {
-            external_id: id,
-            text,
-            source_label: source_label.to_string(),
-            source_id: String::new(),
-        });
+fn section_text(heading: Option<&str>, body: &str, title: &str) -> Option<String> {
+    match heading {
+        None => {
+            if body.is_empty() {
+                None
+            } else {
+                Some(format!("{}\n\n{}", title, body))
+            }
+        }
+        Some(h) => {
+            if body.is_empty() {
+                Some(format!("### {}", h))
+            } else {
+                Some(format!("### {}\n{}", h, body))
+            }
+        }
     }
-
-    Ok(items)
 }
 
 /// Fetch all block children of a Notion page/block and convert them to
@@ -1138,21 +1120,11 @@ fn fetch_notion_block_lines(
             .map_err(|e| DirigentError::Source(format!("Notion blocks parse error: {e}")))?;
 
         if let Some(results) = body.get("results").and_then(|r| r.as_array()) {
-            for block in results {
-                if let Some(line) = notion_block_to_text(block) {
-                    lines.push(line);
-                }
-            }
+            lines.extend(results.iter().filter_map(notion_block_to_text));
         }
 
-        match body.get("has_more").and_then(|h| h.as_bool()) {
-            Some(true) => {
-                cursor = body
-                    .get("next_cursor")
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.to_string());
-            }
-            _ => break,
+        if !notion_has_more(&body, &mut cursor) {
+            break;
         }
     }
 

@@ -160,16 +160,26 @@ fn fetch_source_items(
         let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
         Vec::new()
     };
-    let mut items = match source.kind {
+    let mut items = fetch_by_kind(source, project_root).unwrap_or_else(err);
+    for item in &mut items {
+        item.source_id = source.id.clone().unwrap_or_default();
+    }
+    items
+}
+
+fn fetch_by_kind(
+    source: &settings::SourceConfig,
+    project_root: &Path,
+) -> crate::error::Result<Vec<SourceItem>> {
+    let token = || sources::resolve_source_token(source, project_root);
+    let nonempty_filter = || (!source.filter.is_empty()).then_some(source.filter.as_str());
+
+    match source.kind {
         SourceKind::GitHubIssues => {
-            let label_filter = (!source.filter.is_empty()).then(|| source.filter.as_str());
-            sources::fetch_github_issues(project_root, label_filter, None, &source.label)
-                .unwrap_or_else(err)
+            sources::fetch_github_issues(project_root, nonempty_filter(), None, &source.label)
         }
         SourceKind::Slack => {
-            let token = sources::resolve_source_token(source, project_root);
-            sources::fetch_slack_messages(&token, &source.channel, &source.label)
-                .unwrap_or_else(err)
+            sources::fetch_slack_messages(&token(), &source.channel, &source.label)
         }
         SourceKind::SonarQube => {
             let host = if source.host_url.is_empty() {
@@ -177,9 +187,7 @@ fn fetch_source_items(
             } else {
                 &source.host_url
             };
-            let token = sources::resolve_source_token(source, project_root);
-            sources::fetch_sonarqube_issues(host, &source.project_key, &token, &source.label)
-                .unwrap_or_else(err)
+            sources::fetch_sonarqube_issues(host, &source.project_key, &token(), &source.label)
         }
         SourceKind::Trello => {
             let api_key = if !source.api_key.is_empty() {
@@ -190,47 +198,29 @@ fn fetch_source_items(
                     .or_else(|| sources::load_env_var(project_root, "TRELLO_API_KEY"))
                     .unwrap_or_default()
             };
-            let token = sources::resolve_source_token(source, project_root);
-            let list_filter = if source.filter.is_empty() {
-                None
-            } else {
-                Some(source.filter.as_str())
-            };
             sources::fetch_trello_cards(
                 &api_key,
-                &token,
+                &token(),
                 &source.project_key,
-                list_filter,
+                nonempty_filter(),
                 &source.label,
             )
-            .unwrap_or_else(err)
         }
         SourceKind::Asana => {
-            let token = sources::resolve_source_token(source, project_root);
-            sources::fetch_asana_tasks(&token, &source.project_key, &source.label)
-                .unwrap_or_else(err)
+            sources::fetch_asana_tasks(&token(), &source.project_key, &source.label)
         }
-        SourceKind::Notion => {
-            let token = sources::resolve_source_token(source, project_root);
-            let inbox_status = if source.filter.is_empty() {
-                None
-            } else {
-                Some(source.filter.as_str())
-            };
-            sources::fetch_notion_tasks(
-                &token,
-                &source.project_key,
-                &source.notion_page_type,
-                inbox_status,
-                &source.notion_done_value,
-                &source.notion_status_property,
-                &source.label,
-            )
-            .unwrap_or_else(err)
-        }
+        SourceKind::Notion => sources::fetch_notion_tasks(
+            &token(),
+            &source.project_key,
+            &source.notion_page_type,
+            nonempty_filter(),
+            &source.notion_done_value,
+            &source.notion_status_property,
+            &source.label,
+        ),
         SourceKind::Custom | SourceKind::Mcp => {
             if source.command.is_empty() {
-                Vec::new()
+                Ok(Vec::new())
             } else {
                 sources::fetch_custom_command(
                     project_root,
@@ -238,13 +228,7 @@ fn fetch_source_items(
                     &source.label,
                     source.id.as_deref().unwrap_or(""),
                 )
-                .unwrap_or_else(err)
             }
         }
-    };
-    // Stamp the stable source identifier on every item.
-    for item in &mut items {
-        item.source_id = source.id.clone().unwrap_or_default();
     }
-    items
 }

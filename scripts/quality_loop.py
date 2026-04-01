@@ -179,7 +179,7 @@ def build_config(args: argparse.Namespace) -> Config:
     if missing:
         print(f"[error] Missing required configuration: {', '.join(missing)}")
         print(f"        Add them to {args.env_file} or pass as CLI flags.")
-        print(f"        Run with --help for full setup instructions.")
+        print("        Run with --help for full setup instructions.")
         sys.exit(1)
 
     return Config(
@@ -199,8 +199,20 @@ def build_config(args: argparse.Namespace) -> Config:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _redact_cmd(cmd: list[str]) -> list[str]:
+    """Return a copy of cmd with sensitive-looking values masked."""
+    redacted = []
+    for arg in cmd:
+        for prefix in ("-Dsonar.token=", "--token="):
+            if arg.startswith(prefix):
+                arg = f"{prefix}***"
+                break
+        redacted.append(arg)
+    return redacted
+
+
 def run(cmd: list[str], check=True, capture=False) -> subprocess.CompletedProcess:
-    print(f"  $ {' '.join(cmd)}")
+    print(f"  $ {' '.join(_redact_cmd(cmd))}")
     try:
         return subprocess.run(
             cmd,
@@ -402,7 +414,7 @@ def coderabbit_summary_posted(cfg: Config) -> bool:
     )
 
 
-def wait_for_coderabbit(cfg: Config, since_sha: str) -> None:
+def wait_for_coderabbit(cfg: Config, _since_sha: str) -> None:
     """Block until CI passes and CodeRabbit has reviewed the latest push."""
     banner(f"Waiting for CI + CodeRabbit (timeout {cfg.poll_timeout}s)")
     deadline = time.time() + cfg.poll_timeout
@@ -480,6 +492,20 @@ def _extract_tool_detail(inp: dict) -> str:
     return ""
 
 
+def _print_result_summary(event: dict) -> None:
+    """Print cost/duration summary from a Claude result event."""
+    cost = event.get("cost_usd")
+    duration = event.get("duration_ms")
+    if cost is None and duration is None:
+        return
+    parts = []
+    if duration is not None:
+        parts.append(f"{duration / 1000:.0f}s")
+    if cost is not None:
+        parts.append(f"${cost:.4f}")
+    print(f"  [{', '.join(parts)}]")
+
+
 def _print_stream_event(event: dict) -> None:
     """Print a human-readable summary of a Claude stream-json event."""
     etype = event.get("type", "")
@@ -491,15 +517,7 @@ def _print_stream_event(event: dict) -> None:
                 detail = _extract_tool_detail(block.get("input", {}))
                 print(f"  \u2192 {name}{detail}")
     elif etype == "result":
-        cost = event.get("cost_usd")
-        duration = event.get("duration_ms")
-        if cost is not None or duration is not None:
-            parts = []
-            if duration is not None:
-                parts.append(f"{duration / 1000:.0f}s")
-            if cost is not None:
-                parts.append(f"${cost:.4f}")
-            print(f"  [{', '.join(parts)}]")
+        _print_result_summary(event)
 
 
 def build_fix_prompt(
@@ -548,7 +566,7 @@ def current_sha() -> str:
 
 def git_commit_push(iteration: int) -> bool:
     """Commit and push changes. Returns True if push succeeded."""
-    result = run(["git", "add", "-A"], check=False)
+    result = run(["git", "add", "-u"], check=False)
     if result.returncode != 0:
         print("  [warn] git add failed.")
         return False
@@ -574,6 +592,28 @@ def git_commit_push(iteration: int) -> bool:
 # Main loop
 # ---------------------------------------------------------------------------
 
+def collect_signals(cfg: Config) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Collect all quality signals and return (sonar, clippy, fmt, coderabbit)."""
+    print("\n[1/4] Running SonarQube scan ...")
+    scan_ok = sonar_scan(cfg)
+    s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
+    print(f"  SonarQube issues: {len(s_issues)}")
+
+    print("\n[2/4] Running cargo clippy ...")
+    c_issues = cargo_clippy_issues()
+    print(f"  Clippy issues: {len(c_issues)}")
+
+    print("\n[3/4] Running cargo fmt --check ...")
+    f_issues = cargo_fmt_check()
+    print(f"  Fmt issues: {len(f_issues)}")
+
+    print("\n[4/4] Fetching CodeRabbit comments ...")
+    cr_issues = coderabbit_comments(cfg)
+    print(f"  CodeRabbit comments: {len(cr_issues)}")
+
+    return s_issues, c_issues, f_issues, cr_issues
+
+
 def main() -> None:
     args = parse_args()
     cfg = build_config(args)
@@ -590,31 +630,13 @@ def main() -> None:
     for iteration in range(1, cfg.max_iterations + 1):
         banner(f"Iteration {iteration}/{cfg.max_iterations}")
 
-        # -- Collect all quality signals --
-        print("\n[1/4] Running SonarQube scan ...")
-        scan_ok = sonar_scan(cfg)
-        s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
-        print(f"  SonarQube issues: {len(s_issues)}")
-
-        print("\n[2/4] Running cargo clippy ...")
-        c_issues = cargo_clippy_issues()
-        print(f"  Clippy issues: {len(c_issues)}")
-
-        print("\n[3/4] Running cargo fmt --check ...")
-        f_issues = cargo_fmt_check()
-        print(f"  Fmt issues: {len(f_issues)}")
-
-        print("\n[4/4] Fetching CodeRabbit comments ...")
-        cr_issues = coderabbit_comments(cfg)
-        print(f"  CodeRabbit comments: {len(cr_issues)}")
-
+        s_issues, c_issues, f_issues, cr_issues = collect_signals(cfg)
         total = len(s_issues) + len(c_issues) + len(f_issues) + len(cr_issues)
 
         if total == 0:
             banner("All signals clean -- loop complete!")
             sys.exit(0)
 
-        # -- Build prompt and invoke Claude Code --
         print(f"\n  Total issues: {total}.")
         prompt = build_fix_prompt(s_issues, c_issues, f_issues, cr_issues)
 
@@ -629,7 +651,6 @@ def main() -> None:
         if not success:
             print("[warn] Claude Code exited with an error. Continuing anyway.")
 
-        # -- Regression guard --
         print("\n  Running cargo test (regression guard) ...")
         if not cargo_test():
             print("[error] Tests broke after Claude's changes. Stopping.")
@@ -637,17 +658,14 @@ def main() -> None:
             sys.exit(1)
         print("  Tests still green.")
 
-        # -- Commit and push --
         sha_before = current_sha()
         pushed = git_commit_push(iteration)
         sha_after = current_sha()
 
         if sha_before == sha_after:
-            print("  No changes committed. Likely all issues were already resolved.")
-            banner("Nothing to push -- loop complete!")
-            sys.exit(0)
+            print("  No changes committed. Re-collecting signals to verify.")
+            continue
 
-        # -- Wait for CI and CodeRabbit --
         if pushed:
             wait_for_coderabbit(cfg, sha_after)
         else:

@@ -4,6 +4,14 @@ use std::sync::mpsc;
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
+fn notion_type_icon(object_type: &str) -> &'static str {
+    if object_type == "database" {
+        "\u{1F5C3}" // 🗃️
+    } else {
+        "\u{1F4C4}" // 📄
+    }
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_settings_sources_section(
         &mut self,
@@ -171,295 +179,299 @@ impl DirigentApp {
 
     fn render_settings_source_kind_fields(&mut self, ui: &mut egui::Ui, i: usize) {
         match self.settings.sources[i].kind {
-            SourceKind::GitHubIssues => {
-                ui.label("GH Label:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
-                        .desired_width(120.0)
-                        .hint_text("e.g. enhancement")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            SourceKind::Slack => {
-                ui.label("Bot Token:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                        .desired_width(200.0)
-                        .hint_text("from env SLACK_BOT_TOKEN or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Channel:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].channel)
-                        .desired_width(200.0)
-                        .hint_text("C01ABCDEF or #channel-name")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            SourceKind::SonarQube => {
-                ui.label("Host URL:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].host_url)
-                        .desired_width(200.0)
-                        .hint_text("http://localhost:9000")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Project Key:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                        .desired_width(200.0)
-                        .hint_text("e.g. my-project")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Token:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                        .desired_width(200.0)
-                        .hint_text("from env SONAR_TOKEN or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            SourceKind::Trello => {
-                ui.label("API Key:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].api_key)
-                        .desired_width(200.0)
-                        .hint_text("from env TRELLO_API_KEY or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Token:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                        .desired_width(200.0)
-                        .hint_text("from env TRELLO_TOKEN or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Board ID:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                        .desired_width(200.0)
-                        .hint_text("e.g. 60d5ecXXXXX")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("List Filter:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
-                        .desired_width(120.0)
-                        .hint_text("e.g. To Do (optional)")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            SourceKind::Asana => {
-                ui.label("Token:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                        .desired_width(200.0)
-                        .hint_text("from env ASANA_TOKEN or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                ui.label("Project GID:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                        .desired_width(200.0)
-                        .hint_text("e.g. 120345678901234")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            SourceKind::Notion => {
-                ui.label("Token:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                        .desired_width(200.0)
-                        .hint_text("from env NOTION_TOKEN or .env")
-                        .password(true)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-
-                // Database/Page selector: dropdown when objects are loaded, else text input.
-                ui.label("Database / Page:");
-                let is_loading = self
-                    .notion_objects_rx
-                    .as_ref()
-                    .is_some_and(|(idx, _)| *idx == i);
-                let has_objects = self.notion_objects.get(&i).is_some_and(|v| !v.is_empty());
-
-                ui.horizontal(|ui| {
-                    if has_objects {
-                        let objects = &self.notion_objects[&i];
-                        let current_id = &self.settings.sources[i].project_key;
-                        let selected_label = objects
-                            .iter()
-                            .find(|o| o.id == *current_id)
-                            .map(|o| {
-                                let icon = if o.object_type == "database" {
-                                    "\u{1F5C3}" // 🗃️
-                                } else {
-                                    "\u{1F4C4}" // 📄
-                                };
-                                format!("{} {}", icon, o.title)
-                            })
-                            .unwrap_or_else(|| {
-                                if current_id.is_empty() {
-                                    "Select\u{2026}".to_string()
-                                } else {
-                                    current_id.clone()
-                                }
-                            });
-
-                        egui::ComboBox::from_id_salt(format!("notion_obj_{}", i))
-                            .selected_text(&selected_label)
-                            .width(200.0)
-                            .show_ui(ui, |ui| {
-                                for obj in objects {
-                                    let icon = if obj.object_type == "database" {
-                                        "\u{1F5C3}" // 🗃️
-                                    } else {
-                                        "\u{1F4C4}" // 📄
-                                    };
-                                    let label = format!("{} {}", icon, obj.title);
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.settings.sources[i].project_key,
-                                            obj.id.clone(),
-                                            &label,
-                                        )
-                                        .changed()
-                                    {
-                                        // Auto-set page type hint based on object type.
-                                    }
-                                }
-                            });
-                    }
-
-                    if is_loading {
-                        ui.spinner();
-                    } else if ui.small_button("Load").clicked() {
-                        self.start_notion_objects_fetch(i);
-                    }
-                });
-                ui.end_row();
-
-                // Always show a text field for manual ID / URL entry.
-                ui.label("");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                            .desired_width(200.0)
-                            .hint_text("ID or Notion URL")
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    if has_objects {
-                        ui.label(
-                            egui::RichText::new("(or pick from dropdown above)")
-                                .small()
-                                .color(self.semantic.tertiary_text),
-                        );
-                    } else {
-                        ui.label(
-                            egui::RichText::new("(click Load to list databases & pages)")
-                                .small()
-                                .color(self.semantic.tertiary_text),
-                        );
-                    }
-                });
-                ui.end_row();
-
-                // Show error if the last fetch failed.
-                if let Some(err) = self.notion_objects_error.get(&i) {
-                    ui.label("");
-                    ui.label(
-                        egui::RichText::new(err)
-                            .small()
-                            .color(egui::Color32::from_rgb(220, 50, 50)),
-                    );
-                    ui.end_row();
-                }
-
-                ui.label("Page Type:");
-                egui::ComboBox::from_id_salt(format!("notion_page_type_{}", i))
-                    .selected_text(self.settings.sources[i].notion_page_type.display_name())
-                    .show_ui(ui, |ui| {
-                        for pt in NotionPageType::all() {
-                            ui.selectable_value(
-                                &mut self.settings.sources[i].notion_page_type,
-                                pt.clone(),
-                                pt.display_name(),
-                            );
-                        }
-                    });
-                ui.end_row();
-
-                if self.settings.sources[i].notion_page_type == NotionPageType::KanbanBoard {
-                    ui.label("Inbox Status:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
-                            .desired_width(120.0)
-                            .hint_text("e.g. Not started")
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    ui.end_row();
-
-                    ui.label("Status Property:");
-                    ui.add(
-                        egui::TextEdit::singleline(
-                            &mut self.settings.sources[i].notion_status_property,
-                        )
-                        .desired_width(120.0)
-                        .hint_text("default: Status")
-                        .font(egui::TextStyle::Monospace),
-                    );
-                    ui.end_row();
-                }
-
-                let done_hint = match self.settings.sources[i].notion_page_type {
-                    NotionPageType::TodoList => "checkbox property name, e.g. Done",
-                    NotionPageType::KanbanBoard => "target status, e.g. Done",
-                };
-                ui.label("Done Value:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].notion_done_value)
-                        .desired_width(120.0)
-                        .hint_text(done_hint)
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
-            _ => {
-                ui.label("Command:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].command)
-                        .desired_width(200.0)
-                        .hint_text("shell command outputting JSON")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.end_row();
-            }
+            SourceKind::GitHubIssues => self.render_source_github_fields(ui, i),
+            SourceKind::Slack => self.render_source_slack_fields(ui, i),
+            SourceKind::SonarQube => self.render_source_sonarqube_fields(ui, i),
+            SourceKind::Trello => self.render_source_trello_fields(ui, i),
+            SourceKind::Asana => self.render_source_asana_fields(ui, i),
+            SourceKind::Notion => self.render_source_notion_fields(ui, i),
+            _ => self.render_source_custom_fields(ui, i),
         }
+    }
+
+    fn render_source_github_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("GH Label:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
+                .desired_width(120.0)
+                .hint_text("e.g. enhancement")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_slack_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Bot Token:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                .desired_width(200.0)
+                .hint_text("from env SLACK_BOT_TOKEN or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Channel:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].channel)
+                .desired_width(200.0)
+                .hint_text("C01ABCDEF or #channel-name")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_sonarqube_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Host URL:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].host_url)
+                .desired_width(200.0)
+                .hint_text("http://localhost:9000")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Project Key:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                .desired_width(200.0)
+                .hint_text("e.g. my-project")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Token:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                .desired_width(200.0)
+                .hint_text("from env SONAR_TOKEN or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_trello_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("API Key:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].api_key)
+                .desired_width(200.0)
+                .hint_text("from env TRELLO_API_KEY or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Token:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                .desired_width(200.0)
+                .hint_text("from env TRELLO_TOKEN or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Board ID:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                .desired_width(200.0)
+                .hint_text("e.g. 60d5ecXXXXX")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("List Filter:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
+                .desired_width(120.0)
+                .hint_text("e.g. To Do (optional)")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_asana_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Token:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                .desired_width(200.0)
+                .hint_text("from env ASANA_TOKEN or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        ui.label("Project GID:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                .desired_width(200.0)
+                .hint_text("e.g. 120345678901234")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_notion_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Token:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
+                .desired_width(200.0)
+                .hint_text("from env NOTION_TOKEN or .env")
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+
+        self.render_notion_object_selector(ui, i);
+        self.render_notion_page_type_fields(ui, i);
+    }
+
+    fn render_notion_object_selector(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Database / Page:");
+        let is_loading = self
+            .notion_objects_rx
+            .as_ref()
+            .is_some_and(|(idx, _)| *idx == i);
+        let has_objects = self.notion_objects.get(&i).is_some_and(|v| !v.is_empty());
+
+        ui.horizontal(|ui| {
+            if has_objects {
+                self.render_notion_object_dropdown(ui, i);
+            }
+
+            if is_loading {
+                ui.spinner();
+            } else if ui.small_button("Load").clicked() {
+                self.start_notion_objects_fetch(i);
+            }
+        });
+        ui.end_row();
+
+        ui.label("");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                    .desired_width(200.0)
+                    .hint_text("ID or Notion URL")
+                    .font(egui::TextStyle::Monospace),
+            );
+            let hint = if has_objects {
+                "(or pick from dropdown above)"
+            } else {
+                "(click Load to list databases & pages)"
+            };
+            ui.label(
+                egui::RichText::new(hint)
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            );
+        });
+        ui.end_row();
+
+        if let Some(err) = self.notion_objects_error.get(&i) {
+            ui.label("");
+            ui.label(
+                egui::RichText::new(err)
+                    .small()
+                    .color(egui::Color32::from_rgb(220, 50, 50)),
+            );
+            ui.end_row();
+        }
+    }
+
+    fn render_notion_object_dropdown(&mut self, ui: &mut egui::Ui, i: usize) {
+        let objects = &self.notion_objects[&i];
+        let current_id = &self.settings.sources[i].project_key;
+        let selected_label = objects
+            .iter()
+            .find(|o| o.id == *current_id)
+            .map(|o| {
+                let icon = notion_type_icon(&o.object_type);
+                format!("{} {}", icon, o.title)
+            })
+            .unwrap_or_else(|| {
+                if current_id.is_empty() {
+                    "Select\u{2026}".to_string()
+                } else {
+                    current_id.clone()
+                }
+            });
+
+        egui::ComboBox::from_id_salt(format!("notion_obj_{}", i))
+            .selected_text(&selected_label)
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                for obj in objects {
+                    let icon = notion_type_icon(&obj.object_type);
+                    let label = format!("{} {}", icon, obj.title);
+                    ui.selectable_value(
+                        &mut self.settings.sources[i].project_key,
+                        obj.id.clone(),
+                        &label,
+                    );
+                }
+            });
+    }
+
+    fn render_notion_page_type_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Page Type:");
+        egui::ComboBox::from_id_salt(format!("notion_page_type_{}", i))
+            .selected_text(self.settings.sources[i].notion_page_type.display_name())
+            .show_ui(ui, |ui| {
+                for pt in NotionPageType::all() {
+                    ui.selectable_value(
+                        &mut self.settings.sources[i].notion_page_type,
+                        pt.clone(),
+                        pt.display_name(),
+                    );
+                }
+            });
+        ui.end_row();
+
+        if self.settings.sources[i].notion_page_type == NotionPageType::KanbanBoard {
+            ui.label("Inbox Status:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
+                    .desired_width(120.0)
+                    .hint_text("e.g. Not started")
+                    .font(egui::TextStyle::Monospace),
+            );
+            ui.end_row();
+
+            ui.label("Status Property:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.sources[i].notion_status_property)
+                    .desired_width(120.0)
+                    .hint_text("default: Status")
+                    .font(egui::TextStyle::Monospace),
+            );
+            ui.end_row();
+        }
+
+        let done_hint = match self.settings.sources[i].notion_page_type {
+            NotionPageType::TodoList => "checkbox property name, e.g. Done",
+            NotionPageType::KanbanBoard => "target status, e.g. Done",
+        };
+        ui.label("Done Value:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].notion_done_value)
+                .desired_width(120.0)
+                .hint_text(done_hint)
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
+    }
+
+    fn render_source_custom_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        ui.label("Command:");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings.sources[i].command)
+                .desired_width(200.0)
+                .hint_text("shell command outputting JSON")
+                .font(egui::TextStyle::Monospace),
+        );
+        ui.end_row();
     }
 
     /// Kick off a background fetch of Notion databases/pages for source `i`.

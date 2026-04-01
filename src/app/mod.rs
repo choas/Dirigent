@@ -65,6 +65,11 @@ pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+type NotionObjectsReceiver = (
+    usize,
+    mpsc::Receiver<Result<Vec<crate::sources::NotionObject>, String>>,
+);
+
 use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
@@ -261,10 +266,7 @@ pub struct DirigentApp {
 
     // Notion object listing for settings dropdown (source index → objects)
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
-    notion_objects_rx: Option<(
-        usize,
-        mpsc::Receiver<Result<Vec<crate::sources::NotionObject>, String>>,
-    )>,
+    notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
 }
 
