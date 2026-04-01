@@ -2,6 +2,35 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.5] - 2026-04-02
+
+### Added
+- Native Notion integration as a cue source with configurable settings
+- LSP (Language Server Protocol) support with server settings and diagnostics
+- PR findings filter dialog for selective import
+- Sentry error tracking integration
+- Trello and Asana source options in Settings
+- Automated quality loop script for bulk cue processing
+- ANSI escape sequence stripping for OpenCode output
+
+### Fixed
+- Notion source reliability and non-blocking UI during sync
+- OpenCode output streaming (real-time instead of end-of-run)
+- OpenCode error formatting (ANSI escape cleanup)
+- Worktree manager showing deleted branches
+- Font size slider missing in Settings
+- Scheduled runs not starting when computer is locked
+- Notification click action at status bar
+- No-changes runs incorrectly marking cues as Done
+- Quality loop prompt logging, CR comment filtering, and commit flow
+
+### Changed
+- Extensive SonarQube-driven code quality improvements (cognitive complexity, parameter counts, wildcard imports)
+- Split large source files into module directories for maintainability
+- SQL identifier validation in migrations to prevent injection
+- Updated README documentation
+- Updated dependencies (eframe 0.34, rusqlite 0.39, git2 0.20)
+
 ## [0.3.4] - 2026-03-26
 
 ### Fixed
