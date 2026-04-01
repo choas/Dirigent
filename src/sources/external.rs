@@ -994,7 +994,9 @@ fn resolve_notion_id(
     Ok(NotionIdKind::Page(id.to_string()))
 }
 
-/// Fetch a single Notion page by ID and return it as a one-element vector.
+/// Fetch a single Notion page by ID, including its block content, and return
+/// it as a one-element vector.  The title becomes the first line (`# Title`)
+/// and the page body is appended as markdown-style text.
 fn fetch_notion_single_page(
     client: &reqwest::blocking::Client,
     token: &str,
@@ -1020,10 +1022,164 @@ fn fetch_notion_single_page(
         .json()
         .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
 
-    match notion_page_to_item(&page, source_label) {
-        Some(item) => Ok(vec![item]),
-        None => Ok(vec![]),
+    let id = match page.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return Ok(vec![]),
+    };
+
+    let title = extract_notion_page_title(&page);
+    if title.trim().is_empty() {
+        return Ok(vec![]);
     }
+
+    // Fetch the page's block children to get the full body content.
+    let body = fetch_notion_block_children(client, token, page_id).unwrap_or_default();
+
+    let text = if body.is_empty() {
+        title
+    } else {
+        format!("{}\n\n{}", title, body)
+    };
+
+    Ok(vec![SourceItem {
+        external_id: id,
+        text,
+        source_label: source_label.to_string(),
+        source_id: String::new(),
+    }])
+}
+
+/// Fetch all block children of a Notion page/block and convert them to
+/// markdown-style plain text.
+fn fetch_notion_block_children(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    block_id: &str,
+) -> crate::error::Result<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        let mut url = format!(
+            "https://api.notion.com/v1/blocks/{}/children?page_size=100",
+            block_id
+        );
+        if let Some(ref c) = cursor {
+            url.push_str(&format!("&start_cursor={}", c));
+        }
+
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Notion-Version", "2022-06-28")
+            .send()
+            .map_err(|e| DirigentError::Source(format!("Notion blocks request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            break;
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .map_err(|e| DirigentError::Source(format!("Notion blocks parse error: {e}")))?;
+
+        if let Some(results) = body.get("results").and_then(|r| r.as_array()) {
+            for block in results {
+                if let Some(line) = notion_block_to_text(block) {
+                    lines.push(line);
+                }
+            }
+        }
+
+        match body.get("has_more").and_then(|h| h.as_bool()) {
+            Some(true) => {
+                cursor = body
+                    .get("next_cursor")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string());
+            }
+            _ => break,
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Convert a single Notion block to a markdown-style text line.
+fn notion_block_to_text(block: &serde_json::Value) -> Option<String> {
+    let block_type = block.get("type")?.as_str()?;
+    match block_type {
+        "heading_1" => {
+            let text = rich_text_plain(block.get("heading_1")?);
+            Some(format!("# {}", text))
+        }
+        "heading_2" => {
+            let text = rich_text_plain(block.get("heading_2")?);
+            Some(format!("## {}", text))
+        }
+        "heading_3" => {
+            let text = rich_text_plain(block.get("heading_3")?);
+            Some(format!("### {}", text))
+        }
+        "paragraph" => {
+            let text = rich_text_plain(block.get("paragraph")?);
+            if text.is_empty() {
+                Some(String::new())
+            } else {
+                Some(text)
+            }
+        }
+        "bulleted_list_item" => {
+            let text = rich_text_plain(block.get("bulleted_list_item")?);
+            Some(format!("- {}", text))
+        }
+        "numbered_list_item" => {
+            let text = rich_text_plain(block.get("numbered_list_item")?);
+            Some(format!("1. {}", text))
+        }
+        "to_do" => {
+            let obj = block.get("to_do")?;
+            let text = rich_text_plain(obj);
+            let checked = obj
+                .get("checked")
+                .and_then(|c| c.as_bool())
+                .unwrap_or(false);
+            let marker = if checked { "[x]" } else { "[ ]" };
+            Some(format!("- {} {}", marker, text))
+        }
+        "quote" => {
+            let text = rich_text_plain(block.get("quote")?);
+            Some(format!("> {}", text))
+        }
+        "code" => {
+            let obj = block.get("code")?;
+            let text = rich_text_plain(obj);
+            let lang = obj.get("language").and_then(|l| l.as_str()).unwrap_or("");
+            Some(format!("```{}\n{}\n```", lang, text))
+        }
+        "callout" => {
+            let text = rich_text_plain(block.get("callout")?);
+            Some(format!("> {}", text))
+        }
+        "toggle" => {
+            let text = rich_text_plain(block.get("toggle")?);
+            Some(text)
+        }
+        "divider" => Some("---".to_string()),
+        _ => None,
+    }
+}
+
+/// Extract concatenated plain_text from a Notion block's `rich_text` array.
+fn rich_text_plain(obj: &serde_json::Value) -> String {
+    let arr = match obj.get("rich_text").and_then(|r| r.as_array()) {
+        Some(a) => a,
+        None => return String::new(),
+    };
+    arr.iter()
+        .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 /// Extract the title from a Notion page object returned by the Search API.
