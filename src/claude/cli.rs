@@ -44,9 +44,12 @@ pub(super) fn build_claude_command(
     cmd
 }
 
-/// Append whitespace-separated extra arguments to the command.
+/// Append extra arguments to the command, respecting shell quoting.
+/// Falls back to whitespace splitting if quotes are malformed.
 fn append_extra_args(cmd: &mut Command, extra_args: &str) {
-    for arg in extra_args.split_whitespace() {
+    let args = shlex::split(extra_args)
+        .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
+    for arg in args {
         if !arg.is_empty() {
             cmd.arg(arg);
         }

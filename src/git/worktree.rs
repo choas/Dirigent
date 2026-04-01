@@ -146,7 +146,9 @@ fn collect_gone_branches(repo_path: &Path) -> std::collections::HashSet<String> 
         return gone;
     }
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if line.contains("[gone]") {
+        // The format is "branchname [gone]" — match the trailing tracking status,
+        // not an arbitrary substring (avoids false positives on branch names).
+        if line.trim_end().ends_with("[gone]") {
             if let Some(name) = line.split_whitespace().next() {
                 gone.insert(name.to_string());
             }

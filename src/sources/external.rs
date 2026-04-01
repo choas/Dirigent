@@ -970,19 +970,24 @@ fn resolve_notion_id(
         .json()
         .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
 
-    if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
-        for block in results {
-            let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if block_type == "child_database" {
-                if let Some(child_id) = block.get("id").and_then(|v| v.as_str()) {
-                    return Ok(NotionIdKind::Database(child_id.to_string()));
-                }
-            }
-        }
+    if let Some(child_db_id) = find_child_database(&json) {
+        return Ok(NotionIdKind::Database(child_db_id));
     }
 
     // No child database found — treat as a standalone page.
     Ok(NotionIdKind::Page(id.to_string()))
+}
+
+/// Search the children blocks JSON for a `child_database` entry and return its ID.
+fn find_child_database(json: &serde_json::Value) -> Option<String> {
+    let results = json.get("results")?.as_array()?;
+    results.iter().find_map(|block| {
+        let block_type = block.get("type")?.as_str()?;
+        if block_type != "child_database" {
+            return None;
+        }
+        Some(block.get("id")?.as_str()?.to_string())
+    })
 }
 
 /// Fetch a single Notion page by ID, including its block content.

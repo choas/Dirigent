@@ -167,12 +167,17 @@ def build_config(args: argparse.Namespace) -> Config:
         os.environ["GH_PR_NUMBER"] = args.pr
     if args.repo:
         os.environ["GH_REPO"] = args.repo
-    if args.max_iterations:
-        os.environ["MAX_ITERATIONS"] = str(args.max_iterations)
-    if args.poll_interval:
-        os.environ["POLL_INTERVAL"] = str(args.poll_interval)
-    if args.poll_timeout:
-        os.environ["POLL_TIMEOUT"] = str(args.poll_timeout)
+
+    for flag, env_key in [
+        (args.max_iterations, "MAX_ITERATIONS"),
+        (args.poll_interval, "POLL_INTERVAL"),
+        (args.poll_timeout, "POLL_TIMEOUT"),
+    ]:
+        if flag is not None:
+            if flag <= 0:
+                print(f"[error] --{env_key.lower().replace('_', '-')} must be a positive integer, got {flag}")
+                sys.exit(1)
+            os.environ[env_key] = str(flag)
 
     required = ["SONAR_TOKEN", "SONAR_URL", "SONAR_PROJECT_KEY", "GH_REPO", "GH_PR_NUMBER"]
     missing = [k for k in required if not os.environ.get(k)]
@@ -627,6 +632,37 @@ def collect_signals(cfg: Config, cr_since: str = "") -> tuple[list[str], list[st
     return s_issues, c_issues, f_issues, cr_issues
 
 
+def _apply_fixes(prompt: str, iteration: int) -> None:
+    """Invoke Claude Code and verify tests still pass. Exits on test failure."""
+    print("  Invoking Claude Code ...")
+    success = claude_fix(prompt, iteration)
+    if not success:
+        print("[warn] Claude Code exited with an error. Continuing anyway.")
+
+    print("\n  Running cargo test (regression guard) ...")
+    if not cargo_test():
+        print("[error] Tests broke after Claude's changes. Stopping.")
+        print("  Check the diff, fix manually, and re-run.")
+        sys.exit(1)
+    print("  Tests still green.")
+
+
+def _commit_and_wait(cfg: Config, iteration: int) -> None:
+    """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
+    sha_before = current_sha()
+    pushed = git_commit_push(iteration)
+    sha_after = current_sha()
+
+    if sha_before == sha_after:
+        print("  No changes committed. Re-collecting signals to verify.")
+        return
+
+    if pushed:
+        wait_for_coderabbit(cfg)
+    else:
+        print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+
+
 def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
     """Run one quality loop iteration. Returns updated cr_since timestamp,
     or empty string to signal that all issues are resolved."""
@@ -647,31 +683,10 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
         print("\n[dry-run] Stopping after first iteration.")
         sys.exit(0)
 
-    print("  Invoking Claude Code ...")
-    success = claude_fix(prompt, iteration)
-    if not success:
-        print("[warn] Claude Code exited with an error. Continuing anyway.")
+    _apply_fixes(prompt, iteration)
 
-    print("\n  Running cargo test (regression guard) ...")
-    if not cargo_test():
-        print("[error] Tests broke after Claude's changes. Stopping.")
-        print("  Check the diff, fix manually, and re-run.")
-        sys.exit(1)
-    print("  Tests still green.")
-
-    sha_before = current_sha()
     new_cr_since = datetime.now(timezone.utc).isoformat()
-    pushed = git_commit_push(iteration)
-    sha_after = current_sha()
-
-    if sha_before == sha_after:
-        print("  No changes committed. Re-collecting signals to verify.")
-        return new_cr_since
-
-    if pushed:
-        wait_for_coderabbit(cfg)
-    else:
-        print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+    _commit_and_wait(cfg, iteration)
 
     return new_cr_since
 
