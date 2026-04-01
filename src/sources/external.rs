@@ -927,12 +927,18 @@ fn resolve_notion_database_id(
         .send()
         .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
 
-    if db_resp.status().is_success() {
+    let db_status = db_resp.status();
+    if db_status.is_success() {
         // It is a database — use it directly.
         return Ok(id.to_string());
     }
 
-    // Not a database (likely a page). Look for child databases inside it.
+    // Parse the error body to check if the object simply isn't shared with the
+    // integration (Notion returns "object_not_found" for both "does not exist"
+    // and "not shared with integration").
+    let db_body = db_resp.text().unwrap_or_default();
+
+    // Try as a page: look for child databases inside it.
     let children_url = format!(
         "https://api.notion.com/v1/blocks/{}/children?page_size=100",
         id
@@ -945,11 +951,14 @@ fn resolve_notion_database_id(
         .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
 
     if !children_resp.status().is_success() {
-        let status = children_resp.status();
-        let body = children_resp.text().unwrap_or_default();
+        // Both the database and the page/block lookup failed.  The most common
+        // cause is that the page/database hasn't been shared with the Notion
+        // integration.  Surface that directly.
         return Err(DirigentError::Source(format!(
-            "The ID is not a Notion database. Tried to find a child database inside the page \
-             but the Notion API returned ({status}): {body}"
+            "Could not access this Notion ID as a database or page ({}). \
+             Make sure the page is shared with your Notion integration. \
+             Notion API response: {}",
+            db_status, db_body
         )));
     }
 
