@@ -470,19 +470,27 @@ impl DirigentApp {
         };
 
         // Find the matching Notion source config to get token and page type.
-        let notion_source = self
-            .settings
-            .sources
-            .iter()
-            .find(|s| {
-                s.kind == SourceKind::Notion
-                    && (s
-                        .id
-                        .as_ref()
-                        .map_or(false, |sid| cue.source_id.as_deref() == Some(sid.as_str()))
-                        || cue.source_label.as_deref() == Some(&s.label))
-            })
-            .cloned();
+        // If cue.source_id is present, match only by source id; otherwise fall back to label.
+        let notion_source = if cue.source_id.is_some() {
+            self.settings
+                .sources
+                .iter()
+                .find(|s| {
+                    s.kind == SourceKind::Notion
+                        && s.id
+                            .as_ref()
+                            .map_or(false, |sid| cue.source_id.as_deref() == Some(sid.as_str()))
+                })
+                .cloned()
+        } else {
+            self.settings
+                .sources
+                .iter()
+                .find(|s| {
+                    s.kind == SourceKind::Notion && cue.source_label.as_deref() == Some(&s.label)
+                })
+                .cloned()
+        };
         let Some(source) = notion_source else {
             self.set_status_message("Notion source config not found for this cue".into());
             return;
