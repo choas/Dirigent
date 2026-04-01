@@ -433,22 +433,70 @@ def wait_for_coderabbit(cfg: Config, since_sha: str) -> None:
 # ---------------------------------------------------------------------------
 
 def claude_fix(prompt: str) -> bool:
-    """Invoke Claude Code in non-interactive (print) mode with a fix prompt.
+    """Invoke Claude Code with stream-json output to show live progress.
     Returns True if Claude exited successfully."""
-    print(f"  $ claude --print '<prompt ({len(prompt)} chars)>'")
+    print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --dangerously-skip-permissions")
     start = time.time()
     try:
-        result = subprocess.run(
-            ["claude", "--print", prompt],
-            check=False,
+        proc = subprocess.Popen(
+            ["claude", "-p", prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
         )
     except FileNotFoundError:
         print("  [error] Command not found: claude")
         return False
+
+    # Stream stdout line-by-line, parse JSON events for progress
+    for line in proc.stdout:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        _print_stream_event(event)
+
+    proc.wait()
     elapsed = time.time() - start
-    print(f"  Claude Code finished in {elapsed:.0f}s (exit {result.returncode})")
-    return result.returncode == 0
+    print(f"  Claude Code finished in {elapsed:.0f}s (exit {proc.returncode})")
+    return proc.returncode == 0
+
+
+def _extract_tool_detail(inp: dict) -> str:
+    """Build a short detail string from a tool_use input dict."""
+    if "command" in inp:
+        first_line = inp["command"].split("\n", 1)[0]
+        return f" $ {first_line}"
+    if "file_path" in inp:
+        return f" {inp['file_path']}"
+    if "pattern" in inp:
+        return f' "{inp["pattern"]}"'
+    return ""
+
+
+def _print_stream_event(event: dict) -> None:
+    """Print a human-readable summary of a Claude stream-json event."""
+    etype = event.get("type", "")
+    if etype == "assistant":
+        for block in event.get("message", {}).get("content", []):
+            btype = block.get("type", "")
+            if btype == "tool_use":
+                name = block.get("name", "?")
+                detail = _extract_tool_detail(block.get("input", {}))
+                print(f"  \u2192 {name}{detail}")
+    elif etype == "result":
+        cost = event.get("cost_usd")
+        duration = event.get("duration_ms")
+        if cost is not None or duration is not None:
+            parts = []
+            if duration is not None:
+                parts.append(f"{duration / 1000:.0f}s")
+            if cost is not None:
+                parts.append(f"${cost:.4f}")
+            print(f"  [{', '.join(parts)}]")
 
 
 def build_fix_prompt(
