@@ -204,14 +204,23 @@ def build_config(args: argparse.Namespace) -> Config:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_SENSITIVE_PREFIXES = ("-Dsonar.token=", "-Dsonar.login=", "--token=")
+_MAX_ARG_DISPLAY_LEN = 120
+
+
 def _redact_cmd(cmd: list[str]) -> list[str]:
-    """Return a copy of cmd with sensitive-looking values masked."""
+    """Return a copy of cmd with sensitive-looking values masked and long args truncated."""
     redacted = []
     for arg in cmd:
-        for prefix in ("-Dsonar.token=", "--token="):
+        for prefix in _SENSITIVE_PREFIXES:
             if arg.startswith(prefix):
                 arg = f"{prefix}***"
                 break
+        else:
+            # Truncate very long arguments (e.g. inlined prompts) to avoid
+            # flooding logs with multi-KB strings.
+            if len(arg) > _MAX_ARG_DISPLAY_LEN:
+                arg = f"{arg[:_MAX_ARG_DISPLAY_LEN]}... ({len(arg)} chars)"
         redacted.append(arg)
     return redacted
 
@@ -367,9 +376,13 @@ def pr_checks_passing(cfg: Config) -> bool:
         if not checks:
             return True  # No checks configured -- treat as passing
         return all(
-            c.get("conclusion") in ("SUCCESS", "SKIPPED", None)
+            c.get("conclusion") in ("SUCCESS", "SKIPPED")
             for c in checks
-        )
+            # A None conclusion means the check is still in progress;
+            # skip those so we don't treat pending checks as failures,
+            # but also require at least one check to have completed.
+            if c.get("conclusion") is not None
+        ) and any(c.get("conclusion") is not None for c in checks)
     except json.JSONDecodeError:
         return False
 
@@ -469,10 +482,13 @@ def _process_claude_stream(proc) -> None:
 def claude_fix(prompt: str, iteration: int = 0) -> bool:
     """Invoke Claude Code with stream-json output to show live progress.
     Returns True if Claude exited successfully."""
-    # Log prompt to /tmp for debugging
+    # Log prompt to /tmp for debugging (owner-only permissions since the
+    # prompt may embed issue details or tokens from surrounding context).
     ts = time.strftime("%Y%m%d_%H%M%S")
     prompt_file = f"/tmp/quality_loop_prompt_{ts}_iter{iteration}.txt"
-    Path(prompt_file).write_text(prompt)
+    pf = Path(prompt_file)
+    pf.write_text(prompt)
+    pf.chmod(0o600)
     print(f"  Prompt saved to {prompt_file}")
     print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --verbose --dangerously-skip-permissions")
     start = time.time()
@@ -581,9 +597,20 @@ def current_sha() -> str:
     return result.stdout.strip()
 
 
-def git_commit_push(iteration: int) -> bool:
-    """Commit and push changes. Returns True if push succeeded."""
-    result = run(["git", "add", "-u"], check=False)
+def _get_dirty_files() -> set[str]:
+    """Return the set of tracked file paths with uncommitted changes."""
+    result = run(["git", "diff", "--name-only", "HEAD"], check=False, capture=True)
+    return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
+
+
+def git_commit_push(iteration: int, files_to_stage: list[str] | None = None) -> bool:
+    """Commit and push changes. Returns True if push succeeded.
+    If `files_to_stage` is given, only those files are staged (avoids
+    accidentally committing pre-existing local edits or secrets)."""
+    if files_to_stage:
+        result = run(["git", "add", "--"] + files_to_stage, check=False)
+    else:
+        result = run(["git", "add", "-u"], check=False)
     if result.returncode != 0:
         print("  [warn] git add failed.")
         return False
@@ -647,14 +674,14 @@ def _apply_fixes(prompt: str, iteration: int) -> None:
     print("  Tests still green.")
 
 
-def _commit_and_wait(cfg: Config, iteration: int) -> None:
+def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: list[str] | None = None) -> None:
     """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
     sha_before = current_sha()
-    pushed = git_commit_push(iteration)
+    pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
     sha_after = current_sha()
 
     if sha_before == sha_after:
-        print("  No changes committed. Re-collecting signals to verify.")
+        print("  No changes committed — Claude may not have produced a fix.")
         return
 
     if pushed:
@@ -683,10 +710,18 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
         print("\n[dry-run] Stopping after first iteration.")
         sys.exit(0)
 
+    # Snapshot dirty files before Claude runs so we can scope staging
+    # to only files that are *newly* changed, avoiding the risk of
+    # committing pre-existing local edits or mis-ignored secrets.
+    dirty_before = _get_dirty_files()
+
     _apply_fixes(prompt, iteration)
 
+    dirty_after = _get_dirty_files()
+    new_files = sorted(dirty_after - dirty_before)
+
     new_cr_since = datetime.now(timezone.utc).isoformat()
-    _commit_and_wait(cfg, iteration)
+    _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
 
     return new_cr_since
 

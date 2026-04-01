@@ -47,8 +47,12 @@ pub(super) fn build_claude_command(
 /// Append extra arguments to the command, respecting shell quoting.
 /// Falls back to whitespace splitting if quotes are malformed.
 fn append_extra_args(cmd: &mut Command, extra_args: &str) {
-    let args = shlex::split(extra_args)
-        .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
+    let args = shlex::split(extra_args).unwrap_or_else(|| {
+        eprintln!(
+            "warning: extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
+        );
+        extra_args.split_whitespace().map(String::from).collect()
+    });
     for arg in args {
         if !arg.is_empty() {
             cmd.arg(arg);

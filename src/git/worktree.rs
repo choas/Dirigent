@@ -114,15 +114,16 @@ pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String
 }
 
 /// Fetch latest remote refs and prune stale remote-tracking branches.
-/// Best-effort: errors are silently ignored (e.g. no network).
+/// Best-effort / fire-and-forget: the process is spawned in the background
+/// so callers on the UI thread are not blocked by network I/O.
 fn fetch_and_prune(repo_path: &Path) {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     let _ = Command::new("git")
         .args(["fetch", "--prune"])
         .current_dir(repo_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn(); // fire-and-forget — avoids blocking the UI thread
 }
 
 /// Return the set of local branch names whose upstream tracking branch has
