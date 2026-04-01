@@ -167,6 +167,41 @@ fn fetch_source_items(
     items
 }
 
+fn non_empty_or<'a>(value: &'a str, default: &'a str) -> &'a str {
+    if value.is_empty() {
+        default
+    } else {
+        value
+    }
+}
+
+fn resolve_trello_api_key(source: &settings::SourceConfig, project_root: &Path) -> String {
+    if !source.api_key.is_empty() {
+        source.api_key.clone()
+    } else {
+        std::env::var("TRELLO_API_KEY")
+            .ok()
+            .or_else(|| sources::load_env_var(project_root, "TRELLO_API_KEY"))
+            .unwrap_or_default()
+    }
+}
+
+fn fetch_custom_source(
+    source: &settings::SourceConfig,
+    project_root: &Path,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if source.command.is_empty() {
+        Ok(Vec::new())
+    } else {
+        sources::fetch_custom_command(
+            project_root,
+            &source.command,
+            &source.label,
+            source.id.as_deref().unwrap_or(""),
+        )
+    }
+}
+
 fn fetch_by_kind(
     source: &settings::SourceConfig,
     project_root: &Path,
@@ -182,22 +217,11 @@ fn fetch_by_kind(
             sources::fetch_slack_messages(&token(), &source.channel, &source.label)
         }
         SourceKind::SonarQube => {
-            let host = if source.host_url.is_empty() {
-                "http://localhost:9000"
-            } else {
-                &source.host_url
-            };
+            let host = non_empty_or(&source.host_url, "http://localhost:9000");
             sources::fetch_sonarqube_issues(host, &source.project_key, &token(), &source.label)
         }
         SourceKind::Trello => {
-            let api_key = if !source.api_key.is_empty() {
-                source.api_key.clone()
-            } else {
-                std::env::var("TRELLO_API_KEY")
-                    .ok()
-                    .or_else(|| sources::load_env_var(project_root, "TRELLO_API_KEY"))
-                    .unwrap_or_default()
-            };
+            let api_key = resolve_trello_api_key(source, project_root);
             sources::fetch_trello_cards(
                 &api_key,
                 &token(),
@@ -218,17 +242,6 @@ fn fetch_by_kind(
             &source.notion_status_property,
             &source.label,
         ),
-        SourceKind::Custom | SourceKind::Mcp => {
-            if source.command.is_empty() {
-                Ok(Vec::new())
-            } else {
-                sources::fetch_custom_command(
-                    project_root,
-                    &source.command,
-                    &source.label,
-                    source.id.as_deref().unwrap_or(""),
-                )
-            }
-        }
+        SourceKind::Custom | SourceKind::Mcp => fetch_custom_source(source, project_root),
     }
 }

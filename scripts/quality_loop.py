@@ -224,7 +224,7 @@ def run(cmd: list[str], check=True, capture=False) -> subprocess.CompletedProces
         print(f"  [error] Command not found: {cmd[0]}")
         return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr="")
     except subprocess.CalledProcessError as e:
-        print(f"  [error] Command failed (exit {e.returncode}): {' '.join(cmd)}")
+        print(f"  [error] Command failed (exit {e.returncode}): {' '.join(_redact_cmd(cmd))}")
         return subprocess.CompletedProcess(cmd, returncode=e.returncode,
                                            stdout=e.stdout or "", stderr=e.stderr or "")
 
@@ -369,13 +369,17 @@ def pr_checks_passing(cfg: Config) -> bool:
         return False
 
 
-def coderabbit_comments(cfg: Config) -> list[str]:
-    """Return unresolved review comments left by coderabbitai[bot]."""
-    output = gh(
+def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
+    """Return unresolved review comments left by coderabbitai[bot].
+    If `since` is set (ISO 8601 timestamp), only return comments created after that time."""
+    args = [
         "api",
         f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
         "--paginate",
-    )
+    ]
+    if since:
+        args.extend(["-f", f"since={since}"])
+    output = gh(*args)
     try:
         comments = json.loads(output)
     except json.JSONDecodeError:
@@ -414,7 +418,7 @@ def coderabbit_summary_posted(cfg: Config) -> bool:
     )
 
 
-def wait_for_coderabbit(cfg: Config, _since_sha: str) -> None:
+def wait_for_coderabbit(cfg: Config) -> None:
     """Block until CI passes and CodeRabbit has reviewed the latest push."""
     banner(f"Waiting for CI + CodeRabbit (timeout {cfg.poll_timeout}s)")
     deadline = time.time() + cfg.poll_timeout
@@ -444,9 +448,27 @@ def wait_for_coderabbit(cfg: Config, _since_sha: str) -> None:
 # Claude Code
 # ---------------------------------------------------------------------------
 
-def claude_fix(prompt: str) -> bool:
+def _process_claude_stream(proc) -> None:
+    """Parse and display Claude stream-json events from stdout."""
+    for line in proc.stdout:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        _print_stream_event(event)
+
+
+def claude_fix(prompt: str, iteration: int = 0) -> bool:
     """Invoke Claude Code with stream-json output to show live progress.
     Returns True if Claude exited successfully."""
+    # Log prompt to /tmp for debugging
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    prompt_file = f"/tmp/quality_loop_prompt_{ts}_iter{iteration}.txt"
+    Path(prompt_file).write_text(prompt)
+    print(f"  Prompt saved to {prompt_file}")
     print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --verbose --dangerously-skip-permissions")
     start = time.time()
     try:
@@ -460,17 +482,7 @@ def claude_fix(prompt: str) -> bool:
         print("  [error] Command not found: claude")
         return False
 
-    # Stream stdout line-by-line, parse JSON events for progress
-    for line in proc.stdout:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        _print_stream_event(event)
-
+    _process_claude_stream(proc)
     stderr_output = proc.stderr.read()
     proc.wait()
     elapsed = time.time() - start
@@ -592,8 +604,9 @@ def git_commit_push(iteration: int) -> bool:
 # Main loop
 # ---------------------------------------------------------------------------
 
-def collect_signals(cfg: Config) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Collect all quality signals and return (sonar, clippy, fmt, coderabbit)."""
+def collect_signals(cfg: Config, cr_since: str = "") -> tuple[list[str], list[str], list[str], list[str]]:
+    """Collect all quality signals and return (sonar, clippy, fmt, coderabbit).
+    `cr_since` filters CodeRabbit comments to only those created after this ISO 8601 timestamp."""
     print("\n[1/4] Running SonarQube scan ...")
     scan_ok = sonar_scan(cfg)
     s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
@@ -608,10 +621,59 @@ def collect_signals(cfg: Config) -> tuple[list[str], list[str], list[str], list[
     print(f"  Fmt issues: {len(f_issues)}")
 
     print("\n[4/4] Fetching CodeRabbit comments ...")
-    cr_issues = coderabbit_comments(cfg)
+    cr_issues = coderabbit_comments(cfg, since=cr_since)
     print(f"  CodeRabbit comments: {len(cr_issues)}")
 
     return s_issues, c_issues, f_issues, cr_issues
+
+
+def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
+    """Run one quality loop iteration. Returns updated cr_since timestamp,
+    or empty string to signal that all issues are resolved."""
+    from datetime import datetime, timezone
+
+    s_issues, c_issues, f_issues, cr_issues = collect_signals(cfg, cr_since=cr_since)
+    total = len(s_issues) + len(c_issues) + len(f_issues) + len(cr_issues)
+
+    if total == 0:
+        return ""
+
+    print(f"\n  Total issues: {total}.")
+    prompt = build_fix_prompt(s_issues, c_issues, f_issues, cr_issues)
+
+    if cfg.dry_run:
+        print("\n[dry-run] Would invoke Claude Code with this prompt:\n")
+        print(prompt)
+        print("\n[dry-run] Stopping after first iteration.")
+        sys.exit(0)
+
+    print("  Invoking Claude Code ...")
+    success = claude_fix(prompt, iteration)
+    if not success:
+        print("[warn] Claude Code exited with an error. Continuing anyway.")
+
+    print("\n  Running cargo test (regression guard) ...")
+    if not cargo_test():
+        print("[error] Tests broke after Claude's changes. Stopping.")
+        print("  Check the diff, fix manually, and re-run.")
+        sys.exit(1)
+    print("  Tests still green.")
+
+    sha_before = current_sha()
+    new_cr_since = datetime.now(timezone.utc).isoformat()
+    pushed = git_commit_push(iteration)
+    sha_after = current_sha()
+
+    if sha_before == sha_after:
+        print("  No changes committed. Re-collecting signals to verify.")
+        return new_cr_since
+
+    if pushed:
+        wait_for_coderabbit(cfg)
+    else:
+        print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+
+    return new_cr_since
 
 
 def main() -> None:
@@ -627,49 +689,14 @@ def main() -> None:
         sys.exit(1)
     print("  Baseline tests green.")
 
+    cr_since = ""
+
     for iteration in range(1, cfg.max_iterations + 1):
         banner(f"Iteration {iteration}/{cfg.max_iterations}")
-
-        s_issues, c_issues, f_issues, cr_issues = collect_signals(cfg)
-        total = len(s_issues) + len(c_issues) + len(f_issues) + len(cr_issues)
-
-        if total == 0:
+        cr_since = _run_iteration(cfg, iteration, cr_since)
+        if not cr_since:
             banner("All signals clean -- loop complete!")
             sys.exit(0)
-
-        print(f"\n  Total issues: {total}.")
-        prompt = build_fix_prompt(s_issues, c_issues, f_issues, cr_issues)
-
-        if cfg.dry_run:
-            print("\n[dry-run] Would invoke Claude Code with this prompt:\n")
-            print(prompt)
-            print("\n[dry-run] Stopping after first iteration.")
-            sys.exit(0)
-
-        print("  Invoking Claude Code ...")
-        success = claude_fix(prompt)
-        if not success:
-            print("[warn] Claude Code exited with an error. Continuing anyway.")
-
-        print("\n  Running cargo test (regression guard) ...")
-        if not cargo_test():
-            print("[error] Tests broke after Claude's changes. Stopping.")
-            print("  Check the diff, fix manually, and re-run.")
-            sys.exit(1)
-        print("  Tests still green.")
-
-        sha_before = current_sha()
-        pushed = git_commit_push(iteration)
-        sha_after = current_sha()
-
-        if sha_before == sha_after:
-            print("  No changes committed. Re-collecting signals to verify.")
-            continue
-
-        if pushed:
-            wait_for_coderabbit(cfg, sha_after)
-        else:
-            print("  Skipping CI/CodeRabbit wait (push did not succeed).")
 
     print(f"\n[warn] Reached max iterations ({cfg.max_iterations}). Stopping.")
     print("  Some issues may remain. Check the PR manually.")

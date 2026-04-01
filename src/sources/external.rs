@@ -504,8 +504,6 @@ pub(crate) fn fetch_asana_tasks(
 pub(crate) fn fetch_notion_objects(
     token: &str,
 ) -> crate::error::Result<Vec<super::types::NotionObject>> {
-    use super::types::NotionObject;
-
     if token.is_empty() {
         return Err(DirigentError::Source(
             "Notion token is empty (set in source config or NOTION_TOKEN in .env)".to_string(),
@@ -513,32 +511,20 @@ pub(crate) fn fetch_notion_objects(
     }
 
     let client = notion_client()?;
-    let mut all: Vec<NotionObject> = Vec::new();
-    let mut cursor: Option<String> = None;
+    let raw = notion_paginated_post(
+        &client,
+        "https://api.notion.com/v1/search",
+        token,
+        &serde_json::json!({ "page_size": 100 }),
+    )?;
+    let mut all: Vec<super::types::NotionObject> =
+        raw.iter().filter_map(parse_notion_search_result).collect();
+    sort_notion_objects(&mut all);
+    Ok(all)
+}
 
-    loop {
-        let mut body = serde_json::json!({ "page_size": 100 });
-        if let Some(ref c) = cursor {
-            body["start_cursor"] = serde_json::json!(c);
-        }
-
-        let json = notion_post(&client, "https://api.notion.com/v1/search", token, &body)
-            .map_err(|e| DirigentError::Source(format!("Notion Search API: {e}")))?;
-
-        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
-            for obj in results {
-                if let Some(notion_obj) = parse_notion_search_result(obj) {
-                    all.push(notion_obj);
-                }
-            }
-        }
-
-        if !notion_has_more(&json, &mut cursor) {
-            break;
-        }
-    }
-
-    all.sort_by(|a, b| {
+fn sort_notion_objects(objects: &mut [super::types::NotionObject]) {
+    objects.sort_by(|a, b| {
         let type_order = |t: &str| -> u8 {
             if t == "database" {
                 0
@@ -550,7 +536,30 @@ pub(crate) fn fetch_notion_objects(
             .cmp(&type_order(&b.object_type))
             .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
     });
+}
 
+/// POST to a paginated Notion endpoint, collecting all `results` arrays across pages.
+fn notion_paginated_post(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+    base_body: &serde_json::Value,
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    let mut all = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = base_body.clone();
+        if let Some(ref c) = cursor {
+            body["start_cursor"] = serde_json::json!(c);
+        }
+        let json = notion_post(client, url, token, &body)?;
+        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+            all.extend(results.iter().cloned());
+        }
+        if !notion_has_more(&json, &mut cursor) {
+            break;
+        }
+    }
     Ok(all)
 }
 
@@ -573,6 +582,30 @@ fn notion_post(
         .header("Notion-Version", "2022-06-28")
         .header("Content-Type", "application/json")
         .json(body)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let resp_body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Notion API error ({status}): {resp_body}"
+        )));
+    }
+
+    resp.json()
+        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))
+}
+
+fn notion_get(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+) -> crate::error::Result<serde_json::Value> {
+    let resp = client
+        .get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
         .send()
         .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
 
@@ -686,26 +719,7 @@ pub(crate) fn fetch_notion_tasks(
 
     let url = format!("https://api.notion.com/v1/databases/{}/query", resolved_id);
     let filter = build_notion_query_filter(page_type, inbox_status, done_property, status_property);
-
-    let mut all_results: Vec<serde_json::Value> = Vec::new();
-    let mut cursor: Option<String> = None;
-
-    loop {
-        let mut body = filter.clone();
-        if let Some(ref c) = cursor {
-            body["start_cursor"] = serde_json::json!(c);
-        }
-
-        let json = notion_post(&client, &url, token, &body)?;
-
-        if let Some(page_results) = json.get("results").and_then(|v| v.as_array()) {
-            all_results.extend(page_results.iter().cloned());
-        }
-
-        if !notion_has_more(&json, &mut cursor) {
-            break;
-        }
-    }
+    let all_results = notion_paginated_post(&client, &url, token, &filter)?;
 
     Ok(all_results
         .iter()
@@ -981,24 +995,8 @@ fn fetch_notion_single_page(
     page_id: &str,
     source_label: &str,
 ) -> crate::error::Result<Vec<SourceItem>> {
-    let resp = client
-        .get(format!("https://api.notion.com/v1/pages/{}", page_id))
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Notion-Version", "2022-06-28")
-        .send()
-        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Notion API error fetching page ({status}): {body}"
-        )));
-    }
-
-    let page: serde_json::Value = resp
-        .json()
-        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+    let url = format!("https://api.notion.com/v1/pages/{}", page_id);
+    let page = notion_get(client, &url, token)?;
 
     let id = match page.get("id").and_then(|v| v.as_str()) {
         Some(id) => id.to_string(),
@@ -1012,24 +1010,32 @@ fn fetch_notion_single_page(
 
     let lines = fetch_notion_block_lines(client, token, page_id).unwrap_or_default();
     let sections = split_h3_sections(&lines);
-
     let items = sections_to_items(sections, &id, &title, source_label);
     if !items.is_empty() {
         return Ok(items);
     }
 
+    Ok(vec![build_fallback_item(id, title, &lines, source_label)])
+}
+
+fn build_fallback_item(
+    id: String,
+    title: String,
+    lines: &[String],
+    source_label: &str,
+) -> SourceItem {
     let body = lines.join("\n").trim().to_string();
     let text = if body.is_empty() {
         title
     } else {
         format!("{}\n\n{}", title, body)
     };
-    Ok(vec![SourceItem {
+    SourceItem {
         external_id: id,
         text,
         source_label: source_label.to_string(),
         source_id: String::new(),
-    }])
+    }
 }
 
 fn split_h3_sections(lines: &[String]) -> Vec<(Option<String>, Vec<String>)> {
@@ -1085,6 +1091,18 @@ fn section_text(heading: Option<&str>, body: &str, title: &str) -> Option<String
     }
 }
 
+/// Build a Notion blocks-children URL with optional pagination cursor.
+fn build_blocks_url(block_id: &str, cursor: Option<&str>) -> String {
+    let mut url = format!(
+        "https://api.notion.com/v1/blocks/{}/children?page_size=100",
+        block_id
+    );
+    if let Some(c) = cursor {
+        url.push_str(&format!("&start_cursor={}", c));
+    }
+    url
+}
+
 /// Fetch all block children of a Notion page/block and convert them to
 /// markdown-style plain-text lines (one entry per block).
 fn fetch_notion_block_lines(
@@ -1096,28 +1114,11 @@ fn fetch_notion_block_lines(
     let mut cursor: Option<String> = None;
 
     loop {
-        let mut url = format!(
-            "https://api.notion.com/v1/blocks/{}/children?page_size=100",
-            block_id
-        );
-        if let Some(ref c) = cursor {
-            url.push_str(&format!("&start_cursor={}", c));
-        }
-
-        let resp = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Notion-Version", "2022-06-28")
-            .send()
-            .map_err(|e| DirigentError::Source(format!("Notion blocks request failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            break;
-        }
-
-        let body: serde_json::Value = resp
-            .json()
-            .map_err(|e| DirigentError::Source(format!("Notion blocks parse error: {e}")))?;
+        let url = build_blocks_url(block_id, cursor.as_deref());
+        let body = match notion_get(client, &url, token) {
+            Ok(json) => json,
+            Err(_) => break,
+        };
 
         if let Some(results) = body.get("results").and_then(|r| r.as_array()) {
             lines.extend(results.iter().filter_map(notion_block_to_text));
@@ -1135,65 +1136,47 @@ fn fetch_notion_block_lines(
 fn notion_block_to_text(block: &serde_json::Value) -> Option<String> {
     let block_type = block.get("type")?.as_str()?;
     match block_type {
-        "heading_1" => {
-            let text = rich_text_plain(block.get("heading_1")?);
-            Some(format!("# {}", text))
-        }
-        "heading_2" => {
-            let text = rich_text_plain(block.get("heading_2")?);
-            Some(format!("## {}", text))
-        }
-        "heading_3" => {
-            let text = rich_text_plain(block.get("heading_3")?);
-            Some(format!("### {}", text))
-        }
-        "paragraph" => {
-            let text = rich_text_plain(block.get("paragraph")?);
-            if text.is_empty() {
-                Some(String::new())
-            } else {
-                Some(text)
-            }
-        }
+        "heading_1" => block_rich_text(block, "heading_1").map(|t| format!("# {}", t)),
+        "heading_2" => block_rich_text(block, "heading_2").map(|t| format!("## {}", t)),
+        "heading_3" => block_rich_text(block, "heading_3").map(|t| format!("### {}", t)),
+        "paragraph" => block_rich_text(block, "paragraph"),
         "bulleted_list_item" => {
-            let text = rich_text_plain(block.get("bulleted_list_item")?);
-            Some(format!("- {}", text))
+            block_rich_text(block, "bulleted_list_item").map(|t| format!("- {}", t))
         }
         "numbered_list_item" => {
-            let text = rich_text_plain(block.get("numbered_list_item")?);
-            Some(format!("1. {}", text))
+            block_rich_text(block, "numbered_list_item").map(|t| format!("1. {}", t))
         }
-        "to_do" => {
-            let obj = block.get("to_do")?;
-            let text = rich_text_plain(obj);
-            let checked = obj
-                .get("checked")
-                .and_then(|c| c.as_bool())
-                .unwrap_or(false);
-            let marker = if checked { "[x]" } else { "[ ]" };
-            Some(format!("- {} {}", marker, text))
-        }
-        "quote" => {
-            let text = rich_text_plain(block.get("quote")?);
-            Some(format!("> {}", text))
-        }
-        "code" => {
-            let obj = block.get("code")?;
-            let text = rich_text_plain(obj);
-            let lang = obj.get("language").and_then(|l| l.as_str()).unwrap_or("");
-            Some(format!("```{}\n{}\n```", lang, text))
-        }
-        "callout" => {
-            let text = rich_text_plain(block.get("callout")?);
-            Some(format!("> {}", text))
-        }
-        "toggle" => {
-            let text = rich_text_plain(block.get("toggle")?);
-            Some(text)
-        }
+        "to_do" => format_todo_block(block),
+        "quote" => block_rich_text(block, "quote").map(|t| format!("> {}", t)),
+        "code" => format_code_block(block),
+        "callout" => block_rich_text(block, "callout").map(|t| format!("> {}", t)),
+        "toggle" => block_rich_text(block, "toggle"),
         "divider" => Some("---".to_string()),
         _ => None,
     }
+}
+
+/// Extract the rich_text plain content from a named sub-object of a block.
+fn block_rich_text(block: &serde_json::Value, key: &str) -> Option<String> {
+    Some(rich_text_plain(block.get(key)?))
+}
+
+fn format_todo_block(block: &serde_json::Value) -> Option<String> {
+    let obj = block.get("to_do")?;
+    let text = rich_text_plain(obj);
+    let checked = obj
+        .get("checked")
+        .and_then(|c| c.as_bool())
+        .unwrap_or(false);
+    let marker = if checked { "[x]" } else { "[ ]" };
+    Some(format!("- {} {}", marker, text))
+}
+
+fn format_code_block(block: &serde_json::Value) -> Option<String> {
+    let obj = block.get("code")?;
+    let text = rich_text_plain(obj);
+    let lang = obj.get("language").and_then(|l| l.as_str()).unwrap_or("");
+    Some(format!("```{}\n{}\n```", lang, text))
 }
 
 /// Extract concatenated plain_text from a Notion block's `rich_text` array.

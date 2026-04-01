@@ -127,23 +127,7 @@ impl DirigentApp {
             .spacing([SPACE_SM, SPACE_XS])
             .show(ui, |ui| {
                 ui.label("Kind:");
-                let prev_kind = self.settings.sources[i].kind.clone();
-                egui::ComboBox::from_id_salt(format!("source_kind_{}", i))
-                    .selected_text(self.settings.sources[i].kind.display_name())
-                    .show_ui(ui, |ui| {
-                        for kind in SourceKind::all() {
-                            ui.selectable_value(
-                                &mut self.settings.sources[i].kind,
-                                kind.clone(),
-                                kind.display_name(),
-                            );
-                        }
-                    });
-                // Auto-fill sensible defaults when the kind changes.
-                if self.settings.sources[i].kind != prev_kind {
-                    self.settings.sources[i].label =
-                        self.settings.sources[i].kind.default_label().to_string();
-                }
+                self.render_source_kind_selector(ui, i);
                 ui.end_row();
 
                 ui.label("Label:");
@@ -159,22 +143,46 @@ impl DirigentApp {
 
                 ui.label("Poll interval:");
                 ui.horizontal(|ui| {
-                    let mut secs = self.settings.sources[i].poll_interval_secs as f64;
-                    ui.add(
-                        egui::DragValue::new(&mut secs)
-                            .range(0.0..=86400.0)
-                            .speed(10.0)
-                            .suffix("s"),
-                    );
-                    self.settings.sources[i].poll_interval_secs = secs as u64;
-                    ui.label(
-                        egui::RichText::new("(0 = manual only)")
-                            .small()
-                            .color(self.semantic.tertiary_text),
-                    );
+                    self.render_poll_interval(ui, i);
                 });
                 ui.end_row();
             });
+    }
+
+    fn render_source_kind_selector(&mut self, ui: &mut egui::Ui, i: usize) {
+        let prev_kind = self.settings.sources[i].kind.clone();
+        egui::ComboBox::from_id_salt(format!("source_kind_{}", i))
+            .selected_text(self.settings.sources[i].kind.display_name())
+            .show_ui(ui, |ui| {
+                for kind in SourceKind::all() {
+                    ui.selectable_value(
+                        &mut self.settings.sources[i].kind,
+                        kind.clone(),
+                        kind.display_name(),
+                    );
+                }
+            });
+        // Auto-fill sensible defaults when the kind changes.
+        if self.settings.sources[i].kind != prev_kind {
+            self.settings.sources[i].label =
+                self.settings.sources[i].kind.default_label().to_string();
+        }
+    }
+
+    fn render_poll_interval(&mut self, ui: &mut egui::Ui, i: usize) {
+        let mut secs = self.settings.sources[i].poll_interval_secs as f64;
+        ui.add(
+            egui::DragValue::new(&mut secs)
+                .range(0.0..=86400.0)
+                .speed(10.0)
+                .suffix("s"),
+        );
+        self.settings.sources[i].poll_interval_secs = secs as u64;
+        ui.label(
+            egui::RichText::new("(0 = manual only)")
+                .small()
+                .color(self.semantic.tertiary_text),
+        );
     }
 
     fn render_settings_source_kind_fields(&mut self, ui: &mut egui::Ui, i: usize) {
