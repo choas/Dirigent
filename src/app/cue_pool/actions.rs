@@ -488,14 +488,7 @@ impl DirigentApp {
             return;
         };
 
-        let token = if !source.token.is_empty() {
-            source.token.clone()
-        } else {
-            std::env::var("NOTION_TOKEN")
-                .ok()
-                .or_else(|| crate::sources::load_env_var(&self.project_root, "NOTION_TOKEN"))
-                .unwrap_or_default()
-        };
+        let token = crate::sources::resolve_source_token(&source, &self.project_root);
 
         let page_ref = source_ref.clone();
         let page_type = source.notion_page_type.clone();

@@ -141,27 +141,6 @@ impl DirigentApp {
     }
 }
 
-/// Resolve the token for a source: use the in-memory value if set, otherwise
-/// fall back to the appropriate environment variable from `.Dirigent/.env`
-/// (preferred) or `.env`.
-fn resolve_source_token(source: &settings::SourceConfig, project_root: &Path) -> String {
-    if !source.token.is_empty() {
-        return source.token.clone();
-    }
-    let env_key = match source.kind {
-        SourceKind::Slack => "SLACK_BOT_TOKEN",
-        SourceKind::SonarQube => "SONAR_TOKEN",
-        SourceKind::Trello => "TRELLO_TOKEN",
-        SourceKind::Asana => "ASANA_TOKEN",
-        SourceKind::Notion => "NOTION_TOKEN",
-        _ => return String::new(),
-    };
-    std::env::var(env_key)
-        .ok()
-        .or_else(|| sources::load_env_var(project_root, env_key))
-        .unwrap_or_default()
-}
-
 fn fetch_source_items(
     source: &settings::SourceConfig,
     project_root: &Path,
@@ -178,7 +157,7 @@ fn fetch_source_items(
                 .unwrap_or_else(err)
         }
         SourceKind::Slack => {
-            let token = resolve_source_token(source, project_root);
+            let token = sources::resolve_source_token(source, project_root);
             sources::fetch_slack_messages(&token, &source.channel, &source.label)
                 .unwrap_or_else(err)
         }
@@ -188,7 +167,7 @@ fn fetch_source_items(
             } else {
                 &source.host_url
             };
-            let token = resolve_source_token(source, project_root);
+            let token = sources::resolve_source_token(source, project_root);
             sources::fetch_sonarqube_issues(host, &source.project_key, &token, &source.label)
                 .unwrap_or_else(err)
         }
@@ -201,7 +180,7 @@ fn fetch_source_items(
                     .or_else(|| sources::load_env_var(project_root, "TRELLO_API_KEY"))
                     .unwrap_or_default()
             };
-            let token = resolve_source_token(source, project_root);
+            let token = sources::resolve_source_token(source, project_root);
             let list_filter = if source.filter.is_empty() {
                 None
             } else {
@@ -217,12 +196,12 @@ fn fetch_source_items(
             .unwrap_or_else(err)
         }
         SourceKind::Asana => {
-            let token = resolve_source_token(source, project_root);
+            let token = sources::resolve_source_token(source, project_root);
             sources::fetch_asana_tasks(&token, &source.project_key, &source.label)
                 .unwrap_or_else(err)
         }
         SourceKind::Notion => {
-            let token = resolve_source_token(source, project_root);
+            let token = sources::resolve_source_token(source, project_root);
             let inbox_status = if source.filter.is_empty() {
                 None
             } else {
