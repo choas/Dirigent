@@ -435,10 +435,19 @@ def wait_for_coderabbit(cfg: Config, since_sha: str) -> None:
 def claude_fix(prompt: str) -> bool:
     """Invoke Claude Code in non-interactive (print) mode with a fix prompt.
     Returns True if Claude exited successfully."""
-    result = run(
-        ["claude", "--print", prompt],
-        check=False,
-    )
+    print(f"  $ claude --print '<prompt ({len(prompt)} chars)>'")
+    start = time.time()
+    try:
+        result = subprocess.run(
+            ["claude", "--print", prompt],
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError:
+        print("  [error] Command not found: claude")
+        return False
+    elapsed = time.time() - start
+    print(f"  Claude Code finished in {elapsed:.0f}s (exit {result.returncode})")
     return result.returncode == 0
 
 
