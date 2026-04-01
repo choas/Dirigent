@@ -670,10 +670,16 @@ pub(crate) fn fetch_notion_tasks(
     // The database_id may be a Notion URL — extract the actual UUID.
     let actual_id = extract_notion_page_id(database_id);
 
-    // Resolve the actual database ID: the user may have pasted a page URL
-    // instead of a database URL. Try the database query first; on 404, look
-    // for a child database inside the page.
-    let resolved_id = resolve_notion_database_id(&client, token, &actual_id)?;
+    // Resolve the actual ID: the user may have pasted a page URL instead of a
+    // database URL.  If it's a standalone page, fetch it directly.
+    let resolved = resolve_notion_id(&client, token, &actual_id)?;
+
+    let resolved_id = match resolved {
+        NotionIdKind::Database(id) => id,
+        NotionIdKind::Page(id) => {
+            return fetch_notion_single_page(&client, token, &id, source_label);
+        }
+    };
 
     let url = format!("https://api.notion.com/v1/databases/{}/query", resolved_id);
 
@@ -910,15 +916,22 @@ pub(crate) fn mark_notion_done(
     Ok(())
 }
 
-/// Given an ID that might be a database or a page, resolve the actual database
-/// ID.  If the ID refers to a database directly, return it as-is.  If it
-/// refers to a page, look for the first child database inside that page and
-/// return its ID instead.
-fn resolve_notion_database_id(
+/// The result of resolving a Notion ID: either a database or a standalone page.
+enum NotionIdKind {
+    Database(String),
+    Page(String),
+}
+
+/// Given an ID that might be a database or a page, resolve what it is.
+/// If the ID refers to a database directly, return `Database`.  If it
+/// refers to a page that contains a child database, return that child
+/// `Database`.  Otherwise return `Page` so the caller can fetch the
+/// page directly.
+fn resolve_notion_id(
     client: &reqwest::blocking::Client,
     token: &str,
     id: &str,
-) -> crate::error::Result<String> {
+) -> crate::error::Result<NotionIdKind> {
     // Quick check: try to retrieve the database metadata.
     let db_resp = client
         .get(&format!("https://api.notion.com/v1/databases/{}", id))
@@ -930,7 +943,7 @@ fn resolve_notion_database_id(
     let db_status = db_resp.status();
     if db_status.is_success() {
         // It is a database — use it directly.
-        return Ok(id.to_string());
+        return Ok(NotionIdKind::Database(id.to_string()));
     }
 
     // Parse the error body to check if the object simply isn't shared with the
@@ -971,17 +984,46 @@ fn resolve_notion_database_id(
             let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if block_type == "child_database" {
                 if let Some(child_id) = block.get("id").and_then(|v| v.as_str()) {
-                    return Ok(child_id.to_string());
+                    return Ok(NotionIdKind::Database(child_id.to_string()));
                 }
             }
         }
     }
 
-    Err(DirigentError::Source(
-        "The provided Notion ID is a page, not a database, and no child database was found \
-         inside it. Please provide the URL of a Notion database instead."
-            .to_string(),
-    ))
+    // No child database found — treat as a standalone page.
+    Ok(NotionIdKind::Page(id.to_string()))
+}
+
+/// Fetch a single Notion page by ID and return it as a one-element vector.
+fn fetch_notion_single_page(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    page_id: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    let resp = client
+        .get(&format!("https://api.notion.com/v1/pages/{}", page_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Notion API error fetching page ({status}): {body}"
+        )));
+    }
+
+    let page: serde_json::Value = resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+
+    match notion_page_to_item(&page, source_label) {
+        Some(item) => Ok(vec![item]),
+        None => Ok(vec![]),
+    }
 }
 
 /// Extract the title from a Notion page object returned by the Search API.
