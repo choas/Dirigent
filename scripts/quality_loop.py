@@ -201,12 +201,20 @@ def build_config(args: argparse.Namespace) -> Config:
 
 def run(cmd: list[str], check=True, capture=False) -> subprocess.CompletedProcess:
     print(f"  $ {' '.join(cmd)}")
-    return subprocess.run(
-        cmd,
-        check=check,
-        capture_output=capture,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            check=check,
+            capture_output=capture,
+            text=True,
+        )
+    except FileNotFoundError:
+        print(f"  [error] Command not found: {cmd[0]}")
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr="")
+    except subprocess.CalledProcessError as e:
+        print(f"  [error] Command failed (exit {e.returncode}): {' '.join(cmd)}")
+        return subprocess.CompletedProcess(cmd, returncode=e.returncode,
+                                           stdout=e.stdout or "", stderr=e.stderr or "")
 
 
 def banner(msg: str) -> None:
@@ -217,8 +225,11 @@ def banner(msg: str) -> None:
 
 
 def gh(*args, capture=True) -> str:
-    """Run a gh CLI command and return stdout."""
-    result = run(["gh", *args], capture=capture)
+    """Run a gh CLI command and return stdout. Returns empty string on failure."""
+    result = run(["gh", *args], check=False, capture=capture)
+    if result.returncode != 0:
+        print(f"  [warn] gh command failed (exit {result.returncode})")
+        return ""
     return result.stdout.strip()
 
 
@@ -271,14 +282,18 @@ def cargo_fmt_check() -> list[str]:
 # SonarQube
 # ---------------------------------------------------------------------------
 
-def sonar_scan(cfg: Config) -> None:
-    """Run sonar-scanner. Assumes sonar-project.properties exists or passes params."""
-    run([
+def sonar_scan(cfg: Config) -> bool:
+    """Run sonar-scanner. Returns True if scan succeeded."""
+    result = run([
         "sonar-scanner",
         f"-Dsonar.token={cfg.sonar_token}",
         f"-Dsonar.host.url={cfg.sonar_url}",
         f"-Dsonar.projectKey={cfg.sonar_project_key}",
     ])
+    if result.returncode != 0:
+        print("  [warn] SonarQube scan failed. Continuing without SonarQube issues.")
+        return False
+    return True
 
 
 def sonar_issues(cfg: Config) -> list[dict]:
@@ -467,21 +482,32 @@ def build_fix_prompt(
 # ---------------------------------------------------------------------------
 
 def current_sha() -> str:
-    result = run(["git", "rev-parse", "HEAD"], capture=True)
+    result = run(["git", "rev-parse", "HEAD"], check=False, capture=True)
     return result.stdout.strip()
 
 
-def git_commit_push(iteration: int) -> None:
-    run(["git", "add", "-A"])
+def git_commit_push(iteration: int) -> bool:
+    """Commit and push changes. Returns True if push succeeded."""
+    result = run(["git", "add", "-A"], check=False)
+    if result.returncode != 0:
+        print("  [warn] git add failed.")
+        return False
     result = run(
         ["git", "diff", "--cached", "--quiet"],
         check=False,
     )
     if result.returncode == 0:
         print("  Nothing to commit -- skipping push.")
-        return
-    run(["git", "commit", "-m", f"chore: quality loop iteration {iteration}"])
-    run(["git", "push"])
+        return False
+    result = run(["git", "commit", "-m", f"chore: quality loop iteration {iteration}"], check=False)
+    if result.returncode != 0:
+        print("  [warn] git commit failed.")
+        return False
+    result = run(["git", "push"], check=False)
+    if result.returncode != 0:
+        print("  [warn] git push failed. Changes are committed locally.")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +532,8 @@ def main() -> None:
 
         # -- Collect all quality signals --
         print("\n[1/4] Running SonarQube scan ...")
-        sonar_scan(cfg)
-        s_issues = format_sonar_issues(sonar_issues(cfg))
+        scan_ok = sonar_scan(cfg)
+        s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
         print(f"  SonarQube issues: {len(s_issues)}")
 
         print("\n[2/4] Running cargo clippy ...")
@@ -553,7 +579,7 @@ def main() -> None:
 
         # -- Commit and push --
         sha_before = current_sha()
-        git_commit_push(iteration)
+        pushed = git_commit_push(iteration)
         sha_after = current_sha()
 
         if sha_before == sha_after:
@@ -562,7 +588,10 @@ def main() -> None:
             sys.exit(0)
 
         # -- Wait for CI and CodeRabbit --
-        wait_for_coderabbit(cfg, sha_after)
+        if pushed:
+            wait_for_coderabbit(cfg, sha_after)
+        else:
+            print("  Skipping CI/CodeRabbit wait (push did not succeed).")
 
     print(f"\n[warn] Reached max iterations ({cfg.max_iterations}). Stopping.")
     print("  Some issues may remain. Check the PR manually.")
