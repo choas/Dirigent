@@ -22,25 +22,44 @@ fn try_i64_to_u64(v: i64) -> rusqlite::Result<u64> {
     })
 }
 
+// Cue column indices — keep in sync with CUE_COLUMNS.
+const COL_ID: usize = 0;
+const COL_TEXT: usize = 1;
+const COL_FILE_PATH: usize = 2;
+const COL_LINE_NUMBER: usize = 3;
+const COL_LINE_NUMBER_END: usize = 4;
+const COL_STATUS: usize = 5;
+const COL_SOURCE_LABEL: usize = 6;
+const COL_SOURCE_ID: usize = 7;
+const COL_SOURCE_REF: usize = 8;
+const COL_ATTACHED_IMAGES: usize = 9;
+const COL_TAG: usize = 10;
+const COL_PLAN_PATH: usize = 11;
+
+/// Column list for SELECT queries that feed into [`row_to_cue`].
+pub(super) const CUE_COLUMNS: &str =
+    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path";
+
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
-    let status_str: String = row.get(5)?;
-    let line_end: Option<i64> = row.get(4)?;
-    let images_json: Option<String> = row.get(8)?;
+    let status_str: String = row.get(COL_STATUS)?;
+    let line_end: Option<i64> = row.get(COL_LINE_NUMBER_END)?;
+    let images_json: Option<String> = row.get(COL_ATTACHED_IMAGES)?;
     let attached_images: Vec<String> = images_json
         .and_then(|j| serde_json::from_str(&j).ok())
         .unwrap_or_default();
     Ok(Cue {
-        id: row.get(0)?,
-        text: row.get(1)?,
-        file_path: row.get(2)?,
-        line_number: try_i64_to_usize(row.get::<_, i64>(3)?)?,
+        id: row.get(COL_ID)?,
+        text: row.get(COL_TEXT)?,
+        file_path: row.get(COL_FILE_PATH)?,
+        line_number: try_i64_to_usize(row.get::<_, i64>(COL_LINE_NUMBER)?)?,
         line_number_end: line_end.map(try_i64_to_usize).transpose()?,
         status: CueStatus::from_str(&status_str).unwrap_or(CueStatus::Inbox),
-        source_label: row.get(6)?,
-        source_ref: row.get(7)?,
+        source_label: row.get(COL_SOURCE_LABEL)?,
+        source_id: row.get(COL_SOURCE_ID)?,
+        source_ref: row.get(COL_SOURCE_REF)?,
         attached_images,
-        tag: row.get(9)?,
-        plan_path: row.get(10)?,
+        tag: row.get(COL_TAG)?,
+        plan_path: row.get(COL_PLAN_PATH)?,
     })
 }
 

@@ -100,6 +100,7 @@ pub(crate) struct Cue {
     pub line_number_end: Option<usize>,
     pub status: CueStatus,
     pub source_label: Option<String>,
+    pub source_id: Option<String>,
     pub source_ref: Option<String>,
     /// Attached image file paths (stored as JSON array in DB).
     pub attached_images: Vec<String>,
