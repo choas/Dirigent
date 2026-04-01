@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::sync::mpsc;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
@@ -299,14 +300,87 @@ impl DirigentApp {
                 );
                 ui.end_row();
 
-                ui.label("Database ID:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                        .desired_width(200.0)
-                        .hint_text("e.g. 8a3b5c…  (from the Notion page URL)")
-                        .font(egui::TextStyle::Monospace),
-                );
+                // Database/Page selector: dropdown when objects are loaded, else text input.
+                ui.label("Database / Page:");
+                let is_loading = self
+                    .notion_objects_rx
+                    .as_ref()
+                    .is_some_and(|(idx, _)| *idx == i);
+                let has_objects = self.notion_objects.get(&i).is_some_and(|v| !v.is_empty());
+
+                ui.horizontal(|ui| {
+                    if has_objects {
+                        let objects = &self.notion_objects[&i];
+                        let current_id = &self.settings.sources[i].project_key;
+                        let selected_label = objects
+                            .iter()
+                            .find(|o| o.id == *current_id)
+                            .map(|o| {
+                                let icon = if o.object_type == "database" {
+                                    "\u{1F5C3}" // 🗃️
+                                } else {
+                                    "\u{1F4C4}" // 📄
+                                };
+                                format!("{} {}", icon, o.title)
+                            })
+                            .unwrap_or_else(|| {
+                                if current_id.is_empty() {
+                                    "Select…".to_string()
+                                } else {
+                                    current_id.clone()
+                                }
+                            });
+
+                        egui::ComboBox::from_id_salt(format!("notion_obj_{}", i))
+                            .selected_text(&selected_label)
+                            .width(200.0)
+                            .show_ui(ui, |ui| {
+                                for obj in objects {
+                                    let icon = if obj.object_type == "database" {
+                                        "\u{1F5C3}" // 🗃️
+                                    } else {
+                                        "\u{1F4C4}" // 📄
+                                    };
+                                    let label = format!("{} {}", icon, obj.title);
+                                    if ui
+                                        .selectable_value(
+                                            &mut self.settings.sources[i].project_key,
+                                            obj.id.clone(),
+                                            &label,
+                                        )
+                                        .changed()
+                                    {
+                                        // Auto-set page type hint based on object type.
+                                    }
+                                }
+                            });
+                    } else {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
+                                .desired_width(200.0)
+                                .hint_text("click Load to list databases & pages")
+                                .font(egui::TextStyle::Monospace),
+                        );
+                    }
+
+                    if is_loading {
+                        ui.spinner();
+                    } else if ui.small_button("Load").clicked() {
+                        self.start_notion_objects_fetch(i);
+                    }
+                });
                 ui.end_row();
+
+                // Show error if the last fetch failed.
+                if let Some(err) = self.notion_objects_error.get(&i) {
+                    ui.label("");
+                    ui.label(
+                        egui::RichText::new(err)
+                            .small()
+                            .color(egui::Color32::from_rgb(220, 50, 50)),
+                    );
+                    ui.end_row();
+                }
 
                 ui.label("Page Type:");
                 egui::ComboBox::from_id_salt(format!("notion_page_type_{}", i))
@@ -366,6 +440,49 @@ impl DirigentApp {
                         .font(egui::TextStyle::Monospace),
                 );
                 ui.end_row();
+            }
+        }
+    }
+
+    /// Kick off a background fetch of Notion databases/pages for source `i`.
+    fn start_notion_objects_fetch(&mut self, i: usize) {
+        let token =
+            crate::sources::resolve_source_token(&self.settings.sources[i], &self.project_root);
+        self.notion_objects_error.remove(&i);
+
+        let (tx, rx) = mpsc::channel();
+        self.notion_objects_rx = Some((i, rx));
+
+        std::thread::spawn(move || {
+            let result = crate::sources::fetch_notion_objects(&token);
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
+    }
+
+    /// Poll for the result of a Notion objects fetch (called from the update loop).
+    pub(in crate::app) fn process_notion_objects_result(&mut self) {
+        let (idx, rx) = match self.notion_objects_rx {
+            Some((idx, ref rx)) => (idx, rx),
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.notion_objects_rx = None;
+                self.notion_objects_error
+                    .insert(idx, "Notion fetch failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        let idx_copy = idx;
+        self.notion_objects_rx = None;
+        match result {
+            Ok(objects) => {
+                self.notion_objects.insert(idx_copy, objects);
+            }
+            Err(e) => {
+                self.notion_objects_error.insert(idx_copy, e);
             }
         }
     }

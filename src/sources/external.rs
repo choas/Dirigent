@@ -496,6 +496,156 @@ pub(crate) fn fetch_asana_tasks(
         .collect())
 }
 
+/// Fetch all databases and pages visible to the Notion integration token.
+///
+/// Uses the Notion Search API (`POST /v1/search`) to list every object the
+/// integration has been shared with.  Returns a vec of [`NotionObject`] with
+/// both databases and pages, sorted databases-first.
+pub(crate) fn fetch_notion_objects(
+    token: &str,
+) -> crate::error::Result<Vec<super::types::NotionObject>> {
+    use super::types::NotionObject;
+
+    if token.is_empty() {
+        return Err(DirigentError::Source(
+            "Notion token is empty (set in source config or NOTION_TOKEN in .env)".to_string(),
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+
+    let mut all: Vec<NotionObject> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        let mut body = serde_json::json!({ "page_size": 100 });
+        if let Some(ref c) = cursor {
+            body["start_cursor"] = serde_json::json!(c);
+        }
+
+        let resp = client
+            .post("https://api.notion.com/v1/search")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Notion-Version", "2022-06-28")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .map_err(|e| DirigentError::Source(format!("Notion search request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let resp_body = resp.text().unwrap_or_default();
+            return Err(DirigentError::Source(format!(
+                "Notion Search API error ({status}): {resp_body}"
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+
+        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+            for obj in results {
+                let object_type = obj
+                    .get("object")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let id = obj
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let title = match object_type.as_str() {
+                    "database" => {
+                        // Database title is a top-level "title" array of rich-text objects.
+                        obj.get("title")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+                                    .collect::<Vec<_>>()
+                                    .join("")
+                            })
+                            .unwrap_or_default()
+                    }
+                    "page" => {
+                        // Page title is in properties → first "title" type property.
+                        obj.get("properties")
+                            .and_then(|p| p.as_object())
+                            .and_then(|props| {
+                                props.values().find_map(|prop| {
+                                    if prop.get("type")?.as_str()? != "title" {
+                                        return None;
+                                    }
+                                    let arr = prop.get("title")?.as_array()?;
+                                    let parts: Vec<&str> = arr
+                                        .iter()
+                                        .filter_map(|t| {
+                                            t.get("plain_text").and_then(|p| p.as_str())
+                                        })
+                                        .collect();
+                                    if parts.is_empty() {
+                                        None
+                                    } else {
+                                        Some(parts.join(""))
+                                    }
+                                })
+                            })
+                            .unwrap_or_default()
+                    }
+                    _ => continue,
+                };
+
+                if id.is_empty() || title.is_empty() {
+                    continue;
+                }
+
+                all.push(NotionObject {
+                    id,
+                    title,
+                    object_type,
+                });
+            }
+        }
+
+        let has_more = json
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !has_more {
+            break;
+        }
+        cursor = json
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    // Sort databases first, then pages, alphabetically within each group.
+    all.sort_by(|a, b| {
+        let type_order = |t: &str| -> u8 {
+            if t == "database" {
+                0
+            } else {
+                1
+            }
+        };
+        type_order(&a.object_type)
+            .cmp(&type_order(&b.object_type))
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
+
+    Ok(all)
+}
+
 /// Fetch tasks from a Notion database using the Notion API.
 ///
 /// For **Todo List** databases: fetches pages where the checkbox property
