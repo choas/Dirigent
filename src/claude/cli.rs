@@ -10,12 +10,8 @@ pub(super) fn resolve_claude_binary(cli_path: &str) -> Result<&str, ClaudeError>
     } else {
         cli_path
     };
-    let which_result = Command::new("which").arg(claude_bin).output();
-    match which_result {
-        Ok(output) if !output.status.success() => Err(ClaudeError::NotFound),
-        Err(_) => Err(ClaudeError::NotFound),
-        _ => Ok(claude_bin),
-    }
+    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
+    Ok(claude_bin)
 }
 
 /// Build the `Command` with prompt, flags, extra args, and env vars.
