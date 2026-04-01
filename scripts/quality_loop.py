@@ -13,6 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 HELP_EPILOG = """
@@ -294,14 +295,14 @@ def cargo_clippy_issues() -> list[str]:
 def cargo_fmt_check() -> list[str]:
     """Return list of files with formatting issues."""
     result = run(
-        ["cargo", "fmt", "--check", "--message-format=json"],
+        ["cargo", "fmt", "--check"],
         check=False,
         capture=True,
     )
     if result.returncode == 0:
         return []
-    # fmt --check just exits non-zero, output is human-readable
-    return [result.stdout.strip()] if result.stdout.strip() else ["Formatting issues found (run cargo fmt)"]
+    # cargo fmt --check prints diffs to stdout when formatting is needed
+    return ["Formatting issues found (run cargo fmt)"]
 
 
 # ---------------------------------------------------------------------------
@@ -390,13 +391,10 @@ def pr_checks_passing(cfg: Config) -> bool:
 def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
     """Return unresolved review comments left by coderabbitai[bot].
     If `since` is set (ISO 8601 timestamp), only return comments created after that time."""
-    args = [
-        "api",
-        f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
-        "--paginate",
-    ]
+    url = f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments"
     if since:
-        args.extend(["-f", f"since={since}"])
+        url += f"?since={since}"
+    args = ["api", url, "--paginate"]
     output = gh(*args)
     try:
         comments = json.loads(output)
@@ -603,7 +601,7 @@ def _get_dirty_files() -> set[str]:
     return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
 
 
-def git_commit_push(iteration: int, files_to_stage: list[str] | None = None) -> bool:
+def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
     """Commit and push changes. Returns True if push succeeded.
     If `files_to_stage` is given, only those files are staged (avoids
     accidentally committing pre-existing local edits or secrets)."""
@@ -674,7 +672,7 @@ def _apply_fixes(prompt: str, iteration: int) -> None:
     print("  Tests still green.")
 
 
-def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: list[str] | None = None) -> None:
+def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> None:
     """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
     sha_before = current_sha()
     pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
@@ -688,6 +686,27 @@ def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: list[str] | No
         wait_for_coderabbit(cfg)
     else:
         print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+
+
+def _cr_since_path(cfg: Config) -> Path:
+    """Path to the file that persists the CodeRabbit comment timestamp across restarts."""
+    return Path(f"/tmp/quality_loop_cr_since_{cfg.gh_repo.replace('/', '_')}_{cfg.gh_pr_number}.txt")
+
+
+def _load_cr_since(cfg: Config) -> str:
+    """Load persisted cr_since timestamp, or return empty string."""
+    p = _cr_since_path(cfg)
+    if p.exists():
+        ts = p.read_text().strip()
+        if ts:
+            print(f"  Resuming with CodeRabbit comments since {ts}")
+            return ts
+    return ""
+
+
+def _save_cr_since(cfg: Config, ts: str) -> None:
+    """Persist cr_since timestamp for restart resilience."""
+    _cr_since_path(cfg).write_text(ts)
 
 
 def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
@@ -721,6 +740,7 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
     new_files = sorted(dirty_after - dirty_before)
 
     new_cr_since = datetime.now(timezone.utc).isoformat()
+    _save_cr_since(cfg, new_cr_since)
     _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
 
     return new_cr_since
@@ -739,7 +759,7 @@ def main() -> None:
         sys.exit(1)
     print("  Baseline tests green.")
 
-    cr_since = ""
+    cr_since = _load_cr_since(cfg)
 
     for iteration in range(1, cfg.max_iterations + 1):
         banner(f"Iteration {iteration}/{cfg.max_iterations}")
