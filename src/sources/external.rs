@@ -994,9 +994,10 @@ fn resolve_notion_id(
     Ok(NotionIdKind::Page(id.to_string()))
 }
 
-/// Fetch a single Notion page by ID, including its block content, and return
-/// it as a one-element vector.  The title becomes the first line (`# Title`)
-/// and the page body is appended as markdown-style text.
+/// Fetch a single Notion page by ID, including its block content.
+/// The page body is split at `### ` (h3) headings so each section becomes its
+/// own `SourceItem` / cue.  Content before the first h3 (plus the page title)
+/// becomes one item; each h3 section becomes another.
 fn fetch_notion_single_page(
     client: &reqwest::blocking::Client,
     token: &str,
@@ -1032,30 +1033,83 @@ fn fetch_notion_single_page(
         return Ok(vec![]);
     }
 
-    // Fetch the page's block children to get the full body content.
-    let body = fetch_notion_block_children(client, token, page_id).unwrap_or_default();
+    // Fetch the page's block children as individual lines.
+    let lines = fetch_notion_block_lines(client, token, page_id).unwrap_or_default();
 
-    let text = if body.is_empty() {
-        title
-    } else {
-        format!("{}\n\n{}", title, body)
-    };
+    // Split lines into sections at h3 (`### `) boundaries.
+    let mut sections: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    // Start with a preamble section (no heading).
+    sections.push((None, Vec::new()));
 
-    Ok(vec![SourceItem {
-        external_id: id,
-        text,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    }])
+    for line in &lines {
+        if line.starts_with("### ") {
+            let heading = line.trim_start_matches("### ").to_string();
+            sections.push((Some(heading), Vec::new()));
+        } else if let Some(last) = sections.last_mut() {
+            last.1.push(line.clone());
+        }
+    }
+
+    let mut items: Vec<SourceItem> = Vec::new();
+    for (idx, (heading, body_lines)) in sections.into_iter().enumerate() {
+        let body = body_lines
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+
+        let text = match heading {
+            None => {
+                // Preamble section: use the page title.
+                if body.is_empty() {
+                    continue;
+                }
+                format!("{}\n\n{}", title, body)
+            }
+            Some(h) => {
+                if body.is_empty() {
+                    format!("### {}", h)
+                } else {
+                    format!("### {}\n{}", h, body)
+                }
+            }
+        };
+
+        items.push(SourceItem {
+            external_id: format!("{}-{}", id, idx),
+            text,
+            source_label: source_label.to_string(),
+            source_id: String::new(),
+        });
+    }
+
+    // If no h3 sections were found, fall back to a single item.
+    if items.is_empty() {
+        let body = lines.join("\n").trim().to_string();
+        let text = if body.is_empty() {
+            title
+        } else {
+            format!("{}\n\n{}", title, body)
+        };
+        items.push(SourceItem {
+            external_id: id,
+            text,
+            source_label: source_label.to_string(),
+            source_id: String::new(),
+        });
+    }
+
+    Ok(items)
 }
 
 /// Fetch all block children of a Notion page/block and convert them to
-/// markdown-style plain text.
-fn fetch_notion_block_children(
+/// markdown-style plain-text lines (one entry per block).
+fn fetch_notion_block_lines(
     client: &reqwest::blocking::Client,
     token: &str,
     block_id: &str,
-) -> crate::error::Result<String> {
+) -> crate::error::Result<Vec<String>> {
     let mut lines: Vec<String> = Vec::new();
     let mut cursor: Option<String> = None;
 
@@ -1102,7 +1156,7 @@ fn fetch_notion_block_children(
         }
     }
 
-    Ok(lines.join("\n"))
+    Ok(lines)
 }
 
 /// Convert a single Notion block to a markdown-style text line.
