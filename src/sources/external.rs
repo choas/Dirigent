@@ -573,37 +573,22 @@ pub(crate) fn fetch_notion_objects(
                             })
                             .unwrap_or_default()
                     }
-                    "page" => {
-                        // Page title is in properties → first "title" type property.
-                        obj.get("properties")
-                            .and_then(|p| p.as_object())
-                            .and_then(|props| {
-                                props.values().find_map(|prop| {
-                                    if prop.get("type")?.as_str()? != "title" {
-                                        return None;
-                                    }
-                                    let arr = prop.get("title")?.as_array()?;
-                                    let parts: Vec<&str> = arr
-                                        .iter()
-                                        .filter_map(|t| {
-                                            t.get("plain_text").and_then(|p| p.as_str())
-                                        })
-                                        .collect();
-                                    if parts.is_empty() {
-                                        None
-                                    } else {
-                                        Some(parts.join(""))
-                                    }
-                                })
-                            })
-                            .unwrap_or_default()
-                    }
+                    "page" => extract_notion_page_title(obj),
                     _ => continue,
                 };
 
-                if id.is_empty() || title.is_empty() {
+                if id.is_empty() {
                     continue;
                 }
+
+                // Use a fallback for pages/databases whose title couldn't be
+                // extracted (e.g. the Search API returned truncated properties).
+                let title = if title.is_empty() {
+                    let short_id = if id.len() > 8 { &id[..8] } else { &id };
+                    format!("Untitled ({}…)", short_id)
+                } else {
+                    title
+                };
 
                 all.push(NotionObject {
                     id,
@@ -915,6 +900,48 @@ pub(crate) fn mark_notion_done(
     }
 
     Ok(())
+}
+
+/// Extract the title from a Notion page object returned by the Search API.
+///
+/// Tries multiple strategies:
+/// 1. Look in `properties` for a property with `"type": "title"` (works for
+///    both standalone pages and database pages).
+/// 2. Fall back to the `child_page.title` field (returned for some child pages).
+fn extract_notion_page_title(obj: &serde_json::Value) -> String {
+    // Strategy 1: properties → first "title"-type property.
+    if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
+        if let Some(title) = props.values().find_map(|prop| {
+            if prop.get("type")?.as_str()? != "title" {
+                return None;
+            }
+            let arr = prop.get("title")?.as_array()?;
+            let parts: Vec<&str> = arr
+                .iter()
+                .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(""))
+            }
+        }) {
+            return title;
+        }
+    }
+
+    // Strategy 2: child_page block title (some search results include this).
+    if let Some(title) = obj
+        .get("child_page")
+        .and_then(|cp| cp.get("title"))
+        .and_then(|t| t.as_str())
+    {
+        if !title.is_empty() {
+            return title.to_string();
+        }
+    }
+
+    String::new()
 }
 
 /// Extract a Notion page UUID from either a raw UUID or a Notion URL.
