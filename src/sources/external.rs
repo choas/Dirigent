@@ -669,7 +669,13 @@ pub(crate) fn fetch_notion_tasks(
 
     // The database_id may be a Notion URL — extract the actual UUID.
     let actual_id = extract_notion_page_id(database_id);
-    let url = format!("https://api.notion.com/v1/databases/{}/query", actual_id);
+
+    // Resolve the actual database ID: the user may have pasted a page URL
+    // instead of a database URL. Try the database query first; on 404, look
+    // for a child database inside the page.
+    let resolved_id = resolve_notion_database_id(&client, token, &actual_id)?;
+
+    let url = format!("https://api.notion.com/v1/databases/{}/query", resolved_id);
 
     // Build a filter to exclude completed items.
     let filter = match page_type {
@@ -902,6 +908,71 @@ pub(crate) fn mark_notion_done(
     }
 
     Ok(())
+}
+
+/// Given an ID that might be a database or a page, resolve the actual database
+/// ID.  If the ID refers to a database directly, return it as-is.  If it
+/// refers to a page, look for the first child database inside that page and
+/// return its ID instead.
+fn resolve_notion_database_id(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+) -> crate::error::Result<String> {
+    // Quick check: try to retrieve the database metadata.
+    let db_resp = client
+        .get(&format!("https://api.notion.com/v1/databases/{}", id))
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if db_resp.status().is_success() {
+        // It is a database — use it directly.
+        return Ok(id.to_string());
+    }
+
+    // Not a database (likely a page). Look for child databases inside it.
+    let children_url = format!(
+        "https://api.notion.com/v1/blocks/{}/children?page_size=100",
+        id
+    );
+    let children_resp = client
+        .get(&children_url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Notion-Version", "2022-06-28")
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
+
+    if !children_resp.status().is_success() {
+        let status = children_resp.status();
+        let body = children_resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "The ID is not a Notion database. Tried to find a child database inside the page \
+             but the Notion API returned ({status}): {body}"
+        )));
+    }
+
+    let json: serde_json::Value = children_resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))?;
+
+    if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+        for block in results {
+            let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if block_type == "child_database" {
+                if let Some(child_id) = block.get("id").and_then(|v| v.as_str()) {
+                    return Ok(child_id.to_string());
+                }
+            }
+        }
+    }
+
+    Err(DirigentError::Source(
+        "The provided Notion ID is a page, not a database, and no child database was found \
+         inside it. Please provide the URL of a Notion database instead."
+            .to_string(),
+    ))
 }
 
 /// Extract the title from a Notion page object returned by the Search API.
