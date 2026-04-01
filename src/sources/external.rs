@@ -955,8 +955,8 @@ fn resolve_notion_database_id(
         // cause is that the page/database hasn't been shared with the Notion
         // integration.  Surface that directly.
         return Err(DirigentError::Source(format!(
-            "Could not access this Notion ID as a database or page ({}). \
-             Make sure the page is shared with your Notion integration. \
+            "Could not access this Notion ID ({}). \
+             Open the page in Notion, click ··· → Connections, and add your integration. \
              Notion API response: {}",
             db_status, db_body
         )));
