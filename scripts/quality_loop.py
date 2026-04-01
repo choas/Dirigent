@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""
+quality_loop.py -- Automated code quality improvement agent for Rust projects.
+
+Run with --help for full usage instructions.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+
+HELP_EPILOG = """
+SETUP (step by step)
+--------------------
+
+1. Open a PR on GitHub
+   Work on your branch as usual, push it, and open a Pull Request.
+   Note the PR number from the GitHub URL (e.g. /pull/42 -> 42).
+
+2. Create a .env file in the repo root (never commit this)
+   Add it to .gitignore first:
+
+       echo '.env' >> .gitignore
+
+   Then create the file:
+
+       SONAR_TOKEN=your_sonarqube_or_sonarcloud_token
+       SONAR_URL=https://sonarcloud.io
+       SONAR_PROJECT_KEY=your_org_your_repo
+       GH_REPO=yourname/dirigent
+       GH_PR_NUMBER=42
+
+   GH_PR_NUMBER is the only value that changes per PR.
+   Everything else stays constant across runs.
+
+3. Authenticate the GitHub CLI (one-time)
+
+       gh auth login
+
+4. Make sure sonar-scanner is on your PATH (one-time)
+
+       brew install sonar-scanner        # macOS
+       # or download from sonarqube.org
+
+5. Run the script from the repo root
+
+       python scripts/quality_loop.py
+
+   Or with overrides:
+
+       python scripts/quality_loop.py --pr 43 --max-iterations 5 --dry-run
+
+WHERE TO PUT THE SCRIPT
+-----------------------
+Option A (recommended): commit it to the repo as scripts/quality_loop.py
+  - Lives alongside the code it operates on
+  - Other contributors can use it
+  - Not part of the code being reviewed (SonarQube/CodeRabbit ignore scripts/)
+
+Option B: keep it outside the repo entirely
+  - Run it from anywhere: python ~/tools/quality_loop.py
+  - Set REPO_PATH env var or cd into the repo first
+
+WHAT THE LOOP DOES
+------------------
+  1. cargo test             -- establishes a green baseline (exits if red)
+  [ loop begins ]
+  2. sonar-scanner          -- pushes analysis to SonarQube
+  3. Fetch SonarQube issues -- via REST API
+  4. cargo clippy           -- collects diagnostics as JSON
+  5. cargo fmt --check      -- detects formatting drift
+  6. Fetch CodeRabbit comments -- from the PR via GitHub API
+  7. If all signals clear   -- loop exits cleanly
+  8. Claude Code fixes all  -- single batched invocation per iteration
+  9. cargo test             -- regression guard (exits if red)
+ 10. git commit + push      -- one commit per iteration
+ 11. Poll until CI done     -- waits for coderabbitai summary comment
+ [ back to step 2 ]
+
+EXIT CODES
+----------
+  0  All quality signals clean
+  1  Tests failed (baseline or regression) -- manual intervention needed
+  2  Max iterations reached without full resolution
+
+ENV VARS (all can also be passed as CLI flags)
+----------------------------------------------
+  SONAR_TOKEN        SonarQube/SonarCloud user token (required)
+  SONAR_URL          SonarQube host URL (required)
+  SONAR_PROJECT_KEY  Project key in SonarQube (required)
+  GH_REPO            GitHub repo as owner/repo (required)
+  GH_PR_NUMBER       Pull Request number to operate on (required)
+  MAX_ITERATIONS     Hard stop -- default 8
+  POLL_INTERVAL      Seconds between CI/CodeRabbit polls -- default 30
+  POLL_TIMEOUT       Max seconds to wait per push -- default 600
+"""
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Config:
+    sonar_token: str
+    sonar_url: str
+    sonar_project_key: str
+    gh_repo: str
+    gh_pr_number: str
+    max_iterations: int = 8
+    poll_interval: int = 30
+    poll_timeout: int = 600
+    dry_run: bool = False
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """Load a .env file into os.environ (no external dependency)."""
+    if not path.exists():
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="quality_loop.py",
+        description="Automated code quality improvement agent for Rust projects.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=HELP_EPILOG,
+    )
+    parser.add_argument("--pr", metavar="NUMBER",
+        help="PR number to operate on (overrides GH_PR_NUMBER in .env)")
+    parser.add_argument("--repo", metavar="OWNER/REPO",
+        help="GitHub repo (overrides GH_REPO in .env)")
+    parser.add_argument("--max-iterations", type=int, metavar="N",
+        help="Hard stop after N iterations (default: 8)")
+    parser.add_argument("--poll-interval", type=int, metavar="SECONDS",
+        help="Seconds between CI/CodeRabbit polls (default: 30)")
+    parser.add_argument("--poll-timeout", type=int, metavar="SECONDS",
+        help="Max wait time per push before continuing (default: 600)")
+    parser.add_argument("--dry-run", action="store_true",
+        help="Collect and print all signals, but do not invoke Claude Code or push")
+    parser.add_argument("--env-file", metavar="PATH", default=".env",
+        help="Path to .env file (default: .env in current directory)")
+    return parser.parse_args()
+
+
+def build_config(args: argparse.Namespace) -> Config:
+    load_dotenv(Path(args.env_file))
+
+    # CLI flags take priority over env vars
+    if args.pr:
+        os.environ["GH_PR_NUMBER"] = args.pr
+    if args.repo:
+        os.environ["GH_REPO"] = args.repo
+    if args.max_iterations:
+        os.environ["MAX_ITERATIONS"] = str(args.max_iterations)
+    if args.poll_interval:
+        os.environ["POLL_INTERVAL"] = str(args.poll_interval)
+    if args.poll_timeout:
+        os.environ["POLL_TIMEOUT"] = str(args.poll_timeout)
+
+    required = ["SONAR_TOKEN", "SONAR_URL", "SONAR_PROJECT_KEY", "GH_REPO", "GH_PR_NUMBER"]
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        print(f"[error] Missing required configuration: {', '.join(missing)}")
+        print(f"        Add them to {args.env_file} or pass as CLI flags.")
+        print(f"        Run with --help for full setup instructions.")
+        sys.exit(1)
+
+    return Config(
+        sonar_token=os.environ["SONAR_TOKEN"],
+        sonar_url=os.environ["SONAR_URL"].rstrip("/"),
+        sonar_project_key=os.environ["SONAR_PROJECT_KEY"],
+        gh_repo=os.environ["GH_REPO"],
+        gh_pr_number=os.environ["GH_PR_NUMBER"],
+        max_iterations=int(os.environ.get("MAX_ITERATIONS", 8)),
+        poll_interval=int(os.environ.get("POLL_INTERVAL", 30)),
+        poll_timeout=int(os.environ.get("POLL_TIMEOUT", 600)),
+        dry_run=args.dry_run,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def run(cmd: list[str], check=True, capture=False) -> subprocess.CompletedProcess:
+    print(f"  $ {' '.join(cmd)}")
+    return subprocess.run(
+        cmd,
+        check=check,
+        capture_output=capture,
+        text=True,
+    )
+
+
+def banner(msg: str) -> None:
+    width = 60
+    print("\n" + "=" * width)
+    print(f"  {msg}")
+    print("=" * width)
+
+
+def gh(*args, capture=True) -> str:
+    """Run a gh CLI command and return stdout."""
+    result = run(["gh", *args], capture=capture)
+    return result.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Cargo
+# ---------------------------------------------------------------------------
+
+def cargo_test() -> bool:
+    """Returns True if all tests pass."""
+    result = run(["cargo", "test"], check=False)
+    return result.returncode == 0
+
+
+def cargo_clippy_issues() -> list[str]:
+    """Return clippy diagnostics as a list of message strings."""
+    result = run(
+        ["cargo", "clippy", "--message-format=json", "--", "-D", "warnings"],
+        check=False,
+        capture=True,
+    )
+    issues = []
+    for line in result.stdout.splitlines():
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("reason") == "compiler-message":
+            msg = obj.get("message", {})
+            if msg.get("level") in ("error", "warning"):
+                rendered = msg.get("rendered", "")
+                if rendered:
+                    issues.append(rendered.strip())
+    return issues
+
+
+def cargo_fmt_check() -> list[str]:
+    """Return list of files with formatting issues."""
+    result = run(
+        ["cargo", "fmt", "--check", "--message-format=json"],
+        check=False,
+        capture=True,
+    )
+    if result.returncode == 0:
+        return []
+    # fmt --check just exits non-zero, output is human-readable
+    return [result.stdout.strip()] if result.stdout.strip() else ["Formatting issues found (run cargo fmt)"]
+
+
+# ---------------------------------------------------------------------------
+# SonarQube
+# ---------------------------------------------------------------------------
+
+def sonar_scan(cfg: Config) -> None:
+    """Run sonar-scanner. Assumes sonar-project.properties exists or passes params."""
+    run([
+        "sonar-scanner",
+        f"-Dsonar.token={cfg.sonar_token}",
+        f"-Dsonar.host.url={cfg.sonar_url}",
+        f"-Dsonar.projectKey={cfg.sonar_project_key}",
+    ])
+
+
+def sonar_issues(cfg: Config) -> list[dict]:
+    """Fetch open issues from SonarQube API."""
+    import urllib.request
+    import urllib.parse
+    import base64
+
+    params = urllib.parse.urlencode({
+        "componentKeys": cfg.sonar_project_key,
+        "resolved": "false",
+        "ps": 100,
+    })
+    url = f"{cfg.sonar_url}/api/issues/search?{params}"
+    req = urllib.request.Request(url)
+    token_b64 = base64.b64encode(f"{cfg.sonar_token}:".encode()).decode()
+    req.add_header("Authorization", f"Basic {token_b64}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+            return data.get("issues", [])
+    except Exception as e:
+        print(f"  [warn] SonarQube API error: {e}")
+        return []
+
+
+def format_sonar_issues(issues: list[dict]) -> list[str]:
+    formatted = []
+    for issue in issues:
+        component = issue.get("component", "").split(":")[-1]
+        line = issue.get("line", "?")
+        severity = issue.get("severity", "?")
+        message = issue.get("message", "")
+        rule = issue.get("rule", "")
+        formatted.append(f"[{severity}] {component}:{line} -- {message} ({rule})")
+    return formatted
+
+
+# ---------------------------------------------------------------------------
+# GitHub / CodeRabbit
+# ---------------------------------------------------------------------------
+
+def pr_checks_passing(cfg: Config) -> bool:
+    """Return True if all PR status checks are green."""
+    output = gh(
+        "pr", "view", cfg.gh_pr_number,
+        "--repo", cfg.gh_repo,
+        "--json", "statusCheckRollup",
+    )
+    try:
+        data = json.loads(output)
+        checks = data.get("statusCheckRollup", [])
+        if not checks:
+            return True  # No checks configured -- treat as passing
+        return all(
+            c.get("conclusion") in ("SUCCESS", "SKIPPED", None)
+            for c in checks
+        )
+    except json.JSONDecodeError:
+        return False
+
+
+def coderabbit_comments(cfg: Config) -> list[str]:
+    """Return unresolved review comments left by coderabbitai[bot]."""
+    output = gh(
+        "api",
+        f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
+        "--paginate",
+    )
+    try:
+        comments = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+
+    unresolved = []
+    for c in comments:
+        user = c.get("user", {}).get("login", "")
+        if "coderabbitai" not in user:
+            continue
+        # Skip if the comment thread was resolved (no direct API field --
+        # heuristic: if body contains actionable suggestion keywords)
+        body = c.get("body", "")
+        if any(kw in body.lower() for kw in ("suggestion", "consider", "should", "nitpick", "issue")):
+            path = c.get("path", "")
+            line = c.get("line") or c.get("original_line") or "?"
+            unresolved.append(f"{path}:{line} -- {body[:300]}")
+
+    return unresolved
+
+
+def coderabbit_summary_posted(cfg: Config) -> bool:
+    """Return True if CodeRabbit has posted its summary review for this push."""
+    output = gh(
+        "api",
+        f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/reviews",
+    )
+    try:
+        reviews = json.loads(output)
+    except json.JSONDecodeError:
+        return False
+
+    return any(
+        "coderabbitai" in r.get("user", {}).get("login", "")
+        for r in reviews
+    )
+
+
+def wait_for_coderabbit(cfg: Config, since_sha: str) -> None:
+    """Block until CI passes and CodeRabbit has reviewed the latest push."""
+    banner(f"Waiting for CI + CodeRabbit (timeout {cfg.poll_timeout}s)")
+    deadline = time.time() + cfg.poll_timeout
+    ci_passed = False
+    cr_done = False
+
+    while time.time() < deadline:
+        if not ci_passed:
+            ci_passed = pr_checks_passing(cfg)
+            print(f"  CI checks passing: {ci_passed}")
+
+        if ci_passed and not cr_done:
+            cr_done = coderabbit_summary_posted(cfg)
+            print(f"  CodeRabbit summary posted: {cr_done}")
+
+        if ci_passed and cr_done:
+            print("  All systems go.")
+            return
+
+        print(f"  Sleeping {cfg.poll_interval}s ...")
+        time.sleep(cfg.poll_interval)
+
+    print("[warn] Timed out waiting for CI/CodeRabbit. Continuing anyway.")
+
+
+# ---------------------------------------------------------------------------
+# Claude Code
+# ---------------------------------------------------------------------------
+
+def claude_fix(prompt: str) -> bool:
+    """Invoke Claude Code in non-interactive (print) mode with a fix prompt.
+    Returns True if Claude exited successfully."""
+    result = run(
+        ["claude", "--print", prompt],
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def build_fix_prompt(
+    sonar: list[str],
+    clippy: list[str],
+    fmt: list[str],
+    coderabbit: list[str],
+) -> str:
+    parts = [
+        "You are a code quality agent for a Rust project.",
+        "Fix ALL of the following issues. Do not change any functionality --",
+        "only improve code quality. After each fix, ensure the code still compiles.",
+        "",
+    ]
+    if sonar:
+        parts.append("== SonarQube issues ==")
+        parts.extend(sonar)
+        parts.append("")
+    if clippy:
+        parts.append("== Clippy diagnostics ==")
+        parts.extend(clippy)
+        parts.append("")
+    if fmt:
+        parts.append("== Formatting issues ==")
+        parts.extend(fmt)
+        parts.append("")
+    if coderabbit:
+        parts.append("== CodeRabbit review comments ==")
+        parts.extend(coderabbit)
+        parts.append("")
+    parts.append(
+        "Fix all issues above. Run `cargo fmt` and `cargo clippy` after editing "
+        "to verify no new issues were introduced. Do not modify tests."
+    )
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Git
+# ---------------------------------------------------------------------------
+
+def current_sha() -> str:
+    result = run(["git", "rev-parse", "HEAD"], capture=True)
+    return result.stdout.strip()
+
+
+def git_commit_push(iteration: int) -> None:
+    run(["git", "add", "-A"])
+    result = run(
+        ["git", "diff", "--cached", "--quiet"],
+        check=False,
+    )
+    if result.returncode == 0:
+        print("  Nothing to commit -- skipping push.")
+        return
+    run(["git", "commit", "-m", f"chore: quality loop iteration {iteration}"])
+    run(["git", "push"])
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    args = parse_args()
+    cfg = build_config(args)
+
+    if cfg.dry_run:
+        print("[dry-run] No Claude Code invocations or git pushes will happen.")
+
+    banner("Baseline: cargo test")
+    if not cargo_test():
+        print("[error] Tests failed before the loop even started. Fix them first.")
+        sys.exit(1)
+    print("  Baseline tests green.")
+
+    for iteration in range(1, cfg.max_iterations + 1):
+        banner(f"Iteration {iteration}/{cfg.max_iterations}")
+
+        # -- Collect all quality signals --
+        print("\n[1/4] Running SonarQube scan ...")
+        sonar_scan(cfg)
+        s_issues = format_sonar_issues(sonar_issues(cfg))
+        print(f"  SonarQube issues: {len(s_issues)}")
+
+        print("\n[2/4] Running cargo clippy ...")
+        c_issues = cargo_clippy_issues()
+        print(f"  Clippy issues: {len(c_issues)}")
+
+        print("\n[3/4] Running cargo fmt --check ...")
+        f_issues = cargo_fmt_check()
+        print(f"  Fmt issues: {len(f_issues)}")
+
+        print("\n[4/4] Fetching CodeRabbit comments ...")
+        cr_issues = coderabbit_comments(cfg)
+        print(f"  CodeRabbit comments: {len(cr_issues)}")
+
+        total = len(s_issues) + len(c_issues) + len(f_issues) + len(cr_issues)
+
+        if total == 0:
+            banner("All signals clean -- loop complete!")
+            sys.exit(0)
+
+        # -- Build prompt and invoke Claude Code --
+        print(f"\n  Total issues: {total}.")
+        prompt = build_fix_prompt(s_issues, c_issues, f_issues, cr_issues)
+
+        if cfg.dry_run:
+            print("\n[dry-run] Would invoke Claude Code with this prompt:\n")
+            print(prompt)
+            print("\n[dry-run] Stopping after first iteration.")
+            sys.exit(0)
+
+        print("  Invoking Claude Code ...")
+        success = claude_fix(prompt)
+        if not success:
+            print("[warn] Claude Code exited with an error. Continuing anyway.")
+
+        # -- Regression guard --
+        print("\n  Running cargo test (regression guard) ...")
+        if not cargo_test():
+            print("[error] Tests broke after Claude's changes. Stopping.")
+            print("  Check the diff, fix manually, and re-run.")
+            sys.exit(1)
+        print("  Tests still green.")
+
+        # -- Commit and push --
+        sha_before = current_sha()
+        git_commit_push(iteration)
+        sha_after = current_sha()
+
+        if sha_before == sha_after:
+            print("  No changes committed. Likely all issues were already resolved.")
+            banner("Nothing to push -- loop complete!")
+            sys.exit(0)
+
+        # -- Wait for CI and CodeRabbit --
+        wait_for_coderabbit(cfg, sha_after)
+
+    print(f"\n[warn] Reached max iterations ({cfg.max_iterations}). Stopping.")
+    print("  Some issues may remain. Check the PR manually.")
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
