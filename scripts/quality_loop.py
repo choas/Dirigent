@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -391,14 +392,18 @@ def pr_checks_passing(cfg: Config) -> bool:
 def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
     """Return unresolved review comments left by coderabbitai[bot].
     If `since` is set (ISO 8601 timestamp), only return comments created after that time."""
-    url = f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments"
-    if since:
-        url += f"?since={since}"
-    args = ["api", url, "--paginate"]
-    output = gh(*args)
+    output = gh(
+        "api",
+        f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
+        "--paginate",
+    )
+    if not output:
+        print("  [warn] No response from GitHub API for PR comments.")
+        return []
     try:
         comments = json.loads(output)
     except json.JSONDecodeError:
+        print("  [warn] Failed to parse PR comments response as JSON.")
         return []
 
     unresolved = []
@@ -406,8 +411,9 @@ def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
         user = c.get("user", {}).get("login", "")
         if "coderabbitai" not in user:
             continue
-        # Skip if the comment thread was resolved (no direct API field --
-        # heuristic: if body contains actionable suggestion keywords)
+        # Filter by created_at client-side (API's `since` param is unreliable)
+        if since and c.get("created_at", "") <= since:
+            continue
         body = c.get("body", "")
         if any(kw in body.lower() for kw in ("suggestion", "consider", "should", "nitpick", "issue")):
             path = c.get("path", "")
@@ -480,13 +486,17 @@ def _process_claude_stream(proc) -> None:
 def claude_fix(prompt: str, iteration: int = 0) -> bool:
     """Invoke Claude Code with stream-json output to show live progress.
     Returns True if Claude exited successfully."""
-    # Log prompt to /tmp for debugging (owner-only permissions since the
-    # prompt may embed issue details or tokens from surrounding context).
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    prompt_file = f"/tmp/quality_loop_prompt_{ts}_iter{iteration}.txt"
-    pf = Path(prompt_file)
-    pf.write_text(prompt)
-    pf.chmod(0o600)
+    # Log prompt to a temp file for debugging. Use tempfile to avoid a
+    # TOCTOU race between write_text() and chmod() on a predictable path.
+    fd = tempfile.NamedTemporaryFile(
+        mode="w",
+        prefix=f"quality_loop_prompt_iter{iteration}_",
+        suffix=".txt",
+        delete=False,
+    )
+    fd.write(prompt)
+    prompt_file = fd.name
+    fd.close()
     print(f"  Prompt saved to {prompt_file}")
     print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --verbose --dangerously-skip-permissions")
     start = time.time()
@@ -672,20 +682,23 @@ def _apply_fixes(prompt: str, iteration: int) -> None:
     print("  Tests still green.")
 
 
-def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> None:
-    """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
+def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
+    """Commit, push, and wait for CI/CodeRabbit if the push succeeded.
+    Returns True if changes were committed and pushed successfully."""
     sha_before = current_sha()
     pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
     sha_after = current_sha()
 
     if sha_before == sha_after:
         print("  No changes committed — Claude may not have produced a fix.")
-        return
+        return False
 
     if pushed:
         wait_for_coderabbit(cfg)
-    else:
-        print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+        return True
+
+    print("  Skipping CI/CodeRabbit wait (push did not succeed).")
+    return False
 
 
 def _cr_since_path(cfg: Config) -> Path:
@@ -740,8 +753,9 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
     new_files = sorted(dirty_after - dirty_before)
 
     new_cr_since = datetime.now(timezone.utc).isoformat()
-    _save_cr_since(cfg, new_cr_since)
-    _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
+    pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
+    if pushed:
+        _save_cr_since(cfg, new_cr_since)
 
     return new_cr_since
 
