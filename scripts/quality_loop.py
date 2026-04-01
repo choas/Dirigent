@@ -435,11 +435,11 @@ def wait_for_coderabbit(cfg: Config, since_sha: str) -> None:
 def claude_fix(prompt: str) -> bool:
     """Invoke Claude Code with stream-json output to show live progress.
     Returns True if Claude exited successfully."""
-    print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --dangerously-skip-permissions")
+    print(f"  $ claude -p '<prompt ({len(prompt)} chars)>' --output-format stream-json --verbose --dangerously-skip-permissions")
     start = time.time()
     try:
         proc = subprocess.Popen(
-            ["claude", "-p", prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"],
+            ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
