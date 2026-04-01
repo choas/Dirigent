@@ -115,7 +115,17 @@ impl DirigentApp {
         let mut new_count = 0;
         for item in items {
             match self.db.cue_exists_by_source_ref(&item.external_id) {
-                Ok(true) => continue,
+                Ok(true) => {
+                    // Backfill source_id on migrated rows that have it NULL.
+                    if !item.source_id.is_empty() {
+                        let _ = self.db.backfill_source_id(
+                            &item.external_id,
+                            &item.source_id,
+                            &item.source_label,
+                        );
+                    }
+                    continue;
+                }
                 Ok(false) => {}
                 Err(_) => continue,
             }

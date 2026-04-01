@@ -57,6 +57,21 @@ impl Database {
         Ok(())
     }
 
+    /// Backfill source_id (and source_label) on an existing cue identified by
+    /// source_ref, but only when the stored source_id is currently NULL.
+    pub fn backfill_source_id(
+        &self,
+        source_ref: &str,
+        source_id: &str,
+        source_label: &str,
+    ) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE cues SET source_id = ?1, source_label = ?2 WHERE source_ref = ?3 AND source_id IS NULL",
+            params![source_id, source_label, source_ref],
+        )?;
+        Ok(updated > 0)
+    }
+
     /// Insert a cue from an external source with optional file location.
     pub fn insert_cue_from_source(
         &self,
