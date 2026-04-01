@@ -459,9 +459,12 @@ def claude_fix(prompt: str) -> bool:
             continue
         _print_stream_event(event)
 
+    stderr_output = proc.stderr.read()
     proc.wait()
     elapsed = time.time() - start
     print(f"  Claude Code finished in {elapsed:.0f}s (exit {proc.returncode})")
+    if proc.returncode != 0 and stderr_output:
+        print(f"  [stderr] {stderr_output.strip()}")
     return proc.returncode == 0
 
 
