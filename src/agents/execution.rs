@@ -265,7 +265,11 @@ fn build_completed_result(
     };
 
     let diagnostics = match kind {
-        AgentKind::Lint | AgentKind::Build | AgentKind::Test | AgentKind::Custom(_) => {
+        AgentKind::Lint
+        | AgentKind::Build
+        | AgentKind::Test
+        | AgentKind::Audit
+        | AgentKind::Custom(_) => {
             let cargo_diags = parse_cargo_diagnostics(&stdout);
             if cargo_diags.is_empty() {
                 parse_generic_diagnostics(&combined)

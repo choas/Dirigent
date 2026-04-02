@@ -1,5 +1,18 @@
 use super::types::{AgentConfig, AgentKind, AgentTrigger};
 
+fn audit_agent(command: &str) -> AgentConfig {
+    AgentConfig {
+        kind: AgentKind::Audit,
+        name: String::new(),
+        enabled: true,
+        command: command.into(),
+        trigger: AgentTrigger::Manual,
+        timeout_secs: 120,
+        working_dir: String::new(),
+        before_run: String::new(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Language presets for agent initialization
 // ---------------------------------------------------------------------------
@@ -112,6 +125,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("cargo audit 2>&1"),
         ],
         AgentLanguage::TypeScript => vec![
             AgentConfig {
@@ -164,6 +178,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("npm audit 2>&1"),
         ],
         AgentLanguage::Python => vec![
             AgentConfig {
@@ -216,6 +231,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("pip-audit 2>&1"),
         ],
         AgentLanguage::Go => vec![
             AgentConfig {
@@ -268,6 +284,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("govulncheck ./... 2>&1"),
         ],
         AgentLanguage::Java => vec![
             AgentConfig {
@@ -320,6 +337,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("mvn org.owasp:dependency-check-maven:check 2>&1"),
         ],
         AgentLanguage::CSharp => vec![
             AgentConfig {
@@ -372,6 +390,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("dotnet list package --vulnerable 2>&1"),
         ],
         AgentLanguage::Ruby => vec![
             AgentConfig {
@@ -424,6 +443,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("bundle audit check 2>&1"),
         ],
         AgentLanguage::Swift => vec![
             AgentConfig {
@@ -602,6 +622,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 working_dir: String::new(),
                 before_run: String::new(),
             },
+            audit_agent("mix hex.audit 2>&1"),
         ],
         AgentLanguage::Zig => vec![
             AgentConfig {

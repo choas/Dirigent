@@ -19,6 +19,7 @@ impl DirigentApp {
 
         let mut close = false;
         let mut analyze_run_idx: Option<usize> = None;
+        let mut fix_run_idx: Option<usize> = None;
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_agent_log_header(ui, kind, fs, &mut close);
@@ -33,10 +34,12 @@ impl DirigentApp {
                 return;
             }
 
-            self.render_agent_log_run_list(ui, &runs, &mut analyze_run_idx);
+            self.render_agent_log_run_list(ui, kind, &runs, &mut analyze_run_idx, &mut fix_run_idx);
         });
 
-        if let Some(idx) = analyze_run_idx {
+        if let Some(idx) = fix_run_idx {
+            self.handle_fix_run(kind, &runs, idx);
+        } else if let Some(idx) = analyze_run_idx {
             self.handle_analyze_run(kind, &runs, idx);
         }
 
@@ -103,14 +106,16 @@ impl DirigentApp {
     fn render_agent_log_run_list(
         &self,
         ui: &mut egui::Ui,
+        kind: AgentKind,
         runs: &[AgentRunEntry],
         analyze_run_idx: &mut Option<usize>,
+        fix_run_idx: &mut Option<usize>,
     ) {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 for (idx, run) in runs.iter().enumerate() {
-                    self.render_single_run_entry(ui, run, idx, analyze_run_idx);
+                    self.render_single_run_entry(ui, kind, run, idx, analyze_run_idx, fix_run_idx);
                     if idx < runs.len() - 1 {
                         ui.separator();
                     }
@@ -122,9 +127,11 @@ impl DirigentApp {
     fn render_single_run_entry(
         &self,
         ui: &mut egui::Ui,
+        kind: AgentKind,
         run: &AgentRunEntry,
         idx: usize,
         analyze_run_idx: &mut Option<usize>,
+        fix_run_idx: &mut Option<usize>,
     ) {
         let dur = crate::app::util::format_duration_ms(run.duration_ms);
         let (status_icon, status_color) = status_icon_and_color(run, &self.semantic);
@@ -162,6 +169,19 @@ impl DirigentApp {
                     .clicked()
                 {
                     *analyze_run_idx = Some(idx);
+                }
+                // Show "Fix with AI" button for Audit agents with failed/error runs
+                if kind == AgentKind::Audit && (run.status == "failed" || run.status == "error") {
+                    if ui
+                        .button(
+                            egui::RichText::new("\u{1F527} Fix with AI")
+                                .small()
+                                .color(self.semantic.danger),
+                        )
+                        .clicked()
+                    {
+                        *fix_run_idx = Some(idx);
+                    }
                 }
             });
         });
@@ -210,6 +230,27 @@ impl DirigentApp {
                 Ok(_id) => {
                     self.reload_cues();
                     // Close the agent log so the user lands on the cue pool
+                    self.agent_state.show_output = None;
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to create cue: {e}"));
+                }
+            }
+        }
+    }
+
+    /// Create a cue from a failed audit run asking the AI to fix the issues.
+    fn handle_fix_run(&mut self, kind: AgentKind, runs: &[AgentRunEntry], idx: usize) {
+        if let Some(run) = runs.get(idx) {
+            let cue_text = format!(
+                "The {} audit found vulnerabilities. Fix all the issues reported below by updating dependencies, applying patches, or making the necessary code changes.\n\n$ {}\n\n{}",
+                kind.label(),
+                run.command,
+                run.output.trim(),
+            );
+            match self.db.insert_cue(&cue_text, "", 0, None, &[]) {
+                Ok(_id) => {
+                    self.reload_cues();
                     self.agent_state.show_output = None;
                 }
                 Err(e) => {
