@@ -354,7 +354,7 @@ fn render_table(
     ui: &mut egui::Ui,
     headers: &[Vec<TextSegment>],
     rows: &[Vec<Vec<TextSegment>>],
-    block_idx: usize,
+    _block_idx: usize,
     ctx: &RenderCtx,
 ) {
     let indent = ctx.indent();
@@ -362,20 +362,36 @@ fn render_table(
     let border = table_border_color(ctx.semantic);
     let header_bg = table_header_bg(ctx.semantic);
     let col_count = headers.len();
+    if col_count == 0 {
+        return;
+    }
 
-    ui.horizontal_wrapped(|ui| {
-        if indent > 0.0 {
-            ui.add_space(indent);
-        }
-        egui::Frame::new()
-            .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(4.0)
-            .show(ui, |ui| {
-                render_table_header(ui, headers, col_count, block_idx, header_bg, ctx);
-                render_table_separator(ui, border);
-                render_table_body(ui, rows, col_count, block_idx, ctx);
-            });
-    });
+    // Pre-compute column widths from actual cell content.
+    let frame_overhead = 2.0 + 2.0 * SPACE_SM;
+    let col_gap = SPACE_SM * col_count.saturating_sub(1) as f32;
+    let available_for_cols =
+        (ui.available_width() - indent - frame_overhead - col_gap).max(col_count as f32 * 40.0);
+    let col_widths = compute_column_widths(
+        ui,
+        headers,
+        rows,
+        col_count,
+        ctx.font_size,
+        available_for_cols,
+    );
+
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, border))
+        .corner_radius(4.0)
+        .outer_margin(egui::Margin {
+            left: indent.round().min(i8::MAX as f32) as i8,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            render_table_header(ui, headers, header_bg, ctx, &col_widths);
+            render_table_separator(ui, border);
+            render_table_body(ui, rows, ctx, &col_widths);
+        });
     ui.add_space(SPACE_SM);
 }
 
@@ -395,32 +411,90 @@ fn table_header_bg(semantic: &crate::settings::SemanticColors) -> egui::Color32 
     }
 }
 
+fn segments_plain_text(segments: &[TextSegment]) -> String {
+    segments
+        .iter()
+        .map(|seg| match seg {
+            TextSegment::Plain(t)
+            | TextSegment::Bold(t)
+            | TextSegment::Italic(t)
+            | TextSegment::BoldItalic(t)
+            | TextSegment::Code(t)
+            | TextSegment::Strikethrough(t)
+            | TextSegment::StrikethroughBold(t)
+            | TextSegment::StrikethroughItalic(t)
+            | TextSegment::StrikethroughBoldItalic(t) => t.as_str(),
+            TextSegment::Link { text, .. } => text.as_str(),
+            TextSegment::SoftBreak => " ",
+            TextSegment::HardBreak => "\n",
+        })
+        .collect()
+}
+
+fn compute_column_widths(
+    ui: &egui::Ui,
+    headers: &[Vec<TextSegment>],
+    rows: &[Vec<Vec<TextSegment>>],
+    col_count: usize,
+    font_size: f32,
+    available: f32,
+) -> Vec<f32> {
+    let font_id = egui::FontId::proportional(font_size);
+    let mut natural = vec![0.0f32; col_count];
+
+    for (i, cell) in headers.iter().enumerate().take(col_count) {
+        let text = segments_plain_text(cell);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text, font_id.clone(), egui::Color32::WHITE);
+        natural[i] = natural[i].max(galley.size().x);
+    }
+    for row in rows {
+        for (i, cell) in row.iter().enumerate().take(col_count) {
+            let text = segments_plain_text(cell);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(text, font_id.clone(), egui::Color32::WHITE);
+            natural[i] = natural[i].max(galley.size().x);
+        }
+    }
+
+    let total: f32 = natural.iter().sum();
+    if total <= available {
+        let extra = available - total;
+        let share = extra / col_count as f32;
+        natural.iter().map(|w| w + share).collect()
+    } else {
+        let scale = available / total;
+        natural.iter().map(|w| (w * scale).max(40.0)).collect()
+    }
+}
+
 fn render_table_header(
     ui: &mut egui::Ui,
     headers: &[Vec<TextSegment>],
-    col_count: usize,
-    block_idx: usize,
     header_bg: egui::Color32,
     ctx: &RenderCtx,
+    col_widths: &[f32],
 ) {
     egui::Frame::new()
         .fill(header_bg)
         .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
         .show(ui, |ui| {
-            egui::Grid::new(ui.id().with(("md_th", block_idx)))
-                .num_columns(col_count)
-                .min_col_width(60.0)
-                .spacing(egui::vec2(SPACE_MD, SPACE_XS))
-                .show(ui, |ui| {
-                    for cell in headers {
+            ui.horizontal(|ui| {
+                for (i, cell) in headers.iter().enumerate() {
+                    let width = col_widths.get(i).copied().unwrap_or(60.0);
+                    ui.vertical(|ui| {
+                        ui.set_min_width(width);
+                        ui.set_max_width(width);
                         ui.horizontal_wrapped(|ui| {
                             for seg in cell {
                                 render_segment(ui, seg, ctx.font_size, true, ctx.semantic);
                             }
                         });
-                    }
-                    ui.end_row();
-                });
+                    });
+                }
+            });
         });
 }
 
@@ -438,30 +512,41 @@ fn render_table_separator(ui: &mut egui::Ui, border: egui::Color32) {
 fn render_table_body(
     ui: &mut egui::Ui,
     rows: &[Vec<Vec<TextSegment>>],
-    col_count: usize,
-    block_idx: usize,
     ctx: &RenderCtx,
+    col_widths: &[f32],
 ) {
+    let stripe_bg = if ctx.semantic.is_dark() {
+        egui::Color32::from_white_alpha(6)
+    } else {
+        egui::Color32::from_black_alpha(6)
+    };
+
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
         .show(ui, |ui| {
-            egui::Grid::new(ui.id().with(("md_td", block_idx)))
-                .num_columns(col_count)
-                .striped(true)
-                .min_col_width(60.0)
-                .spacing(egui::vec2(SPACE_MD, SPACE_XS))
-                .show(ui, |ui| {
-                    for row in rows {
-                        for cell in row {
-                            ui.horizontal_wrapped(|ui| {
-                                for seg in cell {
-                                    render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
-                                }
+            for (row_idx, row) in rows.iter().enumerate() {
+                let fill = if row_idx % 2 == 1 {
+                    stripe_bg
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                egui::Frame::new().fill(fill).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (i, cell) in row.iter().enumerate() {
+                            let width = col_widths.get(i).copied().unwrap_or(60.0);
+                            ui.vertical(|ui| {
+                                ui.set_min_width(width);
+                                ui.set_max_width(width);
+                                ui.horizontal_wrapped(|ui| {
+                                    for seg in cell {
+                                        render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+                                    }
+                                });
                             });
                         }
-                        ui.end_row();
-                    }
+                    });
                 });
+            }
         });
 }
 
