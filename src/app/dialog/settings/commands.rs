@@ -142,7 +142,7 @@ impl DirigentApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.settings.commands[i].cli_args)
                             .desired_width(250.0)
-                            .hint_text("extra CLI flags (e.g. --plan)")
+                            .hint_text("extra CLI flags (e.g. --permission-mode plan)")
                             .font(egui::TextStyle::Monospace),
                     );
                     ui.end_row();
