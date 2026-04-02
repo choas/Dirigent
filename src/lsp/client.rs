@@ -549,8 +549,29 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     }
 }
 
+/// Returns `true` if `name` contains only characters safe for shell interpolation
+/// (alphanumeric, hyphen, underscore, dot, forward slash).
+/// Rejects shell metacharacters like `;`, `|`, `$`, backtick, etc.
+fn is_safe_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+}
+
 /// Resolve a command name using the login shell (handles macOS GUI PATH issues).
 fn resolve_command(command: &str, shell_init: &str) -> Option<String> {
+    // Reject command names with shell metacharacters to prevent command injection.
+    // The command field comes from settings.json which may be attacker-controlled
+    // (e.g. a malicious .Dirigent/settings.json checked into a repository).
+    if !is_safe_command_name(command) {
+        eprintln!(
+            "[lsp] refusing to resolve command with unsafe characters: {:?}",
+            command
+        );
+        return None;
+    }
+
     // If it's already an absolute path, use it directly
     if Path::new(command).is_absolute() {
         if Path::new(command).exists() {

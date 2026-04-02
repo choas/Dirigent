@@ -12,6 +12,17 @@ use super::playbook::default_playbook;
 ///   2. Fall back to a plain `which` (works when launched from a terminal).
 ///   3. Probe well-known installation directories as a last resort.
 fn which(name: &str) -> Option<String> {
+    // Reject names with shell metacharacters to prevent command injection.
+    // `name` may originate from deserialized settings.json which could be
+    // attacker-controlled (e.g. a malicious .Dirigent/settings.json in a repo).
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+    {
+        return None;
+    }
+
     // 1. Login shell
     let login = std::process::Command::new("/bin/zsh")
         .args(["-l", "-c", &format!("which {name}")])
