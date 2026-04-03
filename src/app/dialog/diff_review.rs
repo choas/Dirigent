@@ -52,7 +52,9 @@ impl DirigentApp {
         let fs = self.settings.font_size;
         let sem = self.semantic;
 
-        let review = self.diff_review.as_mut().unwrap();
+        let Some(review) = self.diff_review.as_mut() else {
+            return;
+        };
         let cue_id = review.cue_id;
         let diff_text = review.diff.clone();
         let cue_text = review.cue_text.clone();

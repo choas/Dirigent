@@ -129,10 +129,10 @@ unsafe fn nsimage_from_png(png_bytes: &[u8]) -> *mut objc::runtime::Object {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
-    let ns_data = Class::get("NSData").unwrap();
+    let ns_data = Class::get("NSData").expect("NSData is always available on macOS");
     let data: *mut Object =
         msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
-    let ns_image = Class::get("NSImage").unwrap();
+    let ns_image = Class::get("NSImage").expect("NSImage is always available on macOS");
     let image: *mut Object = msg_send![ns_image, alloc];
     msg_send![image, initWithData:data]
 }
@@ -158,7 +158,8 @@ fn setup_macos_about_panel() {
     // - `ClassDecl::new` returns `None` if a class with the same name already
     //   exists (e.g. if called twice), so we guard with `if let Some(...)`.
     unsafe {
-        let ns_app = Class::get("NSApplication").unwrap();
+        let ns_app =
+            Class::get("NSApplication").expect("NSApplication is always available on macOS");
         let app: *mut Object = msg_send![ns_app, sharedApplication];
 
         // Set application icon (used by dock and About panel)
@@ -167,7 +168,7 @@ fn setup_macos_about_panel() {
 
         // Create a helper class whose showAbout: method opens the standard
         // About panel with our name and version filled in.
-        let superclass = Class::get("NSObject").unwrap();
+        let superclass = Class::get("NSObject").expect("NSObject is always available on macOS");
         if let Some(mut decl) = ClassDecl::new("DirigentAboutHelper", superclass) {
             extern "C" fn show_about(_this: &Object, _sel: Sel, _sender: *mut Object) {
                 // SAFETY: This callback is invoked by AppKit on the main thread
@@ -178,11 +179,14 @@ fn setup_macos_about_panel() {
                 // null-terminated. Dictionary keys and values are autoreleased
                 // ObjC objects valid for the duration of this scope.
                 unsafe {
-                    let ns_app = Class::get("NSApplication").unwrap();
+                    let ns_app = Class::get("NSApplication")
+                        .expect("NSApplication is always available on macOS");
                     let app: *mut Object = msg_send![ns_app, sharedApplication];
-                    let ns_dict = Class::get("NSMutableDictionary").unwrap();
+                    let ns_dict = Class::get("NSMutableDictionary")
+                        .expect("NSMutableDictionary is always available on macOS");
                     let dict: *mut Object = msg_send![ns_dict, new];
-                    let ns_string = Class::get("NSString").unwrap();
+                    let ns_string =
+                        Class::get("NSString").expect("NSString is always available on macOS");
 
                     let key: *mut Object = msg_send![ns_string,
                         stringWithUTF8String: c"ApplicationName".as_ptr()];

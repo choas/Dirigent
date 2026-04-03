@@ -8,7 +8,9 @@ use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 impl DirigentApp {
     /// Agent run log rendered in the central panel (replaces code viewer).
     pub(in crate::app) fn render_agent_log_central(&mut self, ui: &mut egui::Ui) {
-        let kind = self.agent_state.show_output.unwrap();
+        let Some(kind) = self.agent_state.show_output else {
+            return;
+        };
         let fs = self.settings.font_size;
 
         let kind_key = kind.db_key();

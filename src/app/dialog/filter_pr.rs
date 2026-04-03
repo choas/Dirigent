@@ -448,8 +448,11 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         id: i64,
     ) -> Option<(i64, String, String)> {
-        let mut edit_text = self.git.editing_pattern.as_ref().unwrap().1.clone();
-        let mut edit_field = self.git.editing_pattern.as_ref().unwrap().2.clone();
+        let Some((_, ref text, ref field)) = self.git.editing_pattern else {
+            return None;
+        };
+        let mut edit_text = text.clone();
+        let mut edit_field = field.clone();
         let mut cancel = false;
         let mut save = None;
 

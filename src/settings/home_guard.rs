@@ -92,7 +92,7 @@ fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) -> Result<(
 
     let hooks = root
         .as_object_mut()
-        .unwrap()
+        .expect("root is checked to be an object above")
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
 
@@ -102,7 +102,7 @@ fn upsert_hook_in_settings(settings_path: &Path, hook_script: &Path) -> Result<(
 
     let pre = hooks
         .as_object_mut()
-        .unwrap()
+        .expect("hooks is checked to be an object above")
         .entry("PreToolUse")
         .or_insert_with(|| serde_json::json!([]));
 

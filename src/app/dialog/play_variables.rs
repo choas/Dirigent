@@ -21,7 +21,9 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let pending = self.pending_play.as_mut().unwrap();
+                let Some(pending) = self.pending_play.as_mut() else {
+                    return;
+                };
                 Self::render_play_variable_inputs(ui, pending);
 
                 ui.add_space(SPACE_SM * 2.0);
@@ -113,7 +115,9 @@ impl DirigentApp {
 
     /// Resolve all variable values and create the cue.
     fn submit_pending_play(&mut self) {
-        let pending = self.pending_play.take().unwrap();
+        let Some(pending) = self.pending_play.take() else {
+            return;
+        };
         let resolved: Vec<(String, String)> = pending
             .variables
             .iter()

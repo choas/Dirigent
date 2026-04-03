@@ -747,7 +747,9 @@ impl DirigentApp {
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {
-        let diff = result.diff.as_ref().unwrap();
+        let Some(diff) = result.diff.as_ref() else {
+            return;
+        };
         let (m_cost, m_dur, m_turns) = (
             Some(result.metrics.cost_usd),
             Some(result.metrics.duration_ms),

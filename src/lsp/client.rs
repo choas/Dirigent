@@ -236,7 +236,10 @@ impl LspClient {
             ..Default::default()
         };
 
-        self.send_request("initialize", serde_json::to_value(params).unwrap())
+        self.send_request(
+            "initialize",
+            serde_json::to_value(params).expect("LSP params must be serializable"),
+        )
     }
 
     /// Send the `initialized` notification (must be called after receiving initialize response).
@@ -272,7 +275,7 @@ impl LspClient {
 
         self.send_notification(
             "textDocument/didOpen",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         );
         self.open_files.insert(uri_str, 1);
     }
@@ -292,7 +295,7 @@ impl LspClient {
 
         self.send_notification(
             "textDocument/didClose",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         );
     }
 
@@ -315,7 +318,9 @@ impl LspClient {
             Err(_) => return,
         };
 
-        let version = self.open_files.get_mut(&uri_str).unwrap();
+        let Some(version) = self.open_files.get_mut(&uri_str) else {
+            return;
+        };
         *version += 1;
         let ver = *version;
 
@@ -330,7 +335,7 @@ impl LspClient {
 
         self.send_notification(
             "textDocument/didChange",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         );
     }
 
@@ -344,7 +349,10 @@ impl LspClient {
             },
             work_done_progress_params: Default::default(),
         };
-        self.send_request("textDocument/hover", serde_json::to_value(params).unwrap())
+        self.send_request(
+            "textDocument/hover",
+            serde_json::to_value(params).expect("LSP params must be serializable"),
+        )
     }
 
     /// Request `textDocument/definition`.
@@ -360,7 +368,7 @@ impl LspClient {
         };
         self.send_request(
             "textDocument/definition",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         )
     }
 
@@ -374,7 +382,7 @@ impl LspClient {
         };
         self.send_request(
             "textDocument/documentSymbol",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         )
     }
 
@@ -394,7 +402,7 @@ impl LspClient {
         };
         self.send_request(
             "textDocument/references",
-            serde_json::to_value(params).unwrap(),
+            serde_json::to_value(params).expect("LSP params must be serializable"),
         )
     }
 
@@ -451,7 +459,7 @@ impl LspClient {
     }
 
     fn write_message(&self, msg: &serde_json::Value) {
-        let body = serde_json::to_string(msg).unwrap();
+        let body = serde_json::to_string(msg).expect("LSP message must be serializable");
         let mut writer = match self.writer.lock() {
             Ok(w) => w,
             Err(e) => {

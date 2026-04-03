@@ -10,7 +10,9 @@ use crate::settings::CliProvider;
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_running_log_central(&mut self, ui: &mut egui::Ui) {
-        let cue_id = self.claude.show_log.unwrap();
+        let Some(cue_id) = self.claude.show_log else {
+            return;
+        };
         let fs = self.settings.font_size;
 
         // Drain any pending log updates before rendering

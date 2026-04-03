@@ -26,7 +26,7 @@ unsafe fn ns_string_from_str(s: &str) -> *mut objc::runtime::Object {
     use objc::runtime::Class;
     use objc::{msg_send, sel, sel_impl};
 
-    let nsstring = Class::get("NSString").unwrap();
+    let nsstring = Class::get("NSString").expect("NSString is always available on macOS");
     let c_str = std::ffi::CString::new(s).expect("interior null bytes already stripped");
     // SAFETY: `NSString stringWithUTF8String:` is safe to call with a valid
     // C string pointer. The returned object is autoreleased by the runtime.
@@ -56,7 +56,8 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
     // stripped above, so CString construction cannot panic.
     unsafe {
         // SAFETY: `NSAutoreleasePool` is always available on macOS.
-        let pool_cls = Class::get("NSAutoreleasePool").unwrap();
+        let pool_cls = Class::get("NSAutoreleasePool")
+            .expect("NSAutoreleasePool is always available on macOS");
         let pool: *mut Object = msg_send![pool_cls, new];
 
         let title_ns = ns_string_from_str(&title_safe);
@@ -108,7 +109,7 @@ unsafe fn try_modern_notification(
     use objc::{msg_send, sel, sel_impl};
 
     // SAFETY: `NSBundle` is always present on macOS.
-    let bundle_cls = Class::get("NSBundle").unwrap();
+    let bundle_cls = Class::get("NSBundle").expect("NSBundle is always available on macOS");
 
     // SAFETY: The path is a compile-time constant with no interior nulls.
     let fw_path_ns = ns_string_from_str("/System/Library/Frameworks/UserNotifications.framework");
@@ -272,7 +273,7 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             }
         }
 
-        let superclass = Class::get("NSObject").unwrap();
+        let superclass = Class::get("NSObject").expect("NSObject is always available on macOS");
         if let Some(mut decl) = ClassDecl::new("DirigentNotifDelegate", superclass) {
             decl.add_method(
                 sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
@@ -433,7 +434,7 @@ unsafe fn deliver_notification(
     };
     // SAFETY: `NSUUID` is always available on macOS 10.8+. `UUID` and
     // `UUIDString` return autoreleased objects valid within the pool scope.
-    let nsuuid_cls = Class::get("NSUUID").unwrap();
+    let nsuuid_cls = Class::get("NSUUID").expect("NSUUID is always available on macOS 10.8+");
     let uuid: *mut Object = msg_send![nsuuid_cls, UUID];
     let uuid_str: *mut Object = msg_send![uuid, UUIDString];
     let trigger: *const Object = std::ptr::null();

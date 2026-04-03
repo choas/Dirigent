@@ -7,7 +7,9 @@ use crate::db::AgentRunEntry;
 impl DirigentApp {
     /// Agent runs for a specific cue, rendered in the central panel.
     pub(in crate::app) fn render_cue_agent_runs_central(&mut self, ui: &mut egui::Ui) {
-        let cue_id = self.show_agent_runs_for_cue.unwrap();
+        let Some(cue_id) = self.show_agent_runs_for_cue else {
+            return;
+        };
         let cue_text = self.cue_text_truncated(cue_id);
         let runs = self.db.get_agent_runs_for_cue(cue_id).unwrap_or_default();
 

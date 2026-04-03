@@ -41,7 +41,11 @@ fn collapse_entry(mut entry: FileEntry) -> FileEntry {
     // While this directory has exactly one child and that child is a directory,
     // absorb it into the current entry's display name.
     while entry.children.len() == 1 && entry.children[0].is_dir {
-        let child = entry.children.into_iter().next().unwrap();
+        let child = entry
+            .children
+            .into_iter()
+            .next()
+            .expect("children.len() == 1 guarantees an element");
         entry.name = format!("{}/{}", entry.name, child.name);
         entry.path = child.path;
         entry.is_ignored = entry.is_ignored || child.is_ignored;
@@ -50,7 +54,11 @@ fn collapse_entry(mut entry: FileEntry) -> FileEntry {
     // If the collapsed directory contains exactly one file (no subdirs),
     // flatten it into a single file entry with the combined path as name.
     if entry.children.len() == 1 && !entry.children[0].is_dir {
-        let child = entry.children.into_iter().next().unwrap();
+        let child = entry
+            .children
+            .into_iter()
+            .next()
+            .expect("children.len() == 1 guarantees an element");
         return FileEntry {
             name: format!("{}/{}", entry.name, child.name),
             path: child.path,
