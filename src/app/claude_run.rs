@@ -594,17 +594,17 @@ impl DirigentApp {
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         if result.error.is_none() {
-            telemetry::emit_execution_completed(
-                &self.project_name(),
-                result.cue_id,
-                &provider_name,
-                result.metrics.cost_usd,
-                result.metrics.duration_ms,
-                result.metrics.num_turns,
-                result.metrics.input_tokens,
-                result.metrics.output_tokens,
-                result.diff.is_some(),
-            );
+            telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
+                project: &self.project_name(),
+                cue_id: result.cue_id,
+                provider: &provider_name,
+                cost_usd: result.metrics.cost_usd,
+                duration_ms: result.metrics.duration_ms,
+                num_turns: result.metrics.num_turns,
+                input_tokens: result.metrics.input_tokens,
+                output_tokens: result.metrics.output_tokens,
+                has_diff: result.diff.is_some(),
+            });
         }
 
         if is_stale {
