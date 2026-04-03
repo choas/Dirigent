@@ -50,7 +50,7 @@ fn resolve_last_commit(repo: &Repository) -> (String, String) {
         None => return (String::new(), String::new()),
     };
     let h = format!("{}", commit.id());
-    let short = h.chars().take(7).collect::<String>();
+    let short = super::short_hash(&h);
     let msg = commit
         .message()
         .unwrap_or("")

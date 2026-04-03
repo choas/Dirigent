@@ -43,7 +43,7 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
             Err(_) => continue,
         };
         let hash = format!("{}", commit.id());
-        let short_hash = hash.chars().take(7).collect::<String>();
+        let short_hash = super::short_hash(&hash);
         let full_message = commit.message().unwrap_or("");
         let message = full_message.lines().next().unwrap_or("").to_string();
         let body = full_message.trim().to_string();

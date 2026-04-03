@@ -3,25 +3,8 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_SM};
+use crate::app::util::expand_tilde;
 use crate::git;
-
-/// Expand a leading `~` to the user's home directory.
-fn expand_tilde(raw: &str) -> PathBuf {
-    if raw == "~" || raw.starts_with("~/") || raw.starts_with("~\\") {
-        match dirs::home_dir() {
-            Some(home) => {
-                if raw == "~" {
-                    home
-                } else {
-                    home.join(&raw[2..])
-                }
-            }
-            None => PathBuf::from(raw),
-        }
-    } else {
-        PathBuf::from(raw)
-    }
-}
 
 /// Format a byte size as a human-readable string (KB or MB).
 fn format_size(size_bytes: u64) -> String {
