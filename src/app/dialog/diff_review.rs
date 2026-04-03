@@ -14,6 +14,14 @@ struct SearchState<'a> {
     current: Option<usize>,
 }
 
+/// Context for the diff review header bar.
+struct DiffHeaderContext<'a> {
+    read_only: bool,
+    prompt_expanded: bool,
+    cue_text: &'a str,
+    commit_hash: Option<&'a str>,
+}
+
 /// Actions collected during UI rendering, applied after the closure ends.
 struct DiffReviewActions {
     close: bool,
@@ -75,10 +83,12 @@ impl DirigentApp {
                 ui,
                 fs,
                 &sem,
-                read_only,
-                prompt_expanded,
-                &cue_text,
-                commit_hash.as_deref(),
+                &DiffHeaderContext {
+                    read_only,
+                    prompt_expanded,
+                    cue_text: &cue_text,
+                    commit_hash: commit_hash.as_deref(),
+                },
                 &mut actions,
             );
             Self::render_diff_prompt_section(
@@ -120,19 +130,16 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         fs: f32,
         sem: &SemanticColors,
-        read_only: bool,
-        prompt_expanded: bool,
-        cue_text: &str,
-        commit_hash: Option<&str>,
+        ctx: &DiffHeaderContext<'_>,
         actions: &mut DiffReviewActions,
     ) {
-        let prefix = if read_only { "Commit" } else { "Cue" };
-        let arrow = if prompt_expanded {
+        let prefix = if ctx.read_only { "Commit" } else { "Cue" };
+        let arrow = if ctx.prompt_expanded {
             "\u{25BC}"
         } else {
             "\u{25B6}"
         };
-        let hover = if prompt_expanded {
+        let hover = if ctx.prompt_expanded {
             "Hide prompt"
         } else {
             "Show prompt"
@@ -144,7 +151,7 @@ impl DirigentApp {
             ui.separator();
             ui.strong("Diff Review");
             ui.separator();
-            if let Some(hash) = commit_hash {
+            if let Some(hash) = ctx.commit_hash {
                 let short = &hash[..7.min(hash.len())];
                 if ui
                     .button(icon(short, fs))
@@ -162,7 +169,7 @@ impl DirigentApp {
             {
                 actions.toggle_prompt = true;
             }
-            Self::render_collapsed_cue_text(ui, sem, prompt_expanded, cue_text);
+            Self::render_collapsed_cue_text(ui, sem, ctx.prompt_expanded, ctx.cue_text);
         });
     }
 
