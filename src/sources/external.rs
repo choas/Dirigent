@@ -346,10 +346,22 @@ fn fetch_sonar_duplications(
     let Some(measures) = measures else {
         return Ok(Vec::new());
     };
-    let mut items: Vec<SourceItem> = measures
+    // Check duplicated_lines_density — skip all duplication items if below 3.0%
+    // (the SonarQube "Required" gate threshold).
+    let density: f64 = measures
         .iter()
-        .filter_map(|m| parse_sonar_duplication_measure(m, project_key, source_label))
-        .collect();
+        .filter(|m| m.get("metric").and_then(|v| v.as_str()) == Some("duplicated_lines_density"))
+        .filter_map(|m| m.get("value").and_then(|v| v.as_str()))
+        .filter_map(|v| v.parse().ok())
+        .next()
+        .unwrap_or(0.0);
+    if density < 3.0 {
+        return Ok(Vec::new());
+    }
+
+    // Skip summary measures (e.g. "Duplicated blocks: 6") — they lack detail
+    // for Dirigent to act on.  Only fetch per-file duplication details.
+    let mut items: Vec<SourceItem> = Vec::new();
 
     // Fetch per-file duplication details via component_tree.
     static DUP_FILES_WARNED: AtomicBool = AtomicBool::new(false);
@@ -422,33 +434,6 @@ fn fetch_sonar_duplicated_files(
         );
     }
     Ok(items)
-}
-
-/// Parse a single SonarQube duplication measure into a `SourceItem`.
-fn parse_sonar_duplication_measure(
-    m: &serde_json::Value,
-    project_key: &str,
-    source_label: &str,
-) -> Option<SourceItem> {
-    let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
-    let value = m.get("value").and_then(|v| v.as_str()).unwrap_or("0");
-    let label = match metric {
-        "duplicated_lines_density" => "Duplicated lines density",
-        "duplicated_blocks" => "Duplicated blocks",
-        "duplicated_lines" => "Duplicated lines",
-        "duplicated_files" => "Duplicated files",
-        _ => return None,
-    };
-    let suffix = if metric == "duplicated_lines_density" {
-        "%"
-    } else {
-        ""
-    };
-    Some(SourceItem::new(
-        format!("sonar-dup-{}-{}", project_key, metric),
-        format!("[DUPLICATION] {}: {}{}", label, value, suffix),
-        source_label,
-    ))
 }
 
 /// Extract the file path from a SonarQube component string.
