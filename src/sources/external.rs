@@ -539,14 +539,20 @@ pub(crate) fn fetch_trello_cards(
     let client = http_client()?;
 
     // Fetch cards with their list info so we can filter by list name.
-    let url = format!(
-        "https://api.trello.com/1/boards/{}/cards?key={}&token={}&fields=name,desc,shortUrl,idList&limit=100",
-        board_id, api_key, token,
-    );
+    let url = format!("https://api.trello.com/1/boards/{}/cards", board_id,);
 
-    let resp = client.get(&url).send().map_err(|e| {
-        DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
-    })?;
+    let resp = client
+        .get(&url)
+        .query(&[
+            ("key", api_key),
+            ("token", token),
+            ("fields", "name,desc,shortUrl,idList"),
+            ("limit", "100"),
+        ])
+        .send()
+        .map_err(|e| {
+            DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
+        })?;
     let resp = check_response(resp, "Trello API")?;
 
     let parsed: serde_json::Value = resp
@@ -592,13 +598,14 @@ fn resolve_trello_list_ids(
     token: &str,
     filter: &str,
 ) -> crate::error::Result<Vec<String>> {
-    let lists_url = format!(
-        "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
-        board_id, api_key, token,
-    );
-    let lists_resp = client.get(&lists_url).send().map_err(|e| {
-        DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
-    })?;
+    let lists_url = format!("https://api.trello.com/1/boards/{}/lists", board_id,);
+    let lists_resp = client
+        .get(&lists_url)
+        .query(&[("key", api_key), ("token", token), ("fields", "name")])
+        .send()
+        .map_err(|e| {
+            DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
+        })?;
     let lists_resp = check_response(lists_resp, "Trello lists API")?;
 
     let lists: Vec<serde_json::Value> = lists_resp
