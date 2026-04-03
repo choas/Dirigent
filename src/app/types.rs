@@ -31,6 +31,7 @@ pub(super) struct DiffReview {
     pub(super) cue_id: i64,
     pub(super) diff: String,
     pub(super) cue_text: String,
+    pub(super) commit_hash: Option<String>,
     pub(super) parsed: ParsedDiff,
     pub(super) view_mode: DiffViewMode,
     pub(super) read_only: bool,

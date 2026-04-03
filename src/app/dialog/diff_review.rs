@@ -58,6 +58,7 @@ impl DirigentApp {
         let cue_id = review.cue_id;
         let diff_text = review.diff.clone();
         let cue_text = review.cue_text.clone();
+        let commit_hash = review.commit_hash.clone();
         let parsed = review.parsed.clone();
         let view_mode = review.view_mode;
         let read_only = review.read_only;
@@ -77,9 +78,16 @@ impl DirigentApp {
                 read_only,
                 prompt_expanded,
                 &cue_text,
+                commit_hash.as_deref(),
                 &mut actions,
             );
-            Self::render_diff_prompt_section(ui, &sem, prompt_expanded, &cue_text);
+            Self::render_diff_prompt_section(
+                ui,
+                &sem,
+                prompt_expanded,
+                &cue_text,
+                commit_hash.as_deref(),
+            );
             ui.separator();
 
             Self::render_diff_view_mode_toolbar(ui, fs, &sem, view_mode, read_only, &mut actions);
@@ -115,6 +123,7 @@ impl DirigentApp {
         read_only: bool,
         prompt_expanded: bool,
         cue_text: &str,
+        commit_hash: Option<&str>,
         actions: &mut DiffReviewActions,
     ) {
         let prefix = if read_only { "Commit" } else { "Cue" };
@@ -135,6 +144,17 @@ impl DirigentApp {
             ui.separator();
             ui.strong("Diff Review");
             ui.separator();
+            if let Some(hash) = commit_hash {
+                let short = &hash[..7.min(hash.len())];
+                if ui
+                    .button(icon(short, fs))
+                    .on_hover_text("Copy commit ID")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(hash.to_string());
+                }
+                ui.separator();
+            }
             if ui
                 .button(icon(&format!("{} {}", arrow, prefix), fs))
                 .on_hover_text(hover)
@@ -168,9 +188,23 @@ impl DirigentApp {
         sem: &SemanticColors,
         prompt_expanded: bool,
         cue_text: &str,
+        commit_hash: Option<&str>,
     ) {
         if prompt_expanded {
             ui.group(|ui| {
+                if let Some(hash) = commit_hash {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Commit ID:")
+                                .color(sem.secondary_text)
+                                .strong(),
+                        );
+                        if ui.button(hash).on_hover_text("Copy commit ID").clicked() {
+                            ui.ctx().copy_text(hash.to_string());
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
                 egui::ScrollArea::vertical()
                     .id_salt("prompt_scroll")
                     .max_height(150.0)

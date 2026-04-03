@@ -209,6 +209,7 @@ impl DirigentApp {
             cue_id,
             diff,
             cue_text: text,
+            commit_hash: None,
             parsed,
             view_mode: DiffViewMode::Inline,
             read_only,
