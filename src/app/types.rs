@@ -86,6 +86,20 @@ pub(super) enum CueAction {
     RunPlan(i64),
     /// Mark a Notion-sourced cue as done in Notion.
     NotionDone(i64),
+    /// Trigger LLM analysis of Inbox cues to create a workflow plan.
+    CreateWorkflow,
+    /// Cancel ongoing workflow generation.
+    CancelWorkflow,
+    /// Begin executing the workflow plan.
+    StartWorkflow,
+    /// Pause the workflow after the current step completes.
+    PauseWorkflow,
+    /// Resume a paused workflow.
+    ResumeWorkflow,
+    /// Toggle pause_after on a specific step index.
+    TogglePause(usize),
+    /// Remove a cue from the workflow plan.
+    RemoveFromWorkflow(i64),
 }
 
 /// State for a single open file tab.

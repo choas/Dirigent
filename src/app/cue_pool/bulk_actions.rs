@@ -11,12 +11,65 @@ impl DirigentApp {
         section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
     ) {
+        if status == CueStatus::Inbox && section_cues.len() >= 2 {
+            self.render_inbox_bulk_actions(ui, section_cues, actions);
+        }
         if status == CueStatus::Review && section_cues.len() > 1 {
             self.render_review_bulk_actions(ui, actions);
         }
         if status == CueStatus::Done {
             self.render_done_bulk_actions(ui, section_cues, actions);
         }
+    }
+
+    fn render_inbox_bulk_actions(
+        &self,
+        ui: &mut egui::Ui,
+        section_cues: &[&Cue],
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        ui.horizontal(|ui| {
+            if self.workflow_generating {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Analyzing\u{2026}")
+                        .small()
+                        .color(self.semantic.accent),
+                );
+            } else if self.workflow_plan.is_some() {
+                // Workflow plan exists — show "View Workflow" button
+                let btn = egui::Button::new(
+                    icon("\u{1F4CA} View Workflow", self.settings.font_size)
+                        .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.accent);
+                if ui
+                    .add(btn)
+                    .on_hover_text("View the workflow execution plan")
+                    .clicked()
+                {
+                    // Action handled by opening the workflow graph overlay
+                    // (the view toggle is handled in the code_viewer overlay dispatch)
+                }
+            } else {
+                let btn = egui::Button::new(
+                    icon("\u{26A1} Plan Workflow", self.settings.font_size)
+                        .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.accent);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!(
+                        "Use AI to analyze these {} cues and create an optimal execution plan",
+                        section_cues.len()
+                    ))
+                    .clicked()
+                {
+                    actions.push((0, CueAction::CreateWorkflow));
+                }
+            }
+        });
+        ui.add_space(SPACE_XS);
     }
 
     fn render_review_bulk_actions(

@@ -53,6 +53,10 @@ impl DirigentApp {
             self.render_cue_agent_runs_central(ui);
             return true;
         }
+        if self.workflow_plan.is_some() || self.workflow_generating {
+            self.render_workflow_graph_central(ui);
+            return true;
+        }
         false
     }
 

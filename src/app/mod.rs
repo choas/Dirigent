@@ -20,6 +20,8 @@ mod tasks;
 mod theme;
 mod types;
 pub(crate) mod util;
+mod workflow_graph;
+mod workflow_run;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -268,6 +270,13 @@ pub struct DirigentApp {
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
+
+    // Workflow plan state
+    workflow_plan: Option<crate::workflow::WorkflowPlan>,
+    workflow_generating: bool,
+    workflow_rx: Option<mpsc::Receiver<Result<crate::workflow::WorkflowPlan, String>>>,
+    /// Warning from workflow plan parsing (e.g. missing cues, fallback).
+    workflow_warning: Option<String>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -576,6 +585,11 @@ impl DirigentApp {
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
             notion_objects_error: HashMap::new(),
+
+            workflow_plan: None,
+            workflow_generating: false,
+            workflow_rx: None,
+            workflow_warning: None,
         }
     }
 
@@ -725,6 +739,7 @@ impl DirigentApp {
         self.claude.show_log = None;
         self.agent_state.show_output = None;
         self.show_agent_runs_for_cue = None;
+        // Note: workflow_plan is NOT dismissed here — it stays until explicitly cancelled/closed.
     }
 }
 
@@ -754,6 +769,9 @@ impl eframe::App for DirigentApp {
 
         // Process run queue (start next queued cue when no cues are running)
         self.process_run_queue();
+
+        // Poll for workflow analysis results
+        self.process_workflow_result();
 
         // Poll for git push/pull/PR results
         self.process_push_result();

@@ -672,6 +672,11 @@ impl DirigentApp {
 
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
+
+        // If this cue is part of a workflow, check if the step is complete.
+        if !is_stale {
+            self.on_workflow_cue_completed(result.cue_id);
+        }
     }
 
     /// Reload the conversation history panel if it is showing this cue.

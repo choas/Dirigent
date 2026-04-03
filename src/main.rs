@@ -16,6 +16,7 @@ mod settings;
 mod sources;
 mod syntax;
 mod telemetry;
+mod workflow;
 
 use eframe::egui;
 use std::path::PathBuf;

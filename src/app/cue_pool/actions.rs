@@ -121,6 +121,27 @@ impl DirigentApp {
             CueAction::NotionDone(cue_id) => {
                 self.process_notion_done(cue_id);
             }
+            CueAction::CreateWorkflow => {
+                self.create_workflow();
+            }
+            CueAction::CancelWorkflow => {
+                self.cancel_workflow();
+            }
+            CueAction::StartWorkflow => {
+                self.start_workflow();
+            }
+            CueAction::PauseWorkflow => {
+                // Pause is handled via toggle_pause on individual steps
+            }
+            CueAction::ResumeWorkflow => {
+                self.resume_workflow();
+            }
+            CueAction::TogglePause(step_idx) => {
+                self.toggle_workflow_pause(step_idx);
+            }
+            CueAction::RemoveFromWorkflow(cue_id) => {
+                self.remove_from_workflow(cue_id);
+            }
         }
         self.reload_cues();
     }
