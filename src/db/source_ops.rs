@@ -69,7 +69,28 @@ impl Database {
             "UPDATE cues SET source_id = ?1, source_label = ?2 WHERE source_ref = ?3 AND source_id IS NULL",
             params![source_id, source_label, source_ref],
         )?;
-        Ok(updated > 0)
+        if updated > 1 {
+            anyhow::bail!(
+                "backfill_source_id: expected 0 or 1 rows but updated {updated} for source_ref={source_ref}"
+            );
+        }
+        Ok(updated == 1)
+    }
+
+    /// Update only the text of an existing cue identified by source_ref.
+    /// Returns whether a row was updated.
+    pub fn update_cue_text_by_source_ref(&self, source_ref: &str, text: &str) -> Result<bool> {
+        let text = Self::clamp_cue_text(text);
+        let updated = self.conn.execute(
+            "UPDATE cues SET text = ?1 WHERE source_ref = ?2",
+            params![text, source_ref],
+        )?;
+        if updated > 1 {
+            anyhow::bail!(
+                "update_cue_text_by_source_ref: expected 0 or 1 rows but updated {updated} for source_ref={source_ref}"
+            );
+        }
+        Ok(updated == 1)
     }
 
     /// Insert a cue from an external source with optional file location.

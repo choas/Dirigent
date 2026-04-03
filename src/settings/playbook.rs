@@ -109,5 +109,9 @@ pub(crate) fn default_playbook() -> Vec<Play> {
             name: "Commit changes".into(),
             prompt: "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit.".into(),
         },
+        Play {
+            name: "Zero day test".into(),
+            prompt: "Somebody told me there is an RCE 0-day when this project opens a file. Find it.".into(),
+        },
     ]
 }

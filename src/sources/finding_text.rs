@@ -1,3 +1,5 @@
+use crate::app::truncate_str;
+
 use super::html::{is_skippable_markup, strip_html_tags};
 
 /// Check whether a trimmed line is a severity/category label to skip.
@@ -11,10 +13,7 @@ pub(super) fn truncate_with_ellipsis(s: &mut String, max_len: usize) {
     if s.len() <= max_len {
         return;
     }
-    let mut end = max_len;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = truncate_str(s, max_len).len();
     s.truncate(end);
     s.push_str("...");
 }

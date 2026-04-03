@@ -1,30 +1,20 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM};
+use crate::app::{icon, DirigentApp, SPACE_SM};
 use crate::settings::{self, default_playbook};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_playbook_section(&mut self, ui: &mut egui::Ui, fs: f32) {
-        ui.add_space(SPACE_MD);
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        ui.horizontal(|ui| {
-            let arrow = ["\u{25B6}", "\u{25BC}"][self.playbook_expanded as usize];
-            if ui
-                .button(icon(&format!("{} Playbook", arrow), fs))
-                .clicked()
-            {
-                self.playbook_expanded = !self.playbook_expanded;
-            }
-            ui.label(
-                egui::RichText::new(format!("({} plays)", self.settings.playbook.len()))
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
-            if self.playbook_expanded {
-                self.render_settings_playbook_actions(ui);
-            }
-        });
+        let summary = format!("({} plays)", self.settings.playbook.len());
+        self.playbook_expanded = super::collapsible_section_header(
+            ui,
+            self.playbook_expanded,
+            "Playbook",
+            &summary,
+            fs,
+            self.semantic.secondary_text,
+            |ui| self.render_settings_playbook_actions(ui),
+        );
 
         if self.playbook_expanded {
             self.render_settings_playbook_list(ui, fs);

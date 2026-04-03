@@ -8,6 +8,22 @@ pub(crate) struct SourceItem {
     pub source_id: String,
 }
 
+impl SourceItem {
+    /// Create a new source item with `source_id` defaulting to empty.
+    pub fn new(
+        external_id: impl Into<String>,
+        text: impl Into<String>,
+        source_label: &str,
+    ) -> Self {
+        Self {
+            external_id: external_id.into(),
+            text: text.into(),
+            source_label: source_label.to_string(),
+            source_id: String::new(),
+        }
+    }
+}
+
 /// A Notion database or page visible to the integration token.
 #[derive(Debug, Clone)]
 pub(crate) struct NotionObject {

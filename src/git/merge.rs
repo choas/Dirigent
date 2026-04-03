@@ -50,78 +50,67 @@ pub(crate) fn get_conflicted_files(repo_path: &Path) -> Vec<String> {
     files
 }
 
-/// Stage resolved files (git add).
-pub(crate) fn stage_files(repo_path: &Path, files: &[String]) -> crate::error::Result<()> {
-    use std::process::Command;
-    if files.is_empty() {
-        return Ok(());
-    }
-    let mut cmd = Command::new("git");
-    cmd.arg("add").arg("--").current_dir(repo_path);
-    for f in files {
-        cmd.arg(f);
-    }
-    let output = cmd.output()?;
+/// Run a git command and return its stdout on success, or a `GitCommand` error
+/// with the given `label` and stderr on failure.
+fn run_git(
+    repo_path: &Path,
+    cmd: &mut std::process::Command,
+    label: &str,
+) -> crate::error::Result<String> {
+    let output = cmd.current_dir(repo_path).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DirigentError::GitCommand(format!(
-            "git add failed: {}",
+            "{} failed: {}",
+            label,
             stderr.trim()
         )));
     }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Stage resolved files (git add).
+pub(crate) fn stage_files(repo_path: &Path, files: &[String]) -> crate::error::Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("add").arg("--");
+    for f in files {
+        cmd.arg(f);
+    }
+    run_git(repo_path, &mut cmd, "git add")?;
     Ok(())
 }
 
 /// Abort an in-progress merge.
 pub(crate) fn merge_abort(repo_path: &Path) -> crate::error::Result<()> {
-    use std::process::Command;
-    let output = Command::new("git")
-        .args(["merge", "--abort"])
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "git merge --abort failed: {}",
-            stderr.trim()
-        )));
-    }
+    run_git(
+        repo_path,
+        std::process::Command::new("git").args(["merge", "--abort"]),
+        "git merge --abort",
+    )?;
     Ok(())
 }
 
 /// Abort an in-progress rebase.
 pub(crate) fn rebase_abort(repo_path: &Path) -> crate::error::Result<()> {
-    use std::process::Command;
-    let output = Command::new("git")
-        .args(["rebase", "--abort"])
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "git rebase --abort failed: {}",
-            stderr.trim()
-        )));
-    }
+    run_git(
+        repo_path,
+        std::process::Command::new("git").args(["rebase", "--abort"]),
+        "git rebase --abort",
+    )?;
     Ok(())
 }
 
 /// Complete a merge after all conflicts are resolved (creates a merge commit).
 pub(crate) fn merge_continue(repo_path: &Path) -> crate::error::Result<String> {
-    use std::process::Command;
     // git commit with no message flag — git will use the auto-generated merge message
-    let output = Command::new("git")
-        .args(["commit", "--no-edit"])
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "git commit failed: {}",
-            stderr.trim()
-        )));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git(
+        repo_path,
+        std::process::Command::new("git").args(["commit", "--no-edit"]),
+        "git commit",
+    )?;
     Ok(stdout
         .lines()
         .next()
@@ -132,20 +121,13 @@ pub(crate) fn merge_continue(repo_path: &Path) -> crate::error::Result<String> {
 
 /// Continue a rebase after all conflicts in the current step are resolved.
 pub(crate) fn rebase_continue(repo_path: &Path) -> crate::error::Result<String> {
-    use std::process::Command;
-    let output = Command::new("git")
-        .args(["rebase", "--continue"])
-        .env("GIT_EDITOR", "true") // skip editor for commit message
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "git rebase --continue failed: {}",
-            stderr.trim()
-        )));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git(
+        repo_path,
+        std::process::Command::new("git")
+            .args(["rebase", "--continue"])
+            .env("GIT_EDITOR", "true"), // skip editor for commit message
+        "git rebase --continue",
+    )?;
     Ok(stdout
         .lines()
         .last()

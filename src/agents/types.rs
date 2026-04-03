@@ -11,6 +11,7 @@ pub(crate) enum AgentKind {
     Build,
     Test,
     Outdated,
+    Audit,
     Custom(u32),
 }
 
@@ -22,6 +23,7 @@ impl AgentKind {
             AgentKind::Build => "build",
             AgentKind::Test => "test",
             AgentKind::Outdated => "outdated",
+            AgentKind::Audit => "audit",
             AgentKind::Custom(_) => "custom",
         }
     }
@@ -41,6 +43,7 @@ impl AgentKind {
             AgentKind::Build => "Build",
             AgentKind::Test => "Test",
             AgentKind::Outdated => "Outdated",
+            AgentKind::Audit => "Audit",
             AgentKind::Custom(_) => "Custom",
         }
     }
@@ -185,6 +188,7 @@ impl AgentKind {
             "build" => Some(AgentKind::Build),
             "test" => Some(AgentKind::Test),
             "outdated" => Some(AgentKind::Outdated),
+            "audit" => Some(AgentKind::Audit),
             s if s.starts_with("custom_") => s[7..].parse().ok().map(AgentKind::Custom),
             "custom" => Some(AgentKind::Custom(0)),
             _ => None,
@@ -217,6 +221,7 @@ mod tests {
             AgentKind::Build,
             AgentKind::Test,
             AgentKind::Outdated,
+            AgentKind::Audit,
         ]
     }
 

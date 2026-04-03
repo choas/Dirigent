@@ -15,7 +15,7 @@ pub(crate) struct CueCommand {
     /// Shell command to run after the CLI invocation (overrides provider default).
     #[serde(default)]
     pub post_agent: String,
-    /// Extra CLI arguments appended to the provider command (e.g. `--plan`).
+    /// Extra CLI arguments appended to the provider command (e.g. `--permission-mode plan`).
     #[serde(default)]
     pub cli_args: String,
 }
@@ -27,7 +27,7 @@ pub(crate) fn default_commands() -> Vec<CueCommand> {
             prompt: "Analyze the following task and create a detailed implementation plan. Identify the files that need to change, the approach, edge cases, and risks. Do NOT make any code changes — only output the plan.\n\nTask: {task}".into(),
             pre_agent: String::new(),
             post_agent: String::new(),
-            cli_args: "--plan".into(),
+            cli_args: "--permission-mode plan".into(),
         },
         CueCommand {
             name: "test".into(),
