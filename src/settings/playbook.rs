@@ -82,7 +82,7 @@ pub(crate) fn substitute_play_variables(
 
 pub(crate) fn default_playbook() -> Vec<Play> {
     vec![
-        Play::new("Update README", "Review the project and update README.md to accurately reflect the current state: features, setup instructions, and usage."),
+        Play::new("Documentation (Diataxis)", "Update or generate documentation following the Diataxis framework: tutorials (learning-oriented), how-to guides (task-oriented), reference (information-oriented), and explanation (understanding-oriented). Update README.md to accurately reflect the current state: features, setup instructions, and usage."),
         Play::new("Verify architecture", "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes."),
         Play::new("Verify last 5 commits", "Review the last 5 git commits. Check for bugs, incomplete changes, or inconsistencies. Report findings without making changes."),
         Play::new("Create release", "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`."),
