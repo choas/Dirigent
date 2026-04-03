@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-quality_loop.py -- Automated code quality improvement agent for Rust projects.
+quality_loop_generic.py -- Automated code quality improvement agent for any language.
 
 Run with --help for full usage instructions.
 """
@@ -8,11 +8,12 @@ Run with --help for full usage instructions.
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -35,7 +36,7 @@ SETUP (step by step)
        SONAR_TOKEN=your_sonarqube_or_sonarcloud_token
        SONAR_URL=https://sonarcloud.io
        SONAR_PROJECT_KEY=your_org_your_repo
-       GH_REPO=yourname/dirigent
+       GH_REPO=yourname/yourrepo
        GH_PR_NUMBER=42
 
    GH_PR_NUMBER is the only value that changes per PR.
@@ -52,39 +53,67 @@ SETUP (step by step)
 
 5. Run the script from the repo root
 
-       python scripts/quality_loop.py
+       python scripts/quality_loop_generic.py --lang python
+       python scripts/quality_loop_generic.py --lang rust
+       python scripts/quality_loop_generic.py --lang javascript
 
-   Or with overrides:
+   Or with custom tool commands:
 
-       python scripts/quality_loop.py --pr 43 --max-iterations 5 --dry-run
+       python scripts/quality_loop_generic.py \\
+           --test-cmd "pytest -x" \\
+           --lint-cmd "ruff check --output-format json ." \\
+           --fmt-check-cmd "ruff format --check ." \\
+           --fmt-fix-cmd "ruff format ."
 
-WHERE TO PUT THE SCRIPT
------------------------
-Option A (recommended): commit it to the repo as scripts/quality_loop.py
-  - Lives alongside the code it operates on
-  - Other contributors can use it
-  - Not part of the code being reviewed (SonarQube/CodeRabbit ignore scripts/)
+   Or with a config file:
 
-Option B: keep it outside the repo entirely
-  - Run it from anywhere: python ~/tools/quality_loop.py
-  - Set REPO_PATH env var or cd into the repo first
+       python scripts/quality_loop_generic.py --config .quality_loop.json
+
+CONFIG FILE (.quality_loop.json)
+--------------------------------
+Place a JSON file in the repo root to define all tool commands:
+
+    {
+        "lang": "python",
+        "test_cmd": "pytest -x",
+        "lint_cmd": "ruff check --output-format json .",
+        "fmt_check_cmd": "ruff format --check .",
+        "fmt_fix_cmd": "ruff format ."
+    }
+
+Any field can be null to skip that signal. CLI flags override config file values.
+
+SUPPORTED LANGUAGES (built-in presets)
+--------------------------------------
+  rust        cargo test / cargo clippy / cargo fmt
+  python      pytest / ruff check (or flake8, pylint) / ruff format (or black)
+  javascript  npm test / eslint / prettier --check
+  typescript  npm test / eslint / prettier --check
+  go          go test ./... / go vet + staticcheck / gofmt -l
+  java        mvn test / mvn checkstyle:check / (none)
+  ruby        bundle exec rspec / rubocop --format json / rubocop -a
+  swift       swift test / swiftlint / swiftformat --lint
+
+Use --lang to select a preset, then override individual commands with
+--test-cmd, --lint-cmd, --fmt-check-cmd, --fmt-fix-cmd as needed.
 
 WHAT THE LOOP DOES
 ------------------
-  1. cargo test             -- establishes a green baseline (exits if red)
+  1. test command          -- establishes a green baseline (exits if red)
   [ loop begins ]
   2. sonar-scanner          -- pushes analysis to SonarQube
   3. Fetch SonarQube issues -- via REST API
   4. Fetch security hotspots -- via /api/hotspots/search
   5. Fetch duplication metrics -- via /api/measures/component
-  6. cargo clippy           -- collects diagnostics as JSON
-  7. cargo fmt --check      -- detects formatting drift
+  6. lint command           -- collects diagnostics
+  7. fmt check command      -- detects formatting drift
   8. Fetch CodeRabbit comments -- from the PR via GitHub API
   9. If all signals clear   -- loop exits cleanly
  10. Claude Code fixes all  -- single batched invocation per iteration
- 11. cargo test             -- regression guard (exits if red)
- 12. git commit + push      -- one commit per iteration
- 13. Poll until CI done     -- waits for coderabbitai summary comment
+ 11. fmt fix command        -- auto-fix formatting
+ 12. test command           -- regression guard (exits if red)
+ 13. git commit + push      -- one commit per iteration
+ 14. Poll until CI done     -- waits for coderabbitai summary comment
  [ back to step 2 ]
 
 EXIT CODES
@@ -107,8 +136,103 @@ ENV VARS (all can also be passed as CLI flags)
 
 
 # ---------------------------------------------------------------------------
+# Language presets
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LangPreset:
+    """Commands for a specific language. None means skip that signal."""
+    name: str
+    test_cmd: Optional[str]
+    lint_cmd: Optional[str]
+    fmt_check_cmd: Optional[str]
+    fmt_fix_cmd: Optional[str]
+    # The verify commands Claude should run after editing (used in the prompt)
+    verify_instructions: str
+
+
+PRESETS: dict[str, LangPreset] = {
+    "rust": LangPreset(
+        name="Rust",
+        test_cmd="cargo test",
+        lint_cmd="cargo clippy --message-format=json -- -D warnings",
+        fmt_check_cmd="cargo fmt --check",
+        fmt_fix_cmd="cargo fmt",
+        verify_instructions="Run `cargo fmt` and `cargo clippy` after editing to verify no new issues were introduced.",
+    ),
+    "python": LangPreset(
+        name="Python",
+        test_cmd="pytest -x",
+        lint_cmd="ruff check --output-format json .",
+        fmt_check_cmd="ruff format --check .",
+        fmt_fix_cmd="ruff format .",
+        verify_instructions="Run `ruff format .` and `ruff check .` after editing to verify no new issues were introduced.",
+    ),
+    "javascript": LangPreset(
+        name="JavaScript",
+        test_cmd="npm test",
+        lint_cmd="npx eslint . --format json",
+        fmt_check_cmd="npx prettier --check .",
+        fmt_fix_cmd="npx prettier --write .",
+        verify_instructions="Run `npx prettier --write .` and `npx eslint .` after editing to verify no new issues were introduced.",
+    ),
+    "typescript": LangPreset(
+        name="TypeScript",
+        test_cmd="npm test",
+        lint_cmd="npx eslint . --format json",
+        fmt_check_cmd="npx prettier --check .",
+        fmt_fix_cmd="npx prettier --write .",
+        verify_instructions="Run `npx prettier --write .` and `npx eslint .` after editing to verify no new issues were introduced.",
+    ),
+    "go": LangPreset(
+        name="Go",
+        test_cmd="go test ./...",
+        lint_cmd="staticcheck ./...",
+        fmt_check_cmd="gofmt -l .",
+        fmt_fix_cmd="gofmt -w .",
+        verify_instructions="Run `gofmt -w .` and `go vet ./...` after editing to verify no new issues were introduced.",
+    ),
+    "java": LangPreset(
+        name="Java",
+        test_cmd="mvn test -q",
+        lint_cmd="mvn checkstyle:check -q",
+        fmt_check_cmd=None,
+        fmt_fix_cmd=None,
+        verify_instructions="Run `mvn checkstyle:check` after editing to verify no new issues were introduced.",
+    ),
+    "ruby": LangPreset(
+        name="Ruby",
+        test_cmd="bundle exec rspec",
+        lint_cmd="bundle exec rubocop --format json",
+        fmt_check_cmd="bundle exec rubocop --format json",
+        fmt_fix_cmd="bundle exec rubocop -a",
+        verify_instructions="Run `bundle exec rubocop -a` after editing to verify no new issues were introduced.",
+    ),
+    "swift": LangPreset(
+        name="Swift",
+        test_cmd="swift test",
+        lint_cmd="swiftlint --reporter json",
+        fmt_check_cmd="swiftformat --lint .",
+        fmt_fix_cmd="swiftformat .",
+        verify_instructions="Run `swiftformat .` and `swiftlint` after editing to verify no new issues were introduced.",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
+@dataclass
+class ToolCommands:
+    """Shell commands for test, lint, and format. None means skip."""
+    test_cmd: Optional[str] = None
+    lint_cmd: Optional[str] = None
+    fmt_check_cmd: Optional[str] = None
+    fmt_fix_cmd: Optional[str] = None
+    verify_instructions: str = "Verify no new issues were introduced after editing."
+    lang_name: str = "unknown"
+
 
 @dataclass
 class Config:
@@ -117,6 +241,7 @@ class Config:
     sonar_project_key: str
     gh_repo: str
     gh_pr_number: str
+    tools: ToolCommands
     max_iterations: int = 8
     poll_interval: int = 30
     poll_timeout: int = 900
@@ -139,10 +264,93 @@ def load_dotenv(path: Path = Path(".env")) -> None:
                 os.environ[key] = value
 
 
+def _load_config_file(path: str) -> dict:
+    """Load a JSON config file. Returns empty dict if not found."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[warn] Failed to load config file {path}: {e}")
+        return {}
+
+
+def _cmd_available(cmd: str) -> bool:
+    """Check if the first word of a command is available on PATH."""
+    binary = cmd.split()[0]
+    # Handle npx/bunx wrappers -- the tool itself is always available via them
+    if binary in ("npx", "bunx"):
+        return shutil.which(binary) is not None
+    # Handle "bundle exec X" -- check for bundle
+    if binary == "bundle":
+        return shutil.which("bundle") is not None
+    return shutil.which(binary) is not None
+
+
+def _check_tools(tools: ToolCommands) -> None:
+    """Check that all configured tool commands are available. Warn and disable missing ones."""
+    for attr, label in [
+        ("test_cmd", "Test"),
+        ("lint_cmd", "Lint"),
+        ("fmt_check_cmd", "Format check"),
+        ("fmt_fix_cmd", "Format fix"),
+    ]:
+        cmd = getattr(tools, attr)
+        if cmd and not _cmd_available(cmd):
+            binary = cmd.split()[0]
+            print(f"  [warn] {label} tool not found: {binary} (from: {cmd})")
+            print(f"         Disabling {label.lower()} step.")
+            setattr(tools, attr, None)
+
+
+def _resolve_tools(args: argparse.Namespace, file_cfg: dict) -> ToolCommands:
+    """Build ToolCommands from preset + config file + CLI overrides."""
+    # Start from preset if specified
+    lang = args.lang or file_cfg.get("lang")
+    if lang and lang in PRESETS:
+        preset = PRESETS[lang]
+        tools = ToolCommands(
+            test_cmd=preset.test_cmd,
+            lint_cmd=preset.lint_cmd,
+            fmt_check_cmd=preset.fmt_check_cmd,
+            fmt_fix_cmd=preset.fmt_fix_cmd,
+            verify_instructions=preset.verify_instructions,
+            lang_name=preset.name,
+        )
+    elif lang:
+        print(f"[error] Unknown language: {lang}")
+        print(f"        Available: {', '.join(sorted(PRESETS.keys()))}")
+        sys.exit(1)
+    else:
+        tools = ToolCommands()
+
+    # Config file overrides preset
+    for key in ("test_cmd", "lint_cmd", "fmt_check_cmd", "fmt_fix_cmd"):
+        if key in file_cfg:
+            setattr(tools, key, file_cfg[key])
+    if "verify_instructions" in file_cfg:
+        tools.verify_instructions = file_cfg["verify_instructions"]
+    if "lang_name" in file_cfg:
+        tools.lang_name = file_cfg["lang_name"]
+
+    # CLI flags override everything (only if explicitly passed)
+    if args.test_cmd is not None:
+        tools.test_cmd = args.test_cmd or None
+    if args.lint_cmd is not None:
+        tools.lint_cmd = args.lint_cmd or None
+    if args.fmt_check_cmd is not None:
+        tools.fmt_check_cmd = args.fmt_check_cmd or None
+    if args.fmt_fix_cmd is not None:
+        tools.fmt_fix_cmd = args.fmt_fix_cmd or None
+
+    return tools
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="quality_loop.py",
-        description="Automated code quality improvement agent for Rust projects.",
+        prog="quality_loop_generic.py",
+        description="Automated code quality improvement agent for any language.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HELP_EPILOG,
     )
@@ -155,11 +363,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=int, metavar="SECONDS",
         help="Seconds between CI/CodeRabbit polls (default: 30)")
     parser.add_argument("--poll-timeout", type=int, metavar="SECONDS",
-        help="Max wait time per push before continuing (default: 600)")
+        help="Max wait time per push before continuing (default: 900)")
     parser.add_argument("--dry-run", action="store_true",
         help="Collect and print all signals, but do not invoke Claude Code or push")
     parser.add_argument("--env-file", metavar="PATH", default=".env",
         help="Path to .env file (default: .env in current directory)")
+
+    # Language / tool configuration
+    lang_group = parser.add_argument_group("language and tool configuration")
+    lang_group.add_argument("--lang", metavar="LANG",
+        choices=sorted(PRESETS.keys()),
+        help=f"Language preset: {', '.join(sorted(PRESETS.keys()))}")
+    lang_group.add_argument("--config", metavar="PATH", default=".quality_loop.json",
+        help="Path to JSON config file (default: .quality_loop.json)")
+    lang_group.add_argument("--test-cmd", metavar="CMD", default=None,
+        help="Command to run tests (e.g. 'pytest -x'). Empty string to disable.")
+    lang_group.add_argument("--lint-cmd", metavar="CMD", default=None,
+        help="Command to run linter (e.g. 'ruff check .'). Empty string to disable.")
+    lang_group.add_argument("--fmt-check-cmd", metavar="CMD", default=None,
+        help="Command to check formatting (e.g. 'black --check .'). Empty string to disable.")
+    lang_group.add_argument("--fmt-fix-cmd", metavar="CMD", default=None,
+        help="Command to auto-fix formatting (e.g. 'black .'). Empty string to disable.")
+
     return parser.parse_args()
 
 
@@ -191,12 +416,35 @@ def build_config(args: argparse.Namespace) -> Config:
         print("        Run with --help for full setup instructions.")
         sys.exit(1)
 
+    # Resolve tool commands: preset -> config file -> CLI flags
+    file_cfg = _load_config_file(args.config)
+    tools = _resolve_tools(args, file_cfg)
+
+    if not tools.test_cmd and not tools.lint_cmd and not tools.fmt_check_cmd:
+        print("[error] No tools configured. Use --lang or --test-cmd/--lint-cmd/--fmt-check-cmd.")
+        sys.exit(1)
+
+    # Check tool availability
+    print(f"\n  Language: {tools.lang_name}")
+    _check_tools(tools)
+
+    cmds = [
+        ("Test", tools.test_cmd),
+        ("Lint", tools.lint_cmd),
+        ("Format check", tools.fmt_check_cmd),
+        ("Format fix", tools.fmt_fix_cmd),
+    ]
+    for label, cmd in cmds:
+        status = cmd if cmd else "(disabled)"
+        print(f"  {label:14s} {status}")
+
     return Config(
         sonar_token=os.environ["SONAR_TOKEN"],
         sonar_url=os.environ["SONAR_URL"].rstrip("/"),
         sonar_project_key=os.environ["SONAR_PROJECT_KEY"],
         gh_repo=os.environ["GH_REPO"],
         gh_pr_number=os.environ["GH_PR_NUMBER"],
+        tools=tools,
         max_iterations=int(os.environ.get("MAX_ITERATIONS", 8)),
         poll_interval=int(os.environ.get("POLL_INTERVAL", 30)),
         poll_timeout=int(os.environ.get("POLL_TIMEOUT", 900)),
@@ -221,8 +469,6 @@ def _redact_cmd(cmd: list[str]) -> list[str]:
                 arg = f"{prefix}***"
                 break
         else:
-            # Truncate very long arguments (e.g. inlined prompts) to avoid
-            # flooding logs with multi-KB strings.
             if len(arg) > _MAX_ARG_DISPLAY_LEN:
                 arg = f"{arg[:_MAX_ARG_DISPLAY_LEN]}... ({len(arg)} chars)"
         redacted.append(arg)
@@ -251,6 +497,27 @@ def run(cmd: list[str], check=True, capture=False, timeout: Optional[int] = None
                                            stdout=e.stdout or "", stderr=e.stderr or "")
 
 
+def run_shell(cmd: str, check=True, capture=False, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
+    """Run a shell command string. Used for user-configured commands that may contain pipes etc."""
+    print(f"  $ {cmd}")
+    try:
+        return subprocess.run(
+            cmd,
+            shell=True,
+            check=check,
+            capture_output=capture,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  [error] Command timed out after {timeout}s: {cmd}")
+        return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr="")
+    except subprocess.CalledProcessError as e:
+        print(f"  [error] Command failed (exit {e.returncode}): {cmd}")
+        return subprocess.CompletedProcess(cmd, returncode=e.returncode,
+                                           stdout=e.stdout or "", stderr=e.stderr or "")
+
+
 def banner(msg: str) -> None:
     width = 60
     print("\n" + "=" * width)
@@ -268,48 +535,54 @@ def gh(*args, capture=True) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cargo
+# Generic test / lint / format
 # ---------------------------------------------------------------------------
 
-def cargo_test() -> bool:
-    """Returns True if all tests pass."""
-    result = run(["cargo", "test"], check=False)
+def run_tests(tools: ToolCommands) -> bool:
+    """Returns True if all tests pass. Returns True if no test command configured."""
+    if not tools.test_cmd:
+        print("  (no test command configured -- skipping)")
+        return True
+    result = run_shell(tools.test_cmd, check=False)
     return result.returncode == 0
 
 
-def cargo_clippy_issues() -> list[str]:
-    """Return clippy diagnostics as a list of message strings."""
-    result = run(
-        ["cargo", "clippy", "--message-format=json", "--", "-D", "warnings"],
-        check=False,
-        capture=True,
-    )
-    issues = []
-    for line in result.stdout.splitlines():
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("reason") == "compiler-message":
-            msg = obj.get("message", {})
-            if msg.get("level") in ("error", "warning"):
-                rendered = msg.get("rendered", "")
-                if rendered:
-                    issues.append(rendered.strip())
-    return issues
-
-
-def cargo_fmt_check() -> list[str]:
-    """Return list of files with formatting issues."""
-    result = run(
-        ["cargo", "fmt", "--check"],
-        check=False,
-        capture=True,
-    )
+def lint_issues(tools: ToolCommands) -> list[str]:
+    """Return lint diagnostics as a list of strings."""
+    if not tools.lint_cmd:
+        return []
+    result = run_shell(tools.lint_cmd, check=False, capture=True)
     if result.returncode == 0:
         return []
-    # cargo fmt --check prints diffs to stdout when formatting is needed
-    return ["Formatting issues found (run cargo fmt)"]
+    # Combine stdout and stderr -- different linters output to different streams
+    output = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    lines = []
+    if output:
+        lines.extend(output.splitlines())
+    if stderr and stderr != output:
+        lines.extend(stderr.splitlines())
+    return lines if lines else ["Lint issues found (see command output above)"]
+
+
+def fmt_check_issues(tools: ToolCommands) -> list[str]:
+    """Return list of formatting issues."""
+    if not tools.fmt_check_cmd:
+        return []
+    result = run_shell(tools.fmt_check_cmd, check=False, capture=True)
+    if result.returncode == 0:
+        return []
+    output = (result.stdout or "").strip()
+    if output:
+        return output.splitlines()
+    return [f"Formatting issues found (run: {tools.fmt_fix_cmd or tools.fmt_check_cmd})"]
+
+
+def fmt_fix(tools: ToolCommands) -> None:
+    """Run the format fix command if configured."""
+    if not tools.fmt_fix_cmd:
+        return
+    run_shell(tools.fmt_fix_cmd, check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -404,8 +677,7 @@ def format_sonar_hotspots(hotspots: list[dict]) -> list[str]:
 
 
 def sonar_duplications(cfg: Config) -> list[str]:
-    """Fetch duplication metrics from SonarQube API.
-    Returns a list of human-readable duplication findings."""
+    """Fetch duplication metrics from SonarQube API."""
     import urllib.request
     import urllib.parse
     import base64
@@ -450,13 +722,10 @@ def sonar_duplications(cfg: Config) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _check_result(check: dict) -> Optional[str]:
-    """Extract the result of a check, handling both CheckRun (conclusion) and StatusContext (state).
-    Returns an uppercased result string, or None if the check is still in progress."""
-    # CheckRun uses "conclusion" (uppercase), StatusContext uses "state" (lowercase)
+    """Extract the result of a check, handling both CheckRun (conclusion) and StatusContext (state)."""
     result = check.get("conclusion") or check.get("state")
     if result:
         return result.upper()
-    # Both None/empty means the check is still running
     return None
 
 
@@ -471,11 +740,11 @@ def pr_checks_passing(cfg: Config) -> bool:
         data = json.loads(output)
         checks = data.get("statusCheckRollup", [])
         if not checks:
-            return True  # No checks configured -- treat as passing
+            return True
         results = [_check_result(c) for c in checks]
         resolved = [r for r in results if r is not None]
         if not resolved:
-            return False  # All checks still in progress
+            return False
         passing = all(r in ("SUCCESS", "SKIPPED", "NEUTRAL") for r in resolved)
         if not passing:
             failed = [r for r in resolved if r not in ("SUCCESS", "SKIPPED", "NEUTRAL")]
@@ -486,8 +755,7 @@ def pr_checks_passing(cfg: Config) -> bool:
 
 
 def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
-    """Return unresolved review comments left by coderabbitai[bot].
-    If `since` is set (ISO 8601 timestamp), only return comments created after that time."""
+    """Return unresolved review comments left by coderabbitai[bot]."""
     output = gh(
         "api",
         f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
@@ -507,7 +775,6 @@ def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
         user = c.get("user", {}).get("login", "")
         if "coderabbitai" not in user:
             continue
-        # Filter by created_at client-side (API's `since` param is unreliable)
         if since and c.get("created_at", "") <= since:
             continue
         body = c.get("body", "")
@@ -583,10 +850,7 @@ def _process_claude_stream(proc) -> None:
 
 
 def claude_fix(prompt: str, iteration: int = 0) -> bool:
-    """Invoke Claude Code with stream-json output to show live progress.
-    Returns True if Claude exited successfully."""
-    # Log prompt to a temp file for debugging. Use tempfile to avoid a
-    # TOCTOU race between write_text() and chmod() on a predictable path.
+    """Invoke Claude Code with stream-json output to show live progress."""
     fd = tempfile.NamedTemporaryFile(
         mode="w",
         prefix=f"quality_loop_prompt_iter{iteration}_",
@@ -661,17 +925,18 @@ def _print_stream_event(event: dict) -> None:
 
 
 def build_fix_prompt(
+    tools: ToolCommands,
     sonar: list[str],
     hotspots: list[str],
     duplications: list[str],
-    clippy: list[str],
+    lint: list[str],
     fmt: list[str],
     coderabbit: list[str],
 ) -> str:
     parts = [
-        "You are a code quality agent for a Rust project.",
+        f"You are a code quality agent for a {tools.lang_name} project.",
         "Fix ALL of the following issues. Do not change any functionality --",
-        "only improve code quality. After each fix, ensure the code still compiles.",
+        "only improve code quality. After each fix, ensure the code still compiles/runs.",
         "",
     ]
     if sonar:
@@ -686,9 +951,9 @@ def build_fix_prompt(
         parts.append("== SonarQube duplications ==")
         parts.extend(duplications)
         parts.append("")
-    if clippy:
-        parts.append("== Clippy diagnostics ==")
-        parts.extend(clippy)
+    if lint:
+        parts.append("== Lint diagnostics ==")
+        parts.extend(lint)
         parts.append("")
     if fmt:
         parts.append("== Formatting issues ==")
@@ -699,8 +964,7 @@ def build_fix_prompt(
         parts.extend(coderabbit)
         parts.append("")
     parts.append(
-        "Fix all issues above. Run `cargo fmt` and `cargo clippy` after editing "
-        "to verify no new issues were introduced. Do not modify tests."
+        f"Fix all issues above. {tools.verify_instructions} Do not modify tests."
     )
     return "\n".join(parts)
 
@@ -721,9 +985,7 @@ def _get_dirty_files() -> set[str]:
 
 
 def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
-    """Commit and push changes. Returns True if push succeeded.
-    If `files_to_stage` is given, only those files are staged (avoids
-    accidentally committing pre-existing local edits or secrets)."""
+    """Commit and push changes. Returns True if push succeeded."""
     if files_to_stage:
         result = run(["git", "add", "--"] + files_to_stage, check=False)
     else:
@@ -756,8 +1018,7 @@ def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) 
 def collect_signals(
     cfg: Config, cr_since: str = "",
 ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
-    """Collect all quality signals and return (sonar, hotspots, duplications, clippy, fmt, coderabbit).
-    `cr_since` filters CodeRabbit comments to only those created after this ISO 8601 timestamp."""
+    """Collect all quality signals and return (sonar, hotspots, duplications, lint, fmt, coderabbit)."""
     print("\n[1/6] Running SonarQube scan ...")
     scan_ok = sonar_scan(cfg)
     s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
@@ -771,45 +1032,48 @@ def collect_signals(
     d_issues = sonar_duplications(cfg) if scan_ok else []
     print(f"  Duplication findings: {len(d_issues)}")
 
-    print("\n[4/6] Running cargo clippy ...")
-    c_issues = cargo_clippy_issues()
-    print(f"  Clippy issues: {len(c_issues)}")
+    print("\n[4/6] Running lint ...")
+    l_issues = lint_issues(cfg.tools)
+    print(f"  Lint issues: {len(l_issues)}")
 
-    print("\n[5/6] Running cargo fmt --check ...")
-    f_issues = cargo_fmt_check()
+    print("\n[5/6] Running format check ...")
+    f_issues = fmt_check_issues(cfg.tools)
     print(f"  Fmt issues: {len(f_issues)}")
 
     print("\n[6/6] Fetching CodeRabbit comments ...")
     cr_issues = coderabbit_comments(cfg, since=cr_since)
     print(f"  CodeRabbit comments: {len(cr_issues)}")
 
-    return s_issues, h_issues, d_issues, c_issues, f_issues, cr_issues
+    return s_issues, h_issues, d_issues, l_issues, f_issues, cr_issues
 
 
-def _apply_fixes(prompt: str, iteration: int) -> None:
-    """Invoke Claude Code and verify tests still pass. Exits on test failure."""
+def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
+    """Invoke Claude Code, auto-format, and verify tests still pass."""
     print("  Invoking Claude Code ...")
     success = claude_fix(prompt, iteration)
     if not success:
         print("[warn] Claude Code exited with an error. Continuing anyway.")
 
-    print("\n  Running cargo test (regression guard) ...")
-    if not cargo_test():
-        print("[error] Tests broke after Claude's changes. Stopping.")
+    if cfg.tools.fmt_fix_cmd:
+        print("\n  Running format fix ...")
+        fmt_fix(cfg.tools)
+
+    print("\n  Running tests (regression guard) ...")
+    if not run_tests(cfg.tools):
+        print("[error] Tests broke after changes. Stopping.")
         print("  Check the diff, fix manually, and re-run.")
         sys.exit(1)
     print("  Tests still green.")
 
 
 def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
-    """Commit, push, and wait for CI/CodeRabbit if the push succeeded.
-    Returns True if changes were committed and pushed successfully."""
+    """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
     sha_before = current_sha()
     pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
     sha_after = current_sha()
 
     if sha_before == sha_after:
-        print("  No changes committed — Claude may not have produced a fix.")
+        print("  No changes committed -- Claude may not have produced a fix.")
         return False
 
     if pushed:
@@ -846,14 +1110,14 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
     or empty string to signal that all issues are resolved."""
     from datetime import datetime, timezone
 
-    s_issues, h_issues, d_issues, c_issues, f_issues, cr_issues = collect_signals(cfg, cr_since=cr_since)
-    total = len(s_issues) + len(h_issues) + len(d_issues) + len(c_issues) + len(f_issues) + len(cr_issues)
+    s_issues, h_issues, d_issues, l_issues, f_issues, cr_issues = collect_signals(cfg, cr_since=cr_since)
+    total = len(s_issues) + len(h_issues) + len(d_issues) + len(l_issues) + len(f_issues) + len(cr_issues)
 
     if total == 0:
         return ""
 
     print(f"\n  Total issues: {total}.")
-    prompt = build_fix_prompt(s_issues, h_issues, d_issues, c_issues, f_issues, cr_issues)
+    prompt = build_fix_prompt(cfg.tools, s_issues, h_issues, d_issues, l_issues, f_issues, cr_issues)
 
     if cfg.dry_run:
         print("\n[dry-run] Would invoke Claude Code with this prompt:\n")
@@ -861,12 +1125,9 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
         print("\n[dry-run] Stopping after first iteration.")
         sys.exit(0)
 
-    # Snapshot dirty files before Claude runs so we can scope staging
-    # to only files that are *newly* changed, avoiding the risk of
-    # committing pre-existing local edits or mis-ignored secrets.
     dirty_before = _get_dirty_files()
 
-    _apply_fixes(prompt, iteration)
+    _apply_fixes(cfg, prompt, iteration)
 
     dirty_after = _get_dirty_files()
     new_files = sorted(dirty_after - dirty_before)
@@ -886,8 +1147,8 @@ def main() -> None:
     if cfg.dry_run:
         print("[dry-run] No Claude Code invocations or git pushes will happen.")
 
-    banner("Baseline: cargo test")
-    if not cargo_test():
+    banner("Baseline: tests")
+    if not run_tests(cfg.tools):
         print("[error] Tests failed before the loop even started. Fix them first.")
         sys.exit(1)
     print("  Baseline tests green.")

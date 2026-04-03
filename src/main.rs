@@ -15,6 +15,7 @@ mod prompt_suggestions;
 mod settings;
 mod sources;
 mod syntax;
+mod telemetry;
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -223,6 +224,8 @@ fn expand_tilde(arg: &str) -> PathBuf {
 }
 
 fn main() -> eframe::Result {
+    telemetry::init();
+
     let sentry_dsn = std::env::var("SENTRY_DSN")
         .ok()
         .or_else(|| {
@@ -328,10 +331,15 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "macos")]
             setup_macos_about_panel();
 
+            let project_name = project_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             let mut app = app::DirigentApp::new(project_root, show_repo_picker);
             if show_repo_picker {
                 app.show_repo_picker = true;
             }
+            telemetry::emit_app_started(&project_name);
             Ok(Box::new(app))
         }),
     )

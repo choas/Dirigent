@@ -1,5 +1,6 @@
 use crate::agents::{self, AgentKind, AgentResult, AgentStatus, AgentTrigger, LastRunInfo};
 use crate::db::AgentRunRecord;
+use crate::telemetry;
 
 use super::DirigentApp;
 
@@ -35,6 +36,14 @@ impl DirigentApp {
 
         self.set_agent_status_message(&result, &label, &dur);
         self.log_agent_activity(&result, &label, &dur);
+
+        telemetry::emit_agent_completed(
+            &self.project_name(),
+            &result.kind.db_key(),
+            result.status.as_str(),
+            result.duration_ms,
+            result.cue_id,
+        );
 
         // Chain: trigger any agents configured with AfterAgent(<this agent>)
         self.trigger_agents_for(&AgentTrigger::AfterAgent(result.kind), result.cue_id, "");

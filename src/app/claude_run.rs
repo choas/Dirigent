@@ -10,6 +10,7 @@ use crate::db::{Cue, CueStatus, Execution};
 use crate::git;
 use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand};
+use crate::telemetry;
 
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
@@ -443,6 +444,14 @@ impl DirigentApp {
         }
 
         let config = build_provider_config(&self.settings, &provider, &matched_command);
+
+        telemetry::emit_execution_started(
+            &self.project_name(),
+            cue_id,
+            provider.display_name(),
+            &config.model,
+        );
+
         let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
         self.task_handles.push(handle);
     }
@@ -519,6 +528,14 @@ impl DirigentApp {
         }
 
         let config = build_provider_config(&self.settings, &provider, &matched_command);
+
+        telemetry::emit_execution_started(
+            &self.project_name(),
+            cue_id,
+            provider.display_name(),
+            &config.model,
+        );
+
         let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
         self.task_handles.push(handle);
 
@@ -568,6 +585,27 @@ impl DirigentApp {
             result.metrics.input_tokens,
             result.metrics.output_tokens,
         );
+
+        // Emit telemetry for every completed execution (including stale ones).
+        let provider_name = self
+            .claude
+            .running_logs
+            .get(&result.cue_id)
+            .map(|(_, p)| p.display_name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        if result.error.is_none() {
+            telemetry::emit_execution_completed(
+                &self.project_name(),
+                result.cue_id,
+                &provider_name,
+                result.metrics.cost_usd,
+                result.metrics.duration_ms,
+                result.metrics.num_turns,
+                result.metrics.input_tokens,
+                result.metrics.output_tokens,
+                result.diff.is_some(),
+            );
+        }
 
         if is_stale {
             // Stale result — just mark the old execution in the DB, don't change cue status.
@@ -681,6 +719,18 @@ impl DirigentApp {
         let _ = self.db.fail_execution(result.exec_id, error);
         let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
         let _ = self.db.log_activity(result.cue_id, "Run failed");
+        let provider_name = self
+            .claude
+            .running_logs
+            .get(&result.cue_id)
+            .map(|(_, p)| p.display_name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        telemetry::emit_execution_failed(
+            &self.project_name(),
+            result.cue_id,
+            &provider_name,
+            error,
+        );
     }
 
     fn handle_rate_limit(&mut self, result: &ClaudeResult, limit_line: &str) {
@@ -692,6 +742,7 @@ impl DirigentApp {
         let _ = self.db.log_activity(result.cue_id, &activity);
         self.cue_warnings
             .insert(result.cue_id, limit_line.to_string());
+        telemetry::emit_execution_rate_limited(&self.project_name(), result.cue_id, limit_line);
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {

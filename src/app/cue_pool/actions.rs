@@ -6,6 +6,7 @@ use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
 use crate::settings::{CliProvider, SourceKind};
+use crate::telemetry;
 
 use super::helpers::{build_commit_all_subject, parse_schedule_duration};
 
@@ -232,6 +233,8 @@ impl DirigentApp {
                 let _ = self
                     .db
                     .log_activity(cue_id, &format!("Committed ({})", short));
+                let dirty_count = git::get_dirty_files(&self.project_root).len();
+                telemetry::emit_git_commit(&self.project_name(), dirty_count);
             }
             Err(e) => {
                 let msg = format!("{}", e);

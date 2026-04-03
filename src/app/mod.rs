@@ -579,6 +579,14 @@ impl DirigentApp {
         }
     }
 
+    /// Return the project directory name (for telemetry and display).
+    pub(crate) fn project_name(&self) -> String {
+        self.project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
+    }
+
     /// Return a short preview of a cue's text (first few words).
     fn cue_preview(&self, cue_id: i64) -> String {
         self.cues
