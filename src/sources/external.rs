@@ -173,14 +173,12 @@ fn sonar_get(
     Ok(resp)
 }
 
-/// Fetch issues, security hotspots, and duplications from a SonarQube instance.
-/// The caller is expected to resolve the token (e.g. via `resolve_source_token`).
-pub(crate) fn fetch_sonarqube_issues(
+/// Validate that the required SonarQube parameters are non-empty.
+fn validate_sonar_params(
     host_url: &str,
     project_key: &str,
     token: &str,
-    source_label: &str,
-) -> crate::error::Result<Vec<SourceItem>> {
+) -> crate::error::Result<()> {
     if host_url.is_empty() {
         return Err(DirigentError::Source(
             "SonarQube host URL is empty".to_string(),
@@ -196,6 +194,18 @@ pub(crate) fn fetch_sonarqube_issues(
             "SonarQube token is empty (set in source config or SONAR_TOKEN in .env)".to_string(),
         ));
     }
+    Ok(())
+}
+
+/// Fetch issues, security hotspots, and duplications from a SonarQube instance.
+/// The caller is expected to resolve the token (e.g. via `resolve_source_token`).
+pub(crate) fn fetch_sonarqube_issues(
+    host_url: &str,
+    project_key: &str,
+    token: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    validate_sonar_params(host_url, project_key, token)?;
 
     let base = host_url.trim_end_matches('/');
     let client = sonar_client()?;
@@ -214,11 +224,11 @@ pub(crate) fn fetch_sonarqube_issues(
         .cloned()
         .unwrap_or_default();
 
-    for issue in &issues {
-        if let Some(item) = parse_sonar_issue(issue, source_label) {
-            items.push(item);
-        }
-    }
+    items.extend(
+        issues
+            .iter()
+            .filter_map(|issue| parse_sonar_issue(issue, source_label)),
+    );
 
     // ── 2. Security Hotspots (/api/hotspots/search) ──
     items.extend(fetch_sonar_hotspots(
