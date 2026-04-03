@@ -107,18 +107,6 @@ pub(crate) fn emit_execution_rate_limited(project: &str, cue_id: i64, message: &
     );
 }
 
-pub(crate) fn emit_cue_status_changed(project: &str, cue_id: i64, from: &str, to: &str) {
-    emit(
-        "cue.status_changed",
-        &[
-            ("project", str_val(project)),
-            ("cue_id", double_val(cue_id as f64)),
-            ("from_status", str_val(from)),
-            ("to_status", str_val(to)),
-        ],
-    );
-}
-
 pub(crate) fn emit_agent_completed(
     project: &str,
     agent_kind: &str,
