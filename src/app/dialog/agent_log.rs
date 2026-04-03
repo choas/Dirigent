@@ -159,34 +159,51 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(
-                        egui::RichText::new("\u{1F50D} Analyze")
-                            .small()
-                            .color(self.semantic.accent),
-                    )
-                    .clicked()
-                {
-                    *analyze_run_idx = Some(idx);
-                }
-                // Show "Fix with AI" button for Audit agents with failed/error runs
-                if kind == AgentKind::Audit && (run.status == "failed" || run.status == "error") {
-                    if ui
-                        .button(
-                            egui::RichText::new("\u{1F527} Fix with AI")
-                                .small()
-                                .color(self.semantic.danger),
-                        )
-                        .clicked()
-                    {
-                        *fix_run_idx = Some(idx);
-                    }
-                }
-            });
+            self.render_run_action_buttons(ui, kind, run, idx, analyze_run_idx, fix_run_idx);
         });
 
-        // Output block
+        self.render_log_output_block(ui, run);
+    }
+
+    /// Render the Analyze / Fix action buttons for a run entry.
+    fn render_run_action_buttons(
+        &self,
+        ui: &mut egui::Ui,
+        kind: AgentKind,
+        run: &AgentRunEntry,
+        idx: usize,
+        analyze_run_idx: &mut Option<usize>,
+        fix_run_idx: &mut Option<usize>,
+    ) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(
+                    egui::RichText::new("\u{1F50D} Analyze")
+                        .small()
+                        .color(self.semantic.accent),
+                )
+                .clicked()
+            {
+                *analyze_run_idx = Some(idx);
+            }
+            // Show "Fix with AI" button for Audit agents with failed/error runs
+            if kind == AgentKind::Audit
+                && (run.status == "failed" || run.status == "error")
+                && ui
+                    .button(
+                        egui::RichText::new("\u{1F527} Fix with AI")
+                            .small()
+                            .color(self.semantic.danger),
+                    )
+                    .clicked()
+            {
+                *fix_run_idx = Some(idx);
+            }
+        });
+    }
+
+    /// Render the output block for a run entry.
+    fn render_log_output_block(&self, ui: &mut egui::Ui, run: &AgentRunEntry) {
         egui::Frame::NONE
             .inner_margin(egui::Margin {
                 left: SPACE_SM as i8,
@@ -243,8 +260,9 @@ impl DirigentApp {
     fn handle_fix_run(&mut self, kind: AgentKind, runs: &[AgentRunEntry], idx: usize) {
         if let Some(run) = runs.get(idx) {
             let cue_text = format!(
-                "The {} audit found vulnerabilities. Fix all the issues reported below by updating dependencies, applying patches, or making the necessary code changes.\n\n$ {}\n\n{}",
+                "The {} agent exited with status \"{}\". Review the output below and fix any actionable issues by updating dependencies, applying patches, or making the necessary code changes. Ignore non-actionable warnings or environment errors.\n\n$ {}\n\n<agent-output>\n{}\n</agent-output>",
                 kind.label(),
+                run.status,
                 run.command,
                 run.output.trim(),
             );

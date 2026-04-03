@@ -530,24 +530,34 @@ fn render_table_body(
                 } else {
                     egui::Color32::TRANSPARENT
                 };
-                egui::Frame::new().fill(fill).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for (i, cell) in row.iter().enumerate() {
-                            let width = col_widths.get(i).copied().unwrap_or(60.0);
-                            ui.vertical(|ui| {
-                                ui.set_min_width(width);
-                                ui.set_max_width(width);
-                                ui.horizontal_wrapped(|ui| {
-                                    for seg in cell {
-                                        render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
-                                    }
-                                });
-                            });
+                render_table_row(ui, row, fill, ctx, col_widths);
+            }
+        });
+}
+
+fn render_table_row(
+    ui: &mut egui::Ui,
+    row: &[Vec<TextSegment>],
+    fill: egui::Color32,
+    ctx: &RenderCtx,
+    col_widths: &[f32],
+) {
+    egui::Frame::new().fill(fill).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            for (i, cell) in row.iter().enumerate().take(col_widths.len()) {
+                let width = col_widths[i];
+                ui.vertical(|ui| {
+                    ui.set_min_width(width);
+                    ui.set_max_width(width);
+                    ui.horizontal_wrapped(|ui| {
+                        for seg in cell {
+                            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
                         }
                     });
                 });
             }
         });
+    });
 }
 
 fn render_thematic_break(ui: &mut egui::Ui, ctx: &RenderCtx) {

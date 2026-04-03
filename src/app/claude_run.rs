@@ -632,12 +632,17 @@ impl DirigentApp {
             self.try_dispatch_follow_up(result.cue_id);
         }
 
-        if self.claude.show_log == Some(result.cue_id) {
-            if let Ok(execs) = self.db.get_all_executions(result.cue_id) {
+        self.refresh_conversation_history(result.cue_id);
+        self.reload_cues();
+    }
+
+    /// Reload the conversation history panel if it is showing this cue.
+    fn refresh_conversation_history(&mut self, cue_id: i64) {
+        if self.claude.show_log == Some(cue_id) {
+            if let Ok(execs) = self.db.get_all_executions(cue_id) {
                 self.claude.conversation_history = execs;
             }
         }
-        self.reload_cues();
     }
 
     /// If there are queued follow-up prompts for this cue, pop the first one
