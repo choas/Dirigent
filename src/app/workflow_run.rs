@@ -19,8 +19,10 @@ impl DirigentApp {
         }
 
         self.workflow_generating = true;
+        self.show_workflow_graph = true;
         let prompt = workflow::build_workflow_prompt(&inbox_cues);
         let expected_ids: Vec<i64> = inbox_cues.iter().map(|c| c.id).collect();
+        self.workflow_inbox_snapshot = expected_ids.clone();
 
         let provider = self.settings.cli_provider.clone();
         let project_root = self.project_root.clone();
@@ -65,6 +67,7 @@ impl DirigentApp {
                     step_count, cue_count
                 ));
                 self.workflow_plan = Some(plan);
+                self.show_workflow_graph = true;
             }
             Err(e) => {
                 self.set_status_message(format!("Workflow analysis failed: {}", e));
@@ -244,6 +247,8 @@ impl DirigentApp {
         }
         self.workflow_plan = None;
         self.workflow_warning = None;
+        self.show_workflow_graph = false;
+        self.workflow_inbox_snapshot.clear();
         self.reload_cues();
         self.set_status_message("Workflow cancelled".into());
     }

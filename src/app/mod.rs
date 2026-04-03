@@ -277,6 +277,10 @@ pub struct DirigentApp {
     workflow_rx: Option<mpsc::Receiver<Result<crate::workflow::WorkflowPlan, String>>>,
     /// Warning from workflow plan parsing (e.g. missing cues, fallback).
     workflow_warning: Option<String>,
+    /// Whether the workflow graph overlay is visible (separate from plan existence).
+    show_workflow_graph: bool,
+    /// Snapshot of Inbox cue IDs when the workflow plan was created, for change detection.
+    workflow_inbox_snapshot: Vec<i64>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -590,6 +594,8 @@ impl DirigentApp {
             workflow_generating: false,
             workflow_rx: None,
             workflow_warning: None,
+            show_workflow_graph: false,
+            workflow_inbox_snapshot: Vec::new(),
         }
     }
 
@@ -735,7 +741,9 @@ impl DirigentApp {
         self.claude.show_log = None;
         self.agent_state.show_output = None;
         self.show_agent_runs_for_cue = None;
-        // Note: workflow_plan is NOT dismissed here — it stays until explicitly cancelled/closed.
+        // workflow_plan is NOT cleared here — it stays until explicitly cancelled.
+        // But the graph overlay is dismissed so the code viewer becomes visible.
+        self.show_workflow_graph = false;
     }
 }
 

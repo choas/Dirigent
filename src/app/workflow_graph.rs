@@ -27,8 +27,7 @@ impl DirigentApp {
                     .on_hover_text("Close workflow view (plan remains active)")
                     .clicked()
                 {
-                    // Don't cancel — just close the view
-                    // The workflow will continue executing in the background
+                    self.show_workflow_graph = false;
                 }
 
                 if self.is_workflow_active() {
