@@ -1,7 +1,15 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::DirigentError;
+
+/// Print a warning to stderr at most once per flag.
+fn warn_once(flag: &AtomicBool, msg: &str) {
+    if !flag.swap(true, Ordering::Relaxed) {
+        eprintln!("{msg}");
+    }
+}
 
 use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
 use super::types::SourceItem;
@@ -240,14 +248,20 @@ pub(crate) fn fetch_sonarqube_issues(
     // Non-fatal: some tokens lack hotspot permissions.
     match fetch_sonar_hotspots(&client, base, project_key, token, source_label) {
         Ok(hotspots) => items.extend(hotspots),
-        Err(e) => eprintln!("SonarQube hotspots skipped: {e}"),
+        Err(e) => {
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            warn_once(&WARNED, &format!("SonarQube hotspots skipped: {e}"));
+        }
     }
 
     // ── 3. Duplications (/api/measures/component) ──
     // Non-fatal: some tokens lack measures permissions.
     match fetch_sonar_duplications(&client, base, project_key, token, source_label) {
         Ok(dups) => items.extend(dups),
-        Err(e) => eprintln!("SonarQube duplications skipped: {e}"),
+        Err(e) => {
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            warn_once(&WARNED, &format!("SonarQube duplications skipped: {e}"));
+        }
     }
 
     Ok(items)
@@ -304,7 +318,13 @@ fn fetch_sonar_duplications(
     // Fetch per-file duplication details via component_tree.
     match fetch_sonar_duplicated_files(client, base, project_key, token, source_label) {
         Ok(file_items) => items.extend(file_items),
-        Err(e) => eprintln!("SonarQube duplicated files detail skipped: {e}"),
+        Err(e) => {
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            warn_once(
+                &WARNED,
+                &format!("SonarQube duplicated files detail skipped: {e}"),
+            );
+        }
     }
 
     Ok(items)
