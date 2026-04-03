@@ -237,22 +237,18 @@ pub(crate) fn fetch_sonarqube_issues(
     );
 
     // ── 2. Security Hotspots (/api/hotspots/search) ──
-    items.extend(fetch_sonar_hotspots(
-        &client,
-        base,
-        project_key,
-        token,
-        source_label,
-    )?);
+    // Non-fatal: some tokens lack hotspot permissions.
+    match fetch_sonar_hotspots(&client, base, project_key, token, source_label) {
+        Ok(hotspots) => items.extend(hotspots),
+        Err(e) => eprintln!("SonarQube hotspots skipped: {e}"),
+    }
 
     // ── 3. Duplications (/api/measures/component) ──
-    items.extend(fetch_sonar_duplications(
-        &client,
-        base,
-        project_key,
-        token,
-        source_label,
-    )?);
+    // Non-fatal: some tokens lack measures permissions.
+    match fetch_sonar_duplications(&client, base, project_key, token, source_label) {
+        Ok(dups) => items.extend(dups),
+        Err(e) => eprintln!("SonarQube duplications skipped: {e}"),
+    }
 
     Ok(items)
 }
