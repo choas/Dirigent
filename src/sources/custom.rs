@@ -222,6 +222,8 @@ pub(super) fn parse_source_object(
         text: text.to_string(),
         source_label: source_label.to_string(),
         source_id: source_id.to_string(),
+        file_path: String::new(),
+        line_number: 0,
     })
 }
 

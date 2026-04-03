@@ -140,8 +140,8 @@ impl DirigentApp {
                     &item.source_label,
                     &item.source_id,
                     &item.external_id,
-                    "",
-                    0,
+                    &item.file_path,
+                    item.line_number,
                 )
                 .is_ok()
             {

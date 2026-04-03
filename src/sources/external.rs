@@ -353,14 +353,17 @@ fn fetch_sonar_duplicated_files(
         if blocks == 0 {
             continue;
         }
-        items.push(SourceItem::new(
-            format!("sonar-dup-file-{}-{}", project_key, file_path),
-            format!(
-                "[DUPLICATION] {} ({} blocks, {} lines)",
-                file_path, blocks, lines,
-            ),
-            source_label,
-        ));
+        items.push(
+            SourceItem::new(
+                format!("sonar-dup-file-{}-{}", project_key, file_path),
+                format!(
+                    "[DUPLICATION] {} ({} blocks, {} lines)",
+                    file_path, blocks, lines,
+                ),
+                source_label,
+            )
+            .with_location(file_path, 0),
+        );
     }
     Ok(items)
 }
@@ -392,6 +395,16 @@ fn parse_sonar_duplication_measure(
     ))
 }
 
+/// Extract the file path from a SonarQube component string.
+/// SonarQube components are typically `project-key:src/file.rs`; this strips the
+/// project key prefix and returns just the relative path portion.
+fn sonar_component_to_path(component: &str) -> String {
+    if component.is_empty() {
+        return String::new();
+    }
+    component.split(':').last().unwrap_or(component).to_string()
+}
+
 /// Format a SonarQube finding location suffix like `(file.rs:10, rule: S123)`.
 /// Returns an empty string when `component` is empty.
 fn sonar_location_suffix(component: &str, line: u64, detail_label: &str, detail: &str) -> String {
@@ -421,7 +434,8 @@ fn parse_sonar_issue(issue: &serde_json::Value, source_label: &str) -> Option<So
 
     let loc = sonar_location_suffix(component, line, "rule", rule);
     let text = format!("[{}] {}{}", severity, message, loc);
-    Some(SourceItem::new(key, text, source_label))
+    let file_path = sonar_component_to_path(component);
+    Some(SourceItem::new(key, text, source_label).with_location(&file_path, line as usize))
 }
 
 /// Parse a SonarQube Security Hotspot into a `SourceItem`.
@@ -441,7 +455,8 @@ fn parse_sonar_hotspot(hs: &serde_json::Value, source_label: &str) -> Option<Sou
 
     let loc = sonar_location_suffix(component, line, "category", category);
     let text = format!("[HOTSPOT/{}] {}{}", vulnerability, message, loc);
-    Some(SourceItem::new(key, text, source_label))
+    let file_path = sonar_component_to_path(component);
+    Some(SourceItem::new(key, text, source_label).with_location(&file_path, line as usize))
 }
 
 /// Fetch cards from a Trello board using the Trello REST API.
