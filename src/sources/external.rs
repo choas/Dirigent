@@ -328,10 +328,7 @@ fn parse_sonar_hotspot(hs: &serde_json::Value, source_label: &str) -> Option<Sou
         .get("vulnerabilityProbability")
         .and_then(|v| v.as_str())
         .unwrap_or("UNKNOWN");
-    let component = hs
-        .get("component")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
+    let component = hs.get("component").and_then(|c| c.as_str()).unwrap_or("");
     let line = hs.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
     let category = hs
         .get("securityCategory")
