@@ -296,10 +296,73 @@ fn fetch_sonar_duplications(
     let Some(measures) = measures else {
         return Ok(Vec::new());
     };
-    Ok(measures
+    let mut items: Vec<SourceItem> = measures
         .iter()
         .filter_map(|m| parse_sonar_duplication_measure(m, project_key, source_label))
-        .collect())
+        .collect();
+
+    // Fetch per-file duplication details via component_tree.
+    match fetch_sonar_duplicated_files(client, base, project_key, token, source_label) {
+        Ok(file_items) => items.extend(file_items),
+        Err(e) => eprintln!("SonarQube duplicated files detail skipped: {e}"),
+    }
+
+    Ok(items)
+}
+
+/// Fetch individual files with duplications via `/api/measures/component_tree`.
+fn fetch_sonar_duplicated_files(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    project_key: &str,
+    token: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    let url = format!(
+        "{}/api/measures/component_tree?component={}&metricKeys=duplicated_blocks,duplicated_lines\
+         &qualifiers=FIL&metricSort=duplicated_blocks&metricSortFilter=withMeasuresOnly\
+         &s=metric&asc=false&ps=100",
+        base, project_key,
+    );
+    let resp = sonar_get(client, &url, token)?;
+    let components = resp.get("components").and_then(|v| v.as_array());
+    let Some(components) = components else {
+        return Ok(Vec::new());
+    };
+    let mut items = Vec::new();
+    for comp in components {
+        let key = comp.get("key").and_then(|v| v.as_str()).unwrap_or("");
+        let file_path = key.split(':').last().unwrap_or(key);
+        let measures = comp.get("measures").and_then(|v| v.as_array());
+        let Some(measures) = measures else { continue };
+        let mut blocks = 0u64;
+        let mut lines = 0u64;
+        for m in measures {
+            let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+            let val: u64 = m
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            match metric {
+                "duplicated_blocks" => blocks = val,
+                "duplicated_lines" => lines = val,
+                _ => {}
+            }
+        }
+        if blocks == 0 {
+            continue;
+        }
+        items.push(SourceItem::new(
+            format!("sonar-dup-file-{}-{}", project_key, file_path),
+            format!(
+                "[DUPLICATION] {} ({} blocks, {} lines)",
+                file_path, blocks, lines,
+            ),
+            source_label,
+        ));
+    }
+    Ok(items)
 }
 
 /// Parse a single SonarQube duplication measure into a `SourceItem`.
