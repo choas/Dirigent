@@ -279,6 +279,22 @@ fn screen_center_position(win_width: f32, win_height: f32) -> Option<egui::Pos2>
     }
 }
 
+fn scrub_sentry_event(
+    mut event: sentry::protocol::Event<'static>,
+) -> Option<sentry::protocol::Event<'static>> {
+    event.server_name = None;
+    event.user = None;
+    for exc in event.exception.values.iter_mut() {
+        if let Some(ref mut st) = exc.stacktrace {
+            for frame in st.frames.iter_mut() {
+                frame.filename = None;
+                frame.abs_path = None;
+            }
+        }
+    }
+    Some(event)
+}
+
 fn load_logo_icon() -> egui::IconData {
     let png_bytes = include_bytes!("../assets/logo.png");
     let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
@@ -309,25 +325,7 @@ fn main() -> eframe::Result {
         sentry::ClientOptions {
             release: sentry::release_name!(),
             send_default_pii: false,
-            before_send: Some(std::sync::Arc::new(|mut event| {
-                // Strip the server_name (hostname) to avoid leaking the user's machine name
-                event.server_name = None;
-
-                // Scrub user info if somehow attached
-                event.user = None;
-
-                // Scrub file paths from exception stacktraces
-                for exc in event.exception.values.iter_mut() {
-                    if let Some(ref mut st) = exc.stacktrace {
-                        for frame in st.frames.iter_mut() {
-                            frame.filename = None;
-                            frame.abs_path = None;
-                        }
-                    }
-                }
-
-                Some(event)
-            })),
+            before_send: Some(std::sync::Arc::new(scrub_sentry_event)),
             ..Default::default()
         },
     ));
