@@ -92,8 +92,6 @@ pub(super) enum CueAction {
     CancelWorkflow,
     /// Begin executing the workflow plan.
     StartWorkflow,
-    /// Pause the workflow after the current step completes.
-    PauseWorkflow,
     /// Resume a paused workflow.
     ResumeWorkflow,
     /// Toggle pause_after on a specific step index.

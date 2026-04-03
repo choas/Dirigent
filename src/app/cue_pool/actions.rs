@@ -130,9 +130,6 @@ impl DirigentApp {
             CueAction::StartWorkflow => {
                 self.start_workflow();
             }
-            CueAction::PauseWorkflow => {
-                // Pause is handled via toggle_pause on individual steps
-            }
             CueAction::ResumeWorkflow => {
                 self.resume_workflow();
             }

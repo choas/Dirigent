@@ -1,11 +1,7 @@
-use std::time::Instant;
-
 /// A workflow plan produced by LLM analysis of Inbox cues.
 #[derive(Clone)]
 pub(crate) struct WorkflowPlan {
-    pub id: String,
     pub steps: Vec<WorkflowStep>,
-    pub created_at: Instant,
     /// Index of the step currently executing (or about to execute).
     pub current_step: usize,
 }
@@ -30,25 +26,11 @@ pub(crate) enum WorkflowStepStatus {
     Failed,
 }
 
-impl WorkflowStepStatus {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pending => "Pending",
-            Self::Running => "Running",
-            Self::PausedAwaitingReview => "Paused",
-            Self::Completed => "Completed",
-            Self::Failed => "Failed",
-        }
-    }
-}
-
 impl WorkflowPlan {
     /// Build a workflow plan from parsed LLM JSON output.
     pub fn from_steps(steps: Vec<WorkflowStep>) -> Self {
         WorkflowPlan {
-            id: uuid::Uuid::new_v4().to_string(),
             steps,
-            created_at: Instant::now(),
             current_step: 0,
         }
     }
@@ -68,9 +50,7 @@ impl WorkflowPlan {
             })
             .collect();
         WorkflowPlan {
-            id: uuid::Uuid::new_v4().to_string(),
             steps,
-            created_at: Instant::now(),
             current_step: 0,
         }
     }
@@ -80,13 +60,6 @@ impl WorkflowPlan {
         self.steps
             .iter()
             .all(|s| s.status == WorkflowStepStatus::Completed)
-    }
-
-    /// Check if any step has failed.
-    pub fn has_failure(&self) -> bool {
-        self.steps
-            .iter()
-            .any(|s| s.status == WorkflowStepStatus::Failed)
     }
 }
 
