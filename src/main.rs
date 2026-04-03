@@ -304,7 +304,26 @@ fn main() -> eframe::Result {
         sentry_dsn,
         sentry::ClientOptions {
             release: sentry::release_name!(),
-            send_default_pii: true,
+            send_default_pii: false,
+            before_send: Some(std::sync::Arc::new(|mut event| {
+                // Strip the server_name (hostname) to avoid leaking the user's machine name
+                event.server_name = None;
+
+                // Scrub user info if somehow attached
+                event.user = None;
+
+                // Scrub file paths from exception stacktraces
+                for exc in event.exception.values.iter_mut() {
+                    if let Some(ref mut st) = exc.stacktrace {
+                        for frame in st.frames.iter_mut() {
+                            frame.filename = None;
+                            frame.abs_path = None;
+                        }
+                    }
+                }
+
+                Some(event)
+            })),
             ..Default::default()
         },
     ));
