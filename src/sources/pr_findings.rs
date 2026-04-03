@@ -105,8 +105,25 @@ fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Ve
     findings
 }
 
-/// Process issue-level comments into findings.
-fn process_issue_comments(comments: &[serde_json::Value], pr_number: u32) -> Vec<PrFinding> {
+/// Create a non-file-specific finding.
+fn global_finding(text: String, external_id: String) -> PrFinding {
+    PrFinding {
+        file_path: String::new(),
+        line_number: 0,
+        text,
+        external_id,
+    }
+}
+
+/// Process a list of comment/review JSON objects into findings.
+/// `id_prefix` is used to construct the external_id (e.g. "issue_comment" or "review").
+/// When `extract_prompts` is true, multi-prompt extraction is attempted on review bodies.
+fn process_body_comments(
+    comments: &[serde_json::Value],
+    pr_number: u32,
+    id_prefix: &str,
+    extract_prompts: bool,
+) -> Vec<PrFinding> {
     let mut findings = Vec::new();
     for comment in comments {
         let body = comment.get("body").and_then(|b| b.as_str()).unwrap_or("");
@@ -114,46 +131,25 @@ fn process_issue_comments(comments: &[serde_json::Value], pr_number: u32) -> Vec
             continue;
         }
         let comment_id = comment.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-        if let Some(finding_text) = finding_text_from_body(body) {
-            findings.push(PrFinding {
-                file_path: String::new(),
-                line_number: 0,
-                text: finding_text,
-                external_id: format!("pr{}:issue_comment:{}", pr_number, comment_id),
-            });
-        }
-    }
-    findings
-}
 
-/// Process PR review bodies into findings.
-fn process_reviews(reviews: &[serde_json::Value], pr_number: u32) -> Vec<PrFinding> {
-    let mut findings = Vec::new();
-    for review in reviews {
-        let body = review.get("body").and_then(|b| b.as_str()).unwrap_or("");
-        if should_skip_comment(body) {
-            continue;
+        if extract_prompts {
+            let prompts = extract_all_agent_prompts(body);
+            if !prompts.is_empty() {
+                for (i, prompt) in prompts.iter().enumerate() {
+                    findings.push(global_finding(
+                        prompt.clone(),
+                        format!("pr{}:{}:{}_{}", pr_number, id_prefix, comment_id, i),
+                    ));
+                }
+                continue;
+            }
         }
-        let review_id = review.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
-        let prompts = extract_all_agent_prompts(body);
-        if prompts.is_empty() {
-            if let Some(finding_text) = finding_text_from_body(body) {
-                findings.push(PrFinding {
-                    file_path: String::new(),
-                    line_number: 0,
-                    text: finding_text,
-                    external_id: format!("pr{}:review:{}", pr_number, review_id),
-                });
-            }
-        } else {
-            for (i, prompt) in prompts.iter().enumerate() {
-                findings.push(PrFinding {
-                    file_path: String::new(),
-                    line_number: 0,
-                    text: prompt.clone(),
-                    external_id: format!("pr{}:review:{}_{}", pr_number, review_id, i),
-                });
-            }
+
+        if let Some(finding_text) = finding_text_from_body(body) {
+            findings.push(global_finding(
+                finding_text,
+                format!("pr{}:{}:{}", pr_number, id_prefix, comment_id),
+            ));
         }
     }
     findings
@@ -179,7 +175,12 @@ pub(crate) fn fetch_pr_findings(
         project_root,
         &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
     ) {
-        findings.extend(process_issue_comments(&issue_comments, pr_number));
+        findings.extend(process_body_comments(
+            &issue_comments,
+            pr_number,
+            "issue_comment",
+            false,
+        ));
     }
 
     // Also fetch PR reviews (e.g. CodeRabbit re-reviews with nitpick findings in the body)
@@ -187,7 +188,7 @@ pub(crate) fn fetch_pr_findings(
         project_root,
         &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number),
     ) {
-        findings.extend(process_reviews(&reviews, pr_number));
+        findings.extend(process_body_comments(&reviews, pr_number, "review", true));
     }
 
     Ok(findings)

@@ -1,7 +1,7 @@
 use eframe::egui;
 use std::sync::mpsc;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
 fn notion_type_icon(object_type: &str) -> &'static str {
@@ -12,6 +12,31 @@ fn notion_type_icon(object_type: &str) -> &'static str {
     }
 }
 
+/// Render a labeled text field row in a grid.
+fn source_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str, width: f32) {
+    ui.label(label);
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .desired_width(width)
+            .hint_text(hint)
+            .font(egui::TextStyle::Monospace),
+    );
+    ui.end_row();
+}
+
+/// Render a labeled password field row in a grid.
+fn source_password_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
+    ui.label(label);
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .desired_width(200.0)
+            .hint_text(hint)
+            .password(true)
+            .font(egui::TextStyle::Monospace),
+    );
+    ui.end_row();
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_settings_sources_section(
         &mut self,
@@ -19,35 +44,26 @@ impl DirigentApp {
         fs: f32,
         fetch_idx: &mut Option<usize>,
     ) {
-        ui.add_space(SPACE_MD);
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        ui.horizontal(|ui| {
-            let arrow = if self.sources_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
-            if ui.button(icon(&format!("{} Sources", arrow), fs)).clicked() {
-                self.sources_expanded = !self.sources_expanded;
-            }
-            ui.label(
-                egui::RichText::new(format!(
-                    "{}/{}",
-                    self.settings.sources.iter().filter(|s| s.enabled).count(),
-                    self.settings.sources.len()
-                ))
-                .small()
-                .color(self.semantic.secondary_text),
-            );
-            if self.sources_expanded {
+        let summary = format!(
+            "{}/{}",
+            self.settings.sources.iter().filter(|s| s.enabled).count(),
+            self.settings.sources.len()
+        );
+        self.sources_expanded = super::collapsible_section_header(
+            ui,
+            self.sources_expanded,
+            "Sources",
+            &summary,
+            fs,
+            self.semantic.secondary_text,
+            |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("+ Add Source").clicked() {
                         self.settings.sources.push(SourceConfig::default());
                     }
                 });
-            }
-        });
+            },
+        );
 
         if self.sources_expanded {
             self.render_settings_sources_list(ui, fs, fetch_idx);
@@ -198,139 +214,106 @@ impl DirigentApp {
     }
 
     fn render_source_github_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("GH Label:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
-                .desired_width(120.0)
-                .hint_text("e.g. enhancement")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "GH Label:",
+            &mut self.settings.sources[i].filter,
+            "e.g. enhancement",
+            120.0,
         );
-        ui.end_row();
     }
 
     fn render_source_slack_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("Bot Token:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                .desired_width(200.0)
-                .hint_text("from env SLACK_BOT_TOKEN or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "Bot Token:",
+            &mut self.settings.sources[i].token,
+            "from env SLACK_BOT_TOKEN or .env",
         );
-        ui.end_row();
-
-        ui.label("Channel:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].channel)
-                .desired_width(200.0)
-                .hint_text("C01ABCDEF or #channel-name")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Channel:",
+            &mut self.settings.sources[i].channel,
+            "C01ABCDEF or #channel-name",
+            200.0,
         );
-        ui.end_row();
     }
 
     fn render_source_sonarqube_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("Host URL:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].host_url)
-                .desired_width(200.0)
-                .hint_text("http://localhost:9000")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Host URL:",
+            &mut self.settings.sources[i].host_url,
+            "http://localhost:9000",
+            200.0,
         );
-        ui.end_row();
-
-        ui.label("Project Key:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                .desired_width(200.0)
-                .hint_text("e.g. my-project")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Project Key:",
+            &mut self.settings.sources[i].project_key,
+            "e.g. my-project",
+            200.0,
         );
-        ui.end_row();
-
-        ui.label("Token:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                .desired_width(200.0)
-                .hint_text("from env SONAR_TOKEN or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "Token:",
+            &mut self.settings.sources[i].token,
+            "from env SONAR_TOKEN or .env",
         );
-        ui.end_row();
     }
 
     fn render_source_trello_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("API Key:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].api_key)
-                .desired_width(200.0)
-                .hint_text("from env TRELLO_API_KEY or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "API Key:",
+            &mut self.settings.sources[i].api_key,
+            "from env TRELLO_API_KEY or .env",
         );
-        ui.end_row();
-
-        ui.label("Token:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                .desired_width(200.0)
-                .hint_text("from env TRELLO_TOKEN or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "Token:",
+            &mut self.settings.sources[i].token,
+            "from env TRELLO_TOKEN or .env",
         );
-        ui.end_row();
-
-        ui.label("Board ID:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                .desired_width(200.0)
-                .hint_text("e.g. 60d5ecXXXXX")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Board ID:",
+            &mut self.settings.sources[i].project_key,
+            "e.g. 60d5ecXXXXX",
+            200.0,
         );
-        ui.end_row();
-
-        ui.label("List Filter:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].filter)
-                .desired_width(120.0)
-                .hint_text("e.g. To Do (optional)")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "List Filter:",
+            &mut self.settings.sources[i].filter,
+            "e.g. To Do (optional)",
+            120.0,
         );
-        ui.end_row();
     }
 
     fn render_source_asana_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("Token:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                .desired_width(200.0)
-                .hint_text("from env ASANA_TOKEN or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "Token:",
+            &mut self.settings.sources[i].token,
+            "from env ASANA_TOKEN or .env",
         );
-        ui.end_row();
-
-        ui.label("Project GID:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].project_key)
-                .desired_width(200.0)
-                .hint_text("e.g. 120345678901234")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Project GID:",
+            &mut self.settings.sources[i].project_key,
+            "e.g. 120345678901234",
+            200.0,
         );
-        ui.end_row();
     }
 
     fn render_source_notion_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("Token:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].token)
-                .desired_width(200.0)
-                .hint_text("from env NOTION_TOKEN or .env")
-                .password(true)
-                .font(egui::TextStyle::Monospace),
+        source_password_field(
+            ui,
+            "Token:",
+            &mut self.settings.sources[i].token,
+            "from env NOTION_TOKEN or .env",
         );
-        ui.end_row();
-
         self.render_notion_object_selector(ui, i);
         self.render_notion_page_type_fields(ui, i);
     }
@@ -472,14 +455,13 @@ impl DirigentApp {
     }
 
     fn render_source_custom_fields(&mut self, ui: &mut egui::Ui, i: usize) {
-        ui.label("Command:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.sources[i].command)
-                .desired_width(200.0)
-                .hint_text("shell command outputting JSON")
-                .font(egui::TextStyle::Monospace),
+        source_text_field(
+            ui,
+            "Command:",
+            &mut self.settings.sources[i].command,
+            "shell command outputting JSON",
+            200.0,
         );
-        ui.end_row();
     }
 
     /// Kick off a background fetch of Notion databases/pages for source `i`.

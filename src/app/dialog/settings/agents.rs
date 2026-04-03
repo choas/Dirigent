@@ -4,7 +4,7 @@ use crate::agents::{
     agents_for_language, default_agents, next_custom_id, AgentConfig, AgentKind, AgentLanguage,
     AgentTrigger,
 };
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_agents_section(
@@ -13,27 +13,20 @@ impl DirigentApp {
         fs: f32,
         close: &mut bool,
     ) {
-        ui.add_space(SPACE_MD);
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        ui.horizontal(|ui| {
-            let arrow = ["\u{25B6}", "\u{25BC}"][self.agents_expanded as usize];
-            if ui.button(icon(&format!("{} Agents", arrow), fs)).clicked() {
-                self.agents_expanded = !self.agents_expanded;
-            }
-            ui.label(
-                egui::RichText::new(format!(
-                    "{}/{}",
-                    self.settings.agents.iter().filter(|a| a.enabled).count(),
-                    self.settings.agents.len()
-                ))
-                .small()
-                .color(self.semantic.secondary_text),
-            );
-            if self.agents_expanded {
-                self.render_settings_agents_header_actions(ui);
-            }
-        });
+        let summary = format!(
+            "{}/{}",
+            self.settings.agents.iter().filter(|a| a.enabled).count(),
+            self.settings.agents.len()
+        );
+        self.agents_expanded = super::collapsible_section_header(
+            ui,
+            self.agents_expanded,
+            "Agents",
+            &summary,
+            fs,
+            self.semantic.secondary_text,
+            |ui| self.render_settings_agents_header_actions(ui),
+        );
 
         if self.agents_expanded {
             self.render_settings_agents_list(ui, fs, close);

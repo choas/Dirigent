@@ -21,10 +21,23 @@ struct LspCardActions {
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_lsp_section(&mut self, ui: &mut egui::Ui, fs: f32) {
-        ui.add_space(SPACE_MD);
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        self.render_lsp_header(ui, fs);
+        let running = self.lsp.running_servers().len();
+        let total = self
+            .settings
+            .lsp_servers
+            .iter()
+            .filter(|s| s.enabled)
+            .count();
+        let summary = format!("{}/{} running", running, total);
+        self.lsp_expanded = super::collapsible_section_header(
+            ui,
+            self.lsp_expanded,
+            "Language Servers (LSP)",
+            &summary,
+            fs,
+            self.semantic.secondary_text,
+            |_ui| {},
+        );
         if !self.lsp_expanded {
             return;
         }
@@ -44,30 +57,6 @@ impl DirigentApp {
             eprintln!("[lsp] {}", e);
             self.lsp.status_log.push(e);
         }
-    }
-
-    fn render_lsp_header(&mut self, ui: &mut egui::Ui, fs: f32) {
-        ui.horizontal(|ui| {
-            let arrow = ["\u{25B6}", "\u{25BC}"][self.lsp_expanded as usize];
-            if ui
-                .button(icon(&format!("{} Language Servers (LSP)", arrow), fs))
-                .clicked()
-            {
-                self.lsp_expanded = !self.lsp_expanded;
-            }
-            let running = self.lsp.running_servers().len();
-            let total = self
-                .settings
-                .lsp_servers
-                .iter()
-                .filter(|s| s.enabled)
-                .count();
-            ui.label(
-                egui::RichText::new(format!("{}/{} running", running, total))
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
-        });
     }
 
     fn render_lsp_master_toggle(&mut self, ui: &mut egui::Ui) {

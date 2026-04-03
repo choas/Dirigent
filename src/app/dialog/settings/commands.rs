@@ -1,30 +1,20 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 use crate::settings;
 
 impl DirigentApp {
     pub(in crate::app) fn render_settings_commands_section(&mut self, ui: &mut egui::Ui, fs: f32) {
-        ui.add_space(SPACE_MD);
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        ui.horizontal(|ui| {
-            let arrow = ["\u{25B6}", "\u{25BC}"][self.commands_expanded as usize];
-            if ui
-                .button(icon(&format!("{} Commands", arrow), fs))
-                .clicked()
-            {
-                self.commands_expanded = !self.commands_expanded;
-            }
-            ui.label(
-                egui::RichText::new(format!("({} commands)", self.settings.commands.len()))
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
-            if self.commands_expanded {
-                self.render_commands_header_buttons(ui);
-            }
-        });
+        let summary = format!("({} commands)", self.settings.commands.len());
+        self.commands_expanded = super::collapsible_section_header(
+            ui,
+            self.commands_expanded,
+            "Commands",
+            &summary,
+            fs,
+            self.semantic.secondary_text,
+            |ui| self.render_commands_header_buttons(ui),
+        );
 
         if self.commands_expanded {
             self.render_settings_commands_list(ui, fs);

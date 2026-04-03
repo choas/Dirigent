@@ -13,6 +13,41 @@ use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::opencode;
 use crate::settings;
 
+/// Render a collapsible section header with an arrow toggle, label, and summary text.
+/// Returns the (possibly toggled) expanded state.
+fn collapsible_section_header(
+    ui: &mut egui::Ui,
+    expanded: bool,
+    label: &str,
+    summary: &str,
+    fs: f32,
+    secondary_text_color: egui::Color32,
+    add_actions: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    ui.add_space(SPACE_MD);
+    ui.separator();
+    ui.add_space(SPACE_SM);
+    let mut result = expanded;
+    ui.horizontal(|ui| {
+        let arrow = ["\u{25B6}", "\u{25BC}"][result as usize];
+        if ui
+            .button(icon(&format!("{} {}", arrow, label), fs))
+            .clicked()
+        {
+            result = !result;
+        }
+        ui.label(
+            egui::RichText::new(summary)
+                .small()
+                .color(secondary_text_color),
+        );
+        if result {
+            add_actions(ui);
+        }
+    });
+    result
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         let mut save = false;

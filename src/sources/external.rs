@@ -60,12 +60,7 @@ pub(crate) fn fetch_github_issues(
                 format!("[#{}] {}\n\n{}", number, title, body)
             };
 
-            Some(SourceItem {
-                external_id: url.to_string(),
-                text,
-                source_label: source_label.to_string(),
-                source_id: String::new(),
-            })
+            Some(SourceItem::new(url, text, source_label))
         })
         .collect())
 }
@@ -123,12 +118,11 @@ pub(crate) fn fetch_slack_messages(
                 .get("user")
                 .and_then(|u| u.as_str())
                 .unwrap_or("unknown");
-            Some(SourceItem {
-                external_id: format!("{}/{}", channel, ts),
-                text: format!("[{}] {}", user, text),
-                source_label: source_label.to_string(),
-                source_id: String::new(),
-            })
+            Some(SourceItem::new(
+                format!("{}/{}", channel, ts),
+                format!("[{}] {}", user, text),
+                source_label,
+            ))
         })
         .collect())
 }
@@ -332,12 +326,23 @@ fn parse_sonar_duplication_measure(
     } else {
         ""
     };
-    Some(SourceItem {
-        external_id: format!("sonar-dup-{}-{}", project_key, metric),
-        text: format!("[DUPLICATION] {}: {}{}", label, value, suffix),
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    })
+    Some(SourceItem::new(
+        format!("sonar-dup-{}-{}", project_key, metric),
+        format!("[DUPLICATION] {}: {}{}", label, value, suffix),
+        source_label,
+    ))
+}
+
+/// Format a SonarQube finding location suffix like `(file.rs:10, rule: S123)`.
+/// Returns an empty string when `component` is empty.
+fn sonar_location_suffix(component: &str, line: u64, detail_label: &str, detail: &str) -> String {
+    if component.is_empty() {
+        String::new()
+    } else if line > 0 {
+        format!(" ({}:{}, {}: {})", component, line, detail_label, detail)
+    } else {
+        format!(" ({}, {}: {})", component, detail_label, detail)
+    }
 }
 
 /// Parse a standard SonarQube issue into a `SourceItem`.
@@ -355,23 +360,9 @@ fn parse_sonar_issue(issue: &serde_json::Value, source_label: &str) -> Option<So
     let line = issue.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
     let rule = issue.get("rule").and_then(|r| r.as_str()).unwrap_or("");
 
-    let text = if component.is_empty() {
-        format!("[{}] {}", severity, message)
-    } else if line > 0 {
-        format!(
-            "[{}] {} ({}:{}, rule: {})",
-            severity, message, component, line, rule
-        )
-    } else {
-        format!("[{}] {} ({}, rule: {})", severity, message, component, rule)
-    };
-
-    Some(SourceItem {
-        external_id: key.to_string(),
-        text,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    })
+    let loc = sonar_location_suffix(component, line, "rule", rule);
+    let text = format!("[{}] {}{}", severity, message, loc);
+    Some(SourceItem::new(key, text, source_label))
 }
 
 /// Parse a SonarQube Security Hotspot into a `SourceItem`.
@@ -389,26 +380,9 @@ fn parse_sonar_hotspot(hs: &serde_json::Value, source_label: &str) -> Option<Sou
         .and_then(|c| c.as_str())
         .unwrap_or("");
 
-    let text = if component.is_empty() {
-        format!("[HOTSPOT/{}] {}", vulnerability, message)
-    } else if line > 0 {
-        format!(
-            "[HOTSPOT/{}] {} ({}:{}, category: {})",
-            vulnerability, message, component, line, category
-        )
-    } else {
-        format!(
-            "[HOTSPOT/{}] {} ({}, category: {})",
-            vulnerability, message, component, category
-        )
-    };
-
-    Some(SourceItem {
-        external_id: key.to_string(),
-        text,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    })
+    let loc = sonar_location_suffix(component, line, "category", category);
+    let text = format!("[HOTSPOT/{}] {}{}", vulnerability, message, loc);
+    Some(SourceItem::new(key, text, source_label))
 }
 
 /// Fetch cards from a Trello board using the Trello REST API.
@@ -538,12 +512,7 @@ fn trello_card_to_item(
         format!("{}\n\n{}", name, desc)
     };
 
-    Some(SourceItem {
-        external_id: url.to_string(),
-        text,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    })
+    Some(SourceItem::new(url, text, source_label))
 }
 
 /// Fetch incomplete tasks from an Asana project using the Asana REST API.
@@ -632,12 +601,7 @@ pub(crate) fn fetch_asana_tasks(
                 permalink.to_string()
             };
 
-            Some(SourceItem {
-                external_id,
-                text,
-                source_label: source_label.to_string(),
-                source_id: String::new(),
-            })
+            Some(SourceItem::new(external_id, text, source_label))
         })
         .collect())
 }
@@ -932,12 +896,7 @@ fn notion_page_to_item(page: &serde_json::Value, source_label: &str) -> Option<S
         return None;
     }
 
-    Some(SourceItem {
-        external_id: id.to_string(),
-        text: title,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    })
+    Some(SourceItem::new(id, title, source_label))
 }
 
 /// Mark a Notion page as done via the Notion API.
@@ -1157,12 +1116,7 @@ fn build_fallback_item(
     } else {
         format!("{}\n\n{}", title, body)
     };
-    SourceItem {
-        external_id: id,
-        text,
-        source_label: source_label.to_string(),
-        source_id: String::new(),
-    }
+    SourceItem::new(id, text, source_label)
 }
 
 fn split_h3_sections(lines: &[String]) -> Vec<(Option<String>, Vec<String>)> {
@@ -1189,12 +1143,11 @@ fn sections_to_items(
         let body = body_lines.join("\n").trim().to_string();
         let text = section_text(heading.as_deref(), &body, title);
         let Some(text) = text else { continue };
-        items.push(SourceItem {
-            external_id: format!("{}-{}", id, idx),
+        items.push(SourceItem::new(
+            format!("{}-{}", id, idx),
             text,
-            source_label: source_label.to_string(),
-            source_id: String::new(),
-        });
+            source_label,
+        ));
     }
     items
 }
