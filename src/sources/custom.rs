@@ -11,13 +11,47 @@ pub(super) const MAX_COMMAND_LENGTH: usize = 4096;
 /// Timeout for subprocess execution (seconds).
 pub(crate) const SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 
-/// Shell metacharacters that could be used for injection.
-pub(super) const SHELL_METACHARACTERS: &[char] =
-    &['`', '$', '!', ';', '&', '|', '<', '>', '(', ')'];
+/// Check whether a character is allowed in a custom command string.
+///
+/// Uses an allowlist approach: only known-safe ASCII characters and non-ASCII
+/// printable characters (for international file paths) are permitted.  All
+/// shell metacharacters (`$`, `` ` ``, `;`, `&`, `|`, `!`, `(`, `)`, `<`,
+/// `>`, `{`, `}`, `\`, etc.) are rejected by omission, which is robust
+/// against bypass techniques like ANSI-C quoting or parameter expansion.
+fn is_allowed_command_char(c: char) -> bool {
+    if c.is_ascii() {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                ' ' | '\t'
+                    | '/'
+                    | '.'
+                    | '-'
+                    | '_'
+                    | '='
+                    | '+'
+                    | ':'
+                    | '@'
+                    | '%'
+                    | ','
+                    | '~'
+                    | '\''
+                    | '"'
+                    | '#'
+                    | '?'
+                    | '['
+                    | ']'
+            )
+    } else {
+        // Non-ASCII printable characters (e.g. international file paths) are
+        // safe — shell metacharacters are all ASCII.
+        !c.is_control()
+    }
+}
 
 /// Validate a custom command string for safety.
-/// Rejects null bytes, line breaks, control characters (except tab),
-/// shell metacharacters, and excessively long commands.
+/// Only permits known-safe characters via an allowlist. Rejects empty
+/// commands, excessively long commands, and any character not on the allowlist.
 pub(super) fn validate_command(command: &str) -> Result<(), String> {
     if command.is_empty() {
         return Err("empty command".to_string());
@@ -29,24 +63,13 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
             MAX_COMMAND_LENGTH
         ));
     }
-    if command.contains('\0') {
-        return Err("command contains null byte".to_string());
-    }
-    // Reject newlines/carriage-returns — they could chain commands via sh -c
-    if command.contains('\n') || command.contains('\r') {
-        return Err("command contains line break".to_string());
-    }
-    // Reject control characters other than tab
-    if let Some(pos) = command.chars().position(|c| c.is_control() && c != '\t') {
-        return Err(format!(
-            "command contains control character at position {}",
-            pos
-        ));
-    }
-    // Reject shell metacharacters to prevent injection
-    for &meta in SHELL_METACHARACTERS {
-        if command.contains(meta) {
-            return Err(format!("command contains shell metacharacter '{}'", meta));
+    // Reject any character not on the allowlist
+    for (pos, c) in command.char_indices() {
+        if !is_allowed_command_char(c) {
+            return Err(format!(
+                "command contains disallowed character {:?} at byte position {}",
+                c, pos
+            ));
         }
     }
     Ok(())
@@ -283,16 +306,37 @@ mod tests {
 
     #[test]
     fn validate_command_rejects_shell_metacharacters() {
-        for &meta in SHELL_METACHARACTERS {
+        let dangerous = [
+            '`', '$', '!', ';', '&', '|', '<', '>', '(', ')', '{', '}', '\\',
+        ];
+        for meta in dangerous {
             let cmd = format!("echo {}foo", meta);
             assert!(validate_command(&cmd).is_err(), "should reject '{}'", meta);
         }
     }
 
     #[test]
+    fn validate_command_rejects_ansi_c_quoting_chars() {
+        // ANSI-C quoting ($'...') requires $ which is not in the allowlist
+        assert!(validate_command("echo $'\\x41'").is_err());
+        // Backslash is not in the allowlist either
+        assert!(validate_command("echo \\n").is_err());
+    }
+
+    #[test]
     fn validate_command_allows_safe_characters() {
         assert!(validate_command("python3 script.py --flag=value 'arg' \"arg2\"").is_ok());
         assert!(validate_command("curl https://example.com/api").is_ok());
+        assert!(validate_command("ls -la /tmp/my_dir").is_ok());
+        assert!(validate_command("cmd @file.txt path/to+name").is_ok());
+        assert!(validate_command("grep 'pattern' file.txt#L10").is_ok());
+        assert!(validate_command("cmd [opt] ~user/path").is_ok());
+    }
+
+    #[test]
+    fn validate_command_allows_non_ascii_paths() {
+        assert!(validate_command("cat données.txt").is_ok());
+        assert!(validate_command("ls 日本語ファイル").is_ok());
     }
 
     // -- parse_source_json --
