@@ -18,6 +18,43 @@ pub(crate) enum PullStrategy {
     Rebase,
 }
 
+/// Commit whatever is currently staged in the repository index.
+/// Returns the full commit OID as a string.
+///
+/// Handles: signature creation, parent resolution, nothing-to-commit
+/// detection, and post-commit index reset.
+fn commit_staged(
+    repo: &Repository,
+    commit_message: &str,
+    nothing_msg: &str,
+) -> crate::error::Result<String> {
+    let mut index = repo.index()?;
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
+
+    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+
+    if let Some(ref parent_commit) = parent {
+        if parent_commit.tree_id() == tree_id {
+            return Err(DirigentError::GitCommand(nothing_msg.into()));
+        }
+    }
+
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
+
+    // Reset the index back to the newly created commit so it doesn't stay staged.
+    // Use the returned OID rather than repo.head() to avoid stale refdb cache.
+    let new_commit = repo.find_commit(oid)?;
+    repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
+
+    Ok(format!("{}", oid))
+}
+
 /// Commit the working-tree state of files touched by `diff_text`.
 /// This stages the actual files the user sees (including any post-run formatting),
 /// so the committed state matches the working tree and files appear clean afterwards.
@@ -50,37 +87,12 @@ pub(crate) fn commit_diff(
     // Stage the working-tree state of the affected files.
     stage_files(repo_path, &file_paths)?;
 
-    // Now commit whatever is staged
     let repo = Repository::discover(repo_path)?;
-    let mut index = repo.index()?;
-    let tree_id = index.write_tree()?;
-    let tree = repo.find_tree(tree_id)?;
-
-    let sig = repo
-        .signature()
-        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
-
-    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
-
-    // Nothing changed in the index
-    if let Some(ref parent_commit) = parent {
-        if parent_commit.tree_id() == tree_id {
-            return Err(DirigentError::GitCommand(
-                "nothing to commit — diff already applied".into(),
-            ));
-        }
-    }
-
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-
-    let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
-
-    // Reset the index back to the newly created commit so it doesn't stay staged.
-    // Use the returned OID rather than repo.head() to avoid stale refdb cache.
-    let new_commit = repo.find_commit(oid)?;
-    repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
-
-    Ok(format!("{}", oid))
+    commit_staged(
+        &repo,
+        commit_message,
+        "nothing to commit — diff already applied",
+    )
 }
 
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {
@@ -122,35 +134,12 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
         )));
     }
 
-    // Commit
     let repo = Repository::discover(repo_path)?;
-    let mut index = repo.index()?;
-    let tree_id = index.write_tree()?;
-    let tree = repo.find_tree(tree_id)?;
-
-    let sig = repo
-        .signature()
-        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
-
-    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
-
-    if let Some(ref parent_commit) = parent {
-        if parent_commit.tree_id() == tree_id {
-            return Err(DirigentError::GitCommand(
-                "nothing to commit — no uncommitted changes".into(),
-            ));
-        }
-    }
-
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-    let oid = repo.commit(Some("HEAD"), &sig, &sig, commit_message, &tree, &parents)?;
-
-    // Reset index so it doesn't stay staged.
-    // Use the returned OID rather than repo.head() to avoid stale refdb cache.
-    let new_commit = repo.find_commit(oid)?;
-    repo.reset(new_commit.as_object(), git2::ResetType::Mixed, None)?;
-
-    Ok(format!("{}", oid))
+    commit_staged(
+        &repo,
+        commit_message,
+        "nothing to commit — no uncommitted changes",
+    )
 }
 
 pub(crate) fn generate_commit_message(cue_text: &str) -> String {

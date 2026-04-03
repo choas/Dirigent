@@ -77,6 +77,23 @@ unsafe fn retarget_about_menu_item(
 }
 
 #[cfg(target_os = "macos")]
+/// Create an NSImage from raw PNG bytes.
+///
+/// # Safety
+/// Caller must ensure ObjC runtime is available (i.e. running on macOS).
+unsafe fn nsimage_from_png(png_bytes: &[u8]) -> *mut objc::runtime::Object {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_data = Class::get("NSData").unwrap();
+    let data: *mut Object =
+        msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
+    let ns_image = Class::get("NSImage").unwrap();
+    let image: *mut Object = msg_send![ns_image, alloc];
+    msg_send![image, initWithData:data]
+}
+
+#[cfg(target_os = "macos")]
 fn setup_macos_about_panel() {
     use objc::declare::ClassDecl;
     use objc::runtime::{Class, Object, Sel};
@@ -87,13 +104,7 @@ fn setup_macos_about_panel() {
         let app: *mut Object = msg_send![ns_app, sharedApplication];
 
         // Set application icon (used by dock and About panel)
-        let png_bytes = include_bytes!("../assets/logo.png");
-        let ns_data = Class::get("NSData").unwrap();
-        let data: *mut Object =
-            msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
-        let ns_image = Class::get("NSImage").unwrap();
-        let image: *mut Object = msg_send![ns_image, alloc];
-        let image: *mut Object = msg_send![image, initWithData:data];
+        let image = nsimage_from_png(include_bytes!("../assets/logo.png"));
         let _: () = msg_send![app, setApplicationIconImage:image];
 
         // Create a helper class whose showAbout: method opens the standard
@@ -122,13 +133,7 @@ fn setup_macos_about_panel() {
 
                     // Pass our icon so the About panel shows it instead of the
                     // generic macOS folder icon.
-                    let png_bytes = include_bytes!("../assets/logo.png");
-                    let ns_data_cls = Class::get("NSData").unwrap();
-                    let icon_data: *mut Object = msg_send![ns_data_cls,
-                        dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
-                    let ns_image_cls = Class::get("NSImage").unwrap();
-                    let icon: *mut Object = msg_send![ns_image_cls, alloc];
-                    let icon: *mut Object = msg_send![icon, initWithData:icon_data];
+                    let icon = nsimage_from_png(include_bytes!("../assets/logo.png"));
                     let key: *mut Object = msg_send![ns_string,
                         stringWithUTF8String: c"ApplicationIcon".as_ptr()];
                     let _: () = msg_send![dict, setObject:icon forKey:key];
@@ -208,21 +213,6 @@ fn load_logo_icon() -> egui::IconData {
     }
 }
 
-fn expand_tilde(arg: &str) -> PathBuf {
-    if arg == "~" || arg.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/"));
-        if arg == "~" {
-            home
-        } else {
-            home.join(&arg[2..])
-        }
-    } else {
-        PathBuf::from(arg)
-    }
-}
-
 fn main() -> eframe::Result {
     telemetry::init();
 
@@ -250,7 +240,7 @@ fn main() -> eframe::Result {
         .filter(|a| !a.starts_with("-psn"))
         .collect();
 
-    let explicit_path = args.first().map(|arg| expand_tilde(arg));
+    let explicit_path = args.first().map(|arg| app::util::expand_tilde(arg));
 
     // Detect Finder launch: no explicit path and running from inside an .app bundle
     let launched_from_app_bundle = explicit_path.is_none()

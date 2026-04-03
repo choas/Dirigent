@@ -7,6 +7,11 @@ mod pr;
 mod status;
 mod worktree;
 
+/// Shorten a full git hash to 7 characters.
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(7).collect()
+}
+
 pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};
 pub(crate) use commit::{
     commit_all, commit_diff, generate_commit_message, git_pull, git_push, revert_files,

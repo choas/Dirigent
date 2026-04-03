@@ -1,3 +1,23 @@
+use std::path::PathBuf;
+
+/// Expand a leading `~` to the user's home directory.
+pub fn expand_tilde(raw: &str) -> PathBuf {
+    if raw == "~" || raw.starts_with("~/") || raw.starts_with("~\\") {
+        match dirs::home_dir() {
+            Some(home) => {
+                if raw == "~" {
+                    home
+                } else {
+                    home.join(&raw[2..])
+                }
+            }
+            None => PathBuf::from(raw),
+        }
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
 /// Strip ANSI escape sequences (colors, bold, etc.) from a string.
 pub fn strip_ansi(s: &str) -> String {
     let stripped = strip_ansi_escapes::strip(s);

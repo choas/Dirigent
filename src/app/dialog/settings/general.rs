@@ -3,6 +3,18 @@ use eframe::egui;
 use crate::app::{DirigentApp, SPACE_MD, SPACE_SM};
 use crate::settings::{CliProvider, ThemeChoice};
 
+/// Render a labeled monospace text field row in a settings grid.
+fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
+    ui.label(label);
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .desired_width(250.0)
+            .hint_text(hint)
+            .font(egui::TextStyle::Monospace),
+    );
+    ui.end_row();
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_settings_general_grid(
         &mut self,
@@ -163,23 +175,18 @@ impl DirigentApp {
     }
 
     fn render_settings_claude_cli_fields(&mut self, ui: &mut egui::Ui) {
-        ui.label("CLI Path:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.claude_cli_path)
-                .desired_width(250.0)
-                .hint_text("not found — enter path to claude")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "CLI Path:",
+            &mut self.settings.claude_cli_path,
+            "not found \u{2014} enter path to claude",
         );
-        ui.end_row();
-
-        ui.label("Extra Arguments:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.claude_extra_args)
-                .desired_width(250.0)
-                .hint_text("e.g. --max-turns 10")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.claude_extra_args,
+            "e.g. --max-turns 10",
         );
-        ui.end_row();
 
         ui.label("Default Flags:");
         let flags = if self.settings.allow_dangerous_skip_permissions {
@@ -197,43 +204,33 @@ impl DirigentApp {
         );
         ui.end_row();
 
-        ui.label("Pre-run Script:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.claude_pre_run_script)
-                .desired_width(250.0)
-                .hint_text("shell command before run")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.claude_pre_run_script,
+            "shell command before run",
         );
-        ui.end_row();
-
-        ui.label("Post-run Script:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.claude_post_run_script)
-                .desired_width(250.0)
-                .hint_text("shell command after run")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.claude_post_run_script,
+            "shell command after run",
         );
-        ui.end_row();
     }
 
     fn render_settings_opencode_cli_fields(&mut self, ui: &mut egui::Ui) {
-        ui.label("CLI Path:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.opencode_cli_path)
-                .desired_width(250.0)
-                .hint_text("not found — enter path to opencode")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "CLI Path:",
+            &mut self.settings.opencode_cli_path,
+            "not found \u{2014} enter path to opencode",
         );
-        ui.end_row();
-
-        ui.label("Extra Arguments:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.opencode_extra_args)
-                .desired_width(250.0)
-                .hint_text("e.g. --mcp-server ...")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.opencode_extra_args,
+            "e.g. --mcp-server ...",
         );
-        ui.end_row();
 
         ui.label("Default Flags:");
         ui.label(
@@ -243,23 +240,18 @@ impl DirigentApp {
         );
         ui.end_row();
 
-        ui.label("Pre-run Script:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.opencode_pre_run_script)
-                .desired_width(250.0)
-                .hint_text("shell command before run")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.opencode_pre_run_script,
+            "shell command before run",
         );
-        ui.end_row();
-
-        ui.label("Post-run Script:");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.opencode_post_run_script)
-                .desired_width(250.0)
-                .hint_text("shell command after run")
-                .font(egui::TextStyle::Monospace),
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.opencode_post_run_script,
+            "shell command after run",
         );
-        ui.end_row();
     }
 
     fn render_settings_font_row(&mut self, ui: &mut egui::Ui) {

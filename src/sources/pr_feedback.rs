@@ -21,21 +21,18 @@ fn parse_pr_source_ref(source_ref: &str) -> Option<(u32, &str, u64)> {
     Some((pr_num, comment_type, comment_id))
 }
 
-/// Reply to a PR inline review comment via `gh api`.
-fn reply_to_pr_review_comment(
+/// Post to a GitHub API endpoint via `gh api --method POST`.
+fn gh_api_post(
     project_root: &Path,
-    pr_number: u32,
-    comment_id: u64,
+    endpoint: &str,
     body: &str,
+    error_context: &str,
 ) -> crate::error::Result<()> {
     let mut cmd = Command::new("gh");
     cmd.arg("api")
         .arg("--method")
         .arg("POST")
-        .arg(format!(
-            "repos/{{owner}}/{{repo}}/pulls/{}/comments/{}/replies",
-            pr_number, comment_id
-        ))
+        .arg(endpoint)
         .arg("-f")
         .arg(format!("body={}", body))
         .current_dir(project_root);
@@ -49,37 +46,8 @@ fn reply_to_pr_review_comment(
 
     if !output.status.success() {
         return Err(DirigentError::Source(format!(
-            "Failed to reply to PR comment: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
-}
-
-/// Post a new comment on a PR (issue-level) via `gh api`.
-fn comment_on_pr(project_root: &Path, pr_number: u32, body: &str) -> crate::error::Result<()> {
-    let mut cmd = Command::new("gh");
-    cmd.arg("api")
-        .arg("--method")
-        .arg("POST")
-        .arg(format!(
-            "repos/{{owner}}/{{repo}}/issues/{}/comments",
-            pr_number
-        ))
-        .arg("-f")
-        .arg(format!("body={}", body))
-        .current_dir(project_root);
-
-    let child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
-
-    if !output.status.success() {
-        return Err(DirigentError::Source(format!(
-            "Failed to comment on PR: {}",
+            "{}: {}",
+            error_context,
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -105,11 +73,21 @@ pub(crate) fn notify_pr_finding_fixed(
 
     match comment_type {
         "comment" => {
-            reply_to_pr_review_comment(project_root, pr_number, comment_id, &body)?;
+            let endpoint = format!(
+                "repos/{{owner}}/{{repo}}/pulls/{}/comments/{}/replies",
+                pr_number, comment_id
+            );
+            gh_api_post(
+                project_root,
+                &endpoint,
+                &body,
+                "Failed to reply to PR comment",
+            )?;
         }
         "issue_comment" | "review" => {
             // Can't reply directly to issue/review comments; post a new comment mentioning it
-            comment_on_pr(project_root, pr_number, &body)?;
+            let endpoint = format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number);
+            gh_api_post(project_root, &endpoint, &body, "Failed to comment on PR")?;
         }
         _ => return Ok(false),
     }
