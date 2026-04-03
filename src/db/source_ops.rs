@@ -72,6 +72,17 @@ impl Database {
         Ok(updated > 0)
     }
 
+    /// Update only the text of an existing cue identified by source_ref.
+    /// Returns whether a row was updated.
+    pub fn update_cue_text_by_source_ref(&self, source_ref: &str, text: &str) -> Result<bool> {
+        let text = Self::clamp_cue_text(text);
+        let updated = self.conn.execute(
+            "UPDATE cues SET text = ?1 WHERE source_ref = ?2",
+            params![text, source_ref],
+        )?;
+        Ok(updated > 0)
+    }
+
     /// Insert a cue from an external source with optional file location.
     pub fn insert_cue_from_source(
         &self,

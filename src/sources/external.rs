@@ -86,10 +86,7 @@ pub(crate) fn fetch_slack_messages(
         return Err(DirigentError::Source("Slack channel is empty".to_string()));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+    let client = http_client()?;
 
     let resp: serde_json::Value = client
         .get("https://slack.com/api/conversations.history")
@@ -136,8 +133,23 @@ pub(crate) fn fetch_slack_messages(
         .collect())
 }
 
-/// Build a SonarQube HTTP client with the standard timeout.
-fn sonar_client() -> crate::error::Result<reqwest::blocking::Client> {
+/// Check that an HTTP response indicates success; return a descriptive error otherwise.
+fn check_response(
+    resp: reqwest::blocking::Response,
+    api_name: &str,
+) -> crate::error::Result<reqwest::blocking::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    Err(DirigentError::Source(format!(
+        "{api_name} error ({status}): {body}"
+    )))
+}
+
+/// Build an HTTP client with the standard subprocess timeout.
+fn http_client() -> crate::error::Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
         .build()
@@ -208,7 +220,7 @@ pub(crate) fn fetch_sonarqube_issues(
     validate_sonar_params(host_url, project_key, token)?;
 
     let base = host_url.trim_end_matches('/');
-    let client = sonar_client()?;
+    let client = http_client()?;
     let mut items = Vec::new();
 
     // ── 1. Standard issues (/api/issues/search) ──
@@ -237,7 +249,7 @@ pub(crate) fn fetch_sonarqube_issues(
         project_key,
         token,
         source_label,
-    ));
+    )?);
 
     // ── 3. Duplications (/api/measures/component) ──
     items.extend(fetch_sonar_duplications(
@@ -246,73 +258,58 @@ pub(crate) fn fetch_sonarqube_issues(
         project_key,
         token,
         source_label,
-    ));
+    )?);
 
     Ok(items)
 }
 
-/// Fetch security hotspots from SonarQube, returning items on success or
-/// logging an error and returning an empty list on failure.
+/// Fetch security hotspots from SonarQube.
 fn fetch_sonar_hotspots(
     client: &reqwest::blocking::Client,
     base: &str,
     project_key: &str,
     token: &str,
     source_label: &str,
-) -> Vec<SourceItem> {
+) -> crate::error::Result<Vec<SourceItem>> {
     let url = format!(
         "{}/api/hotspots/search?projectKey={}&ps=100&status=TO_REVIEW",
         base, project_key,
     );
-    let resp = match sonar_get(client, &url, token) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("SonarQube: could not fetch security hotspots: {e}");
-            return Vec::new();
-        }
-    };
+    let resp = sonar_get(client, &url, token)?;
     let hotspots = resp
         .get("hotspots")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    hotspots
+    Ok(hotspots
         .iter()
         .filter_map(|hs| parse_sonar_hotspot(hs, source_label))
-        .collect()
+        .collect())
 }
 
-/// Fetch duplication measures from SonarQube, returning items on success or
-/// logging an error and returning an empty list on failure.
+/// Fetch duplication measures from SonarQube.
 fn fetch_sonar_duplications(
     client: &reqwest::blocking::Client,
     base: &str,
     project_key: &str,
     token: &str,
     source_label: &str,
-) -> Vec<SourceItem> {
+) -> crate::error::Result<Vec<SourceItem>> {
     let url = format!(
         "{}/api/measures/component?component={}&metricKeys=duplicated_lines_density,duplicated_blocks,duplicated_lines,duplicated_files",
         base, project_key,
     );
-    let resp = match sonar_get(client, &url, token) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("SonarQube: could not fetch duplication measures: {e}");
-            return Vec::new();
-        }
-    };
-    let measures = match resp
+    let resp = sonar_get(client, &url, token)?;
+    let measures = resp
         .pointer("/component/measures")
-        .and_then(|v| v.as_array())
-    {
-        Some(m) => m,
-        None => return Vec::new(),
+        .and_then(|v| v.as_array());
+    let Some(measures) = measures else {
+        return Ok(Vec::new());
     };
-    measures
+    Ok(measures
         .iter()
         .filter_map(|m| parse_sonar_duplication_measure(m, project_key, source_label))
-        .collect()
+        .collect())
 }
 
 /// Parse a single SonarQube duplication measure into a `SourceItem`.
@@ -435,10 +432,7 @@ pub(crate) fn fetch_trello_cards(
         ));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+    let client = http_client()?;
 
     // Fetch cards with their list info so we can filter by list name.
     let url = format!(
@@ -449,15 +443,7 @@ pub(crate) fn fetch_trello_cards(
     let resp = client.get(&url).send().map_err(|e| {
         DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
     })?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Trello API error ({}): {body}",
-            status
-        )));
-    }
+    let resp = check_response(resp, "Trello API")?;
 
     let parsed: serde_json::Value = resp
         .json()
@@ -509,14 +495,7 @@ fn resolve_trello_list_ids(
     let lists_resp = client.get(&lists_url).send().map_err(|e| {
         DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
     })?;
-
-    if !lists_resp.status().is_success() {
-        let status = lists_resp.status();
-        let body = lists_resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Trello lists API error ({status}): {body}"
-        )));
-    }
+    let lists_resp = check_response(lists_resp, "Trello lists API")?;
 
     let lists: Vec<serde_json::Value> = lists_resp
         .json()
@@ -583,10 +562,7 @@ pub(crate) fn fetch_asana_tasks(
         ));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+    let client = http_client()?;
 
     let url = format!(
         "https://app.asana.com/api/1.0/projects/{}/tasks?opt_fields=name,notes,permalink_url,completed&limit=100",
@@ -598,14 +574,7 @@ pub(crate) fn fetch_asana_tasks(
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .map_err(|e| DirigentError::Source(format!("Asana request failed: {e}")))?;
-
-    if !resp_raw.status().is_success() {
-        let status = resp_raw.status();
-        let body = resp_raw.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Asana API error ({status}): {body}"
-        )));
-    }
+    let resp_raw = check_response(resp_raw, "Asana API")?;
 
     let resp: serde_json::Value = resp_raw
         .json()
@@ -687,7 +656,7 @@ pub(crate) fn fetch_notion_objects(
         ));
     }
 
-    let client = notion_client()?;
+    let client = http_client()?;
     let raw = notion_paginated_post(
         &client,
         "https://api.notion.com/v1/search",
@@ -740,13 +709,6 @@ fn notion_paginated_post(
     Ok(all)
 }
 
-fn notion_client() -> crate::error::Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))
-}
-
 fn notion_post(
     client: &reqwest::blocking::Client,
     url: &str,
@@ -761,14 +723,7 @@ fn notion_post(
         .json(body)
         .send()
         .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let resp_body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Notion API error ({status}): {resp_body}"
-        )));
-    }
+    let resp = check_response(resp, "Notion API")?;
 
     resp.json()
         .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))
@@ -785,14 +740,7 @@ fn notion_get(
         .header("Notion-Version", "2022-06-28")
         .send()
         .map_err(|e| DirigentError::Source(format!("Notion request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let resp_body = resp.text().unwrap_or_default();
-        return Err(DirigentError::Source(format!(
-            "Notion API error ({status}): {resp_body}"
-        )));
-    }
+    let resp = check_response(resp, "Notion API")?;
 
     resp.json()
         .map_err(|e| DirigentError::Source(format!("Notion response parse error: {e}")))
@@ -883,7 +831,7 @@ pub(crate) fn fetch_notion_tasks(
         ));
     }
 
-    let client = notion_client()?;
+    let client = http_client()?;
     let actual_id = extract_notion_page_id(database_id);
     let resolved = resolve_notion_id(&client, token, &actual_id)?;
 
@@ -1012,10 +960,7 @@ pub(crate) fn mark_notion_done(
         return Err(DirigentError::Source("Notion page ID is empty".to_string()));
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
+    let client = http_client()?;
 
     // The page_id from source_ref may be a URL like "https://www.notion.so/...{id}".
     // Extract the actual UUID if needed.

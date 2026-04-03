@@ -116,6 +116,10 @@ impl DirigentApp {
         for item in items {
             match self.db.cue_exists_by_source_ref(&item.external_id) {
                 Ok(true) => {
+                    // Refresh text so metrics (e.g. duplication values) stay current.
+                    let _ = self
+                        .db
+                        .update_cue_text_by_source_ref(&item.external_id, &item.text);
                     // Backfill source_id on migrated rows that have it NULL.
                     if !item.source_id.is_empty() {
                         let _ = self.db.backfill_source_id(
