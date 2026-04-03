@@ -221,69 +221,116 @@ pub(crate) fn fetch_sonarqube_issues(
     }
 
     // ── 2. Security Hotspots (/api/hotspots/search) ──
-    let hotspots_url = format!(
+    items.extend(fetch_sonar_hotspots(
+        &client,
+        base,
+        project_key,
+        token,
+        source_label,
+    ));
+
+    // ── 3. Duplications (/api/measures/component) ──
+    items.extend(fetch_sonar_duplications(
+        &client,
+        base,
+        project_key,
+        token,
+        source_label,
+    ));
+
+    Ok(items)
+}
+
+/// Fetch security hotspots from SonarQube, returning items on success or
+/// logging an error and returning an empty list on failure.
+fn fetch_sonar_hotspots(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    project_key: &str,
+    token: &str,
+    source_label: &str,
+) -> Vec<SourceItem> {
+    let url = format!(
         "{}/api/hotspots/search?projectKey={}&ps=100&status=TO_REVIEW",
         base, project_key,
     );
-    match sonar_get(&client, &hotspots_url, token) {
-        Ok(resp) => {
-            let hotspots = resp
-                .get("hotspots")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            for hs in &hotspots {
-                if let Some(item) = parse_sonar_hotspot(hs, source_label) {
-                    items.push(item);
-                }
-            }
-        }
+    let resp = match sonar_get(client, &url, token) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("SonarQube: could not fetch security hotspots: {e}");
+            return Vec::new();
         }
-    }
+    };
+    let hotspots = resp
+        .get("hotspots")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    hotspots
+        .iter()
+        .filter_map(|hs| parse_sonar_hotspot(hs, source_label))
+        .collect()
+}
 
-    // ── 3. Duplications (/api/measures/component) ──
-    let duplication_url = format!(
+/// Fetch duplication measures from SonarQube, returning items on success or
+/// logging an error and returning an empty list on failure.
+fn fetch_sonar_duplications(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    project_key: &str,
+    token: &str,
+    source_label: &str,
+) -> Vec<SourceItem> {
+    let url = format!(
         "{}/api/measures/component?component={}&metricKeys=duplicated_lines_density,duplicated_blocks,duplicated_lines,duplicated_files",
         base, project_key,
     );
-    match sonar_get(&client, &duplication_url, token) {
-        Ok(resp) => {
-            if let Some(measures) = resp
-                .pointer("/component/measures")
-                .and_then(|v| v.as_array())
-            {
-                for m in measures {
-                    let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
-                    let value = m.get("value").and_then(|v| v.as_str()).unwrap_or("0");
-                    let label = match metric {
-                        "duplicated_lines_density" => "Duplicated lines density",
-                        "duplicated_blocks" => "Duplicated blocks",
-                        "duplicated_lines" => "Duplicated lines",
-                        "duplicated_files" => "Duplicated files",
-                        _ => continue,
-                    };
-                    let suffix = if metric == "duplicated_lines_density" {
-                        "%"
-                    } else {
-                        ""
-                    };
-                    items.push(SourceItem {
-                        external_id: format!("sonar-dup-{}-{}", project_key, metric),
-                        text: format!("[DUPLICATION] {}: {}{}", label, value, suffix),
-                        source_label: source_label.to_string(),
-                        source_id: String::new(),
-                    });
-                }
-            }
-        }
+    let resp = match sonar_get(client, &url, token) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("SonarQube: could not fetch duplication measures: {e}");
+            return Vec::new();
         }
-    }
+    };
+    let measures = match resp
+        .pointer("/component/measures")
+        .and_then(|v| v.as_array())
+    {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+    measures
+        .iter()
+        .filter_map(|m| parse_sonar_duplication_measure(m, project_key, source_label))
+        .collect()
+}
 
-    Ok(items)
+/// Parse a single SonarQube duplication measure into a `SourceItem`.
+fn parse_sonar_duplication_measure(
+    m: &serde_json::Value,
+    project_key: &str,
+    source_label: &str,
+) -> Option<SourceItem> {
+    let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+    let value = m.get("value").and_then(|v| v.as_str()).unwrap_or("0");
+    let label = match metric {
+        "duplicated_lines_density" => "Duplicated lines density",
+        "duplicated_blocks" => "Duplicated blocks",
+        "duplicated_lines" => "Duplicated lines",
+        "duplicated_files" => "Duplicated files",
+        _ => return None,
+    };
+    let suffix = if metric == "duplicated_lines_density" {
+        "%"
+    } else {
+        ""
+    };
+    Some(SourceItem {
+        external_id: format!("sonar-dup-{}-{}", project_key, metric),
+        text: format!("[DUPLICATION] {}: {}{}", label, value, suffix),
+        source_label: source_label.to_string(),
+        source_id: String::new(),
+    })
 }
 
 /// Parse a standard SonarQube issue into a `SourceItem`.
