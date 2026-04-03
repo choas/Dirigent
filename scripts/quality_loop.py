@@ -641,8 +641,10 @@ def format_sonar_hotspots(hotspots: list[dict]) -> list[str]:
         component = h.get("component", "").split(":")[-1]
         line = h.get("line", "?")
         message = h.get("message", "")
-        rule = h.get("ruleKey", "")
-        formatted.append(f"[SECURITY] {component}:{line} -- {message} ({rule})")
+        vulnerability = h.get("vulnerabilityProbability", "UNKNOWN")
+        category = h.get("securityCategory", "")
+        loc = f" ({component}:{line}, category: {category})" if component else ""
+        formatted.append(f"[HOTSPOT/{vulnerability}] {message}{loc}")
     return formatted
 
 
@@ -666,11 +668,29 @@ def _sonar_api(cfg: Config, path: str, params: dict) -> Optional[dict]:
         return None
 
 
+def sonar_duplication_density(cfg: Config) -> float:
+    """Fetch duplicated_lines_density from /api/measures/component. Returns 0.0 on failure."""
+    data = _sonar_api(cfg, "/api/measures/component", {
+        "component": cfg.sonar_project_key,
+        "metricKeys": "duplicated_lines_density",
+    })
+    if not data:
+        return 0.0
+    measures = data.get("component", {}).get("measures", [])
+    for m in measures:
+        if m.get("metric") == "duplicated_lines_density":
+            try:
+                return float(m.get("value", "0"))
+            except (ValueError, TypeError):
+                return 0.0
+    return 0.0
+
+
 def sonar_duplicated_files(cfg: Config) -> list[str]:
     """Find files with duplications via /api/measures/component_tree."""
     data = _sonar_api(cfg, "/api/measures/component_tree", {
         "component": cfg.sonar_project_key,
-        "metricKeys": "duplicated_blocks",
+        "metricKeys": "duplicated_blocks,duplicated_lines",
         "qualifiers": "FIL",
         "metricSort": "duplicated_blocks",
         "metricSortFilter": "withMeasuresOnly",
@@ -701,6 +721,13 @@ def sonar_duplications_detailed(cfg: Config) -> list[list[str]]:
     """Fetch detailed duplication info from SonarQube.
     Returns a list of groups -- each group is a list of issue strings
     for one duplicated file, suitable for a separate Claude Code call."""
+    # Match Dirigent: skip all duplication items if density is below 3.0%
+    density = sonar_duplication_density(cfg)
+    print(f"  Duplication density: {density:.1f}%")
+    if density < 3.0:
+        print("  Below 3.0% threshold -- skipping duplications.")
+        return []
+
     dup_files = sonar_duplicated_files(cfg)
     if not dup_files:
         return []
@@ -960,7 +987,7 @@ def build_fix_prompt(
         parts.extend(sonar)
         parts.append("")
     if hotspots:
-        parts.append("== SonarQube security hotspots ==")
+        parts.append("== SonarQube security hotspots (TO_REVIEW) ==")
         parts.extend(hotspots)
         parts.append("")
     if lint:
