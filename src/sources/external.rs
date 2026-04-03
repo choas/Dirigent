@@ -136,7 +136,44 @@ pub(crate) fn fetch_slack_messages(
         .collect())
 }
 
-/// Fetch issues from a SonarQube instance using its Web API.
+/// Build a SonarQube HTTP client with the standard timeout.
+fn sonar_client() -> crate::error::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))
+}
+
+/// Perform a GET request to SonarQube and return the parsed JSON.
+fn sonar_get(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+) -> crate::error::Result<serde_json::Value> {
+    let resp: serde_json::Value = client
+        .get(url)
+        .basic_auth(token, Option::<&str>::None)
+        .send()
+        .map_err(|e| DirigentError::Source(format!("SonarQube request failed: {e}")))?
+        .json()
+        .map_err(|e| DirigentError::Source(format!("SonarQube response parse error: {e}")))?;
+
+    if let Some(errors) = resp.get("errors").and_then(|v| v.as_array()) {
+        let msgs: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.get("msg").and_then(|m| m.as_str()).map(String::from))
+            .collect();
+        if !msgs.is_empty() {
+            return Err(DirigentError::Source(format!(
+                "SonarQube API error: {}",
+                msgs.join("; ")
+            )));
+        }
+    }
+    Ok(resp)
+}
+
+/// Fetch issues, security hotspots, and duplications from a SonarQube instance.
 /// The caller is expected to resolve the token (e.g. via `resolve_source_token`).
 pub(crate) fn fetch_sonarqube_issues(
     host_url: &str,
@@ -160,39 +197,16 @@ pub(crate) fn fetch_sonarqube_issues(
         ));
     }
 
-    let url = format!(
+    let base = host_url.trim_end_matches('/');
+    let client = sonar_client()?;
+    let mut items = Vec::new();
+
+    // ── 1. Standard issues (/api/issues/search) ──
+    let issues_url = format!(
         "{}/api/issues/search?componentKeys={}&resolved=false&ps=100",
-        host_url.trim_end_matches('/'),
-        project_key,
+        base, project_key,
     );
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| DirigentError::Source(format!("HTTP client error: {e}")))?;
-
-    let resp: serde_json::Value = client
-        .get(&url)
-        .basic_auth(token, Option::<&str>::None)
-        .send()
-        .map_err(|e| DirigentError::Source(format!("SonarQube request failed: {e}")))?
-        .json()
-        .map_err(|e| DirigentError::Source(format!("SonarQube response parse error: {e}")))?;
-
-    if let Some(errors) = resp.get("errors").and_then(|v| v.as_array()) {
-        let msgs: Vec<String> = errors
-            .iter()
-            .filter_map(|e| e.get("msg").and_then(|m| m.as_str()).map(String::from))
-            .collect();
-        return Err(DirigentError::Source(format!(
-            "SonarQube API error: {}",
-            if msgs.is_empty() {
-                "unknown error".to_string()
-            } else {
-                msgs.join("; ")
-            }
-        )));
-    }
+    let resp = sonar_get(&client, &issues_url, token)?;
 
     let issues = resp
         .get("issues")
@@ -200,41 +214,150 @@ pub(crate) fn fetch_sonarqube_issues(
         .cloned()
         .unwrap_or_default();
 
-    Ok(issues
-        .iter()
-        .filter_map(|issue| {
-            let key = issue.get("key")?.as_str()?;
-            let message = issue.get("message")?.as_str()?;
-            let severity = issue
-                .get("severity")
-                .and_then(|s| s.as_str())
-                .unwrap_or("INFO");
-            let component = issue
-                .get("component")
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
-            let line = issue.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
-            let rule = issue.get("rule").and_then(|r| r.as_str()).unwrap_or("");
+    for issue in &issues {
+        if let Some(item) = parse_sonar_issue(issue, source_label) {
+            items.push(item);
+        }
+    }
 
-            let text = if component.is_empty() {
-                format!("[{}] {}", severity, message)
-            } else if line > 0 {
-                format!(
-                    "[{}] {} ({}:{}, rule: {})",
-                    severity, message, component, line, rule
-                )
-            } else {
-                format!("[{}] {} ({}, rule: {})", severity, message, component, rule)
-            };
+    // ── 2. Security Hotspots (/api/hotspots/search) ──
+    let hotspots_url = format!(
+        "{}/api/hotspots/search?projectKey={}&ps=100&status=TO_REVIEW",
+        base, project_key,
+    );
+    match sonar_get(&client, &hotspots_url, token) {
+        Ok(resp) => {
+            let hotspots = resp
+                .get("hotspots")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            for hs in &hotspots {
+                if let Some(item) = parse_sonar_hotspot(hs, source_label) {
+                    items.push(item);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("SonarQube: could not fetch security hotspots: {e}");
+        }
+    }
 
-            Some(SourceItem {
-                external_id: key.to_string(),
-                text,
-                source_label: source_label.to_string(),
-                source_id: String::new(),
-            })
-        })
-        .collect())
+    // ── 3. Duplications (/api/measures/component) ──
+    let duplication_url = format!(
+        "{}/api/measures/component?component={}&metricKeys=duplicated_lines_density,duplicated_blocks,duplicated_lines,duplicated_files",
+        base, project_key,
+    );
+    match sonar_get(&client, &duplication_url, token) {
+        Ok(resp) => {
+            if let Some(measures) = resp
+                .pointer("/component/measures")
+                .and_then(|v| v.as_array())
+            {
+                for m in measures {
+                    let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+                    let value = m.get("value").and_then(|v| v.as_str()).unwrap_or("0");
+                    let label = match metric {
+                        "duplicated_lines_density" => "Duplicated lines density",
+                        "duplicated_blocks" => "Duplicated blocks",
+                        "duplicated_lines" => "Duplicated lines",
+                        "duplicated_files" => "Duplicated files",
+                        _ => continue,
+                    };
+                    let suffix = if metric == "duplicated_lines_density" {
+                        "%"
+                    } else {
+                        ""
+                    };
+                    items.push(SourceItem {
+                        external_id: format!("sonar-dup-{}-{}", project_key, metric),
+                        text: format!("[DUPLICATION] {}: {}{}", label, value, suffix),
+                        source_label: source_label.to_string(),
+                        source_id: String::new(),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("SonarQube: could not fetch duplication measures: {e}");
+        }
+    }
+
+    Ok(items)
+}
+
+/// Parse a standard SonarQube issue into a `SourceItem`.
+fn parse_sonar_issue(issue: &serde_json::Value, source_label: &str) -> Option<SourceItem> {
+    let key = issue.get("key")?.as_str()?;
+    let message = issue.get("message")?.as_str()?;
+    let severity = issue
+        .get("severity")
+        .and_then(|s| s.as_str())
+        .unwrap_or("INFO");
+    let component = issue
+        .get("component")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let line = issue.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
+    let rule = issue.get("rule").and_then(|r| r.as_str()).unwrap_or("");
+
+    let text = if component.is_empty() {
+        format!("[{}] {}", severity, message)
+    } else if line > 0 {
+        format!(
+            "[{}] {} ({}:{}, rule: {})",
+            severity, message, component, line, rule
+        )
+    } else {
+        format!("[{}] {} ({}, rule: {})", severity, message, component, rule)
+    };
+
+    Some(SourceItem {
+        external_id: key.to_string(),
+        text,
+        source_label: source_label.to_string(),
+        source_id: String::new(),
+    })
+}
+
+/// Parse a SonarQube Security Hotspot into a `SourceItem`.
+fn parse_sonar_hotspot(hs: &serde_json::Value, source_label: &str) -> Option<SourceItem> {
+    let key = hs.get("key")?.as_str()?;
+    let message = hs.get("message")?.as_str()?;
+    let vulnerability = hs
+        .get("vulnerabilityProbability")
+        .and_then(|v| v.as_str())
+        .unwrap_or("UNKNOWN");
+    let component = hs
+        .get("component")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let line = hs.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
+    let category = hs
+        .get("securityCategory")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+
+    let text = if component.is_empty() {
+        format!("[HOTSPOT/{}] {}", vulnerability, message)
+    } else if line > 0 {
+        format!(
+            "[HOTSPOT/{}] {} ({}:{}, category: {})",
+            vulnerability, message, component, line, category
+        )
+    } else {
+        format!(
+            "[HOTSPOT/{}] {} ({}, category: {})",
+            vulnerability, message, component, category
+        )
+    };
+
+    Some(SourceItem {
+        external_id: key.to_string(),
+        text,
+        source_label: source_label.to_string(),
+        source_id: String::new(),
+    })
 }
 
 /// Fetch cards from a Trello board using the Trello REST API.
