@@ -19,6 +19,27 @@ fn is_insufficient_privileges(e: &DirigentError) -> bool {
     }
 }
 
+/// Try an optional SonarQube fetch; on failure, warn once with a privilege hint.
+fn try_sonar_fetch(
+    items: &mut Vec<SourceItem>,
+    result: crate::error::Result<Vec<SourceItem>>,
+    warned: &AtomicBool,
+    category: &str,
+    privilege_hint: &str,
+) {
+    match result {
+        Ok(new) => items.extend(new),
+        Err(e) => {
+            let hint = if is_insufficient_privileges(&e) {
+                privilege_hint
+            } else {
+                ""
+            };
+            warn_once(warned, &format!("SonarQube {category} skipped: {e}{hint}"));
+        }
+    }
+}
+
 use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
 use super::types::SourceItem;
 
@@ -254,41 +275,30 @@ pub(crate) fn fetch_sonarqube_issues(
 
     // ── 2. Security Hotspots (/api/hotspots/search) ──
     // Non-fatal: some tokens lack hotspot permissions.
-    match fetch_sonar_hotspots(&client, base, project_key, token, source_label) {
-        Ok(hotspots) => items.extend(hotspots),
-        Err(e) => {
-            static WARNED: AtomicBool = AtomicBool::new(false);
-            let hint = if is_insufficient_privileges(&e) {
-                "\n  → Your token's user needs 'Browse' and 'Administer \
-                 Security Hotspots' on this project. Ask a SonarQube admin \
-                 to grant these under the project's Permissions page, or \
-                 generate a new token with a user that already has them."
-            } else {
-                ""
-            };
-            warn_once(&WARNED, &format!("SonarQube hotspots skipped: {e}{hint}"));
-        }
-    }
+    static HOTSPOT_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_hotspots(&client, base, project_key, token, source_label),
+        &HOTSPOT_WARNED,
+        "hotspots",
+        "\n  → Your token's user needs 'Browse' and 'Administer \
+         Security Hotspots' on this project. Ask a SonarQube admin \
+         to grant these under the project's Permissions page, or \
+         generate a new token with a user that already has them.",
+    );
 
     // ── 3. Duplications (/api/measures/component) ──
     // Non-fatal: some tokens lack measures permissions.
-    match fetch_sonar_duplications(&client, base, project_key, token, source_label) {
-        Ok(dups) => items.extend(dups),
-        Err(e) => {
-            static WARNED: AtomicBool = AtomicBool::new(false);
-            let hint = if is_insufficient_privileges(&e) {
-                "\n  → Your token's user needs 'Browse' permission on this \
-                 project. Ask a SonarQube admin to grant it, or generate a \
-                 new token with a user that already has access."
-            } else {
-                ""
-            };
-            warn_once(
-                &WARNED,
-                &format!("SonarQube duplications skipped: {e}{hint}"),
-            );
-        }
-    }
+    static DUP_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_duplications(&client, base, project_key, token, source_label),
+        &DUP_WARNED,
+        "duplications",
+        "\n  → Your token's user needs 'Browse' permission on this \
+         project. Ask a SonarQube admin to grant it, or generate a \
+         new token with a user that already has access.",
+    );
 
     Ok(items)
 }
@@ -342,23 +352,16 @@ fn fetch_sonar_duplications(
         .collect();
 
     // Fetch per-file duplication details via component_tree.
-    match fetch_sonar_duplicated_files(client, base, project_key, token, source_label) {
-        Ok(file_items) => items.extend(file_items),
-        Err(e) => {
-            static WARNED: AtomicBool = AtomicBool::new(false);
-            let hint = if is_insufficient_privileges(&e) {
-                "\n  → Your token's user needs 'Browse' permission on this \
-                 project. Ask a SonarQube admin to grant it, or generate a \
-                 new token with a user that already has access."
-            } else {
-                ""
-            };
-            warn_once(
-                &WARNED,
-                &format!("SonarQube duplicated files detail skipped: {e}{hint}"),
-            );
-        }
-    }
+    static DUP_FILES_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_duplicated_files(client, base, project_key, token, source_label),
+        &DUP_FILES_WARNED,
+        "duplicated files detail",
+        "\n  → Your token's user needs 'Browse' permission on this \
+         project. Ask a SonarQube admin to grant it, or generate a \
+         new token with a user that already has access.",
+    );
 
     Ok(items)
 }

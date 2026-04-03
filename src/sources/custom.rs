@@ -52,6 +52,41 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Drain a child process's stdout and stderr on background threads so the OS
+/// pipe buffers don't fill up and block the child (classic pipe deadlock).
+///
+/// Returns join handles whose value is the captured bytes.  Pass the results
+/// through [`collect_drained`] to get the final `Vec<u8>` values.
+pub(crate) fn drain_child_pipes(
+    child: &mut std::process::Child,
+) -> (
+    Option<std::thread::JoinHandle<Vec<u8>>>,
+    Option<std::thread::JoinHandle<Vec<u8>>>,
+) {
+    use std::io::Read;
+
+    let stdout_handle = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|mut err| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = err.read_to_end(&mut buf);
+            buf
+        })
+    });
+    (stdout_handle, stderr_handle)
+}
+
+/// Collect the output from drain handles returned by [`drain_child_pipes`].
+pub(crate) fn collect_drained(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    handle.and_then(|h| h.join().ok()).unwrap_or_default()
+}
+
 /// Run a command with a timeout. Returns the output or an IO error on timeout.
 ///
 /// Reads stdout and stderr on separate threads to avoid deadlocking when the
@@ -60,26 +95,7 @@ pub(crate) fn output_with_timeout(
     mut child: std::process::Child,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
-    use std::io::Read;
-
-    // Take ownership of the pipe handles so we can read them on background threads.
-    let stdout_handle = child.stdout.take();
-    let stderr_handle = child.stderr.take();
-
-    let stdout_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        if let Some(mut out) = stdout_handle {
-            out.read_to_end(&mut buf)?;
-        }
-        Ok(buf)
-    });
-    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        if let Some(mut err) = stderr_handle {
-            err.read_to_end(&mut buf)?;
-        }
-        Ok(buf)
-    });
+    let (stdout_handle, stderr_handle) = drain_child_pipes(&mut child);
 
     // Poll for process exit with a timeout.
     let deadline = std::time::Instant::now() + timeout;
@@ -98,8 +114,8 @@ pub(crate) fn output_with_timeout(
         }
     };
 
-    let stdout = stdout_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
-    let stderr = stderr_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
+    let stdout = collect_drained(stdout_handle);
+    let stderr = collect_drained(stderr_handle);
 
     Ok(std::process::Output {
         status,

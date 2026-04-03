@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::diagnostics::{parse_cargo_diagnostics, parse_generic_diagnostics, Diagnostic};
 use super::types::{AgentConfig, AgentKind, AgentStatus};
+use crate::sources::{collect_drained, drain_child_pipes};
 
 // ---------------------------------------------------------------------------
 // Agent result (sent from worker thread back to main)
@@ -303,35 +304,14 @@ fn wait_with_timeout(
     timeout: Duration,
     cancel: &Arc<AtomicBool>,
 ) -> WaitResult {
-    use std::io::Read;
-
-    // Spawn threads to drain stdout/stderr so the pipe buffers don't fill up
-    // and block the child process (classic pipe deadlock).
-    let stdout_handle = child.stdout.take().map(|mut out| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = out.read_to_end(&mut buf);
-            buf
-        })
-    });
-    let stderr_handle = child.stderr.take().map(|mut err| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = err.read_to_end(&mut buf);
-            buf
-        })
-    });
+    let (stdout_handle, stderr_handle) = drain_child_pipes(child);
 
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = stdout_handle
-                    .and_then(|h| h.join().ok())
-                    .unwrap_or_default();
-                let stderr = stderr_handle
-                    .and_then(|h| h.join().ok())
-                    .unwrap_or_default();
+                let stdout = collect_drained(stdout_handle);
+                let stderr = collect_drained(stderr_handle);
                 return WaitResult::Completed(std::process::Output {
                     status,
                     stdout,

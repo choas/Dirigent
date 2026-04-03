@@ -15,6 +15,16 @@ Dirigent can pull issues, security hotspots, and code duplication data from a So
 
 Generate a token in SonarQube under **My Account > Security > Generate Tokens**.
 
+**You must create a User Token (prefix `squ_`).** SonarQube offers three token types:
+
+| Token type | Prefix | Works for Dirigent? |
+|---|---|---|
+| **User Token** | `squ_` | **Yes** — full API read access (issues, hotspots, duplications) |
+| Project Analysis Token | `sqp_` | **No** — can only upload scan results, cannot read any API data |
+| Global Analysis Token | `sqg_` | **No** — same as above, just not scoped to one project |
+
+When generating the token, select **User Token** from the Type dropdown. If you accidentally created a `sqp_` or `sqg_` token, it will fail with "Insufficient privileges" on every API call regardless of what project permissions are set.
+
 The token can be provided in three ways (in order of precedence):
 1. Pasted directly into the **Token** field in Settings
 2. Set as `SONAR_TOKEN` in your shell environment
@@ -22,7 +32,7 @@ The token can be provided in three ways (in order of precedence):
 
 ## Required Permissions
 
-The token's user must have the following permissions on the SonarQube project (configured in **SonarQube Project Settings > Permissions**):
+Once you have a **User Token** (`squ_`), the token's user must also have the following project-level permissions (configured in SonarQube at **Project Settings > Permissions**, or via the URL `/project_roles?id=YourProjectKey`):
 
 | Data                    | Required Permission                           |
 |-------------------------|-----------------------------------------------|
@@ -31,13 +41,7 @@ The token's user must have the following permissions on the SonarQube project (c
 | Duplication metrics     | **Browse**                                    |
 | Per-file duplications   | **Browse**                                    |
 
-If permissions are missing, Dirigent will skip the affected data gracefully and print a warning to the terminal, e.g.:
-
-```
-SonarQube hotspots skipped: source: SonarQube API error: Insufficient privileges
-  → Grant 'Browse' + 'Administer Security Hotspots' permission to your token's user
-    in SonarQube Project Settings > Permissions
-```
+If permissions are missing, Dirigent will skip the affected data gracefully and print a warning to the terminal.
 
 ## What Dirigent fetches
 
@@ -56,5 +60,5 @@ Each finding becomes a cue in the Dirigent Inbox with severity, rule key, and fi
 | `SonarQube token is empty` | No token configured | Add token in Settings, env, or `.env` |
 | `SonarQube host URL is empty` | Host URL blank | Set the Host URL field |
 | `SonarQube project key is empty` | Project key blank | Set the Project Key field |
-| `Insufficient privileges` | Token user lacks permissions | Grant permissions per table above |
+| `Insufficient privileges` | **Most likely:** token is a `sqp_` (analysis-only) token, not a `squ_` (user) token. **Less likely:** user lacks project permissions. | Check your token prefix. If it starts with `sqp_`, generate a new **User Token** (`squ_`). If already `squ_`, grant permissions per table above. |
 | `SonarQube request failed` | Server unreachable or URL wrong | Check the Host URL and network |

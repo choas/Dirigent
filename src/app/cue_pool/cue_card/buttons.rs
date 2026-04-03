@@ -204,21 +204,7 @@ impl DirigentApp {
         {
             actions.push((cue.id, CueAction::ShowDiff(cue.id)));
         }
-        if ui
-            .small_button(icon("Log", fs))
-            .on_hover_text("View Claude's output log")
-            .clicked()
-        {
-            actions.push((cue.id, CueAction::ShowRunningLog(cue.id)));
-        }
-        if !self.settings.agents.is_empty()
-            && ui
-                .small_button(icon("Agents", fs))
-                .on_hover_text("View agent run logs (format, lint, build, test)")
-                .clicked()
-        {
-            actions.push((cue.id, CueAction::ShowAgentRuns(cue.id)));
-        }
+        self.render_log_and_agents_buttons(ui, cue, actions, fs);
         if ui
             .small_button(icon("\u{21A9} Reply", fs))
             .on_hover_text("Send feedback to Claude for another iteration")

@@ -6,6 +6,15 @@ pub(crate) struct Play {
     pub prompt: String,
 }
 
+impl Play {
+    fn new(name: &str, prompt: &str) -> Self {
+        Self {
+            name: name.into(),
+            prompt: prompt.into(),
+        }
+    }
+}
+
 /// A parsed template variable from a play prompt, e.g. `{LICENSE:MIT,Apache 2.0,ISC}`.
 #[derive(Debug, Clone)]
 pub(crate) struct PlayVariable {
@@ -73,45 +82,15 @@ pub(crate) fn substitute_play_variables(
 
 pub(crate) fn default_playbook() -> Vec<Play> {
     vec![
-        Play {
-            name: "Update README".into(),
-            prompt: "Review the project and update README.md to accurately reflect the current state: features, setup instructions, and usage.".into(),
-        },
-        Play {
-            name: "Verify architecture".into(),
-            prompt: "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes.".into(),
-        },
-        Play {
-            name: "Verify last 5 commits".into(),
-            prompt: "Review the last 5 git commits. Check for bugs, incomplete changes, or inconsistencies. Report findings without making changes.".into(),
-        },
-        Play {
-            name: "Create release".into(),
-            prompt: "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`.".into(),
-        },
-        Play {
-            name: "Security audit".into(),
-            prompt: "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings.".into(),
-        },
-        Play {
-            name: "Check dead code".into(),
-            prompt: "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything.".into(),
-        },
-        Play {
-            name: "Add tests".into(),
-            prompt: "Identify untested code paths and write comprehensive tests for the most critical and least covered areas.".into(),
-        },
-        Play {
-            name: "Fix all warnings".into(),
-            prompt: "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them.".into(),
-        },
-        Play {
-            name: "Commit changes".into(),
-            prompt: "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit.".into(),
-        },
-        Play {
-            name: "Zero day test".into(),
-            prompt: "Somebody told me there is an RCE 0-day when this project opens a file. Find it.".into(),
-        },
+        Play::new("Update README", "Review the project and update README.md to accurately reflect the current state: features, setup instructions, and usage."),
+        Play::new("Verify architecture", "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes."),
+        Play::new("Verify last 5 commits", "Review the last 5 git commits. Check for bugs, incomplete changes, or inconsistencies. Report findings without making changes."),
+        Play::new("Create release", "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`."),
+        Play::new("Security audit", "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings."),
+        Play::new("Check dead code", "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything."),
+        Play::new("Add tests", "Identify untested code paths and write comprehensive tests for the most critical and least covered areas."),
+        Play::new("Fix all warnings", "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them."),
+        Play::new("Commit changes", "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit."),
+        Play::new("Zero day test", "Somebody told me there is an RCE 0-day when this project opens a file. Find it."),
     ]
 }

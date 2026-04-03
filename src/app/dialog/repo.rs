@@ -5,6 +5,7 @@ use eframe::egui;
 use super::super::{icon, DirigentApp, SPACE_SM};
 use crate::app::util::expand_tilde;
 use crate::git;
+use crate::settings::SemanticColors;
 
 /// Format a byte size as a human-readable string (KB or MB).
 fn format_size(size_bytes: u64) -> String {
@@ -67,6 +68,55 @@ struct WorktreeActions {
 }
 
 impl DirigentApp {
+    /// Render a confirmation dialog with Cancel and a destructive confirm button.
+    /// The `body` closure draws the dialog content; `confirm_label` is the red button text.
+    /// Returns `(confirmed, cancelled)`.
+    fn confirmation_dialog(
+        &self,
+        ctx: &egui::Context,
+        title: &str,
+        confirm_label: &str,
+        width: f32,
+        body: impl FnOnce(&mut egui::Ui, &SemanticColors),
+    ) -> (bool, bool) {
+        let mut confirm = false;
+        let mut cancel = false;
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .default_size([width, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                body(ui, &self.semantic);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new(confirm_label).color(egui::Color32::RED))
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                    });
+                });
+            });
+        (confirm, cancel)
+    }
+
+    /// Render an italic empty-state label in tertiary text color.
+    fn empty_label(&self, ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .italics()
+                .color(self.semantic.tertiary_text),
+        );
+    }
+
     // ── Repo picker ──────────────────────────────────────────────────
 
     /// Repo picker window.
@@ -153,11 +203,7 @@ impl DirigentApp {
                     }
                 }
                 if self.cached_existing_repos.is_empty() {
-                    ui.label(
-                        egui::RichText::new("(none)")
-                            .italics()
-                            .color(self.semantic.tertiary_text),
-                    );
+                    self.empty_label(ui, "(none)");
                 }
             });
     }
@@ -216,11 +262,7 @@ impl DirigentApp {
                 }
 
                 if self.git.worktrees.is_empty() {
-                    ui.label(
-                        egui::RichText::new("No worktrees found")
-                            .italics()
-                            .color(self.semantic.tertiary_text),
-                    );
+                    self.empty_label(ui, "No worktrees found");
                 }
             });
     }
@@ -508,47 +550,29 @@ impl DirigentApp {
         let path = path.clone();
         let error_msg = error_msg.clone();
 
-        let mut force = false;
-        let mut cancel = false;
-
-        egui::Window::new("Remove Worktree")
-            .collapsible(false)
-            .resizable(false)
-            .default_size([420.0, 0.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
+        let (force, cancel) = self.confirmation_dialog(
+            ctx,
+            "Remove Worktree",
+            "Force Remove",
+            420.0,
+            |ui, semantic| {
                 ui.label("The worktree contains modified or untracked files:");
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(path.to_string_lossy().as_ref())
                         .monospace()
-                        .color(self.semantic.secondary_text),
+                        .color(semantic.secondary_text),
                 );
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(&error_msg)
                         .small()
-                        .color(self.semantic.tertiary_text),
+                        .color(semantic.tertiary_text),
                 );
                 ui.add_space(8.0);
                 ui.label("Force remove will delete all changes in this worktree.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(egui::RichText::new("Force Remove").color(egui::Color32::RED))
-                            .clicked()
-                        {
-                            force = true;
-                        }
-                    });
-                });
-            });
+            },
+        );
 
         if cancel {
             self.git.pending_force_remove = None;
@@ -566,41 +590,23 @@ impl DirigentApp {
         };
         let path = path.clone();
 
-        let mut confirm = false;
-        let mut cancel = false;
-
-        egui::Window::new("Delete Archived DB")
-            .collapsible(false)
-            .resizable(false)
-            .default_size([400.0, 0.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
+        let (confirm, cancel) = self.confirmation_dialog(
+            ctx,
+            "Delete Archived DB",
+            "Delete",
+            400.0,
+            |ui, semantic| {
                 ui.label("Are you sure you want to delete this archived database?");
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(path.to_string_lossy().as_ref())
                         .monospace()
-                        .color(self.semantic.secondary_text),
+                        .color(semantic.secondary_text),
                 );
                 ui.add_space(8.0);
                 ui.label("This action cannot be undone.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(egui::RichText::new("Delete").color(egui::Color32::RED))
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
-                    });
-                });
-            });
+            },
+        );
 
         if cancel {
             self.git.pending_delete_archive = None;

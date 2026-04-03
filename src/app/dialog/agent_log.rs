@@ -144,7 +144,7 @@ impl DirigentApp {
     /// Render the status icon, timestamp, duration, and optional cue ID labels.
     fn render_run_header_labels(&self, ui: &mut egui::Ui, run: &AgentRunEntry) {
         let dur = crate::app::util::format_duration_ms(run.duration_ms);
-        let (status_icon, status_color) = status_icon_and_color(run, &self.semantic);
+        let (status_icon, status_color) = self.agent_status_icon_and_color(&run.status);
 
         ui.label(
             egui::RichText::new(status_icon)
@@ -209,6 +209,17 @@ impl DirigentApp {
 
     /// Render the output block for a run entry.
     fn render_log_output_block(&self, ui: &mut egui::Ui, run: &AgentRunEntry) {
+        self.render_agent_output_frame(ui, &run.output, None);
+    }
+
+    /// Render agent run output in a styled frame.
+    /// When `scroll` is provided as `(id, max_height)`, wraps output in a vertical scroll area.
+    pub(super) fn render_agent_output_frame(
+        &self,
+        ui: &mut egui::Ui,
+        output: &str,
+        scroll: Option<(egui::Id, f32)>,
+    ) {
         egui::Frame::NONE
             .inner_margin(egui::Margin {
                 left: SPACE_SM as i8,
@@ -219,17 +230,36 @@ impl DirigentApp {
             .corner_radius(4)
             .fill(self.semantic.selection_bg())
             .show(ui, |ui| {
-                // run.output is already ANSI-stripped by build_completed_result
-                if run.output.trim().is_empty() {
+                if output.trim().is_empty() {
                     ui.label(
                         egui::RichText::new("(no output)")
                             .italics()
                             .color(self.semantic.tertiary_text),
                     );
+                } else if let Some((id, max_height)) = scroll {
+                    egui::ScrollArea::vertical()
+                        .id_salt(id)
+                        .max_height(max_height)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(output).monospace().small());
+                        });
                 } else {
-                    ui.label(egui::RichText::new(&run.output).monospace().small());
+                    ui.label(egui::RichText::new(output).monospace().small());
                 }
             });
+    }
+
+    /// Map a run status string to an icon character and color.
+    pub(super) fn agent_status_icon_and_color(
+        &self,
+        status: &str,
+    ) -> (&'static str, egui::Color32) {
+        match status {
+            "passed" => ("\u{2713}", self.semantic.success),
+            "failed" => ("\u{2717}", self.semantic.danger),
+            "error" => ("!", self.semantic.danger),
+            _ => ("\u{25CF}", self.semantic.secondary_text),
+        }
     }
 
     /// Create a cue from the selected run's output for analysis.
@@ -248,16 +278,7 @@ impl DirigentApp {
                 run.command,
                 run.output.trim(),
             );
-            match self.db.insert_cue(&cue_text, "", 0, None, &[]) {
-                Ok(_id) => {
-                    self.reload_cues();
-                    // Close the agent log so the user lands on the cue pool
-                    self.agent_state.show_output = None;
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to create cue: {e}"));
-                }
-            }
+            self.create_cue_and_close_log(&cue_text);
         }
     }
 
@@ -271,14 +292,19 @@ impl DirigentApp {
                 run.command,
                 run.output.trim(),
             );
-            match self.db.insert_cue(&cue_text, "", 0, None, &[]) {
-                Ok(_id) => {
-                    self.reload_cues();
-                    self.agent_state.show_output = None;
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to create cue: {e}"));
-                }
+            self.create_cue_and_close_log(&cue_text);
+        }
+    }
+
+    /// Insert a cue, reload the pool, and close the agent log.
+    fn create_cue_and_close_log(&mut self, cue_text: &str) {
+        match self.db.insert_cue(cue_text, "", 0, None, &[]) {
+            Ok(_id) => {
+                self.reload_cues();
+                self.agent_state.show_output = None;
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to create cue: {e}"));
             }
         }
     }
@@ -291,18 +317,5 @@ impl DirigentApp {
             self.reload_settings_from_disk();
             self.show_settings = true;
         }
-    }
-}
-
-/// Map a run status string to its icon and color.
-fn status_icon_and_color<'a>(
-    run: &AgentRunEntry,
-    semantic: &crate::settings::SemanticColors,
-) -> (&'a str, egui::Color32) {
-    match run.status.as_str() {
-        "passed" => ("\u{2713}", semantic.success),
-        "failed" => ("\u{2717}", semantic.danger),
-        "error" => ("!", semantic.danger),
-        _ => ("\u{25CF}", semantic.secondary_text),
     }
 }

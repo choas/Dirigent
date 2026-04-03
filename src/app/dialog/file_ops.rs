@@ -4,6 +4,25 @@ use eframe::egui;
 
 use crate::app::DirigentApp;
 
+/// Returns a relative display path by stripping the project root prefix.
+fn display_path(path: &Path, project_root: &Path) -> String {
+    path.strip_prefix(project_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Creates a standard centered dialog window with the given title.
+fn file_op_dialog(title: String, frame: egui::Frame) -> egui::Window<'static> {
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .default_size([400.0, 0.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(frame)
+        .order(egui::Order::Foreground)
+}
+
 /// Returns `true` if `name` is a valid filename for rename operations.
 /// Rejects empty names, ".", "..", any path separators, and parent-traversal components.
 fn validate_filename(name: &str) -> bool {
@@ -36,41 +55,30 @@ impl DirigentApp {
         let mut confirm = false;
         let mut cancel = false;
 
-        egui::Window::new(format!("Rename {}", label))
-            .collapsible(false)
-            .resizable(false)
-            .default_size([400.0, 0.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                let display = target
-                    .strip_prefix(&self.project_root)
-                    .unwrap_or(&target)
-                    .to_string_lossy()
-                    .to_string();
-                ui.label(format!("Rename: {}", display));
-                ui.add_space(8.0);
-                let resp = ui.text_edit_singleline(&mut self.rename_buffer);
-                if !self.rename_focus_requested {
-                    resp.request_focus();
-                    self.rename_focus_requested = true;
-                }
-                confirm |= resp.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && validate_filename(&self.rename_buffer);
-                cancel |= ui.input(|i| i.key_pressed(egui::Key::Escape));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    cancel |= ui.button("Cancel").clicked();
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let name_valid = validate_filename(&self.rename_buffer);
-                        confirm |= ui
-                            .add_enabled(name_valid, egui::Button::new("Rename"))
-                            .clicked();
-                    });
+        file_op_dialog(format!("Rename {}", label), self.semantic.dialog_frame()).show(ctx, |ui| {
+            let display = display_path(&target, &self.project_root);
+            ui.label(format!("Rename: {}", display));
+            ui.add_space(8.0);
+            let resp = ui.text_edit_singleline(&mut self.rename_buffer);
+            if !self.rename_focus_requested {
+                resp.request_focus();
+                self.rename_focus_requested = true;
+            }
+            confirm |= resp.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && validate_filename(&self.rename_buffer);
+            cancel |= ui.input(|i| i.key_pressed(egui::Key::Escape));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                cancel |= ui.button("Cancel").clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let name_valid = validate_filename(&self.rename_buffer);
+                    confirm |= ui
+                        .add_enabled(name_valid, egui::Button::new("Rename"))
+                        .clicked();
                 });
             });
+        });
 
         if cancel {
             self.rename_target = None;
@@ -95,11 +103,7 @@ impl DirigentApp {
         match std::fs::rename(target, &new_path) {
             Ok(()) => {
                 self.update_tabs_after_rename(target, &new_path, is_dir);
-                let display = new_path
-                    .strip_prefix(&self.project_root)
-                    .unwrap_or(&new_path)
-                    .to_string_lossy()
-                    .to_string();
+                let display = display_path(&new_path, &self.project_root);
                 self.set_status_message(format!("Renamed to: {}", display));
                 self.reload_file_tree();
                 self.reload_git_info();
@@ -147,46 +151,35 @@ impl DirigentApp {
         let mut confirm = false;
         let mut cancel = false;
 
-        egui::Window::new(format!("Delete {}", label))
-            .collapsible(false)
-            .resizable(false)
-            .default_size([400.0, 0.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "Are you sure you want to delete this {}?",
-                    label.to_lowercase()
-                ));
-                ui.add_space(8.0);
-                let display = path
-                    .strip_prefix(&self.project_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-                ui.label(
-                    egui::RichText::new(&display)
-                        .monospace()
-                        .color(self.semantic.secondary_text),
-                );
-                ui.add_space(8.0);
-                ui.label("This action cannot be undone.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
+        file_op_dialog(format!("Delete {}", label), self.semantic.dialog_frame()).show(ctx, |ui| {
+            ui.label(format!(
+                "Are you sure you want to delete this {}?",
+                label.to_lowercase()
+            ));
+            ui.add_space(8.0);
+            let display = display_path(&path, &self.project_root);
+            ui.label(
+                egui::RichText::new(&display)
+                    .monospace()
+                    .color(self.semantic.secondary_text),
+            );
+            ui.add_space(8.0);
+            ui.label("This action cannot be undone.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(egui::RichText::new("Delete").color(egui::Color32::RED))
+                        .clicked()
+                    {
+                        confirm = true;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(egui::RichText::new("Delete").color(egui::Color32::RED))
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
-                    });
                 });
             });
+        });
 
         if cancel {
             self.pending_file_delete = None;
@@ -206,11 +199,7 @@ impl DirigentApp {
         match result {
             Ok(()) => {
                 self.close_tabs_for_deleted_path(path, is_dir);
-                let display = path
-                    .strip_prefix(&self.project_root)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .to_string();
+                let display = display_path(path, &self.project_root);
                 self.set_status_message(format!("Deleted: {}", display));
                 self.reload_file_tree();
                 self.reload_git_info();

@@ -679,6 +679,26 @@ impl DirigentApp {
             .unwrap_or_default();
     }
 
+    /// Activate an Inbox cue: move to Ready, log activity, and trigger Claude.
+    /// Returns `true` if the cue was activated.
+    fn activate_inbox_cue(&mut self, id: i64, activity: &str) -> bool {
+        if self
+            .cues
+            .iter()
+            .any(|c| c.id == id && c.status == CueStatus::Inbox)
+        {
+            let _ = self.db.update_cue_status(id, CueStatus::Ready);
+            let _ = self.db.log_activity(id, activity);
+            self.cue_move_flash.insert(id, Instant::now());
+            self.claude.expand_running = true;
+            self.reload_cues();
+            self.trigger_claude(id);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Process scheduled runs: trigger any cue whose scheduled time has arrived.
     fn process_scheduled_runs(&mut self) {
         let now = SystemTime::now();
@@ -690,19 +710,7 @@ impl DirigentApp {
             .collect();
         for id in ready {
             self.scheduled_runs.remove(&id);
-            // Verify cue is still in Inbox before triggering
-            if self
-                .cues
-                .iter()
-                .any(|c| c.id == id && c.status == CueStatus::Inbox)
-            {
-                let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                let _ = self.db.log_activity(id, "Scheduled run started");
-                self.cue_move_flash.insert(id, Instant::now());
-                self.claude.expand_running = true;
-                self.reload_cues();
-                self.trigger_claude(id);
-            }
+            self.activate_inbox_cue(id, "Scheduled run started");
         }
     }
 
@@ -715,19 +723,7 @@ impl DirigentApp {
         let any_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
         if !any_running {
             let id = self.run_queue.remove(0);
-            // Verify cue is still in Inbox before triggering
-            if self
-                .cues
-                .iter()
-                .any(|c| c.id == id && c.status == CueStatus::Inbox)
-            {
-                let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                let _ = self.db.log_activity(id, "Queued run started");
-                self.cue_move_flash.insert(id, Instant::now());
-                self.claude.expand_running = true;
-                self.reload_cues();
-                self.trigger_claude(id);
-            }
+            self.activate_inbox_cue(id, "Queued run started");
         }
     }
 

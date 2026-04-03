@@ -91,36 +91,27 @@ impl DirigentApp {
 
     /// Render the send button and handle submit logic.
     fn render_prompt_send_button(&mut self, ui: &mut egui::Ui, input_response: &egui::Response) {
-        ui.vertical_centered(|ui| {
-            let input_h = input_response.rect.height();
-            let btn_size = self.settings.font_size + 12.0;
-            ui.add_space((input_h - btn_size) / 2.0);
-            let send_btn = egui::Button::new(
-                icon("\u{2191}", self.settings.font_size).color(self.semantic.accent_text()),
-            )
-            .fill(self.semantic.accent)
-            .corner_radius(btn_size as u8 / 2)
-            .min_size(egui::vec2(btn_size, btn_size));
-            let btn_clicked = ui
-                .add(send_btn)
-                .on_hover_text("Create cue  (\u{2318}Enter to run)")
-                .clicked();
-            let (enter_submitted, cmd_enter) = if input_response.has_focus() {
-                ui.input(|i| {
-                    let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
-                    (
-                        pressed && !i.modifiers.command,
-                        pressed && i.modifiers.command,
-                    )
-                })
-            } else {
-                (false, false)
-            };
-            if (btn_clicked || enter_submitted || cmd_enter) && !self.global_prompt_input.is_empty()
-            {
-                self.submit_prompt(cmd_enter);
-            }
-        });
+        let btn_clicked = Self::render_send_button(
+            ui,
+            self.settings.font_size,
+            input_response,
+            &self.semantic,
+            "Create cue  (\u{2318}Enter to run)",
+        );
+        let (enter_submitted, cmd_enter) = if input_response.has_focus() {
+            ui.input(|i| {
+                let pressed = i.key_pressed(egui::Key::Enter) && !i.modifiers.shift;
+                (
+                    pressed && !i.modifiers.command,
+                    pressed && i.modifiers.command,
+                )
+            })
+        } else {
+            (false, false)
+        };
+        if (btn_clicked || enter_submitted || cmd_enter) && !self.global_prompt_input.is_empty() {
+            self.submit_prompt(cmd_enter);
+        }
     }
 
     /// Submit the current prompt text as a new cue.

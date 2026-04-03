@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{DirigentApp, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH};
+use super::{
+    icon, DirigentApp, SemanticColors, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH,
+};
 
 impl DirigentApp {
     /// Handle drag-and-drop of files onto the window.
@@ -190,6 +192,29 @@ impl DirigentApp {
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);
+    }
+
+    /// Render the circular send button, vertically centered next to a text input.
+    /// Returns `true` if the button was clicked.
+    pub(super) fn render_send_button(
+        ui: &mut egui::Ui,
+        fs: f32,
+        input_response: &egui::Response,
+        semantic: &SemanticColors,
+        tooltip: &str,
+    ) -> bool {
+        let mut clicked = false;
+        ui.vertical_centered(|ui| {
+            let input_h = input_response.rect.height();
+            let btn_size = fs + 12.0;
+            ui.add_space((input_h - btn_size) / 2.0);
+            let send_btn = egui::Button::new(icon("\u{2191}", fs).color(semantic.accent_text()))
+                .fill(semantic.accent)
+                .corner_radius(btn_size as u8 / 2)
+                .min_size(egui::vec2(btn_size, btn_size));
+            clicked = ui.add(send_btn).on_hover_text(tooltip).clicked();
+        });
+        clicked
     }
 
     /// Render project-wide search panel as a left side panel (replaces file tree).

@@ -397,6 +397,37 @@ impl DirigentApp {
         }
     }
 
+    /// Insert a new execution record, emit telemetry, and spawn the provider thread.
+    fn insert_exec_and_spawn(
+        &mut self,
+        cue_id: i64,
+        prompt: String,
+        provider: CliProvider,
+        matched_command: &Option<CueCommand>,
+    ) {
+        let exec_id = self
+            .db
+            .insert_execution(cue_id, &prompt, &provider)
+            .unwrap_or(0);
+
+        self.claude.exec_ids.insert(cue_id, exec_id);
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
+
+        let config = build_provider_config(&self.settings, &provider, matched_command);
+
+        telemetry::emit_execution_started(
+            &self.project_name(),
+            cue_id,
+            provider.display_name(),
+            &config.model,
+        );
+
+        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
+        self.task_handles.push(handle);
+    }
+
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
         if let Err(e) = settings::sync_home_guard_hook(
             &self.project_root,
@@ -433,27 +464,7 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        let exec_id = self
-            .db
-            .insert_execution(cue_id, &prompt, &provider)
-            .unwrap_or(0);
-
-        self.claude.exec_ids.insert(cue_id, exec_id);
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            self.claude.conversation_history = execs;
-        }
-
-        let config = build_provider_config(&self.settings, &provider, &matched_command);
-
-        telemetry::emit_execution_started(
-            &self.project_name(),
-            cue_id,
-            provider.display_name(),
-            &config.model,
-        );
-
-        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
-        self.task_handles.push(handle);
+        self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
     }
 
     pub(super) fn trigger_claude_reply(
@@ -517,27 +528,7 @@ impl DirigentApp {
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
 
-        let exec_id = self
-            .db
-            .insert_execution(cue_id, &prompt, &provider)
-            .unwrap_or(0);
-
-        self.claude.exec_ids.insert(cue_id, exec_id);
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            self.claude.conversation_history = execs;
-        }
-
-        let config = build_provider_config(&self.settings, &provider, &matched_command);
-
-        telemetry::emit_execution_started(
-            &self.project_name(),
-            cue_id,
-            provider.display_name(),
-            &config.model,
-        );
-
-        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
-        self.task_handles.push(handle);
+        self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
 
         if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
             self.diff_review = None;
