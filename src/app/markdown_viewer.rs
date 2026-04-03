@@ -465,8 +465,17 @@ fn compute_column_widths(
         let share = extra / col_count as f32;
         natural.iter().map(|w| w + share).collect()
     } else {
-        let scale = available / total;
-        natural.iter().map(|w| (w * scale).max(40.0)).collect()
+        let min_width = 40.0f32;
+        let total_min = min_width * col_count as f32;
+        if available <= total_min {
+            vec![available / col_count as f32; col_count]
+        } else {
+            let distributable = available - total_min;
+            natural
+                .iter()
+                .map(|w| min_width + distributable * (w / total))
+                .collect()
+        }
     }
 }
 
@@ -509,28 +518,35 @@ fn render_table_separator(ui: &mut egui::Ui, border: egui::Color32) {
     );
 }
 
+fn stripe_bg_color(is_dark: bool) -> egui::Color32 {
+    if is_dark {
+        egui::Color32::from_white_alpha(6)
+    } else {
+        egui::Color32::from_black_alpha(6)
+    }
+}
+
+fn row_fill(row_idx: usize, stripe_bg: egui::Color32) -> egui::Color32 {
+    if row_idx % 2 == 1 {
+        stripe_bg
+    } else {
+        egui::Color32::TRANSPARENT
+    }
+}
+
 fn render_table_body(
     ui: &mut egui::Ui,
     rows: &[Vec<Vec<TextSegment>>],
     ctx: &RenderCtx,
     col_widths: &[f32],
 ) {
-    let stripe_bg = if ctx.semantic.is_dark() {
-        egui::Color32::from_white_alpha(6)
-    } else {
-        egui::Color32::from_black_alpha(6)
-    };
+    let stripe_bg = stripe_bg_color(ctx.semantic.is_dark());
 
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
         .show(ui, |ui| {
             for (row_idx, row) in rows.iter().enumerate() {
-                let fill = if row_idx % 2 == 1 {
-                    stripe_bg
-                } else {
-                    egui::Color32::TRANSPARENT
-                };
-                render_table_row(ui, row, fill, ctx, col_widths);
+                render_table_row(ui, row, row_fill(row_idx, stripe_bg), ctx, col_widths);
             }
         });
 }
@@ -542,10 +558,11 @@ fn render_table_row(
     ctx: &RenderCtx,
     col_widths: &[f32],
 ) {
+    let empty_cell: Vec<TextSegment> = Vec::new();
     egui::Frame::new().fill(fill).show(ui, |ui| {
         ui.horizontal(|ui| {
-            for (i, cell) in row.iter().enumerate().take(col_widths.len()) {
-                let width = col_widths[i];
+            for (i, &width) in col_widths.iter().enumerate() {
+                let cell = row.get(i).unwrap_or(&empty_cell);
                 ui.vertical(|ui| {
                     ui.set_min_width(width);
                     ui.set_max_width(width);

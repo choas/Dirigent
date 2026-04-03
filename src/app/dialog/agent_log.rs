@@ -133,36 +133,41 @@ impl DirigentApp {
         analyze_run_idx: &mut Option<usize>,
         fix_run_idx: &mut Option<usize>,
     ) {
-        let dur = crate::app::util::format_duration_ms(run.duration_ms);
-        let (status_icon, status_color) = status_icon_and_color(run, &self.semantic);
-
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(status_icon)
-                    .strong()
-                    .color(status_color),
-            );
-            ui.label(
-                egui::RichText::new(&run.started_at)
-                    .small()
-                    .color(self.semantic.muted_text()),
-            );
-            ui.label(
-                egui::RichText::new(format!("({})", dur))
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
-            if let Some(cue_id) = run.cue_id {
-                ui.label(
-                    egui::RichText::new(format!("cue #{}", cue_id))
-                        .small()
-                        .color(self.semantic.tertiary_text),
-                );
-            }
+            self.render_run_header_labels(ui, run);
             self.render_run_action_buttons(ui, kind, run, idx, analyze_run_idx, fix_run_idx);
         });
 
         self.render_log_output_block(ui, run);
+    }
+
+    /// Render the status icon, timestamp, duration, and optional cue ID labels.
+    fn render_run_header_labels(&self, ui: &mut egui::Ui, run: &AgentRunEntry) {
+        let dur = crate::app::util::format_duration_ms(run.duration_ms);
+        let (status_icon, status_color) = status_icon_and_color(run, &self.semantic);
+
+        ui.label(
+            egui::RichText::new(status_icon)
+                .strong()
+                .color(status_color),
+        );
+        ui.label(
+            egui::RichText::new(&run.started_at)
+                .small()
+                .color(self.semantic.muted_text()),
+        );
+        ui.label(
+            egui::RichText::new(format!("({})", dur))
+                .small()
+                .color(self.semantic.secondary_text),
+        );
+        if let Some(cue_id) = run.cue_id {
+            ui.label(
+                egui::RichText::new(format!("cue #{}", cue_id))
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            );
+        }
     }
 
     /// Render the Analyze / Fix action buttons for a run entry.
