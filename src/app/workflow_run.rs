@@ -295,12 +295,16 @@ impl DirigentApp {
             .collect()
     }
 
-    /// Check if the workflow is currently active (has a plan that isn't all completed).
+    /// Check if the workflow is currently executing (has Running or Paused steps).
     pub(super) fn is_workflow_active(&self) -> bool {
-        self.workflow_plan
-            .as_ref()
-            .map(|p| !p.is_complete())
-            .unwrap_or(false)
+        self.workflow_plan.as_ref().map_or(false, |p| {
+            p.steps.iter().any(|s| {
+                matches!(
+                    s.status,
+                    WorkflowStepStatus::Running | WorkflowStepStatus::PausedAwaitingReview
+                )
+            })
+        })
     }
 }
 
