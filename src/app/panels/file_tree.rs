@@ -258,7 +258,15 @@ impl DirigentApp {
         // Precompute graph column width: each lane = 12px, cap at 6 lanes.
         let lane_width = 12.0_f32;
         let visible_lanes = self.git.graph_max_lanes.min(6).max(1);
-        let graph_col_width = (visible_lanes as f32 + 0.5) * lane_width;
+        let has_overflow = self.git.graph_max_lanes > 6;
+        let extra_for_ellipsis = if has_overflow { 1.0_f32 } else { 0.0 };
+        let graph_col_width = (visible_lanes as f32 + extra_for_ellipsis + 0.5) * lane_width;
+
+        // Compute branch lineage highlight from previous frame's hovered row.
+        let lineage = self
+            .git
+            .hovered_graph_row
+            .and_then(|row| compute_branch_lineage(&self.git.graph_rows, row));
 
         egui::ScrollArea::vertical()
             .id_salt("git_log_scroll")
@@ -271,10 +279,12 @@ impl DirigentApp {
                     .saturating_sub(hash_prefix_len)
                     .max(10);
                 let ahead = self.git.ahead_of_remote;
+                let mut new_hovered: Option<usize> = None;
                 for (idx, commit) in self.git.commit_history.iter().enumerate() {
                     let is_unpushed = idx < ahead;
                     let graph_row = self.git.graph_rows.get(idx);
-                    if render_commit_row(
+                    let highlight_lane = lineage.as_ref().filter(|l| l.rows[idx]).map(|l| l.lane);
+                    let (clicked, hovered) = render_commit_row(
                         ui,
                         commit,
                         is_unpushed,
@@ -283,14 +293,21 @@ impl DirigentApp {
                         graph_col_width,
                         lane_width,
                         &self.semantic,
-                    ) {
+                        highlight_lane,
+                        lineage.is_some(),
+                    );
+                    if clicked {
                         clicked_commit = Some((
                             commit.full_hash.clone(),
                             commit.message.clone(),
                             commit.body.clone(),
                         ));
                     }
+                    if hovered {
+                        new_hovered = Some(idx);
+                    }
                 }
+                self.git.hovered_graph_row = new_hovered;
                 if self.git.commit_history.len() == self.git.commit_history_limit {
                     ui.add_space(4.0);
                     if ui
@@ -484,8 +501,57 @@ impl DirigentApp {
 // Git graph rendering helpers
 // ---------------------------------------------------------------------------
 
+/// Result of computing which rows belong to a branch lineage.
+struct BranchLineage {
+    /// Per-row flag: true if this row is part of the highlighted lineage.
+    rows: Vec<bool>,
+    /// The lane column that defines this lineage.
+    lane: usize,
+}
+
+/// Trace the contiguous branch path through `lane` starting from `hovered_row`.
+/// Returns `None` if the hovered row is out of range or has no graph data.
+fn compute_branch_lineage(
+    graph_rows: &[crate::git::graph::GraphRow],
+    hovered_row: usize,
+) -> Option<BranchLineage> {
+    let graph = graph_rows.get(hovered_row)?;
+    let lane = graph.column;
+    let num = graph_rows.len();
+    let mut rows = vec![false; num];
+    rows[hovered_row] = true;
+
+    // Trace upward: contiguous non-Empty segments in this lane.
+    for i in (0..hovered_row).rev() {
+        let seg = graph_rows[i]
+            .lanes
+            .get(lane)
+            .copied()
+            .unwrap_or(crate::git::graph::LaneSegment::Empty);
+        if seg == crate::git::graph::LaneSegment::Empty {
+            break;
+        }
+        rows[i] = true;
+    }
+
+    // Trace downward.
+    for i in (hovered_row + 1)..num {
+        let seg = graph_rows[i]
+            .lanes
+            .get(lane)
+            .copied()
+            .unwrap_or(crate::git::graph::LaneSegment::Empty);
+        if seg == crate::git::graph::LaneSegment::Empty {
+            break;
+        }
+        rows[i] = true;
+    }
+
+    Some(BranchLineage { rows, lane })
+}
+
 /// Render one commit row: graph column on the left, commit text on the right.
-/// Returns true if the row was clicked.
+/// Returns (clicked, hovered).
 #[allow(clippy::too_many_arguments)]
 fn render_commit_row(
     ui: &mut egui::Ui,
@@ -496,7 +562,9 @@ fn render_commit_row(
     graph_col_width: f32,
     lane_width: f32,
     semantic: &SemanticColors,
-) -> bool {
+    highlight_lane: Option<usize>,
+    any_highlight_active: bool,
+) -> (bool, bool) {
     let is_dark = semantic.is_dark();
     let lane_colors = semantic.lane_colors();
     let row_height = ui.text_style_height(&egui::TextStyle::Small) + 4.0;
@@ -505,6 +573,16 @@ fn render_commit_row(
     // Allocate full row for click detection.
     let (row_rect, response) =
         ui.allocate_exact_size(egui::vec2(full_width, row_height), egui::Sense::click());
+
+    // Branch lineage highlight (tinted row background).
+    if highlight_lane.is_some() {
+        let tint = if is_dark {
+            egui::Color32::from_white_alpha(8)
+        } else {
+            egui::Color32::from_black_alpha(6)
+        };
+        ui.painter().rect_filled(row_rect, 0, tint);
+    }
 
     // Hover highlight.
     if response.hovered() {
@@ -526,6 +604,8 @@ fn render_commit_row(
             lane_width,
             row_height,
             &lane_colors,
+            highlight_lane,
+            any_highlight_active,
         );
     }
 
@@ -579,13 +659,18 @@ fn render_commit_row(
     }
 
     // Hover tooltip.
-    let hover = format_commit_hover(commit, is_unpushed);
-    let response = response.on_hover_text(hover);
+    let hover_text = format_commit_hover(commit, is_unpushed);
+    let hovered = response.hovered();
+    let response = response.on_hover_text(hover_text);
 
-    response.clicked()
+    (response.clicked(), hovered)
 }
 
 /// Paint the graph column (lane lines + commit dot) for one row.
+///
+/// `highlight_lane`: if `Some(lane)`, that lane is part of the highlighted branch lineage.
+/// `any_highlight_active`: true when any row is being highlighted (dims non-highlighted lanes).
+#[allow(clippy::too_many_arguments)]
 fn paint_graph_column(
     ui: &egui::Ui,
     row_rect: egui::Rect,
@@ -594,6 +679,8 @@ fn paint_graph_column(
     lane_width: f32,
     row_height: f32,
     lane_colors: &[egui::Color32; 6],
+    highlight_lane: Option<usize>,
+    any_highlight_active: bool,
 ) {
     use crate::git::graph::LaneSegment;
 
@@ -602,18 +689,31 @@ fn paint_graph_column(
     let top = row_rect.top();
     let bot = row_rect.bottom();
     let mid_y = row_rect.center().y;
-    let line_width = 1.5;
+    let base_line_width = 1.5;
 
     // Clip to graph column area.
     let _graph_rect =
         egui::Rect::from_min_size(row_rect.min, egui::vec2(graph_col_width, row_height));
 
+    let max_visible_lanes = 6;
     for (lane_idx, segment) in graph.lanes.iter().enumerate() {
-        if lane_idx >= 6 {
+        if lane_idx >= max_visible_lanes {
             break; // Cap at 6 visible lanes.
         }
         let x = graph_left + (lane_idx as f32 + 0.5) * lane_width;
-        let color = lane_colors[lane_idx % lane_colors.len()];
+        let base_color = lane_colors[lane_idx % lane_colors.len()];
+
+        // Determine color and stroke width based on highlight state.
+        let is_hl = highlight_lane == Some(lane_idx);
+        let (color, line_width) = if any_highlight_active {
+            if is_hl {
+                (base_color, base_line_width * 1.6)
+            } else {
+                (base_color.linear_multiply(0.25), base_line_width)
+            }
+        } else {
+            (base_color, base_line_width)
+        };
 
         match segment {
             LaneSegment::Straight => {
@@ -633,7 +733,8 @@ fn paint_graph_column(
                     egui::Stroke::new(line_width, color),
                 );
                 // Commit dot.
-                painter.circle_filled(egui::pos2(x, mid_y), 3.0, color);
+                let dot_radius = if is_hl { 4.0 } else { 3.0 };
+                painter.circle_filled(egui::pos2(x, mid_y), dot_radius, color);
             }
             LaneSegment::ForkRight => {
                 // Diagonal from commit lane to this lane (top to mid).
@@ -665,21 +766,58 @@ fn paint_graph_column(
         }
     }
 
+    // Ellipsis column: show "···" when this row has active lanes beyond the visible cap.
+    let has_overflow = graph
+        .lanes
+        .iter()
+        .skip(max_visible_lanes)
+        .any(|s| *s != LaneSegment::Empty);
+    if has_overflow {
+        let ellipsis_x = graph_left + (max_visible_lanes as f32 + 0.5) * lane_width;
+        let color = ui.visuals().text_color().gamma_multiply(0.4);
+        painter.text(
+            egui::pos2(ellipsis_x, mid_y),
+            egui::Align2::CENTER_CENTER,
+            "\u{00B7}\u{00B7}\u{00B7}",
+            egui::FontId::monospace(row_height * 0.7),
+            color,
+        );
+    }
+
     // Draw connection diagonals for merge/fork lines.
     for &(from_lane, to_lane) in &graph.connections {
-        if from_lane >= 6 || to_lane >= 6 {
+        // Cap overflow lanes to the ellipsis column position.
+        let vis_from = from_lane.min(max_visible_lanes);
+        let vis_to = to_lane.min(max_visible_lanes);
+        if vis_from == vis_to {
             continue;
         }
-        let from_x = graph_left + (from_lane as f32 + 0.5) * lane_width;
-        let to_x = graph_left + (to_lane as f32 + 0.5) * lane_width;
-        let color = lane_colors[to_lane % lane_colors.len()];
+        let from_x = graph_left + (vis_from as f32 + 0.5) * lane_width;
+        let to_x = graph_left + (vis_to as f32 + 0.5) * lane_width;
+        let color_idx = to_lane.min(lane_colors.len() - 1);
+        let base_color = lane_colors[color_idx % lane_colors.len()];
+        let conn_involves_hl = highlight_lane == Some(from_lane) || highlight_lane == Some(to_lane);
+        let (color, conn_width) = if any_highlight_active {
+            if conn_involves_hl {
+                (base_color, base_line_width * 1.6)
+            } else {
+                (base_color.linear_multiply(0.25), base_line_width)
+            }
+        } else {
+            (base_color, base_line_width)
+        };
         // Only draw explicit connection if not already drawn by ForkRight/MergeLeft.
-        if graph.lanes.get(to_lane) != Some(&LaneSegment::ForkRight)
-            && graph.lanes.get(to_lane) != Some(&LaneSegment::MergeLeft)
+        let target_segment = if to_lane < max_visible_lanes {
+            graph.lanes.get(to_lane)
+        } else {
+            None
+        };
+        if target_segment != Some(&LaneSegment::ForkRight)
+            && target_segment != Some(&LaneSegment::MergeLeft)
         {
             painter.line_segment(
                 [egui::pos2(from_x, mid_y), egui::pos2(to_x, mid_y)],
-                egui::Stroke::new(line_width, color),
+                egui::Stroke::new(conn_width, color),
             );
         }
     }
