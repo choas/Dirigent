@@ -48,15 +48,15 @@ impl DirigentApp {
                     let mut actions: Vec<(i64, CueAction)> = Vec::new();
                     let mut load_more_archived = false;
 
-                    let cues_snapshot = self.cues.clone();
+                    // Temporarily move cues out so we can borrow them immutably
+                    // while calling &mut self methods for rendering (zero-cost
+                    // vs the previous .clone()).
+                    let cues_owned = std::mem::take(&mut self.cues);
                     let source_filter = self.sources.filter.clone();
                     let filtered_archived_count = self.cached_filtered_archived_count;
                     for &status in CueStatus::all() {
-                        let section_cues: Vec<&Cue> = filter_cues_by_status_and_source(
-                            &cues_snapshot,
-                            status,
-                            &source_filter,
-                        );
+                        let section_cues: Vec<&Cue> =
+                            filter_cues_by_status_and_source(&cues_owned, status, &source_filter);
                         self.render_cue_section(
                             ui,
                             status,
@@ -66,6 +66,7 @@ impl DirigentApp {
                             filtered_archived_count,
                         );
                     }
+                    self.cues = cues_owned;
 
                     if load_more_archived {
                         self.archived_cue_limit += 50;
