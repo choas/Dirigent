@@ -35,9 +35,11 @@ impl DirigentApp {
                     if ahead == 1 { "" } else { "s" },
                     branch,
                 ));
+                ui.add_space(SPACE_XS);
+
                 ui.label(
                     egui::RichText::new(format!(
-                        "'{}' will be reset to origin/{}.",
+                        "This will create a new branch, reset '{}' back to origin/{}, and switch to the new branch so you can push and create a PR.",
                         branch, branch
                     ))
                     .small()
