@@ -420,6 +420,8 @@ impl DirigentApp {
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
+        let (graph_rows, graph_max_lanes) = git::graph::compute_graph(&commit_history);
+
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
             if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
@@ -461,6 +463,9 @@ impl DirigentApp {
                 commit_history_total,
                 commit_history_limit: 10,
                 show_log: false,
+                graph_rows,
+                graph_max_lanes,
+                history_cache_key: (String::new(), 0),
                 worktrees,
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,

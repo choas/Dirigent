@@ -373,6 +373,12 @@ pub(crate) struct GitState {
     pub(super) commit_history_total: usize,
     pub(super) commit_history_limit: usize,
     pub(super) show_log: bool,
+    /// Graph layout rows corresponding to `commit_history` (one per commit).
+    pub(super) graph_rows: Vec<git::graph::GraphRow>,
+    /// Maximum number of simultaneous lanes in the current graph.
+    pub(super) graph_max_lanes: usize,
+    /// Cache key for commit history: (HEAD hash, limit) — skip reload if unchanged.
+    pub(super) history_cache_key: (String, usize),
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,

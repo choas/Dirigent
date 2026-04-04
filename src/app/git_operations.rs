@@ -711,7 +711,22 @@ impl DirigentApp {
 
     pub(super) fn reload_commit_history(&mut self) {
         let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        // Cache key: HEAD hash + requested limit. Skip if unchanged.
+        let head_hash = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.last_commit_hash.clone())
+            .unwrap_or_default();
+        let cache_key = (head_hash, limit);
+        if cache_key == self.git.history_cache_key {
+            return;
+        }
         self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
+        let (rows, max_lanes) = git::graph::compute_graph(&self.git.commit_history);
+        self.git.graph_rows = rows;
+        self.git.graph_max_lanes = max_lanes;
+        self.git.history_cache_key = cache_key;
     }
 }

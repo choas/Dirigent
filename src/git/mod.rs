@@ -1,6 +1,7 @@
 mod archive;
 mod commit;
 mod diff;
+pub(crate) mod graph;
 mod history;
 mod merge;
 mod pr;
