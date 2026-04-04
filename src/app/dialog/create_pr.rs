@@ -21,86 +21,97 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let branch = self
-                    .git
-                    .info
-                    .as_ref()
-                    .map(|i| i.branch.as_str())
-                    .unwrap_or("unknown");
-                ui.label(
-                    egui::RichText::new(format!("Branch: {}", branch))
-                        .monospace()
-                        .color(self.semantic.accent),
-                );
-                ui.add_space(SPACE_SM);
+                // Buttons at bottom — always visible
+                egui::Panel::bottom("create_pr_buttons")
+                    .show_separator_line(false)
+                    .show_inside(ui, |ui| {
+                        ui.add_space(SPACE_SM);
 
-                // Title
-                ui.label(egui::RichText::new("Title").strong());
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.git.pr_title)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("PR title"),
-                );
-                ui.add_space(SPACE_XS);
+                        // Info: will push
+                        let ahead = self.git.ahead_of_remote;
+                        if ahead > 0 {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "\u{2191} {} commit{} will be pushed",
+                                    ahead,
+                                    if ahead == 1 { "" } else { "s" }
+                                ))
+                                .color(self.semantic.accent),
+                            );
+                            ui.add_space(SPACE_XS);
+                        }
 
-                // Base branch
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Base branch").strong());
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.git.pr_base)
-                            .desired_width(120.0)
-                            .hint_text("main"),
-                    );
-                });
-                ui.add_space(SPACE_XS);
+                        ui.horizontal(|ui| {
+                            let can_create =
+                                !self.git.pr_title.trim().is_empty() && !self.git.creating_pr;
+                            let create_btn = egui::Button::new(
+                                icon("\u{2191} Push & Create PR", fs)
+                                    .color(self.semantic.badge_text),
+                            )
+                            .fill(self.semantic.accent);
+                            if ui
+                                .add_enabled(can_create, create_btn)
+                                .on_hover_text(
+                                    "Push the branch and create the pull request on GitHub",
+                                )
+                                .clicked()
+                            {
+                                do_create = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                dismiss = true;
+                            }
+                        });
+                    });
 
-                // Body
-                ui.label(egui::RichText::new("Description").strong());
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.git.pr_body)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(8)
-                        .hint_text("PR description (optional)")
-                        .font(egui::TextStyle::Monospace),
-                );
-                ui.add_space(SPACE_XS);
-
-                // Draft checkbox
-                ui.checkbox(&mut self.git.pr_draft, "Create as draft");
-
-                ui.add_space(SPACE_SM);
-
-                // Info: will push
-                let ahead = self.git.ahead_of_remote;
-                if ahead > 0 {
+                // Scrollable content
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let branch = self
+                        .git
+                        .info
+                        .as_ref()
+                        .map(|i| i.branch.as_str())
+                        .unwrap_or("unknown");
                     ui.label(
-                        egui::RichText::new(format!(
-                            "\u{2191} {} commit{} will be pushed",
-                            ahead,
-                            if ahead == 1 { "" } else { "s" }
-                        ))
-                        .color(self.semantic.accent),
+                        egui::RichText::new(format!("Branch: {}", branch))
+                            .monospace()
+                            .color(self.semantic.accent),
+                    );
+                    ui.add_space(SPACE_SM);
+
+                    // Title
+                    ui.label(egui::RichText::new("Title").strong());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.git.pr_title)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("PR title"),
                     );
                     ui.add_space(SPACE_XS);
-                }
 
-                // Buttons
-                ui.horizontal(|ui| {
-                    let can_create = !self.git.pr_title.trim().is_empty() && !self.git.creating_pr;
-                    let create_btn = egui::Button::new(
-                        icon("\u{2191} Push & Create PR", fs).color(self.semantic.badge_text),
-                    )
-                    .fill(self.semantic.accent);
-                    if ui
-                        .add_enabled(can_create, create_btn)
-                        .on_hover_text("Push the branch and create the pull request on GitHub")
-                        .clicked()
-                    {
-                        do_create = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        dismiss = true;
-                    }
+                    // Base branch
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Base branch").strong());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.git.pr_base)
+                                .desired_width(120.0)
+                                .hint_text("main"),
+                        );
+                    });
+                    ui.add_space(SPACE_XS);
+
+                    // Body
+                    ui.label(egui::RichText::new("Description").strong());
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.git.pr_body)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(8)
+                            .hint_text("PR description (optional)")
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.add_space(SPACE_XS);
+
+                    // Draft checkbox
+                    ui.checkbox(&mut self.git.pr_draft, "Create as draft");
                 });
             });
 
