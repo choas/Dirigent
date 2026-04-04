@@ -415,7 +415,6 @@ impl DirigentApp {
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
-                self.reload_cues();
                 return false;
             }
         };
@@ -581,11 +580,7 @@ impl DirigentApp {
             .is_some_and(|&current| current != result.exec_id);
 
         if !is_stale {
-            if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
-                let _ = self.db.update_execution_log(result.exec_id, log_text);
-            }
-            self.claude.exec_ids.remove(&result.cue_id);
-            self.claude.start_times.remove(&result.cue_id);
+            self.flush_and_clear_tracking(&result);
         }
 
         let _ = self.db.update_execution_metrics(
@@ -597,14 +592,43 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
-        // Detect usage-limit messages in the response or log before deciding
-        // which handler to use.  When a hard rate/usage limit is hit, Claude
-        // exits without changes and we must NOT treat it as "no changes needed".
-        //
-        // `running_logs` is keyed by `cue_id`, so for stale results (where a
-        // newer execution has already started) the buffer belongs to a different
-        // run.  Only consult it when the result is current.
-        let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
+        let usage_limit_msg = self.detect_result_usage_limit(&result, is_stale);
+
+        self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
+
+        if is_stale {
+            self.complete_stale_execution(&result);
+            return;
+        }
+
+        let is_error = self.dispatch_result(&result, &usage_limit_msg);
+
+        if !is_error {
+            self.handle_successful_run(&result);
+        }
+
+        self.refresh_conversation_history(result.cue_id);
+        self.reload_cues();
+        // We already returned early for stale results above.
+        self.on_workflow_cue_completed(result.cue_id);
+    }
+
+    /// Flush the running log to DB and remove tracking state for a completed result.
+    fn flush_and_clear_tracking(&mut self, result: &ClaudeResult) {
+        if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
+            let _ = self.db.update_execution_log(result.exec_id, log_text);
+        }
+        self.claude.exec_ids.remove(&result.cue_id);
+        self.claude.start_times.remove(&result.cue_id);
+    }
+
+    /// Detect usage-limit messages in the response or log.
+    ///
+    /// `running_logs` is keyed by `cue_id`, so for stale results (where a
+    /// newer execution has already started) the buffer belongs to a different
+    /// run.  Only consult it when the result is current.
+    fn detect_result_usage_limit(&self, result: &ClaudeResult, is_stale: bool) -> Option<String> {
+        claude::detect_usage_limit(&result.response)
             .or_else(|| {
                 if is_stale {
                     return None;
@@ -614,56 +638,43 @@ impl DirigentApp {
                     .get(&result.cue_id)
                     .and_then(|(log, _)| claude::detect_usage_limit(log))
             })
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+    }
 
-        self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
-
-        if is_stale {
-            self.complete_stale_execution(&result);
-            return;
-        }
-
-        let is_error = if let Some(ref error) = result.error {
-            self.handle_run_error(&result, error);
+    /// Route the result to the appropriate handler. Returns `true` if the
+    /// result represents an error condition.
+    fn dispatch_result(&mut self, result: &ClaudeResult, usage_limit_msg: &Option<String>) -> bool {
+        if let Some(ref error) = result.error {
+            self.handle_run_error(result, error);
             true
         } else if let Some(ref limit_line) = usage_limit_msg {
-            self.handle_rate_limit(&result, limit_line);
+            self.handle_rate_limit(result, limit_line);
             true
         } else if result.diff.is_some() {
-            self.handle_run_with_diff(&result);
+            self.handle_run_with_diff(result);
             false
         } else {
-            self.handle_run_no_changes(&result);
+            self.handle_run_no_changes(result);
             false
-        };
-
-        // After every successful run, refresh git state and open tabs so that
-        // commits made by Claude Code (or any other file changes) are visible
-        // immediately in the UI — git log, dirty-file markers, tab contents.
-        if !is_error {
-            // Detect Claude Code plan (ExitPlanMode) in the log output.
-            let plan_path = self
-                .claude
-                .running_logs
-                .get(&result.cue_id)
-                .and_then(|(log, _)| claude::extract_plan_path(log));
-            let _ = self
-                .db
-                .update_cue_plan_path(result.cue_id, plan_path.as_deref());
-
-            self.refresh_open_tabs();
-            self.reload_git_info();
-            self.reload_commit_history();
-            self.try_dispatch_follow_up(result.cue_id);
         }
+    }
 
-        self.refresh_conversation_history(result.cue_id);
-        self.reload_cues();
+    /// Post-processing after a successful (non-error) run: refresh git state,
+    /// open tabs, and dispatch any queued follow-ups.
+    fn handle_successful_run(&mut self, result: &ClaudeResult) {
+        let plan_path = self
+            .claude
+            .running_logs
+            .get(&result.cue_id)
+            .and_then(|(log, _)| claude::extract_plan_path(log));
+        let _ = self
+            .db
+            .update_cue_plan_path(result.cue_id, plan_path.as_deref());
 
-        // If this cue is part of a workflow, check if the step is complete.
-        if !is_stale {
-            self.on_workflow_cue_completed(result.cue_id);
-        }
+        self.refresh_open_tabs();
+        self.reload_git_info();
+        self.reload_commit_history();
+        self.try_dispatch_follow_up(result.cue_id);
     }
 
     /// Finalize a stale execution in the DB without touching live state.
