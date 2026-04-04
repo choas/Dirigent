@@ -9,6 +9,7 @@ use crate::settings::SemanticColors;
 struct MenuBarActions {
     push_clicked: bool,
     pull_clicked: bool,
+    move_to_branch_clicked: bool,
     create_pr_clicked: bool,
     import_pr_clicked: bool,
     run_all_agents: bool,
@@ -69,6 +70,29 @@ impl DirigentApp {
             }
 
             self.render_git_menu_pull_push(ui, actions);
+
+            // Show "Move to Branch" when on main/master with commits ahead
+            let is_default = self
+                .git
+                .info
+                .as_ref()
+                .map(|i| i.branch == "main" || i.branch == "master")
+                .unwrap_or(false);
+            if is_default && self.git.ahead_of_remote > 0 {
+                let label = format!(
+                    "Move {} commit{} to branch",
+                    self.git.ahead_of_remote,
+                    if self.git.ahead_of_remote == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                );
+                if ui.button(label).clicked() {
+                    actions.move_to_branch_clicked = true;
+                    ui.close();
+                }
+            }
 
             ui.separator();
 
@@ -260,6 +284,9 @@ impl DirigentApp {
         }
         if actions.push_clicked {
             self.start_git_push();
+        }
+        if actions.move_to_branch_clicked {
+            self.open_move_to_branch_dialog();
         }
         if actions.create_pr_clicked {
             self.open_create_pr_dialog();
