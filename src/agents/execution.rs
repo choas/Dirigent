@@ -310,8 +310,8 @@ fn wait_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = collect_drained(stdout_handle);
-                let stderr = collect_drained(stderr_handle);
+                let stdout = collect_drained(stdout_handle).unwrap_or_default();
+                let stderr = collect_drained(stderr_handle).unwrap_or_default();
                 return WaitResult::Completed(std::process::Output {
                     status,
                     stdout,

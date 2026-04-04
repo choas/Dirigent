@@ -54,6 +54,8 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use eframe::egui;
 
+type WorkflowResult = Result<(crate::workflow::WorkflowPlan, Option<String>), String>;
+
 /// Truncate a string to at most `max_bytes` without panicking on UTF-8 boundaries.
 /// Returns a slice that ends at or before `max_bytes` on a valid char boundary.
 pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
@@ -274,7 +276,7 @@ pub struct DirigentApp {
     // Workflow plan state
     workflow_plan: Option<crate::workflow::WorkflowPlan>,
     workflow_generating: bool,
-    workflow_rx: Option<mpsc::Receiver<Result<crate::workflow::WorkflowPlan, String>>>,
+    workflow_rx: Option<mpsc::Receiver<WorkflowResult>>,
     /// Warning from workflow plan parsing (e.g. missing cues, fallback).
     workflow_warning: Option<String>,
     /// Whether the workflow graph overlay is visible (separate from plan existence).
@@ -699,6 +701,13 @@ impl DirigentApp {
             self.claude.expand_running = true;
             self.reload_cues();
             self.trigger_claude(id);
+            // Verify the run actually started — trigger_claude may bail out
+            // (e.g. home guard sync failure) leaving the cue stuck in Ready.
+            if !self.claude.running_logs.contains_key(&id) {
+                let _ = self.db.update_cue_status(id, CueStatus::Inbox);
+                self.reload_cues();
+                return false;
+            }
             true
         } else {
             false

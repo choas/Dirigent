@@ -174,7 +174,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                     timeout: 120,
                 },
                 Step {
-                    cmd: "python -m py_compile *.py 2>&1",
+                    cmd: "python -m compileall -q . 2>&1",
                     timeout: 60,
                 },
                 Step {
@@ -216,24 +216,24 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                     timeout: 60,
                 },
                 Step {
-                    cmd: "mvn checkstyle:check 2>&1",
+                    cmd: "./mvnw checkstyle:check 2>&1",
                     timeout: 120,
                 },
                 Step {
-                    cmd: "mvn compile 2>&1",
+                    cmd: "./mvnw compile 2>&1",
                     timeout: 180,
                 },
                 Step {
-                    cmd: "mvn test 2>&1",
+                    cmd: "./mvnw test 2>&1",
                     timeout: 300,
                 },
             );
             v.push(outdated_agent(
-                "mvn versions:display-dependency-updates 2>&1",
+                "./mvnw versions:display-dependency-updates 2>&1",
                 120,
             ));
             v.push(audit_agent(
-                "mvn org.owasp:dependency-check-maven:check 2>&1",
+                "./mvnw org.owasp:dependency-check-maven:check 2>&1",
             ));
             v
         }

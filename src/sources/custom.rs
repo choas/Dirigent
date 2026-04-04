@@ -53,7 +53,7 @@ fn is_allowed_command_char(c: char) -> bool {
 /// Only permits known-safe characters via an allowlist. Rejects empty
 /// commands, excessively long commands, and any character not on the allowlist.
 pub(super) fn validate_command(command: &str) -> Result<(), String> {
-    if command.is_empty() {
+    if command.trim().is_empty() {
         return Err("empty command".to_string());
     }
     if command.len() > MAX_COMMAND_LENGTH {
@@ -80,7 +80,7 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
 ///
 /// Returns join handles whose value is the captured bytes.  Pass the results
 /// through [`collect_drained`] to get the final `Vec<u8>` values.
-type PipeHandle = Option<std::thread::JoinHandle<Vec<u8>>>;
+type PipeHandle = Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>;
 
 pub(crate) fn drain_child_pipes(child: &mut std::process::Child) -> (PipeHandle, PipeHandle) {
     use std::io::Read;
@@ -88,23 +88,28 @@ pub(crate) fn drain_child_pipes(child: &mut std::process::Child) -> (PipeHandle,
     let stdout_handle = child.stdout.take().map(|mut out| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
-            let _ = out.read_to_end(&mut buf);
-            buf
+            out.read_to_end(&mut buf)?;
+            Ok(buf)
         })
     });
     let stderr_handle = child.stderr.take().map(|mut err| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
-            let _ = err.read_to_end(&mut buf);
-            buf
+            err.read_to_end(&mut buf)?;
+            Ok(buf)
         })
     });
     (stdout_handle, stderr_handle)
 }
 
 /// Collect the output from drain handles returned by [`drain_child_pipes`].
-pub(crate) fn collect_drained(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    handle.and_then(|h| h.join().ok()).unwrap_or_default()
+pub(crate) fn collect_drained(handle: PipeHandle) -> std::io::Result<Vec<u8>> {
+    match handle {
+        Some(h) => h
+            .join()
+            .map_err(|_| std::io::Error::other("pipe reader thread panicked"))?,
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Run a command with a timeout. Returns the output or an IO error on timeout.
@@ -134,8 +139,8 @@ pub(crate) fn output_with_timeout(
         }
     };
 
-    let stdout = collect_drained(stdout_handle);
-    let stderr = collect_drained(stderr_handle);
+    let stdout = collect_drained(stdout_handle)?;
+    let stderr = collect_drained(stderr_handle)?;
 
     Ok(std::process::Output {
         status,

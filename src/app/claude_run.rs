@@ -405,10 +405,18 @@ impl DirigentApp {
         provider: CliProvider,
         matched_command: &Option<CueCommand>,
     ) {
-        let exec_id = self
-            .db
-            .insert_execution(cue_id, &prompt, &provider)
-            .unwrap_or(0);
+        let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to create execution record for cue {cue_id}: {e}");
+                self.claude.running_logs.remove(&cue_id);
+                self.claude.start_times.remove(&cue_id);
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.set_status_message(format!("Failed to start run: {e}"));
+                self.reload_cues();
+                return;
+            }
+        };
 
         self.claude.exec_ids.insert(cue_id, exec_id);
         if let Ok(execs) = self.db.get_all_executions(cue_id) {

@@ -304,7 +304,7 @@ impl LspLanguage {
 
 fn preset_to_config(p: &LanguagePreset, enabled: bool) -> LspServerConfig {
     LspServerConfig {
-        id: generate_id(),
+        id: format!("preset-{}", p.server_name),
         name: p.server_name.into(),
         extensions: p.extensions.iter().map(|&s| s.into()).collect(),
         command: p.command.into(),

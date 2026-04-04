@@ -59,13 +59,14 @@ impl DirigentApp {
         self.workflow_generating = false;
         self.workflow_rx = None;
         match result {
-            Ok(plan) => {
+            Ok((plan, warning)) => {
                 let step_count = plan.steps.len();
                 let cue_count: usize = plan.steps.iter().map(|s| s.cue_ids.len()).sum();
                 self.set_status_message(format!(
                     "Workflow plan ready: {} steps, {} cues",
                     step_count, cue_count
                 ));
+                self.workflow_warning = warning;
                 self.workflow_plan = Some(plan);
                 self.show_workflow_graph = true;
             }
@@ -91,7 +92,14 @@ impl DirigentApp {
         let cue_ids: Vec<i64> = plan.steps[0].cue_ids.clone();
 
         for &cue_id in &cue_ids {
-            // Move cue to Ready and trigger
+            // Only move cues that are still in Inbox — skip already-completed ones.
+            let is_inbox = self
+                .cues
+                .iter()
+                .any(|c| c.id == cue_id && c.status == CueStatus::Inbox);
+            if !is_inbox {
+                continue;
+            }
             let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
             let _ = self.db.log_activity(cue_id, "Workflow: started (step 0)");
             self.cue_move_flash
@@ -100,9 +108,14 @@ impl DirigentApp {
         self.claude.expand_running = true;
         self.reload_cues();
 
-        // Trigger Claude for each cue in parallel (up to concurrency limit of 3)
         for &cue_id in &cue_ids {
-            self.trigger_claude(cue_id);
+            let is_ready = self
+                .cues
+                .iter()
+                .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
+            if is_ready {
+                self.trigger_claude(cue_id);
+            }
         }
     }
 
@@ -185,6 +198,14 @@ impl DirigentApp {
                 let cue_ids: Vec<i64> = plan.steps[idx].cue_ids.clone();
 
                 for &cue_id in &cue_ids {
+                    // Only move cues that are still in Inbox — skip already-completed ones.
+                    let is_inbox = self
+                        .cues
+                        .iter()
+                        .any(|c| c.id == cue_id && c.status == CueStatus::Inbox);
+                    if !is_inbox {
+                        continue;
+                    }
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
                     let _ = self
                         .db
@@ -196,7 +217,13 @@ impl DirigentApp {
                 self.reload_cues();
 
                 for &cue_id in &cue_ids {
-                    self.trigger_claude(cue_id);
+                    let is_ready = self
+                        .cues
+                        .iter()
+                        .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
+                    if is_ready {
+                        self.trigger_claude(cue_id);
+                    }
                 }
             }
             None => {
@@ -227,6 +254,10 @@ impl DirigentApp {
 
     /// Cancel the current workflow.
     pub(super) fn cancel_workflow(&mut self) {
+        // Invalidate any in-flight analysis so a late result cannot repopulate.
+        self.workflow_generating = false;
+        self.workflow_rx = None;
+
         // Collect cue IDs to cancel before mutating self.
         let cue_ids_to_cancel: Vec<i64> = self
             .workflow_plan
@@ -241,8 +272,16 @@ impl DirigentApp {
             .unwrap_or_default();
 
         for cue_id in cue_ids_to_cancel {
+            // Only demote cues still in Ready (running). Don't touch cues that
+            // already moved to Review/Done — that would discard completed work.
+            let is_ready = self
+                .cues
+                .iter()
+                .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
             self.cancel_cue_task(cue_id);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            if is_ready {
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            }
             let _ = self.db.log_activity(cue_id, "Workflow cancelled");
         }
         self.workflow_plan = None;
@@ -320,7 +359,7 @@ fn run_workflow_analysis(
     provider: &crate::settings::CliProvider,
     project_root: &std::path::Path,
     settings: &crate::settings::Settings,
-) -> Result<WorkflowPlan, String> {
+) -> Result<(WorkflowPlan, Option<String>), String> {
     use crate::settings::CliProvider;
 
     let response_text = match provider {
@@ -368,5 +407,5 @@ fn run_workflow_analysis(
     if let Some(ref w) = warning {
         eprintln!("[workflow] Warning: {}", w);
     }
-    Ok(plan)
+    Ok((plan, warning))
 }

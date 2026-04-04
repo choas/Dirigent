@@ -117,9 +117,9 @@ unsafe fn retarget_about_menu_item(
 ///   panic if the ObjC runtime were somehow unavailable.
 /// - `dataWithBytes:length:` copies the bytes into the NSData object, so
 ///   `png_bytes` does not need to outlive the call.
-/// - The returned `*mut Object` is an autoreleased NSImage (ownership
-///   follows ObjC conventions). The caller must retain it or ensure it is
-///   used within the current autorelease pool scope.
+/// - The returned `*mut Object` is an owned (+1) NSImage produced by
+///   `alloc`+`initWithData:`. The caller is responsible for releasing it
+///   or transferring ownership (e.g. to `setApplicationIconImage:`).
 ///
 /// **If pointers are invalid:** this function only receives a Rust slice
 /// (bounds-checked); the ObjC pointers are produced internally. A corrupted

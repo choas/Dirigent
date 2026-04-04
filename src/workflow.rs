@@ -139,12 +139,10 @@ pub(crate) fn parse_workflow_response(
                 })
                 .collect();
 
-            // Validate: ensure all expected cue IDs are present
+            // Deduplicate: each cue ID should appear only once across all steps.
             let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
-            for step in &steps {
-                for &id in &step.cue_ids {
-                    seen.insert(id);
-                }
+            for step in &mut steps {
+                step.cue_ids.retain(|id| seen.insert(*id));
             }
             let missing: Vec<i64> = expected_cue_ids
                 .iter()

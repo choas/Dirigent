@@ -11,7 +11,9 @@ impl DirigentApp {
         section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
     ) {
-        if status == CueStatus::Inbox && section_cues.len() >= 2 {
+        if status == CueStatus::Inbox
+            && (section_cues.len() >= 2 || self.workflow_plan.is_some() || self.workflow_generating)
+        {
             self.render_inbox_bulk_actions(ui, section_cues, actions);
         }
         if status == CueStatus::Review && section_cues.len() > 1 {
