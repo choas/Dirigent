@@ -400,7 +400,7 @@ fn fetch_sonar_duplicated_files(
     let mut items = Vec::new();
     for comp in components {
         let key = comp.get("key").and_then(|v| v.as_str()).unwrap_or("");
-        let file_path = key.split(':').last().unwrap_or(key);
+        let file_path = key.split(':').next_back().unwrap_or(key);
         let measures = comp.get("measures").and_then(|v| v.as_array());
         let Some(measures) = measures else { continue };
         let mut blocks = 0u64;
@@ -443,7 +443,11 @@ fn sonar_component_to_path(component: &str) -> String {
     if component.is_empty() {
         return String::new();
     }
-    component.split(':').last().unwrap_or(component).to_string()
+    component
+        .split(':')
+        .next_back()
+        .unwrap_or(component)
+        .to_string()
 }
 
 /// Format a SonarQube finding location suffix like `(file.rs:10, rule: S123)`.

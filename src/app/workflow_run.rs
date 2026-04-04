@@ -302,7 +302,7 @@ impl DirigentApp {
 
     /// Check if the workflow is currently executing (has Running or Paused steps).
     pub(super) fn is_workflow_active(&self) -> bool {
-        self.workflow_plan.as_ref().map_or(false, |p| {
+        self.workflow_plan.as_ref().is_some_and(|p| {
             p.steps.iter().any(|s| {
                 matches!(
                     s.status,

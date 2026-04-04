@@ -80,12 +80,9 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
 ///
 /// Returns join handles whose value is the captured bytes.  Pass the results
 /// through [`collect_drained`] to get the final `Vec<u8>` values.
-pub(crate) fn drain_child_pipes(
-    child: &mut std::process::Child,
-) -> (
-    Option<std::thread::JoinHandle<Vec<u8>>>,
-    Option<std::thread::JoinHandle<Vec<u8>>>,
-) {
+type PipeHandle = Option<std::thread::JoinHandle<Vec<u8>>>;
+
+pub(crate) fn drain_child_pipes(child: &mut std::process::Child) -> (PipeHandle, PipeHandle) {
     use std::io::Read;
 
     let stdout_handle = child.stdout.take().map(|mut out| {

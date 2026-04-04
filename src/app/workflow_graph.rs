@@ -69,19 +69,18 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         actions: &mut Vec<(i64, CueAction)>,
     ) {
-        let has_paused = self.workflow_plan.as_ref().map_or(false, |p| {
+        let has_paused = self.workflow_plan.as_ref().is_some_and(|p| {
             p.steps
                 .iter()
                 .any(|s| s.status == WorkflowStepStatus::PausedAwaitingReview)
         });
-        if has_paused {
-            if ui
+        if has_paused
+            && ui
                 .small_button(icon("\u{25B6} Resume", self.settings.font_size))
                 .on_hover_text("Resume workflow from paused step")
                 .clicked()
-            {
-                actions.push((0, CueAction::ResumeWorkflow));
-            }
+        {
+            actions.push((0, CueAction::ResumeWorkflow));
         }
         if ui
             .small_button(
@@ -100,21 +99,18 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let has_plan = self.workflow_plan.is_some();
-        let all_complete = self
-            .workflow_plan
-            .as_ref()
-            .map_or(false, |p| p.is_complete());
+        let all_complete = self.workflow_plan.as_ref().is_some_and(|p| p.is_complete());
 
-        if has_plan && !all_complete {
-            if ui
+        if has_plan
+            && !all_complete
+            && ui
                 .small_button(
                     icon("\u{25B6} Start", self.settings.font_size).color(self.semantic.badge_text),
                 )
                 .on_hover_text("Start executing the workflow plan")
                 .clicked()
-            {
-                actions.push((0, CueAction::StartWorkflow));
-            }
+        {
+            actions.push((0, CueAction::StartWorkflow));
         }
     }
 
