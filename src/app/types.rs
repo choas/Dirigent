@@ -447,4 +447,6 @@ pub(crate) struct GitState {
     pub(super) new_pattern_field: String,
     /// Pattern id currently being edited (None = not editing).
     pub(super) editing_pattern: Option<(i64, String, String)>,
+    /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
+    pub(super) hovered_graph_row: Option<usize>,
 }

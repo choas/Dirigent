@@ -506,6 +506,7 @@ impl DirigentApp {
                 new_pattern_text: String::new(),
                 new_pattern_field: "text".to_string(),
                 editing_pattern: None,
+                hovered_graph_row: None,
             },
             settings,
             semantic,
