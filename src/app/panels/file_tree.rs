@@ -271,8 +271,6 @@ impl DirigentApp {
                     .saturating_sub(hash_prefix_len)
                     .max(10);
                 let ahead = self.git.ahead_of_remote;
-                let accent = self.semantic.accent;
-                let is_dark = self.semantic.is_dark();
                 for (idx, commit) in self.git.commit_history.iter().enumerate() {
                     let is_unpushed = idx < ahead;
                     let graph_row = self.git.graph_rows.get(idx);
@@ -284,8 +282,7 @@ impl DirigentApp {
                         graph_row,
                         graph_col_width,
                         lane_width,
-                        accent,
-                        is_dark,
+                        &self.semantic,
                     ) {
                         clicked_commit = Some((
                             commit.full_hash.clone(),
@@ -487,16 +484,6 @@ impl DirigentApp {
 // Git graph rendering helpers
 // ---------------------------------------------------------------------------
 
-/// Lane colors — a palette of distinguishable colors for branch lanes.
-const LANE_COLORS: [egui::Color32; 6] = [
-    egui::Color32::from_rgb(97, 175, 239),  // blue
-    egui::Color32::from_rgb(152, 195, 121), // green
-    egui::Color32::from_rgb(229, 192, 123), // yellow
-    egui::Color32::from_rgb(198, 120, 221), // purple
-    egui::Color32::from_rgb(224, 108, 117), // red
-    egui::Color32::from_rgb(86, 182, 194),  // cyan
-];
-
 /// Render one commit row: graph column on the left, commit text on the right.
 /// Returns true if the row was clicked.
 #[allow(clippy::too_many_arguments)]
@@ -508,9 +495,10 @@ fn render_commit_row(
     graph_row: Option<&crate::git::graph::GraphRow>,
     graph_col_width: f32,
     lane_width: f32,
-    _accent: egui::Color32,
-    is_dark: bool,
+    semantic: &SemanticColors,
 ) -> bool {
+    let is_dark = semantic.is_dark();
+    let lane_colors = semantic.lane_colors();
     let row_height = ui.text_style_height(&egui::TextStyle::Small) + 4.0;
     let full_width = ui.available_width();
 
@@ -530,7 +518,15 @@ fn render_commit_row(
 
     // Paint graph column.
     if let Some(graph) = graph_row {
-        paint_graph_column(ui, row_rect, graph, graph_col_width, lane_width, row_height);
+        paint_graph_column(
+            ui,
+            row_rect,
+            graph,
+            graph_col_width,
+            lane_width,
+            row_height,
+            &lane_colors,
+        );
     }
 
     // Paint commit text to the right of the graph column.
@@ -572,11 +568,11 @@ fn render_commit_row(
         let mut badge_x = text_x + label_galley.size().x + 6.0;
         let badge_font = egui::FontId::proportional(9.0);
         for (i, branch_name) in commit.branch_labels.iter().enumerate() {
-            let color = LANE_COLORS[i % LANE_COLORS.len()];
+            let color = lane_colors[i % lane_colors.len()];
             badge_x = paint_ref_badge(ui, badge_x, text_y, branch_name, color, &badge_font);
         }
         for tag_name in &commit.tag_labels {
-            let color = egui::Color32::from_rgb(229, 192, 123); // yellow for tags
+            let color = semantic.warning; // tags use warning/yellow
             badge_x = paint_ref_badge(ui, badge_x, text_y, tag_name, color, &badge_font);
         }
         let _ = badge_x; // suppress unused
@@ -597,6 +593,7 @@ fn paint_graph_column(
     graph_col_width: f32,
     lane_width: f32,
     row_height: f32,
+    lane_colors: &[egui::Color32; 6],
 ) {
     use crate::git::graph::LaneSegment;
 
@@ -616,7 +613,7 @@ fn paint_graph_column(
             break; // Cap at 6 visible lanes.
         }
         let x = graph_left + (lane_idx as f32 + 0.5) * lane_width;
-        let color = LANE_COLORS[lane_idx % LANE_COLORS.len()];
+        let color = lane_colors[lane_idx % lane_colors.len()];
 
         match segment {
             LaneSegment::Straight => {
@@ -675,7 +672,7 @@ fn paint_graph_column(
         }
         let from_x = graph_left + (from_lane as f32 + 0.5) * lane_width;
         let to_x = graph_left + (to_lane as f32 + 0.5) * lane_width;
-        let color = LANE_COLORS[to_lane % LANE_COLORS.len()];
+        let color = lane_colors[to_lane % lane_colors.len()];
         // Only draw explicit connection if not already drawn by ForkRight/MergeLeft.
         if graph.lanes.get(to_lane) != Some(&LaneSegment::ForkRight)
             && graph.lanes.get(to_lane) != Some(&LaneSegment::MergeLeft)
