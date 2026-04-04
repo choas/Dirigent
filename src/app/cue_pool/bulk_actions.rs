@@ -11,11 +11,94 @@ impl DirigentApp {
         section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
     ) {
+        if status == CueStatus::Inbox
+            && (section_cues.len() >= 2 || self.workflow_plan.is_some() || self.workflow_generating)
+        {
+            self.render_inbox_bulk_actions(ui, section_cues, actions);
+        }
         if status == CueStatus::Review && section_cues.len() > 1 {
             self.render_review_bulk_actions(ui, actions);
         }
         if status == CueStatus::Done {
             self.render_done_bulk_actions(ui, section_cues, actions);
+        }
+    }
+
+    fn render_inbox_bulk_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        section_cues: &[&Cue],
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        ui.horizontal(|ui| {
+            if self.workflow_generating {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Analyzing\u{2026}")
+                        .small()
+                        .color(self.semantic.accent),
+                );
+            } else if self.workflow_plan.is_some() {
+                self.render_workflow_plan_actions(ui, section_cues, actions);
+            } else {
+                let btn = egui::Button::new(
+                    icon("\u{26A1} Plan Workflow", self.settings.font_size)
+                        .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.accent);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!(
+                        "Use AI to analyze these {} cues and create an optimal execution plan",
+                        section_cues.len()
+                    ))
+                    .clicked()
+                {
+                    actions.push((0, CueAction::CreateWorkflow));
+                }
+            }
+        });
+        ui.add_space(SPACE_XS);
+    }
+
+    fn render_workflow_plan_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        section_cues: &[&Cue],
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        // Check if Inbox has changed since the plan was created
+        let current_inbox_ids: Vec<i64> = section_cues.iter().map(|c| c.id).collect();
+        let inbox_changed = current_inbox_ids != self.workflow_inbox_snapshot;
+
+        if inbox_changed && !self.is_workflow_active() {
+            // Inbox changed and workflow isn't running — offer to re-analyze
+            let btn = egui::Button::new(
+                icon("\u{26A1} Re-plan Workflow", self.settings.font_size)
+                    .color(self.semantic.badge_text),
+            )
+            .fill(self.semantic.warning);
+            if ui
+                .add(btn)
+                .on_hover_text("Inbox has changed since the plan was created — re-analyze")
+                .clicked()
+            {
+                actions.push((0, CueAction::CreateWorkflow));
+            }
+        } else {
+            // Inbox unchanged or workflow is active — show view button
+            let btn = egui::Button::new(
+                icon("\u{1F4CA} View Workflow", self.settings.font_size)
+                    .color(self.semantic.badge_text),
+            )
+            .fill(self.semantic.accent);
+            if ui
+                .add(btn)
+                .on_hover_text("View the workflow execution plan")
+                .clicked()
+            {
+                self.show_workflow_graph = true;
+            }
         }
     }
 

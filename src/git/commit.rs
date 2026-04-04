@@ -32,9 +32,10 @@ fn commit_staged(
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
 
-    let sig = repo
-        .signature()
-        .unwrap_or_else(|_| Signature::now("Dirigent", "Dirigent@local").unwrap());
+    let sig = repo.signature().unwrap_or_else(|_| {
+        Signature::now("Dirigent", "Dirigent@local")
+            .expect("hardcoded signature arguments are valid")
+    });
 
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
 

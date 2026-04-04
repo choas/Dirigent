@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use crate::app::{SPACE_SM, SPACE_XS};
+use crate::claude::parse_hunk_header;
 use crate::settings::SemanticColors;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,7 +87,7 @@ fn parse_file_hunks(lines: &[&str], mut i: usize) -> (Vec<DiffHunk>, usize) {
             continue;
         }
 
-        let (old_start, new_start) = parse_hunk_header(lines[i]);
+        let (old_start, new_start, _) = parse_hunk_header(lines[i]);
         i += 1;
 
         let (hunk_lines, next_i) = parse_hunk_lines(lines, i, old_start, new_start);
@@ -165,29 +166,6 @@ fn classify_hunk_line(line: &str, old_line: &mut usize, new_line: &mut usize) ->
     }
 }
 
-fn parse_hunk_header(header: &str) -> (usize, usize) {
-    let inner = header.strip_prefix("@@ ").unwrap_or(header);
-    let range_part = if let Some(pos) = inner.find(" @@") {
-        &inner[..pos]
-    } else {
-        inner
-    };
-    let parts: Vec<&str> = range_part.split_whitespace().collect();
-    let old_start = parts
-        .first()
-        .and_then(|p| p.strip_prefix('-'))
-        .and_then(|p| p.split(',').next())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1);
-    let new_start = parts
-        .get(1)
-        .and_then(|p| p.strip_prefix('+'))
-        .and_then(|p| p.split(',').next())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1);
-    (old_start, new_start)
-}
-
 // ---------------------------------------------------------------------------
 // Shared rendering helpers
 // ---------------------------------------------------------------------------
@@ -240,6 +218,32 @@ fn toggle_collapsed(collapsed_files: &mut HashSet<usize>, file_idx: usize) {
         collapsed_files.remove(&file_idx);
     } else {
         collapsed_files.insert(file_idx);
+    }
+}
+
+/// Iterate over files, rendering collapsible headers and calling `render_hunks`
+/// for each expanded file. Shared by inline and side-by-side modes.
+fn render_diff_files(
+    ui: &mut egui::Ui,
+    diff: &ParsedDiff,
+    collapsed_files: &mut HashSet<usize>,
+    colors: &SemanticColors,
+    mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize),
+) {
+    for (file_idx, file) in diff.files.iter().enumerate() {
+        let is_collapsed = collapsed_files.contains(&file_idx);
+        if render_file_header(ui, file, is_collapsed, colors) {
+            toggle_collapsed(collapsed_files, file_idx);
+        }
+
+        if collapsed_files.contains(&file_idx) {
+            ui.separator();
+            continue;
+        }
+
+        ui.add_space(SPACE_XS);
+        render_hunks(ui, file, file_idx);
+        ui.separator();
     }
 }
 
@@ -316,19 +320,9 @@ pub(crate) fn render_inline_diff(
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
 ) {
-    for (file_idx, file) in diff.files.iter().enumerate() {
-        let is_collapsed = collapsed_files.contains(&file_idx);
-        if render_file_header(ui, file, is_collapsed, colors) {
-            toggle_collapsed(collapsed_files, file_idx);
-        }
-
-        if !collapsed_files.contains(&file_idx) {
-            ui.add_space(SPACE_XS);
-            render_inline_file_hunks(ui, file, file_idx, search, colors);
-        }
-
-        ui.separator();
-    }
+    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
+        render_inline_file_hunks(ui, file, file_idx, search, colors);
+    });
 }
 
 /// Render all hunks for a single file in inline mode.
@@ -473,21 +467,9 @@ pub(crate) fn render_side_by_side_diff(
     let dc = DiffColors::from_semantic(colors);
     let sep_color = colors.separator;
 
-    for (file_idx, file) in diff.files.iter().enumerate() {
-        let is_collapsed = collapsed_files.contains(&file_idx);
-        if render_file_header(ui, file, is_collapsed, colors) {
-            toggle_collapsed(collapsed_files, file_idx);
-        }
-
-        if collapsed_files.contains(&file_idx) {
-            ui.separator();
-            continue;
-        }
-
-        ui.add_space(SPACE_XS);
+    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
         render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color);
-        ui.separator();
-    }
+    });
 }
 
 /// Render all hunks for a single file in side-by-side mode.

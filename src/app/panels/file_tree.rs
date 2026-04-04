@@ -352,6 +352,7 @@ impl DirigentApp {
             cue_id: 0,
             diff: diff_text,
             cue_text,
+            commit_hash: Some(full_hash.to_string()),
             parsed,
             view_mode: DiffViewMode::Inline,
             read_only: true,
@@ -394,7 +395,7 @@ impl DirigentApp {
         );
 
         // Directory name
-        let name_color = dir_name_color(ui, entry.is_ignored, dir_has_dirty, ctx.semantic);
+        let name_color = entry_name_color(ui, entry.is_ignored, dir_has_dirty, ctx.semantic);
         ui.painter().text(
             egui::pos2(text_pos.x + 20.0, text_pos.y),
             egui::Align2::LEFT_CENTER,
@@ -455,7 +456,7 @@ impl DirigentApp {
 
         // File name
         let name_color =
-            file_name_color(ui, entry.is_ignored, status_letter.is_some(), ctx.semantic);
+            entry_name_color(ui, entry.is_ignored, status_letter.is_some(), ctx.semantic);
         let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
         ui.painter().text(
             text_pos,
@@ -534,24 +535,8 @@ pub(super) fn paint_hover_highlight(
     }
 }
 
-/// Determine the display color for a directory name.
-pub(super) fn dir_name_color(
-    ui: &egui::Ui,
-    is_ignored: bool,
-    has_dirty: bool,
-    semantic: &SemanticColors,
-) -> egui::Color32 {
-    if is_ignored {
-        ui.visuals().weak_text_color()
-    } else if has_dirty {
-        semantic.warning
-    } else {
-        ui.visuals().text_color()
-    }
-}
-
-/// Determine the display color for a file name.
-pub(super) fn file_name_color(
+/// Determine the display color for a file or directory name.
+pub(super) fn entry_name_color(
     ui: &egui::Ui,
     is_ignored: bool,
     is_dirty: bool,

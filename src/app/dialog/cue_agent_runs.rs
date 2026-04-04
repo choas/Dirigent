@@ -1,13 +1,15 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DirigentApp};
 use crate::agents::AgentKind;
 use crate::db::AgentRunEntry;
 
 impl DirigentApp {
     /// Agent runs for a specific cue, rendered in the central panel.
     pub(in crate::app) fn render_cue_agent_runs_central(&mut self, ui: &mut egui::Ui) {
-        let cue_id = self.show_agent_runs_for_cue.unwrap();
+        let Some(cue_id) = self.show_agent_runs_for_cue else {
+            return;
+        };
         let cue_text = self.cue_text_truncated(cue_id);
         let runs = self.db.get_agent_runs_for_cue(cue_id).unwrap_or_default();
 
@@ -158,7 +160,7 @@ impl DirigentApp {
     /// Render a single agent run entry (status, command, output block).
     fn render_agent_run_entry(&self, ui: &mut egui::Ui, run: &AgentRunEntry, idx: usize) {
         let dur = crate::app::util::format_duration_ms(run.duration_ms);
-        let (status_icon, status_color) = self.status_icon_and_color(&run.status);
+        let (status_icon, status_color) = self.agent_status_icon_and_color(&run.status);
 
         // Run header
         ui.horizontal(|ui| {
@@ -195,46 +197,7 @@ impl DirigentApp {
         }
 
         // Output block
-        self.render_run_output_block(ui, run, idx);
-    }
-
-    /// Render the output frame for a single agent run.
-    fn render_run_output_block(&self, ui: &mut egui::Ui, run: &AgentRunEntry, idx: usize) {
-        egui::Frame::NONE
-            .inner_margin(egui::Margin {
-                left: SPACE_SM as i8,
-                top: SPACE_XS as i8,
-                right: SPACE_XS as i8,
-                bottom: SPACE_SM as i8,
-            })
-            .corner_radius(4)
-            .fill(self.semantic.selection_bg())
-            .show(ui, |ui| {
-                // run.output is already ANSI-stripped by build_completed_result
-                if run.output.trim().is_empty() {
-                    ui.label(
-                        egui::RichText::new("(no output)")
-                            .italics()
-                            .color(self.semantic.tertiary_text),
-                    );
-                } else {
-                    egui::ScrollArea::vertical()
-                        .id_salt(("agent_run_output", idx))
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            ui.label(egui::RichText::new(&run.output).monospace().small());
-                        });
-                }
-            });
-    }
-
-    /// Map a run status string to an icon character and color.
-    fn status_icon_and_color(&self, status: &str) -> (&'static str, egui::Color32) {
-        match status {
-            "passed" => ("\u{2713}", self.semantic.success),
-            "failed" => ("\u{2717}", self.semantic.danger),
-            "error" => ("!", self.semantic.danger),
-            _ => ("\u{25CF}", self.semantic.secondary_text),
-        }
+        let scroll_id = egui::Id::new(("agent_run_output", idx));
+        self.render_agent_output_frame(ui, &run.output, Some((scroll_id, 300.0)));
     }
 }

@@ -127,12 +127,12 @@ pub(super) fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
     //          src/app.ts(15,3): error TS2345: something
     let re = Regex::new(
         r"(?m)^(.+?):(\d+)(?::(\d+))?:\s*(?:(error|warning|warn|info|note|hint))(?:\[.*?\])?:\s*(.+)$"
-    ).unwrap();
+    ).expect("hardcoded diagnostic regex");
 
     // MSVC / TypeScript pattern: file(line,col): error CODE: message
     let re_paren =
         Regex::new(r"(?m)^(.+?)\((\d+),(\d+)\):\s*(?:(error|warning))(?:\s+\w+)?:\s*(.+)$")
-            .unwrap();
+            .expect("hardcoded diagnostic regex");
 
     for cap in re.captures_iter(output) {
         let file = cap[1].to_string();

@@ -166,7 +166,7 @@ fn fix_hunk_headers(diff_text: &str) -> String {
     text
 }
 
-fn parse_hunk_header(header: &str) -> (usize, usize, &str) {
+pub(crate) fn parse_hunk_header(header: &str) -> (usize, usize, &str) {
     let inner = header.strip_prefix("@@ ").unwrap_or(header);
 
     let (range_part, tail) = if let Some(pos) = inner.find(" @@") {

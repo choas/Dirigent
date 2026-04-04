@@ -1,7 +1,44 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::DirigentError;
+
+/// Print a warning to stderr at most once per flag.
+fn warn_once(flag: &AtomicBool, msg: &str) {
+    if !flag.swap(true, Ordering::Relaxed) {
+        eprintln!("{msg}");
+    }
+}
+
+/// Check whether a `DirigentError` is an "Insufficient privileges" response from SonarQube.
+fn is_insufficient_privileges(e: &DirigentError) -> bool {
+    match e {
+        DirigentError::Source(msg) => msg.contains("Insufficient privileges"),
+        _ => false,
+    }
+}
+
+/// Try an optional SonarQube fetch; on failure, warn once with a privilege hint.
+fn try_sonar_fetch(
+    items: &mut Vec<SourceItem>,
+    result: crate::error::Result<Vec<SourceItem>>,
+    warned: &AtomicBool,
+    category: &str,
+    privilege_hint: &str,
+) {
+    match result {
+        Ok(new) => items.extend(new),
+        Err(e) => {
+            let hint = if is_insufficient_privileges(&e) {
+                privilege_hint
+            } else {
+                ""
+            };
+            warn_once(warned, &format!("SonarQube {category} skipped: {e}{hint}"));
+        }
+    }
+}
 
 use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
 use super::types::SourceItem;
@@ -237,22 +274,31 @@ pub(crate) fn fetch_sonarqube_issues(
     );
 
     // ── 2. Security Hotspots (/api/hotspots/search) ──
-    items.extend(fetch_sonar_hotspots(
-        &client,
-        base,
-        project_key,
-        token,
-        source_label,
-    )?);
+    // Non-fatal: some tokens lack hotspot permissions.
+    static HOTSPOT_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_hotspots(&client, base, project_key, token, source_label),
+        &HOTSPOT_WARNED,
+        "hotspots",
+        "\n  → Your token's user needs 'Browse' and 'Administer \
+         Security Hotspots' on this project. Ask a SonarQube admin \
+         to grant these under the project's Permissions page, or \
+         generate a new token with a user that already has them.",
+    );
 
     // ── 3. Duplications (/api/measures/component) ──
-    items.extend(fetch_sonar_duplications(
-        &client,
-        base,
-        project_key,
-        token,
-        source_label,
-    )?);
+    // Non-fatal: some tokens lack measures permissions.
+    static DUP_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_duplications(&client, base, project_key, token, source_label),
+        &DUP_WARNED,
+        "duplications",
+        "\n  → Your token's user needs 'Browse' permission on this \
+         project. Ask a SonarQube admin to grant it, or generate a \
+         new token with a user that already has access.",
+    );
 
     Ok(items)
 }
@@ -300,37 +346,108 @@ fn fetch_sonar_duplications(
     let Some(measures) = measures else {
         return Ok(Vec::new());
     };
-    Ok(measures
+    // Check duplicated_lines_density — skip all duplication items if below 3.0%
+    // (the SonarQube "Required" gate threshold).
+    let density: f64 = measures
         .iter()
-        .filter_map(|m| parse_sonar_duplication_measure(m, project_key, source_label))
-        .collect())
+        .filter(|m| m.get("metric").and_then(|v| v.as_str()) == Some("duplicated_lines_density"))
+        .filter_map(|m| m.get("value").and_then(|v| v.as_str()))
+        .filter_map(|v| v.parse().ok())
+        .next()
+        .unwrap_or(0.0);
+    if density < 3.0 {
+        return Ok(Vec::new());
+    }
+
+    // Skip summary measures (e.g. "Duplicated blocks: 6") — they lack detail
+    // for Dirigent to act on.  Only fetch per-file duplication details.
+    let mut items: Vec<SourceItem> = Vec::new();
+
+    // Fetch per-file duplication details via component_tree.
+    static DUP_FILES_WARNED: AtomicBool = AtomicBool::new(false);
+    try_sonar_fetch(
+        &mut items,
+        fetch_sonar_duplicated_files(client, base, project_key, token, source_label),
+        &DUP_FILES_WARNED,
+        "duplicated files detail",
+        "\n  → Your token's user needs 'Browse' permission on this \
+         project. Ask a SonarQube admin to grant it, or generate a \
+         new token with a user that already has access.",
+    );
+
+    Ok(items)
 }
 
-/// Parse a single SonarQube duplication measure into a `SourceItem`.
-fn parse_sonar_duplication_measure(
-    m: &serde_json::Value,
+/// Fetch individual files with duplications via `/api/measures/component_tree`.
+fn fetch_sonar_duplicated_files(
+    client: &reqwest::blocking::Client,
+    base: &str,
     project_key: &str,
+    token: &str,
     source_label: &str,
-) -> Option<SourceItem> {
-    let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
-    let value = m.get("value").and_then(|v| v.as_str()).unwrap_or("0");
-    let label = match metric {
-        "duplicated_lines_density" => "Duplicated lines density",
-        "duplicated_blocks" => "Duplicated blocks",
-        "duplicated_lines" => "Duplicated lines",
-        "duplicated_files" => "Duplicated files",
-        _ => return None,
+) -> crate::error::Result<Vec<SourceItem>> {
+    let url = format!(
+        "{}/api/measures/component_tree?component={}&metricKeys=duplicated_blocks,duplicated_lines\
+         &qualifiers=FIL&metricSort=duplicated_blocks&metricSortFilter=withMeasuresOnly\
+         &s=metric&asc=false&ps=100",
+        base, project_key,
+    );
+    let resp = sonar_get(client, &url, token)?;
+    let components = resp.get("components").and_then(|v| v.as_array());
+    let Some(components) = components else {
+        return Ok(Vec::new());
     };
-    let suffix = if metric == "duplicated_lines_density" {
-        "%"
-    } else {
-        ""
-    };
-    Some(SourceItem::new(
-        format!("sonar-dup-{}-{}", project_key, metric),
-        format!("[DUPLICATION] {}: {}{}", label, value, suffix),
-        source_label,
-    ))
+    let mut items = Vec::new();
+    for comp in components {
+        let key = comp.get("key").and_then(|v| v.as_str()).unwrap_or("");
+        let file_path = key.split(':').next_back().unwrap_or(key);
+        let measures = comp.get("measures").and_then(|v| v.as_array());
+        let Some(measures) = measures else { continue };
+        let mut blocks = 0u64;
+        let mut lines = 0u64;
+        for m in measures {
+            let metric = m.get("metric").and_then(|v| v.as_str()).unwrap_or("");
+            let val: u64 = m
+                .get("value")
+                .and_then(|v| v.as_str())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            match metric {
+                "duplicated_blocks" => blocks = val,
+                "duplicated_lines" => lines = val,
+                _ => {}
+            }
+        }
+        if blocks == 0 {
+            continue;
+        }
+        items.push(
+            SourceItem::new(
+                format!("sonar-dup-file-{}-{}", project_key, file_path),
+                format!(
+                    "[DUPLICATION] {} ({} blocks, {} lines)",
+                    file_path, blocks, lines,
+                ),
+                source_label,
+            )
+            .with_location(file_path, 0),
+        );
+    }
+    Ok(items)
+}
+
+/// Extract the file path from a SonarQube component string.
+/// SonarQube components are typically `project-key:src/file.rs`; this strips the
+/// project key prefix and returns just the relative path portion.
+fn sonar_component_to_path(component: &str) -> String {
+    if component.is_empty() {
+        return String::new();
+    }
+    component
+        .split(':')
+        .next_back()
+        .unwrap_or(component)
+        .to_string()
 }
 
 /// Format a SonarQube finding location suffix like `(file.rs:10, rule: S123)`.
@@ -362,7 +479,8 @@ fn parse_sonar_issue(issue: &serde_json::Value, source_label: &str) -> Option<So
 
     let loc = sonar_location_suffix(component, line, "rule", rule);
     let text = format!("[{}] {}{}", severity, message, loc);
-    Some(SourceItem::new(key, text, source_label))
+    let file_path = sonar_component_to_path(component);
+    Some(SourceItem::new(key, text, source_label).with_location(&file_path, line as usize))
 }
 
 /// Parse a SonarQube Security Hotspot into a `SourceItem`.
@@ -382,7 +500,8 @@ fn parse_sonar_hotspot(hs: &serde_json::Value, source_label: &str) -> Option<Sou
 
     let loc = sonar_location_suffix(component, line, "category", category);
     let text = format!("[HOTSPOT/{}] {}{}", vulnerability, message, loc);
-    Some(SourceItem::new(key, text, source_label))
+    let file_path = sonar_component_to_path(component);
+    Some(SourceItem::new(key, text, source_label).with_location(&file_path, line as usize))
 }
 
 /// Fetch cards from a Trello board using the Trello REST API.
@@ -409,14 +528,20 @@ pub(crate) fn fetch_trello_cards(
     let client = http_client()?;
 
     // Fetch cards with their list info so we can filter by list name.
-    let url = format!(
-        "https://api.trello.com/1/boards/{}/cards?key={}&token={}&fields=name,desc,shortUrl,idList&limit=100",
-        board_id, api_key, token,
-    );
+    let url = format!("https://api.trello.com/1/boards/{}/cards", board_id,);
 
-    let resp = client.get(&url).send().map_err(|e| {
-        DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
-    })?;
+    let resp = client
+        .get(&url)
+        .query(&[
+            ("key", api_key),
+            ("token", token),
+            ("fields", "name,desc,shortUrl,idList"),
+            ("limit", "100"),
+        ])
+        .send()
+        .map_err(|e| {
+            DirigentError::Source(format!("Trello request failed: {}", e.without_url()))
+        })?;
     let resp = check_response(resp, "Trello API")?;
 
     let parsed: serde_json::Value = resp
@@ -462,13 +587,14 @@ fn resolve_trello_list_ids(
     token: &str,
     filter: &str,
 ) -> crate::error::Result<Vec<String>> {
-    let lists_url = format!(
-        "https://api.trello.com/1/boards/{}/lists?key={}&token={}&fields=name",
-        board_id, api_key, token,
-    );
-    let lists_resp = client.get(&lists_url).send().map_err(|e| {
-        DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
-    })?;
+    let lists_url = format!("https://api.trello.com/1/boards/{}/lists", board_id,);
+    let lists_resp = client
+        .get(&lists_url)
+        .query(&[("key", api_key), ("token", token), ("fields", "name")])
+        .send()
+        .map_err(|e| {
+            DirigentError::Source(format!("Trello lists request failed: {}", e.without_url()))
+        })?;
     let lists_resp = check_response(lists_resp, "Trello lists API")?;
 
     let lists: Vec<serde_json::Value> = lists_resp

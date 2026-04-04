@@ -20,6 +20,8 @@ mod tasks;
 mod theme;
 mod types;
 pub(crate) mod util;
+mod workflow_graph;
+mod workflow_run;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -51,6 +53,8 @@ const SEARCH_PANEL_MIN_WIDTH: f32 = 150.0;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use eframe::egui;
+
+type WorkflowResult = Result<(crate::workflow::WorkflowPlan, Option<String>), String>;
 
 /// Truncate a string to at most `max_bytes` without panicking on UTF-8 boundaries.
 /// Returns a slice that ends at or before `max_bytes` on a valid char boundary.
@@ -268,6 +272,17 @@ pub struct DirigentApp {
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
+
+    // Workflow plan state
+    workflow_plan: Option<crate::workflow::WorkflowPlan>,
+    workflow_generating: bool,
+    workflow_rx: Option<mpsc::Receiver<WorkflowResult>>,
+    /// Warning from workflow plan parsing (e.g. missing cues, fallback).
+    workflow_warning: Option<String>,
+    /// Whether the workflow graph overlay is visible (separate from plan existence).
+    show_workflow_graph: bool,
+    /// Snapshot of Inbox cue IDs when the workflow plan was created, for change detection.
+    workflow_inbox_snapshot: Vec<i64>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -576,6 +591,13 @@ impl DirigentApp {
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
             notion_objects_error: HashMap::new(),
+
+            workflow_plan: None,
+            workflow_generating: false,
+            workflow_rx: None,
+            workflow_warning: None,
+            show_workflow_graph: false,
+            workflow_inbox_snapshot: Vec::new(),
         }
     }
 
@@ -665,6 +687,33 @@ impl DirigentApp {
             .unwrap_or_default();
     }
 
+    /// Activate an Inbox cue: move to Ready, log activity, and trigger Claude.
+    /// Returns `true` if the cue was activated.
+    fn activate_inbox_cue(&mut self, id: i64, activity: &str) -> bool {
+        if self
+            .cues
+            .iter()
+            .any(|c| c.id == id && c.status == CueStatus::Inbox)
+        {
+            let _ = self.db.update_cue_status(id, CueStatus::Ready);
+            let _ = self.db.log_activity(id, activity);
+            self.cue_move_flash.insert(id, Instant::now());
+            self.claude.expand_running = true;
+            self.reload_cues();
+            self.trigger_claude(id);
+            // Verify the run actually started — trigger_claude may bail out
+            // (e.g. home guard sync failure) leaving the cue stuck in Ready.
+            if !self.claude.running_logs.contains_key(&id) {
+                let _ = self.db.update_cue_status(id, CueStatus::Inbox);
+                self.reload_cues();
+                return false;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Process scheduled runs: trigger any cue whose scheduled time has arrived.
     fn process_scheduled_runs(&mut self) {
         let now = SystemTime::now();
@@ -676,19 +725,7 @@ impl DirigentApp {
             .collect();
         for id in ready {
             self.scheduled_runs.remove(&id);
-            // Verify cue is still in Inbox before triggering
-            if self
-                .cues
-                .iter()
-                .any(|c| c.id == id && c.status == CueStatus::Inbox)
-            {
-                let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                let _ = self.db.log_activity(id, "Scheduled run started");
-                self.cue_move_flash.insert(id, Instant::now());
-                self.claude.expand_running = true;
-                self.reload_cues();
-                self.trigger_claude(id);
-            }
+            self.activate_inbox_cue(id, "Scheduled run started");
         }
     }
 
@@ -701,19 +738,7 @@ impl DirigentApp {
         let any_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
         if !any_running {
             let id = self.run_queue.remove(0);
-            // Verify cue is still in Inbox before triggering
-            if self
-                .cues
-                .iter()
-                .any(|c| c.id == id && c.status == CueStatus::Inbox)
-            {
-                let _ = self.db.update_cue_status(id, CueStatus::Ready);
-                let _ = self.db.log_activity(id, "Queued run started");
-                self.cue_move_flash.insert(id, Instant::now());
-                self.claude.expand_running = true;
-                self.reload_cues();
-                self.trigger_claude(id);
-            }
+            self.activate_inbox_cue(id, "Queued run started");
         }
     }
 
@@ -725,6 +750,9 @@ impl DirigentApp {
         self.claude.show_log = None;
         self.agent_state.show_output = None;
         self.show_agent_runs_for_cue = None;
+        // workflow_plan is NOT cleared here — it stays until explicitly cancelled.
+        // But the graph overlay is dismissed so the code viewer becomes visible.
+        self.show_workflow_graph = false;
     }
 }
 
@@ -754,6 +782,9 @@ impl eframe::App for DirigentApp {
 
         // Process run queue (start next queued cue when no cues are running)
         self.process_run_queue();
+
+        // Poll for workflow analysis results
+        self.process_workflow_result();
 
         // Poll for git push/pull/PR results
         self.process_push_result();

@@ -397,6 +397,47 @@ impl DirigentApp {
         }
     }
 
+    /// Insert a new execution record, emit telemetry, and spawn the provider thread.
+    /// Insert a new execution record and spawn the provider thread.
+    /// Returns `true` on success, `false` if the execution record could not be
+    /// created (the caller should skip any post-spawn cleanup in that case).
+    fn insert_exec_and_spawn(
+        &mut self,
+        cue_id: i64,
+        prompt: String,
+        provider: CliProvider,
+        matched_command: &Option<CueCommand>,
+    ) -> bool {
+        let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to create execution record for cue {cue_id}: {e}");
+                self.claude.running_logs.remove(&cue_id);
+                self.claude.start_times.remove(&cue_id);
+                self.set_status_message(format!("Failed to start run: {e}"));
+                return false;
+            }
+        };
+
+        self.claude.exec_ids.insert(cue_id, exec_id);
+        if let Ok(execs) = self.db.get_all_executions(cue_id) {
+            self.claude.conversation_history = execs;
+        }
+
+        let config = build_provider_config(&self.settings, &provider, matched_command);
+
+        telemetry::emit_execution_started(
+            &self.project_name(),
+            cue_id,
+            provider.display_name(),
+            &config.model,
+        );
+
+        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
+        self.task_handles.push(handle);
+        true
+    }
+
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
         if let Err(e) = settings::sync_home_guard_hook(
             &self.project_root,
@@ -433,27 +474,10 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        let exec_id = self
-            .db
-            .insert_execution(cue_id, &prompt, &provider)
-            .unwrap_or(0);
-
-        self.claude.exec_ids.insert(cue_id, exec_id);
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            self.claude.conversation_history = execs;
+        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command) {
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.reload_cues();
         }
-
-        let config = build_provider_config(&self.settings, &provider, &matched_command);
-
-        telemetry::emit_execution_started(
-            &self.project_name(),
-            cue_id,
-            provider.display_name(),
-            &config.model,
-        );
-
-        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
-        self.task_handles.push(handle);
     }
 
     pub(super) fn trigger_claude_reply(
@@ -517,30 +541,16 @@ impl DirigentApp {
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
 
-        let exec_id = self
-            .db
-            .insert_execution(cue_id, &prompt, &provider)
-            .unwrap_or(0);
+        let started = self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
 
-        self.claude.exec_ids.insert(cue_id, exec_id);
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            self.claude.conversation_history = execs;
-        }
-
-        let config = build_provider_config(&self.settings, &provider, &matched_command);
-
-        telemetry::emit_execution_started(
-            &self.project_name(),
-            cue_id,
-            provider.display_name(),
-            &config.model,
-        );
-
-        let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
-        self.task_handles.push(handle);
-
-        if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
-            self.diff_review = None;
+        if started {
+            if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
+                self.diff_review = None;
+            }
+        } else {
+            // Restore the cue to Review (its state before we attempted the reply).
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
+            self.reload_cues();
         }
     }
 
@@ -570,11 +580,7 @@ impl DirigentApp {
             .is_some_and(|&current| current != result.exec_id);
 
         if !is_stale {
-            if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
-                let _ = self.db.update_execution_log(result.exec_id, log_text);
-            }
-            self.claude.exec_ids.remove(&result.cue_id);
-            self.claude.start_times.remove(&result.cue_id);
+            self.flush_and_clear_tracking(&result);
         }
 
         let _ = self.db.update_execution_metrics(
@@ -586,92 +592,138 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
-        // Emit telemetry for every completed execution (including stale ones).
-        let provider_name = self
-            .claude
-            .running_logs
-            .get(&result.cue_id)
-            .map(|(_, p)| p.display_name().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        if result.error.is_none() {
-            telemetry::emit_execution_completed(
-                &self.project_name(),
-                result.cue_id,
-                &provider_name,
-                result.metrics.cost_usd,
-                result.metrics.duration_ms,
-                result.metrics.num_turns,
-                result.metrics.input_tokens,
-                result.metrics.output_tokens,
-                result.diff.is_some(),
-            );
-        }
+        let usage_limit_msg = self.detect_result_usage_limit(&result, is_stale);
+
+        self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
 
         if is_stale {
-            // Stale result — just mark the old execution in the DB, don't change cue status.
-            if let Some(ref error) = result.error {
-                let _ = self.db.fail_execution(result.exec_id, error);
-            } else {
-                let _ = self.db.complete_execution(
-                    result.exec_id,
-                    &result.response,
-                    result.diff.as_deref(),
-                    Some(result.metrics.cost_usd),
-                    Some(result.metrics.duration_ms),
-                    Some(result.metrics.num_turns),
-                );
-            }
+            self.complete_stale_execution(&result);
             return;
         }
 
-        // Detect usage-limit messages in the response or log before deciding
-        // which handler to use.  When a hard rate/usage limit is hit, Claude
-        // exits without changes and we must NOT treat it as "no changes needed".
-        let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
+        let is_error = self.dispatch_result(&result, &usage_limit_msg);
+
+        if !is_error {
+            self.handle_successful_run(&result);
+        }
+
+        self.refresh_conversation_history(result.cue_id);
+        self.reload_cues();
+        // We already returned early for stale results above.
+        self.on_workflow_cue_completed(result.cue_id);
+    }
+
+    /// Flush the running log to DB and remove tracking state for a completed result.
+    fn flush_and_clear_tracking(&mut self, result: &ClaudeResult) {
+        if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
+            let _ = self.db.update_execution_log(result.exec_id, log_text);
+        }
+        self.claude.exec_ids.remove(&result.cue_id);
+        self.claude.start_times.remove(&result.cue_id);
+    }
+
+    /// Detect usage-limit messages in the response or log.
+    ///
+    /// `running_logs` is keyed by `cue_id`, so for stale results (where a
+    /// newer execution has already started) the buffer belongs to a different
+    /// run.  Only consult it when the result is current.
+    fn detect_result_usage_limit(&self, result: &ClaudeResult, is_stale: bool) -> Option<String> {
+        claude::detect_usage_limit(&result.response)
             .or_else(|| {
+                if is_stale {
+                    return None;
+                }
                 self.claude
                     .running_logs
                     .get(&result.cue_id)
                     .and_then(|(log, _)| claude::detect_usage_limit(log))
             })
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+    }
 
-        let is_error = if let Some(ref error) = result.error {
-            self.handle_run_error(&result, error);
+    /// Route the result to the appropriate handler. Returns `true` if the
+    /// result represents an error condition.
+    fn dispatch_result(&mut self, result: &ClaudeResult, usage_limit_msg: &Option<String>) -> bool {
+        if let Some(ref error) = result.error {
+            self.handle_run_error(result, error);
             true
         } else if let Some(ref limit_line) = usage_limit_msg {
-            self.handle_rate_limit(&result, limit_line);
+            self.handle_rate_limit(result, limit_line);
             true
         } else if result.diff.is_some() {
-            self.handle_run_with_diff(&result);
+            self.handle_run_with_diff(result);
             false
         } else {
-            self.handle_run_no_changes(&result);
+            self.handle_run_no_changes(result);
             false
-        };
+        }
+    }
 
-        // After every successful run, refresh git state and open tabs so that
-        // commits made by Claude Code (or any other file changes) are visible
-        // immediately in the UI — git log, dirty-file markers, tab contents.
-        if !is_error {
-            // Detect Claude Code plan (ExitPlanMode) in the log output.
-            let plan_path = self
-                .claude
+    /// Post-processing after a successful (non-error) run: refresh git state,
+    /// open tabs, and dispatch any queued follow-ups.
+    fn handle_successful_run(&mut self, result: &ClaudeResult) {
+        let plan_path = self
+            .claude
+            .running_logs
+            .get(&result.cue_id)
+            .and_then(|(log, _)| claude::extract_plan_path(log));
+        let _ = self
+            .db
+            .update_cue_plan_path(result.cue_id, plan_path.as_deref());
+
+        self.refresh_open_tabs();
+        self.reload_git_info();
+        self.reload_commit_history();
+        self.try_dispatch_follow_up(result.cue_id);
+    }
+
+    /// Finalize a stale execution in the DB without touching live state.
+    fn complete_stale_execution(&self, result: &ClaudeResult) {
+        if let Some(ref error) = result.error {
+            let _ = self.db.fail_execution(result.exec_id, error);
+        } else {
+            let _ = self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                result.diff.as_deref(),
+                Some(result.metrics.cost_usd),
+                Some(result.metrics.duration_ms),
+                Some(result.metrics.num_turns),
+            );
+        }
+    }
+
+    /// Emit telemetry for a completed execution (unless it errored or hit a
+    /// usage limit).
+    fn emit_completion_telemetry(
+        &self,
+        result: &ClaudeResult,
+        is_stale: bool,
+        usage_limit_msg: &Option<String>,
+    ) {
+        if result.error.is_some() || usage_limit_msg.is_some() {
+            return;
+        }
+        let provider_name = if !is_stale {
+            self.claude
                 .running_logs
                 .get(&result.cue_id)
-                .and_then(|(log, _)| claude::extract_plan_path(log));
-            let _ = self
-                .db
-                .update_cue_plan_path(result.cue_id, plan_path.as_deref());
-
-            self.refresh_open_tabs();
-            self.reload_git_info();
-            self.reload_commit_history();
-            self.try_dispatch_follow_up(result.cue_id);
-        }
-
-        self.refresh_conversation_history(result.cue_id);
-        self.reload_cues();
+                .map(|(_, p)| p.display_name().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        } else {
+            "unknown".to_string()
+        };
+        telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
+            project: &self.project_name(),
+            cue_id: result.cue_id,
+            provider: &provider_name,
+            cost_usd: result.metrics.cost_usd,
+            duration_ms: result.metrics.duration_ms,
+            num_turns: result.metrics.num_turns,
+            input_tokens: result.metrics.input_tokens,
+            output_tokens: result.metrics.output_tokens,
+            has_diff: result.diff.is_some(),
+        });
     }
 
     /// Reload the conversation history panel if it is showing this cue.
@@ -751,7 +803,9 @@ impl DirigentApp {
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {
-        let diff = result.diff.as_ref().unwrap();
+        let Some(diff) = result.diff.as_ref() else {
+            return;
+        };
         let (m_cost, m_dur, m_turns) = (
             Some(result.metrics.cost_usd),
             Some(result.metrics.duration_ms),

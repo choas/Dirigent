@@ -31,6 +31,7 @@ pub(super) struct DiffReview {
     pub(super) cue_id: i64,
     pub(super) diff: String,
     pub(super) cue_text: String,
+    pub(super) commit_hash: Option<String>,
     pub(super) parsed: ParsedDiff,
     pub(super) view_mode: DiffViewMode,
     pub(super) read_only: bool,
@@ -86,6 +87,18 @@ pub(super) enum CueAction {
     RunPlan(i64),
     /// Mark a Notion-sourced cue as done in Notion.
     NotionDone(i64),
+    /// Trigger LLM analysis of Inbox cues to create a workflow plan.
+    CreateWorkflow,
+    /// Cancel ongoing workflow generation.
+    CancelWorkflow,
+    /// Begin executing the workflow plan.
+    StartWorkflow,
+    /// Resume a paused workflow.
+    ResumeWorkflow,
+    /// Toggle pause_after on a specific step index.
+    TogglePause(usize),
+    /// Remove a cue from the workflow plan.
+    RemoveFromWorkflow(i64),
 }
 
 /// State for a single open file tab.

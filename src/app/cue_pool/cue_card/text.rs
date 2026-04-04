@@ -27,7 +27,8 @@ fn file_ref_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         // Optional "Dirigent:" prefix, path with at least one `/`, file extension, `:line`.
-        Regex::new(r"(?:Dirigent:)?((?:[\w.\-]+/)+[\w.\-]+\.\w+):(\d+)").unwrap()
+        Regex::new(r"(?:Dirigent:)?((?:[\w.\-]+/)+[\w.\-]+\.\w+):(\d+)")
+            .expect("hardcoded file-reference regex")
     })
 }
 
@@ -35,8 +36,8 @@ fn find_file_references(text: &str) -> Vec<InlineFileRef> {
     let re = file_ref_regex();
     re.captures_iter(text)
         .map(|cap| {
-            let path_match = cap.get(1).unwrap();
-            let line_match = cap.get(2).unwrap();
+            let path_match = cap.get(1).expect("capture group 1 always present in match");
+            let line_match = cap.get(2).expect("capture group 2 always present in match");
             let byte_start = path_match.start();
             let byte_end = line_match.end();
             // Convert byte offsets → character offsets for galley CCursor matching.
@@ -80,20 +81,23 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
         fs: f32,
     ) {
-        let editing = self.editing_cue.as_mut().unwrap();
+        let Some(editing) = self.editing_cue.as_mut() else {
+            return;
+        };
         let response = ui.text_edit_multiline(&mut editing.text);
         ui.horizontal(|ui| {
             if ui.small_button(icon("\u{2713} Save", fs)).clicked() {
-                actions.push((
-                    cue.id,
-                    CueAction::SaveEdit(self.editing_cue.as_ref().unwrap().text.clone()),
-                ));
+                if let Some(ref editing) = self.editing_cue {
+                    actions.push((cue.id, CueAction::SaveEdit(editing.text.clone())));
+                }
             }
             if ui.small_button(icon("\u{2715} Cancel", fs)).clicked() {
                 actions.push((cue.id, CueAction::CancelEdit));
             }
         });
-        let editing = self.editing_cue.as_mut().unwrap();
+        let Some(editing) = self.editing_cue.as_mut() else {
+            return;
+        };
         if !editing.focus_requested {
             response.request_focus();
             editing.focus_requested = true;

@@ -14,6 +14,25 @@ enum NotificationOutcome {
     Failed(String),
 }
 
+/// Create an `NSString` from a Rust `&str`, returning a raw pointer suitable
+/// for passing to ObjC message sends.
+///
+/// # Safety
+/// Must be called within an active `NSAutoreleasePool` scope. The returned
+/// pointer is autoreleased and valid until the enclosing pool is drained.
+/// The input must not contain interior null bytes (caller strips them).
+#[cfg(target_os = "macos")]
+unsafe fn ns_string_from_str(s: &str) -> *mut objc::runtime::Object {
+    use objc::runtime::Class;
+    use objc::{msg_send, sel, sel_impl};
+
+    let nsstring = Class::get("NSString").expect("NSString is always available on macOS");
+    let c_str = std::ffi::CString::new(s).expect("interior null bytes already stripped");
+    // SAFETY: `NSString stringWithUTF8String:` is safe to call with a valid
+    // C string pointer. The returned object is autoreleased by the runtime.
+    msg_send![nsstring, stringWithUTF8String: c_str.as_ptr()]
+}
+
 /// Send a macOS notification via `UNUserNotificationCenter` (modern API).
 /// Registers a delegate on first call so notifications are shown even when the
 /// app is in the foreground (macOS suppresses them by default).
@@ -22,26 +41,28 @@ enum NotificationOutcome {
 pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
-    use std::ffi::CString;
 
     // Strip null bytes to prevent CString::new panics.
     let title_safe = title.replace('\0', "");
     let subtitle_safe = subtitle.replace('\0', "");
     let body_safe = body.replace('\0', "");
 
+    // SAFETY: All ObjC messaging in this block operates within an
+    // NSAutoreleasePool that is drained before the block exits. The
+    // NSString pointers (`title_ns`, `sub_ns`, `body_ns`) are autoreleased
+    // and remain valid for the duration of the pool. Class lookups
+    // (`NSAutoreleasePool`, `NSString`) are guaranteed to exist on any
+    // supported macOS version (10.14+). Interior null bytes have been
+    // stripped above, so CString construction cannot panic.
     unsafe {
-        let pool_cls = Class::get("NSAutoreleasePool").unwrap();
+        // SAFETY: `NSAutoreleasePool` is always available on macOS.
+        let pool_cls = Class::get("NSAutoreleasePool")
+            .expect("NSAutoreleasePool is always available on macOS");
         let pool: *mut Object = msg_send![pool_cls, new];
 
-        let nsstring = Class::get("NSString").unwrap();
-
-        let title_c = CString::new(title_safe.as_str()).unwrap();
-        let sub_c = CString::new(subtitle_safe.as_str()).unwrap();
-        let body_c = CString::new(body_safe.as_str()).unwrap();
-
-        let title_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: title_c.as_ptr()];
-        let sub_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: sub_c.as_ptr()];
-        let body_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: body_c.as_ptr()];
+        let title_ns = ns_string_from_str(&title_safe);
+        let sub_ns = ns_string_from_str(&subtitle_safe);
+        let body_ns = ns_string_from_str(&body_safe);
 
         match try_modern_notification(title_ns, sub_ns, body_ns) {
             NotificationOutcome::Unavailable => {
@@ -58,6 +79,9 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
             }
         }
 
+        // SAFETY: `drain` releases all autoreleased objects created since
+        // `[pool new]`. After this point, `title_ns`/`sub_ns`/`body_ns` are
+        // invalid — but they are not used again.
         let _: () = msg_send![pool, drain];
     }
 }
@@ -66,6 +90,15 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
 /// (macOS 10.14+). Returns a [`NotificationOutcome`] indicating whether the
 /// notification was delivered, the API is unavailable, the user has not
 /// authorized notifications, or delivery failed.
+///
+/// # Safety
+/// - `title_ns`, `sub_ns`, and `body_ns` must be valid, autoreleased
+///   `NSString*` pointers (or ObjC `nil`). ObjC nil-messaging is safe (returns
+///   zero/nil), so null pointers degrade gracefully — notifications just appear
+///   with empty fields rather than crashing.
+/// - Must be called within an active `NSAutoreleasePool` scope so that
+///   autoreleased intermediaries (framework path string, UUID, etc.) are
+///   collected.
 #[cfg(target_os = "macos")]
 unsafe fn try_modern_notification(
     title_ns: *mut objc::runtime::Object,
@@ -75,14 +108,16 @@ unsafe fn try_modern_notification(
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
-    let bundle_cls = Class::get("NSBundle").unwrap();
-    let nsstring = Class::get("NSString").unwrap();
+    // SAFETY: `NSBundle` is always present on macOS.
+    let bundle_cls = Class::get("NSBundle").expect("NSBundle is always available on macOS");
 
-    let fw_path_c =
-        std::ffi::CString::new("/System/Library/Frameworks/UserNotifications.framework").unwrap();
-    let fw_path_ns: *mut Object = msg_send![nsstring, stringWithUTF8String: fw_path_c.as_ptr()];
+    // SAFETY: The path is a compile-time constant with no interior nulls.
+    let fw_path_ns = ns_string_from_str("/System/Library/Frameworks/UserNotifications.framework");
+    // SAFETY: `bundleWithPath:` returns nil for non-existent paths — checked below.
     let fw_bundle: *mut Object = msg_send![bundle_cls, bundleWithPath: fw_path_ns];
 
+    // SAFETY: `mainBundle` always returns a valid object; `bundleIdentifier`
+    // returns nil when running without a bundle (e.g. `cargo run`).
     let main_bundle: *mut Object = msg_send![bundle_cls, mainBundle];
     let bundle_id: *mut Object = msg_send![main_bundle, bundleIdentifier];
 
@@ -90,15 +125,22 @@ unsafe fn try_modern_notification(
         return NotificationOutcome::Unavailable;
     }
 
+    // SAFETY: `fw_bundle` is non-null (checked above). `load` is idempotent
+    // and returns false only if the framework binary is missing/corrupt.
     let loaded: bool = msg_send![fw_bundle, load];
     if !loaded {
         return NotificationOutcome::Unavailable;
     }
 
+    // SAFETY: After successfully loading the framework, the class should be
+    // registered with the ObjC runtime. If it is not, we treat the API as
+    // unavailable rather than panicking.
     let center_cls = match Class::get("UNUserNotificationCenter") {
         Some(cls) => cls,
         None => return NotificationOutcome::Unavailable,
     };
+    // SAFETY: `currentNotificationCenter` returns nil if the notification
+    // system cannot be initialized — checked below.
     let center: *mut Object = msg_send![center_cls, currentNotificationCenter];
     if center.is_null() {
         return NotificationOutcome::Unavailable;
@@ -111,6 +153,16 @@ unsafe fn try_modern_notification(
 /// One-time delegate registration and authorization request.
 /// Registers a `UNUserNotificationCenterDelegate` so notifications appear even
 /// when the app is in the foreground, and requests alert+sound authorization.
+///
+/// # Safety
+/// - `center` must be a valid, non-null `UNUserNotificationCenter*` pointer.
+/// - Must be called from the main thread (ObjC delegate assignment and
+///   authorization requests are main-thread-only operations).
+/// - The delegate object is intentionally leaked so it outlives the app;
+///   this is safe because macOS reclaims all process memory on exit.
+/// - The `AuthBlock` is stack-allocated, then heap-copied via `_Block_copy`
+///   before being passed to the async authorization API. `_Block_release` is
+///   called immediately after — the runtime retains its own copy.
 #[cfg(target_os = "macos")]
 unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Object) {
     use objc::declare::ClassDecl;
@@ -188,6 +240,10 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             _notification: *mut Object,
             handler: *const std::ffi::c_void,
         ) {
+            // SAFETY: `handler` is a valid ObjC block pointer provided by
+            // the system. We cast it to `PresentCompletionBlock` which
+            // matches the ABI layout of `void (^)(UNNotificationPresentationOptions)`.
+            // The block is invoked exactly once, as required by the API contract.
             unsafe {
                 let bh = handler as *const PresentCompletionBlock;
                 // UNNotificationPresentationOptionBanner  (1 << 4)
@@ -207,13 +263,17 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
             _response: *mut Object,
             handler: *const std::ffi::c_void,
         ) {
+            // SAFETY: `handler` is a valid ObjC block pointer provided by
+            // the system. We cast it to `ResponseCompletionBlock` which
+            // matches the ABI layout of `void (^)(void)`. The block is
+            // invoked exactly once, as required by the API contract.
             unsafe {
                 let bh = handler as *const ResponseCompletionBlock;
                 ((*bh).invoke)(handler);
             }
         }
 
-        let superclass = Class::get("NSObject").unwrap();
+        let superclass = Class::get("NSObject").expect("NSObject is always available on macOS");
         if let Some(mut decl) = ClassDecl::new("DirigentNotifDelegate", superclass) {
             decl.add_method(
                 sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
@@ -267,6 +327,17 @@ unsafe fn setup_notification_delegate_and_auth(center: *mut objc::runtime::Objec
 /// and deliver it via the given `UNUserNotificationCenter`.
 /// Returns a [`NotificationOutcome`] based on the completion handler result
 /// or timeout.
+///
+/// # Safety
+/// - `center` must be a valid, non-null `UNUserNotificationCenter*` pointer.
+/// - `title_ns`, `sub_ns`, and `body_ns` must be valid `NSString*` pointers
+///   (or ObjC nil). Nil is safe — ObjC nil-messaging is a no-op.
+/// - Must be called within an active `NSAutoreleasePool` scope.
+/// - The `CompletionBlock` is stack-allocated and heap-copied via `_Block_copy`
+///   before being passed to `addNotificationRequest:withCompletionHandler:`.
+///   The heap block captures a `Box`-allocated `outcome_ptr` and a GCD
+///   semaphore; on timeout, both are intentionally leaked so the late-firing
+///   completion handler does not write to freed memory.
 #[cfg(target_os = "macos")]
 unsafe fn deliver_notification(
     center: *mut objc::runtime::Object,
@@ -318,6 +389,12 @@ unsafe fn deliver_notification(
     const OUTCOME_FAILED: u8 = 1;
     const OUTCOME_NOT_AUTHORIZED: u8 = 2;
 
+    // SAFETY: Called by the ObjC runtime as a block invocation. `block` is a
+    // valid pointer to the heap-copied `CompletionBlock`. `outcome` is a
+    // heap-allocated `Box<u8>` (via `Box::into_raw`) that remains valid because:
+    //   - On the happy path, we wait on the semaphore before freeing it.
+    //   - On timeout, we intentionally leak it so this write is still safe.
+    // `error` is either a valid `NSError*` or ObjC nil (checked before use).
     unsafe extern "C" fn completion_invoke(block: *mut CompletionBlock, error: *mut Object) {
         use objc::{msg_send, sel, sel_impl};
 
@@ -335,14 +412,18 @@ unsafe fn deliver_notification(
         dispatch_semaphore_signal((*block).semaphore);
     }
 
+    // SAFETY: Class lookups use `match` — None returns Unavailable, not UB.
+    // `UNMutableNotificationContent` was loaded by `try_modern_notification`
+    // before calling us.
     let content_cls = match Class::get("UNMutableNotificationContent") {
         Some(cls) => cls,
         None => return NotificationOutcome::Unavailable,
     };
     let content: *mut Object = msg_send![content_cls, new];
-    // Autorelease so the caller's NSAutoreleasePool handles cleanup,
+    // SAFETY: Autorelease so the caller's NSAutoreleasePool handles cleanup,
     // covering both early-return and normal exit paths.
     let content: *mut Object = msg_send![content, autorelease];
+    // SAFETY: Setters accept NSString* (or nil). ObjC nil-messaging is a no-op.
     let _: () = msg_send![content, setTitle: title_ns];
     let _: () = msg_send![content, setSubtitle: sub_ns];
     let _: () = msg_send![content, setBody: body_ns];
@@ -351,7 +432,9 @@ unsafe fn deliver_notification(
         Some(cls) => cls,
         None => return NotificationOutcome::Unavailable,
     };
-    let nsuuid_cls = Class::get("NSUUID").unwrap();
+    // SAFETY: `NSUUID` is always available on macOS 10.8+. `UUID` and
+    // `UUIDString` return autoreleased objects valid within the pool scope.
+    let nsuuid_cls = Class::get("NSUUID").expect("NSUUID is always available on macOS 10.8+");
     let uuid: *mut Object = msg_send![nsuuid_cls, UUID];
     let uuid_str: *mut Object = msg_send![uuid, UUIDString];
     let trigger: *const Object = std::ptr::null();
@@ -396,7 +479,9 @@ unsafe fn deliver_notification(
         return NotificationOutcome::Failed("timed out waiting for notification completion".into());
     }
 
-    // Completion handler ran within the timeout — safe to read and free.
+    // SAFETY: Completion handler ran within the timeout — the semaphore
+    // guarantees `outcome_ptr` has been written and no concurrent access
+    // remains. Safe to read the value and reclaim the Box.
     let outcome_code = *outcome_ptr;
     drop(Box::from_raw(outcome_ptr));
     _Block_release(heap_block);

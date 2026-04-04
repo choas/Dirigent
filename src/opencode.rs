@@ -321,45 +321,13 @@ fn build_opencode_command(
             cmd.arg(arg);
         }
     }
-    apply_env_vars(&mut cmd, config.env_vars);
+    claude::apply_env_vars(&mut cmd, config.env_vars);
     // Inject .Dirigent/.env overrides so AI runs use dev credentials.
     crate::claude::apply_dirigent_env(&mut cmd, project_root);
     cmd.current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     Ok(cmd)
-}
-
-/// Resolve environment variable **names** (one per line, # comments allowed)
-/// from the current process environment and apply them to the command.
-/// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
-/// for backward compatibility with old KEY=VALUE config entries.
-fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
-    for line in env_vars.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Accept bare names; strip any =value suffix left over from old config.
-        let name = match line.split_once('=') {
-            Some((key, _)) => key.trim(),
-            None => line,
-        };
-        if name.is_empty() {
-            continue;
-        }
-        match std::env::var(name) {
-            Ok(value) => {
-                cmd.env(name, value);
-            }
-            Err(_) => {
-                eprintln!(
-                    "warning: env var '{}' not found in environment, skipping",
-                    name
-                );
-            }
-        }
-    }
 }
 
 /// Spawn a watchdog thread that kills the child process on cancellation.

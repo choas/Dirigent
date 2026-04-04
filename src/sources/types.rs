@@ -6,6 +6,10 @@ pub(crate) struct SourceItem {
     pub source_label: String,
     /// Stable source identifier (matches SourceConfig.id).
     pub source_id: String,
+    /// File path the finding refers to (empty for global/project-level items).
+    pub file_path: String,
+    /// Line number within the file (0 if not applicable).
+    pub line_number: usize,
 }
 
 impl SourceItem {
@@ -20,7 +24,16 @@ impl SourceItem {
             text: text.into(),
             source_label: source_label.to_string(),
             source_id: String::new(),
+            file_path: String::new(),
+            line_number: 0,
         }
+    }
+
+    /// Set the file location for this source item.
+    pub fn with_location(mut self, file_path: &str, line_number: usize) -> Self {
+        self.file_path = file_path.to_string();
+        self.line_number = line_number;
+        self
     }
 }
 

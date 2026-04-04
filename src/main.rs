@@ -16,6 +16,7 @@ mod settings;
 mod sources;
 mod syntax;
 mod telemetry;
+mod workflow;
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -42,7 +43,26 @@ pub fn spawn_new_instance() {
 /// Walk the main menu to find the About item and retarget it to our helper.
 ///
 /// # Safety
-/// Caller must pass valid ObjC pointers obtained from NSApplication.
+///
+/// **Preconditions:**
+/// - `app` must be a valid, non-null pointer to the `NSApplication` shared
+///   instance, obtained via `[NSApplication sharedApplication]`.
+/// - `helper` must be a valid, non-null pointer to an ObjC object that
+///   responds to the `showAbout:` selector (i.e. the class must have that
+///   method registered before this call).
+/// - Must be called on the main thread (AppKit is not thread-safe).
+///
+/// **Invariants / rationale:**
+/// - All `msg_send!` calls follow standard ObjC messaging. Sending a message
+///   to a valid ObjC object with a selector it does not respond to returns
+///   nil/zero rather than crashing (ObjC nil-messaging semantics), but we
+///   guard against null pointers from `mainMenu` and `submenu` explicitly.
+/// - `itemAtIndex:` is safe for indices in `0..numberOfItems` — we never
+///   read out-of-bounds.
+///
+/// **If pointers are invalid:** passing a dangling or non-ObjC pointer
+/// causes undefined behaviour (likely SIGSEGV / EXC_BAD_ACCESS). Callers
+/// must guarantee pointer validity.
 unsafe fn retarget_about_menu_item(
     app: *mut objc::runtime::Object,
     helper: *mut objc::runtime::Object,
@@ -80,15 +100,39 @@ unsafe fn retarget_about_menu_item(
 /// Create an NSImage from raw PNG bytes.
 ///
 /// # Safety
-/// Caller must ensure ObjC runtime is available (i.e. running on macOS).
+///
+/// **Preconditions:**
+/// - The ObjC runtime must be initialised (guaranteed on macOS when called
+///   after `NSApplication` setup — the `#[cfg(target_os = "macos")]` gate
+///   ensures this is never compiled for other platforms).
+/// - `png_bytes` must be a valid byte slice containing a well-formed PNG
+///   image. If the data is not valid PNG, `initWithData:` returns nil and
+///   the caller receives a null pointer (callers must handle this).
+/// - Must be called on the main thread (AppKit requirement for NSImage).
+///
+/// **Invariants:**
+/// - `Class::get("NSData")` and `Class::get("NSImage")` will always succeed
+///   on macOS — these are foundational AppKit/Foundation classes present
+///   since OS X 10.0. The `unwrap()` calls are safe in practice but would
+///   panic if the ObjC runtime were somehow unavailable.
+/// - `dataWithBytes:length:` copies the bytes into the NSData object, so
+///   `png_bytes` does not need to outlive the call.
+/// - The returned `*mut Object` is an owned (+1) NSImage produced by
+///   `alloc`+`initWithData:`. The caller is responsible for releasing it
+///   or transferring ownership (e.g. to `setApplicationIconImage:`).
+///
+/// **If pointers are invalid:** this function only receives a Rust slice
+/// (bounds-checked); the ObjC pointers are produced internally. A corrupted
+/// ObjC runtime would cause UB via `msg_send!`, but this cannot occur under
+/// normal macOS operation.
 unsafe fn nsimage_from_png(png_bytes: &[u8]) -> *mut objc::runtime::Object {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
-    let ns_data = Class::get("NSData").unwrap();
+    let ns_data = Class::get("NSData").expect("NSData is always available on macOS");
     let data: *mut Object =
         msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
-    let ns_image = Class::get("NSImage").unwrap();
+    let ns_image = Class::get("NSImage").expect("NSImage is always available on macOS");
     let image: *mut Object = msg_send![ns_image, alloc];
     msg_send![image, initWithData:data]
 }
@@ -99,8 +143,23 @@ fn setup_macos_about_panel() {
     use objc::runtime::{Class, Object, Sel};
     use objc::{msg_send, sel, sel_impl};
 
+    // SAFETY: This entire block performs ObjC interop via `msg_send!` to
+    // configure the macOS About panel. It is safe because:
+    // - We are on the main thread (called from eframe's app creation callback).
+    // - `NSApplication`, `NSObject`, and related Foundation/AppKit classes are
+    //   always available on macOS — the `unwrap()` calls on `Class::get` cannot
+    //   fail under normal operation.
+    // - `sharedApplication` returns the singleton NSApplication; it is never null
+    //   after the application has launched.
+    // - `include_bytes!` produces a static &[u8] — the PNG data is always valid.
+    // - The helper object is intentionally leaked (`let _ = helper`) to ensure
+    //   it lives for the duration of the process, since the menu item holds an
+    //   unretained reference to it.
+    // - `ClassDecl::new` returns `None` if a class with the same name already
+    //   exists (e.g. if called twice), so we guard with `if let Some(...)`.
     unsafe {
-        let ns_app = Class::get("NSApplication").unwrap();
+        let ns_app =
+            Class::get("NSApplication").expect("NSApplication is always available on macOS");
         let app: *mut Object = msg_send![ns_app, sharedApplication];
 
         // Set application icon (used by dock and About panel)
@@ -109,15 +168,25 @@ fn setup_macos_about_panel() {
 
         // Create a helper class whose showAbout: method opens the standard
         // About panel with our name and version filled in.
-        let superclass = Class::get("NSObject").unwrap();
+        let superclass = Class::get("NSObject").expect("NSObject is always available on macOS");
         if let Some(mut decl) = ClassDecl::new("DirigentAboutHelper", superclass) {
             extern "C" fn show_about(_this: &Object, _sel: Sel, _sender: *mut Object) {
+                // SAFETY: This callback is invoked by AppKit on the main thread
+                // when the user clicks the About menu item. The ObjC runtime is
+                // fully initialised at this point. All Class::get calls target
+                // Foundation/AppKit classes that are always present. String
+                // literals use C-string syntax (`c"..."`) which are guaranteed
+                // null-terminated. Dictionary keys and values are autoreleased
+                // ObjC objects valid for the duration of this scope.
                 unsafe {
-                    let ns_app = Class::get("NSApplication").unwrap();
+                    let ns_app = Class::get("NSApplication")
+                        .expect("NSApplication is always available on macOS");
                     let app: *mut Object = msg_send![ns_app, sharedApplication];
-                    let ns_dict = Class::get("NSMutableDictionary").unwrap();
+                    let ns_dict = Class::get("NSMutableDictionary")
+                        .expect("NSMutableDictionary is always available on macOS");
                     let dict: *mut Object = msg_send![ns_dict, new];
-                    let ns_string = Class::get("NSString").unwrap();
+                    let ns_string =
+                        Class::get("NSString").expect("NSString is always available on macOS");
 
                     let key: *mut Object = msg_send![ns_string,
                         stringWithUTF8String: c"ApplicationName".as_ptr()];
@@ -182,6 +251,16 @@ fn screen_center_position(win_width: f32, win_height: f32) -> Option<egui::Pos2>
         size: CGSize,
     }
 
+    // SAFETY: ObjC interop to query the main screen dimensions.
+    // - `NSScreen` is a standard AppKit class, always available on macOS.
+    //   `Class::get` returns `None` (not UB) if absent, handled by `?`.
+    // - `mainScreen` returns nil when no screen is attached (e.g. headless
+    //   CI); we check for null and return `None`.
+    // - `frame` returns a by-value `NSRect` (CGRect). The `#[repr(C)]`
+    //   structs above match the CoreGraphics ABI layout (origin + size,
+    //   both f64 on 64-bit macOS). Mismatched layout would yield wrong
+    //   values but not memory unsafety.
+    // - Must be called on the main thread (AppKit requirement).
     unsafe {
         use objc::runtime::{Class, Object};
         use objc::{msg_send, sel, sel_impl};
@@ -198,6 +277,22 @@ fn screen_center_position(win_width: f32, win_height: f32) -> Option<egui::Pos2>
 
         Some(egui::pos2(x.max(0.0), y.max(0.0)))
     }
+}
+
+fn scrub_sentry_event(
+    mut event: sentry::protocol::Event<'static>,
+) -> Option<sentry::protocol::Event<'static>> {
+    event.server_name = None;
+    event.user = None;
+    for exc in event.exception.values.iter_mut() {
+        if let Some(ref mut st) = exc.stacktrace {
+            for frame in st.frames.iter_mut() {
+                frame.filename = None;
+                frame.abs_path = None;
+            }
+        }
+    }
+    Some(event)
 }
 
 fn load_logo_icon() -> egui::IconData {
@@ -229,7 +324,8 @@ fn main() -> eframe::Result {
         sentry_dsn,
         sentry::ClientOptions {
             release: sentry::release_name!(),
-            send_default_pii: true,
+            send_default_pii: false,
+            before_send: Some(std::sync::Arc::new(scrub_sentry_event)),
             ..Default::default()
         },
     ));

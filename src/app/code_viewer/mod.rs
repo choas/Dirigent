@@ -53,6 +53,10 @@ impl DirigentApp {
             self.render_cue_agent_runs_central(ui);
             return true;
         }
+        if (self.workflow_plan.is_some() && self.show_workflow_graph) || self.workflow_generating {
+            self.render_workflow_graph_central(ui);
+            return true;
+        }
         false
     }
 
@@ -234,6 +238,7 @@ impl DirigentApp {
                 cue_id: 0,
                 diff: diff_text,
                 cue_text: format!("Uncommitted changes: {}", rel_path),
+                commit_hash: None,
                 parsed,
                 view_mode: DiffViewMode::Inline,
                 read_only: true,

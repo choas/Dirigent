@@ -11,15 +11,49 @@ pub(super) const MAX_COMMAND_LENGTH: usize = 4096;
 /// Timeout for subprocess execution (seconds).
 pub(crate) const SUBPROCESS_TIMEOUT_SECS: u64 = 60;
 
-/// Shell metacharacters that could be used for injection.
-pub(super) const SHELL_METACHARACTERS: &[char] =
-    &['`', '$', '!', ';', '&', '|', '<', '>', '(', ')'];
+/// Check whether a character is allowed in a custom command string.
+///
+/// Uses an allowlist approach: only known-safe ASCII characters and non-ASCII
+/// printable characters (for international file paths) are permitted.  All
+/// shell metacharacters (`$`, `` ` ``, `;`, `&`, `|`, `!`, `(`, `)`, `<`,
+/// `>`, `{`, `}`, `\`, etc.) are rejected by omission, which is robust
+/// against bypass techniques like ANSI-C quoting or parameter expansion.
+fn is_allowed_command_char(c: char) -> bool {
+    if c.is_ascii() {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                ' ' | '\t'
+                    | '/'
+                    | '.'
+                    | '-'
+                    | '_'
+                    | '='
+                    | '+'
+                    | ':'
+                    | '@'
+                    | '%'
+                    | ','
+                    | '~'
+                    | '\''
+                    | '"'
+                    | '#'
+                    | '?'
+                    | '['
+                    | ']'
+            )
+    } else {
+        // Non-ASCII printable characters (e.g. international file paths) are
+        // safe — shell metacharacters are all ASCII.
+        !c.is_control()
+    }
+}
 
 /// Validate a custom command string for safety.
-/// Rejects null bytes, line breaks, control characters (except tab),
-/// shell metacharacters, and excessively long commands.
+/// Only permits known-safe characters via an allowlist. Rejects empty
+/// commands, excessively long commands, and any character not on the allowlist.
 pub(super) fn validate_command(command: &str) -> Result<(), String> {
-    if command.is_empty() {
+    if command.trim().is_empty() {
         return Err("empty command".to_string());
     }
     if command.len() > MAX_COMMAND_LENGTH {
@@ -29,27 +63,53 @@ pub(super) fn validate_command(command: &str) -> Result<(), String> {
             MAX_COMMAND_LENGTH
         ));
     }
-    if command.contains('\0') {
-        return Err("command contains null byte".to_string());
-    }
-    // Reject newlines/carriage-returns — they could chain commands via sh -c
-    if command.contains('\n') || command.contains('\r') {
-        return Err("command contains line break".to_string());
-    }
-    // Reject control characters other than tab
-    if let Some(pos) = command.chars().position(|c| c.is_control() && c != '\t') {
-        return Err(format!(
-            "command contains control character at position {}",
-            pos
-        ));
-    }
-    // Reject shell metacharacters to prevent injection
-    for &meta in SHELL_METACHARACTERS {
-        if command.contains(meta) {
-            return Err(format!("command contains shell metacharacter '{}'", meta));
+    // Reject any character not on the allowlist
+    for (pos, c) in command.char_indices() {
+        if !is_allowed_command_char(c) {
+            return Err(format!(
+                "command contains disallowed character {:?} at byte position {}",
+                c, pos
+            ));
         }
     }
     Ok(())
+}
+
+/// Drain a child process's stdout and stderr on background threads so the OS
+/// pipe buffers don't fill up and block the child (classic pipe deadlock).
+///
+/// Returns join handles whose value is the captured bytes.  Pass the results
+/// through [`collect_drained`] to get the final `Vec<u8>` values.
+type PipeHandle = Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>;
+
+pub(crate) fn drain_child_pipes(child: &mut std::process::Child) -> (PipeHandle, PipeHandle) {
+    use std::io::Read;
+
+    let stdout_handle = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            out.read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|mut err| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            err.read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+    });
+    (stdout_handle, stderr_handle)
+}
+
+/// Collect the output from drain handles returned by [`drain_child_pipes`].
+pub(crate) fn collect_drained(handle: PipeHandle) -> std::io::Result<Vec<u8>> {
+    match handle {
+        Some(h) => h
+            .join()
+            .map_err(|_| std::io::Error::other("pipe reader thread panicked"))?,
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Run a command with a timeout. Returns the output or an IO error on timeout.
@@ -60,26 +120,7 @@ pub(crate) fn output_with_timeout(
     mut child: std::process::Child,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
-    use std::io::Read;
-
-    // Take ownership of the pipe handles so we can read them on background threads.
-    let stdout_handle = child.stdout.take();
-    let stderr_handle = child.stderr.take();
-
-    let stdout_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        if let Some(mut out) = stdout_handle {
-            out.read_to_end(&mut buf)?;
-        }
-        Ok(buf)
-    });
-    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        if let Some(mut err) = stderr_handle {
-            err.read_to_end(&mut buf)?;
-        }
-        Ok(buf)
-    });
+    let (stdout_handle, stderr_handle) = drain_child_pipes(&mut child);
 
     // Poll for process exit with a timeout.
     let deadline = std::time::Instant::now() + timeout;
@@ -98,8 +139,8 @@ pub(crate) fn output_with_timeout(
         }
     };
 
-    let stdout = stdout_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
-    let stderr = stderr_thread.join().unwrap_or_else(|_| Ok(Vec::new()))?;
+    let stdout = collect_drained(stdout_handle)?;
+    let stderr = collect_drained(stderr_handle)?;
 
     Ok(std::process::Output {
         status,
@@ -222,6 +263,8 @@ pub(super) fn parse_source_object(
         text: text.to_string(),
         source_label: source_label.to_string(),
         source_id: source_id.to_string(),
+        file_path: String::new(),
+        line_number: 0,
     })
 }
 
@@ -265,16 +308,37 @@ mod tests {
 
     #[test]
     fn validate_command_rejects_shell_metacharacters() {
-        for &meta in SHELL_METACHARACTERS {
+        let dangerous = [
+            '`', '$', '!', ';', '&', '|', '<', '>', '(', ')', '{', '}', '\\',
+        ];
+        for meta in dangerous {
             let cmd = format!("echo {}foo", meta);
             assert!(validate_command(&cmd).is_err(), "should reject '{}'", meta);
         }
     }
 
     #[test]
+    fn validate_command_rejects_ansi_c_quoting_chars() {
+        // ANSI-C quoting ($'...') requires $ which is not in the allowlist
+        assert!(validate_command("echo $'\\x41'").is_err());
+        // Backslash is not in the allowlist either
+        assert!(validate_command("echo \\n").is_err());
+    }
+
+    #[test]
     fn validate_command_allows_safe_characters() {
         assert!(validate_command("python3 script.py --flag=value 'arg' \"arg2\"").is_ok());
         assert!(validate_command("curl https://example.com/api").is_ok());
+        assert!(validate_command("ls -la /tmp/my_dir").is_ok());
+        assert!(validate_command("cmd @file.txt path/to+name").is_ok());
+        assert!(validate_command("grep 'pattern' file.txt#L10").is_ok());
+        assert!(validate_command("cmd [opt] ~user/path").is_ok());
+    }
+
+    #[test]
+    fn validate_command_allows_non_ascii_paths() {
+        assert!(validate_command("cat données.txt").is_ok());
+        assert!(validate_command("ls 日本語ファイル").is_ok());
     }
 
     // -- parse_source_json --

@@ -230,7 +230,10 @@ fn render_list_item(
         return;
     }
 
-    render_list_item_inline_first(ui, prefix, first.unwrap(), ctx);
+    let Some(first_block) = first else {
+        return;
+    };
+    render_list_item_inline_first(ui, prefix, first_block, ctx);
 
     if item_blocks.len() > 1 {
         let nested = ctx.nested();

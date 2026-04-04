@@ -10,7 +10,9 @@ use crate::settings::CliProvider;
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_running_log_central(&mut self, ui: &mut egui::Ui) {
-        let cue_id = self.claude.show_log.unwrap();
+        let Some(cue_id) = self.claude.show_log else {
+            return;
+        };
         let fs = self.settings.font_size;
 
         // Drain any pending log updates before rendering
@@ -189,7 +191,7 @@ impl DirigentApp {
                     .hint_text("Reply with feedback...")
                     .font(egui::TextStyle::Monospace),
             );
-            let submitted = Self::render_send_button(ui, fs, &input_response, &self.semantic);
+            let submitted = Self::render_reply_send_button(ui, fs, &input_response, &self.semantic);
             if submitted && !reply_text.trim().is_empty() {
                 reply_send = Some(reply_text.trim().to_string());
             }
@@ -199,29 +201,21 @@ impl DirigentApp {
 
     /// Render the send button and check for submit shortcuts.
     /// Returns `true` if the user triggered a send action.
-    fn render_send_button(
+    fn render_reply_send_button(
         ui: &mut egui::Ui,
         fs: f32,
         input_response: &egui::Response,
         semantic: &crate::app::SemanticColors,
     ) -> bool {
-        let mut submitted = false;
-        ui.vertical_centered(|ui| {
-            let input_h = input_response.rect.height();
-            let btn_size = fs + 12.0;
-            ui.add_space((input_h - btn_size) / 2.0);
-            let send_btn = egui::Button::new(icon("\u{2191}", fs).color(semantic.accent_text()))
-                .fill(semantic.accent)
-                .corner_radius(btn_size as u8 / 2)
-                .min_size(egui::vec2(btn_size, btn_size));
-            let btn_clicked = ui
-                .add(send_btn)
-                .on_hover_text("Send feedback (\u{2318}Enter)")
-                .clicked();
-            let keyboard_submit = Self::is_submit_shortcut(ui, input_response.has_focus());
-            submitted = btn_clicked || keyboard_submit;
-        });
-        submitted
+        let btn_clicked = Self::render_send_button(
+            ui,
+            fs,
+            input_response,
+            semantic,
+            "Send feedback (\u{2318}Enter)",
+        );
+        let keyboard_submit = Self::is_submit_shortcut(ui, input_response.has_focus());
+        btn_clicked || keyboard_submit
     }
 
     /// Render the list of attached files above the reply input, with remove buttons.
@@ -361,15 +355,7 @@ impl DirigentApp {
                 .color(current_provider_color),
         );
         Self::render_indented_frame(ui, |ui| {
-            if current_running_log.is_empty() {
-                ui.label(
-                    egui::RichText::new("Waiting for output...")
-                        .italics()
-                        .color(self.semantic.tertiary_text),
-                );
-            } else {
-                ui.label(egui::RichText::new(current_running_log).monospace().small());
-            }
+            self.render_response_content(ui, true, current_running_log, &None);
         });
     }
 

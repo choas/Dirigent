@@ -52,8 +52,9 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Notifications** — macOS notifications with three-tier fallback (UNUserNotificationCenter → NSUserNotificationCenter → osascript) and configurable sound/popup
 - **Lava lamp** — Retro pixelated lava lamp animation while a cue is running
 - **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history, dedicated log viewer, and cargo diagnostic parsing
+- **Workflow planning** — LLM-analyzed execution plans for multiple Inbox cues; automatically groups independent cues for parallel execution and orders dependent steps sequentially; visual workflow graph overlay with step-by-step progress
 - **Task management** — Background task lifecycle with cancellation support; running Claude tasks can be stopped mid-execution
-- **Error tracking** — Optional Sentry integration for crash reporting
+- **Error tracking** — Optional Sentry integration for crash reporting; optional OpenTelemetry log export via `DIRIGENT_OTEL_ENDPOINT`
 - **Home directory guard** — Optional Claude Code hook that blocks tool calls targeting personal directories (configurable in Settings)
 - **Settings** — Configure theme, CLI backend and model, font family and size, notification preferences, cue commands, sources, playbook, agent commands/triggers, and LSP servers
 - **Repository picker** — Switch between projects and track recent repositories
@@ -152,6 +153,8 @@ src/
 │   ├── theme.rs              — Theme system, semantic colors, font loading
 │   ├── types.rs              — Shared app-level types (PendingPlay, DiffReview, etc.)
 │   ├── util.rs               — Utility functions (ANSI stripping, duration formatting)
+│   ├── workflow_graph.rs     — Workflow plan graph overlay rendering
+│   ├── workflow_run.rs       — Workflow creation, step execution, and progress
 │   ├── code_viewer/
 │   │   ├── breadcrumb.rs     — Breadcrumb path bar with navigation
 │   │   ├── cue_input.rs      — Inline cue creation from code selection
@@ -245,7 +248,9 @@ src/
 ├── error.rs                  — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs              — Recursive directory scanning with ignore patterns
 ├── prompt_hints.rs           — Heuristic prompt quality analysis and warnings
-└── prompt_suggestions.rs     — Prompt improvement suggestions (context, specificity)
+├── prompt_suggestions.rs     — Prompt improvement suggestions (context, specificity)
+├── telemetry.rs              — OpenTelemetry OTLP log export (opt-in via env var)
+└── workflow.rs               — Workflow plan types, LLM prompt building, response parsing
 ```
 
 **Key dependencies:**
@@ -266,7 +271,7 @@ src/
 
 ## Status
 
-Dirigent is in active development (v0.3.5, 800+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, post-run agents with diagnostic parsing, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.3.5, 750+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 

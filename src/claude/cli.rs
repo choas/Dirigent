@@ -60,7 +60,7 @@ fn append_extra_args(cmd: &mut Command, extra_args: &str) {
 /// from the current process environment and apply them to the command.
 /// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
 /// for backward compatibility with old KEY=VALUE config entries.
-fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
+pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
     for line in env_vars.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {

@@ -1,16 +1,59 @@
 use super::types::{AgentConfig, AgentKind, AgentTrigger};
 
-fn audit_agent(command: &str) -> AgentConfig {
+struct Step<'a> {
+    cmd: &'a str,
+    timeout: u64,
+}
+
+fn agent(kind: AgentKind, command: &str, trigger: AgentTrigger, timeout_secs: u64) -> AgentConfig {
     AgentConfig {
-        kind: AgentKind::Audit,
+        kind,
         name: String::new(),
         enabled: true,
         command: command.into(),
-        trigger: AgentTrigger::Manual,
-        timeout_secs: 120,
+        trigger,
+        timeout_secs,
         working_dir: String::new(),
         before_run: String::new(),
     }
+}
+
+fn audit_agent(command: &str) -> AgentConfig {
+    agent(AgentKind::Audit, command, AgentTrigger::Manual, 120)
+}
+
+fn outdated_agent(command: &str, timeout: u64) -> AgentConfig {
+    agent(AgentKind::Outdated, command, AgentTrigger::Manual, timeout)
+}
+
+/// Standard pipeline: Format → Lint → Build → Test (each chained via AfterAgent).
+fn pipeline(fmt: Step, lint: Step, build: Step, test: Step) -> Vec<AgentConfig> {
+    vec![
+        agent(
+            AgentKind::Format,
+            fmt.cmd,
+            AgentTrigger::AfterRun,
+            fmt.timeout,
+        ),
+        agent(
+            AgentKind::Lint,
+            lint.cmd,
+            AgentTrigger::AfterAgent(AgentKind::Format),
+            lint.timeout,
+        ),
+        agent(
+            AgentKind::Build,
+            build.cmd,
+            AgentTrigger::AfterAgent(AgentKind::Lint),
+            build.timeout,
+        ),
+        agent(
+            AgentKind::Test,
+            test.cmd,
+            AgentTrigger::AfterAgent(AgentKind::Build),
+            test.timeout,
+        ),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -74,639 +117,284 @@ impl AgentLanguage {
 
 pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
     match lang {
-        AgentLanguage::Rust => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "cargo fmt".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
+        AgentLanguage::Rust => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "cargo fmt",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "cargo clippy --message-format=json 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "cargo build --message-format=json 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "cargo test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("cargo outdated 2>&1", 120));
+            v.push(audit_agent("cargo audit 2>&1"));
+            v
+        }
+        AgentLanguage::TypeScript => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "npx prettier --write .",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "npx eslint . 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "npx tsc --noEmit 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "npx jest 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("npm outdated 2>&1", 60));
+            v.push(audit_agent("npm audit 2>&1"));
+            v
+        }
+        AgentLanguage::Python => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "black .",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "ruff check . 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "python -m compileall -q . 2>&1",
+                    timeout: 60,
+                },
+                Step {
+                    cmd: "pytest 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("pip list --outdated 2>&1", 60));
+            v.push(audit_agent("pip-audit 2>&1"));
+            v
+        }
+        AgentLanguage::Go => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "gofmt -w .",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "golangci-lint run 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "go build ./... 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "go test ./... 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("go list -m -u all 2>&1", 60));
+            v.push(audit_agent("govulncheck ./... 2>&1"));
+            v
+        }
+        AgentLanguage::Java => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "./mvnw com.diffplug.spotless:spotless-maven-plugin:apply 2>&1",
+                    timeout: 60,
+                },
+                Step {
+                    cmd: "./mvnw checkstyle:check 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "./mvnw compile 2>&1",
+                    timeout: 180,
+                },
+                Step {
+                    cmd: "./mvnw test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent(
+                "./mvnw versions:display-dependency-updates 2>&1",
+                120,
+            ));
+            v.push(audit_agent(
+                "./mvnw org.owasp:dependency-check-maven:check 2>&1",
+            ));
+            v
+        }
+        AgentLanguage::CSharp => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "dotnet format 2>&1",
+                    timeout: 60,
+                },
+                Step {
+                    cmd: "dotnet format --verify-no-changes 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "dotnet build 2>&1",
+                    timeout: 180,
+                },
+                Step {
+                    cmd: "dotnet test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("dotnet list package --outdated 2>&1", 60));
+            v.push(audit_agent("dotnet list package --vulnerable 2>&1"));
+            v
+        }
+        AgentLanguage::Ruby => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "bundle exec rubocop -a 2>&1",
+                    timeout: 60,
+                },
+                Step {
+                    cmd: "bundle exec rubocop 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "find . -name '*.rb' -exec ruby -c {} + 2>&1",
+                    timeout: 60,
+                },
+                Step {
+                    cmd: "bundle exec rspec 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("bundle outdated 2>&1", 60));
+            v.push(audit_agent("bundle audit check 2>&1"));
+            v
+        }
+        AgentLanguage::Swift => pipeline(
+            Step {
+                cmd: "swift-format format -i -r . 2>&1",
+                timeout: 30,
             },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "cargo clippy --message-format=json 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "swiftlint 2>&1",
+                timeout: 120,
             },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "cargo build --message-format=json 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "swift build 2>&1",
+                timeout: 180,
             },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "cargo test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "swift test 2>&1",
+                timeout: 300,
             },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "cargo outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+        ),
+        AgentLanguage::Kotlin => pipeline(
+            Step {
+                cmd: "ktlint --format 2>&1",
+                timeout: 60,
             },
-            audit_agent("cargo audit 2>&1"),
-        ],
-        AgentLanguage::TypeScript => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "npx prettier --write .".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "ktlint 2>&1",
+                timeout: 120,
             },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "npx eslint . 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "./gradlew compileKotlin 2>&1",
+                timeout: 180,
             },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "npx tsc --noEmit 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "./gradlew test 2>&1",
+                timeout: 300,
             },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "npx jest 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
+        ),
+        AgentLanguage::Cpp => pipeline(
+            Step {
+                cmd: "find . -name '*.cpp' -o -name '*.h' | xargs clang-format -i",
+                timeout: 30,
             },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "npm outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "cppcheck --enable=all . 2>&1",
+                timeout: 120,
             },
-            audit_agent("npm audit 2>&1"),
-        ],
-        AgentLanguage::Python => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "black .".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "cmake --build build 2>&1",
+                timeout: 180,
             },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "ruff check . 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "ctest --test-dir build 2>&1",
+                timeout: 300,
             },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "python -m py_compile *.py 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
+        ),
+        AgentLanguage::Elixir => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "mix format",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "mix credo 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "mix compile 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "mix test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("mix hex.outdated 2>&1", 60));
+            v.push(audit_agent("mix hex.audit 2>&1"));
+            v
+        }
+        AgentLanguage::Zig => pipeline(
+            Step {
+                cmd: "zig fmt .",
+                timeout: 30,
             },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "pytest 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "zig fmt --check . 2>&1",
+                timeout: 120,
             },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "pip list --outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "zig build 2>&1",
+                timeout: 120,
             },
-            audit_agent("pip-audit 2>&1"),
-        ],
-        AgentLanguage::Go => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "gofmt -w .".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "zig build test 2>&1",
+                timeout: 300,
             },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "golangci-lint run 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+        ),
+        AgentLanguage::Lua => pipeline(
+            Step {
+                cmd: "stylua .",
+                timeout: 30,
             },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "go build ./... 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "luacheck . 2>&1",
+                timeout: 120,
             },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "go test ./... 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "find . -name '*.lua' -exec luac -p {} + 2>&1",
+                timeout: 60,
             },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "go list -m -u all 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
+            Step {
+                cmd: "busted 2>&1",
+                timeout: 300,
             },
-            audit_agent("govulncheck ./... 2>&1"),
-        ],
-        AgentLanguage::Java => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "./mvnw com.diffplug.spotless:spotless-maven-plugin:apply 2>&1".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "mvn checkstyle:check 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "mvn compile 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 180,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "mvn test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "mvn versions:display-dependency-updates 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            audit_agent("mvn org.owasp:dependency-check-maven:check 2>&1"),
-        ],
-        AgentLanguage::CSharp => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "dotnet format 2>&1".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "dotnet format --verify-no-changes 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "dotnet build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 180,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "dotnet test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "dotnet list package --outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            audit_agent("dotnet list package --vulnerable 2>&1"),
-        ],
-        AgentLanguage::Ruby => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "bundle exec rubocop -a 2>&1".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "bundle exec rubocop 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "ruby -c **/*.rb 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "bundle exec rspec 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "bundle outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            audit_agent("bundle audit check 2>&1"),
-        ],
-        AgentLanguage::Swift => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "swift-format format -i -r . 2>&1".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "swiftlint 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "swift build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 180,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "swift test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-        ],
-        AgentLanguage::Kotlin => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "ktlint --format 2>&1".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "ktlint 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "./gradlew compileKotlin 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 180,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "./gradlew test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-        ],
-        AgentLanguage::Cpp => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "find . -name '*.cpp' -o -name '*.h' | xargs clang-format -i".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "cppcheck --enable=all . 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "cmake --build build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 180,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "ctest --test-dir build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-        ],
-        AgentLanguage::Elixir => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "mix format".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "mix credo 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "mix compile 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "mix test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Outdated,
-                name: String::new(),
-                enabled: true,
-                command: "mix hex.outdated 2>&1".into(),
-                trigger: AgentTrigger::Manual,
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            audit_agent("mix hex.audit 2>&1"),
-        ],
-        AgentLanguage::Zig => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "zig fmt .".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "zig build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "zig build 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "zig build test 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-        ],
-        AgentLanguage::Lua => vec![
-            AgentConfig {
-                kind: AgentKind::Format,
-                name: String::new(),
-                enabled: true,
-                command: "stylua .".into(),
-                trigger: AgentTrigger::AfterRun,
-                timeout_secs: 30,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Lint,
-                name: String::new(),
-                enabled: true,
-                command: "luacheck . 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Format),
-                timeout_secs: 120,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Build,
-                name: String::new(),
-                enabled: true,
-                command: "luac -p *.lua 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Lint),
-                timeout_secs: 60,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-            AgentConfig {
-                kind: AgentKind::Test,
-                name: String::new(),
-                enabled: true,
-                command: "busted 2>&1".into(),
-                trigger: AgentTrigger::AfterAgent(AgentKind::Build),
-                timeout_secs: 300,
-                working_dir: String::new(),
-                before_run: String::new(),
-            },
-        ],
+        ),
     }
 }
