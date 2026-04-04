@@ -616,46 +616,10 @@ impl DirigentApp {
             })
             .map(|s| s.to_string());
 
-        // Emit telemetry for every completed execution (including stale ones),
-        // but only after ruling out rate limits — otherwise the same response
-        // would be counted as both completed and rate-limited.
-        let provider_name = if !is_stale {
-            self.claude
-                .running_logs
-                .get(&result.cue_id)
-                .map(|(_, p)| p.display_name().to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        } else {
-            "unknown".to_string()
-        };
-        if result.error.is_none() && usage_limit_msg.is_none() {
-            telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
-                project: &self.project_name(),
-                cue_id: result.cue_id,
-                provider: &provider_name,
-                cost_usd: result.metrics.cost_usd,
-                duration_ms: result.metrics.duration_ms,
-                num_turns: result.metrics.num_turns,
-                input_tokens: result.metrics.input_tokens,
-                output_tokens: result.metrics.output_tokens,
-                has_diff: result.diff.is_some(),
-            });
-        }
+        self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
 
         if is_stale {
-            // Stale result — just mark the old execution in the DB, don't change cue status.
-            if let Some(ref error) = result.error {
-                let _ = self.db.fail_execution(result.exec_id, error);
-            } else {
-                let _ = self.db.complete_execution(
-                    result.exec_id,
-                    &result.response,
-                    result.diff.as_deref(),
-                    Some(result.metrics.cost_usd),
-                    Some(result.metrics.duration_ms),
-                    Some(result.metrics.num_turns),
-                );
-            }
+            self.complete_stale_execution(&result);
             return;
         }
 
@@ -700,6 +664,55 @@ impl DirigentApp {
         if !is_stale {
             self.on_workflow_cue_completed(result.cue_id);
         }
+    }
+
+    /// Finalize a stale execution in the DB without touching live state.
+    fn complete_stale_execution(&self, result: &ClaudeResult) {
+        if let Some(ref error) = result.error {
+            let _ = self.db.fail_execution(result.exec_id, error);
+        } else {
+            let _ = self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                result.diff.as_deref(),
+                Some(result.metrics.cost_usd),
+                Some(result.metrics.duration_ms),
+                Some(result.metrics.num_turns),
+            );
+        }
+    }
+
+    /// Emit telemetry for a completed execution (unless it errored or hit a
+    /// usage limit).
+    fn emit_completion_telemetry(
+        &self,
+        result: &ClaudeResult,
+        is_stale: bool,
+        usage_limit_msg: &Option<String>,
+    ) {
+        if result.error.is_some() || usage_limit_msg.is_some() {
+            return;
+        }
+        let provider_name = if !is_stale {
+            self.claude
+                .running_logs
+                .get(&result.cue_id)
+                .map(|(_, p)| p.display_name().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        } else {
+            "unknown".to_string()
+        };
+        telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
+            project: &self.project_name(),
+            cue_id: result.cue_id,
+            provider: &provider_name,
+            cost_usd: result.metrics.cost_usd,
+            duration_ms: result.metrics.duration_ms,
+            num_turns: result.metrics.num_turns,
+            input_tokens: result.metrics.input_tokens,
+            output_tokens: result.metrics.output_tokens,
+            has_diff: result.diff.is_some(),
+        });
     }
 
     /// Reload the conversation history panel if it is showing this cue.
