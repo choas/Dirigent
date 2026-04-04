@@ -585,6 +585,7 @@ impl DirigentApp {
 
         // Clear source filter so newly imported cues are visible in the pool
         self.sources.filter = None;
+        self.cached_filtered_archived_count = self.archived_cue_count;
 
         self.handle_pr_findings(findings);
     }

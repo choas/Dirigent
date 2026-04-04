@@ -52,17 +52,15 @@ impl DirigentApp {
 
     /// Render the total DB cost (inline, left-aligned) in the status bar.
     fn render_status_bar_db_cost(&self, ui: &mut egui::Ui) {
-        if let Ok(total_cost) = self.db.total_cost() {
-            if total_cost > 0.0 {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("${:.2}", total_cost))
-                        .monospace()
-                        .small()
-                        .color(self.semantic.tertiary_text),
-                )
-                .on_hover_text("Total API cost for this project");
-            }
+        if self.cached_total_cost > 0.0 {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!("${:.2}", self.cached_total_cost))
+                    .monospace()
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            )
+            .on_hover_text("Total API cost for this project");
         }
     }
 

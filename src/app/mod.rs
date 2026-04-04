@@ -109,6 +109,8 @@ pub struct DirigentApp {
     cues: Vec<Cue>,
     archived_cue_count: usize,
     archived_cue_limit: usize,
+    /// Cached archived count for current source filter (avoids DB query per frame).
+    cached_filtered_archived_count: usize,
 
     // Claude execution & running logs
     pub(super) claude: ClaudeRunState,
@@ -452,6 +454,7 @@ impl DirigentApp {
             },
             cues,
             archived_cue_count,
+            cached_filtered_archived_count: archived_cue_count,
             archived_cue_limit: 50,
             claude: ClaudeRunState::new(),
             diff_review: None,
@@ -683,6 +686,10 @@ impl DirigentApp {
             .all_cues_limited_archived(self.archived_cue_limit)
             .unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+        self.cached_filtered_archived_count = match &self.sources.filter {
+            Some(label) => self.db.archived_cue_count_by_source(label).unwrap_or(0),
+            None => self.archived_cue_count,
+        };
         self.latest_exec_cache = self
             .db
             .get_all_latest_execution_metrics()

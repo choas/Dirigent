@@ -50,10 +50,7 @@ impl DirigentApp {
 
                     let cues_snapshot = self.cues.clone();
                     let source_filter = self.sources.filter.clone();
-                    let filtered_archived_count = match &source_filter {
-                        Some(label) => self.db.archived_cue_count_by_source(label).unwrap_or(0),
-                        None => self.archived_cue_count,
-                    };
+                    let filtered_archived_count = self.cached_filtered_archived_count;
                     for &status in CueStatus::all() {
                         let section_cues: Vec<&Cue> = filter_cues_by_status_and_source(
                             &cues_snapshot,
@@ -238,6 +235,7 @@ impl DirigentApp {
                     let is_all = self.sources.filter.is_none();
                     if ui.selectable_label(is_all, "All").clicked() {
                         self.sources.filter = None;
+                        self.cached_filtered_archived_count = self.archived_cue_count;
                     }
                     for label in &unique_labels {
                         let count = self
@@ -249,6 +247,8 @@ impl DirigentApp {
                         let selected = self.sources.filter.as_deref() == Some(label.as_str());
                         if ui.selectable_label(selected, &display).clicked() {
                             self.sources.filter = Some(label.clone());
+                            self.cached_filtered_archived_count =
+                                self.db.archived_cue_count_by_source(label).unwrap_or(0);
                         }
                     }
                 });
