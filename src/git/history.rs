@@ -24,7 +24,7 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
     };
 
     // Build branch label map: Oid -> Vec<branch name>
-    let branch_map = build_branch_map(&repo);
+    let mut branch_map = build_branch_map(&repo);
     // Build tag label map: Oid -> Vec<tag name>
     let tag_map = build_tag_map(&repo);
 
@@ -33,8 +33,41 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         Err(_) => return Vec::new(),
     };
 
-    if revwalk.push_head().is_err() {
-        return Vec::new();
+    // Topological + time sorting ensures proper graph layout when
+    // multiple branch histories are interleaved.
+    revwalk
+        .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+        .ok();
+
+    // Detect detached HEAD and record its OID for labeling.
+    let head_detached = repo.head_detached().unwrap_or(false);
+    let head_oid = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id());
+
+    // Push HEAD (works for both normal and detached HEAD).
+    if let Some(oid) = head_oid {
+        revwalk.push(oid).ok();
+        // Add "HEAD" label for detached HEAD so the graph shows it.
+        if head_detached {
+            branch_map
+                .entry(oid)
+                .or_default()
+                .insert(0, "HEAD".to_string());
+        }
+    }
+
+    // Push all local branch tips to include orphan branches
+    // (branches with no common ancestor with HEAD).
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            let (branch_ref, _) = branch;
+            if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                revwalk.push(commit.id()).ok();
+            }
+        }
     }
 
     let now = std::time::SystemTime::now()
@@ -129,8 +162,20 @@ pub(crate) fn count_commits(path: &Path) -> usize {
         Ok(r) => r,
         Err(_) => return 0,
     };
-    if revwalk.push_head().is_err() {
-        return 0;
+    // Push HEAD.
+    if let Ok(head) = repo.head() {
+        if let Some(oid) = head.target() {
+            revwalk.push(oid).ok();
+        }
+    }
+    // Push all local branch tips to count orphan branch commits too.
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            let (branch_ref, _) = branch;
+            if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                revwalk.push(commit.id()).ok();
+            }
+        }
     }
     revwalk.count()
 }
