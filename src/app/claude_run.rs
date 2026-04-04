@@ -600,8 +600,15 @@ impl DirigentApp {
         // Detect usage-limit messages in the response or log before deciding
         // which handler to use.  When a hard rate/usage limit is hit, Claude
         // exits without changes and we must NOT treat it as "no changes needed".
+        //
+        // `running_logs` is keyed by `cue_id`, so for stale results (where a
+        // newer execution has already started) the buffer belongs to a different
+        // run.  Only consult it when the result is current.
         let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
             .or_else(|| {
+                if is_stale {
+                    return None;
+                }
                 self.claude
                     .running_logs
                     .get(&result.cue_id)
@@ -612,12 +619,15 @@ impl DirigentApp {
         // Emit telemetry for every completed execution (including stale ones),
         // but only after ruling out rate limits — otherwise the same response
         // would be counted as both completed and rate-limited.
-        let provider_name = self
-            .claude
-            .running_logs
-            .get(&result.cue_id)
-            .map(|(_, p)| p.display_name().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let provider_name = if !is_stale {
+            self.claude
+                .running_logs
+                .get(&result.cue_id)
+                .map(|(_, p)| p.display_name().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        } else {
+            "unknown".to_string()
+        };
         if result.error.is_none() && usage_limit_msg.is_none() {
             telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
                 project: &self.project_name(),
