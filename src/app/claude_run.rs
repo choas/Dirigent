@@ -398,23 +398,25 @@ impl DirigentApp {
     }
 
     /// Insert a new execution record, emit telemetry, and spawn the provider thread.
+    /// Insert a new execution record and spawn the provider thread.
+    /// Returns `true` on success, `false` if the execution record could not be
+    /// created (the caller should skip any post-spawn cleanup in that case).
     fn insert_exec_and_spawn(
         &mut self,
         cue_id: i64,
         prompt: String,
         provider: CliProvider,
         matched_command: &Option<CueCommand>,
-    ) {
+    ) -> bool {
         let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
             Ok(id) => id,
             Err(e) => {
                 eprintln!("Failed to create execution record for cue {cue_id}: {e}");
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 self.set_status_message(format!("Failed to start run: {e}"));
                 self.reload_cues();
-                return;
+                return false;
             }
         };
 
@@ -434,6 +436,7 @@ impl DirigentApp {
 
         let handle = self.spawn_provider_thread(cue_id, exec_id, prompt, provider, config);
         self.task_handles.push(handle);
+        true
     }
 
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
@@ -472,7 +475,10 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
+        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command) {
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.reload_cues();
+        }
     }
 
     pub(super) fn trigger_claude_reply(
@@ -536,10 +542,16 @@ impl DirigentApp {
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
 
-        self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
+        let started = self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
 
-        if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
-            self.diff_review = None;
+        if started {
+            if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
+                self.diff_review = None;
+            }
+        } else {
+            // Restore the cue to Review (its state before we attempted the reply).
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
+            self.reload_cues();
         }
     }
 
@@ -585,14 +597,28 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
-        // Emit telemetry for every completed execution (including stale ones).
+        // Detect usage-limit messages in the response or log before deciding
+        // which handler to use.  When a hard rate/usage limit is hit, Claude
+        // exits without changes and we must NOT treat it as "no changes needed".
+        let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
+            .or_else(|| {
+                self.claude
+                    .running_logs
+                    .get(&result.cue_id)
+                    .and_then(|(log, _)| claude::detect_usage_limit(log))
+            })
+            .map(|s| s.to_string());
+
+        // Emit telemetry for every completed execution (including stale ones),
+        // but only after ruling out rate limits — otherwise the same response
+        // would be counted as both completed and rate-limited.
         let provider_name = self
             .claude
             .running_logs
             .get(&result.cue_id)
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        if result.error.is_none() {
+        if result.error.is_none() && usage_limit_msg.is_none() {
             telemetry::emit_execution_completed(&telemetry::ExecutionCompleted {
                 project: &self.project_name(),
                 cue_id: result.cue_id,
@@ -622,18 +648,6 @@ impl DirigentApp {
             }
             return;
         }
-
-        // Detect usage-limit messages in the response or log before deciding
-        // which handler to use.  When a hard rate/usage limit is hit, Claude
-        // exits without changes and we must NOT treat it as "no changes needed".
-        let usage_limit_msg: Option<String> = claude::detect_usage_limit(&result.response)
-            .or_else(|| {
-                self.claude
-                    .running_logs
-                    .get(&result.cue_id)
-                    .and_then(|(log, _)| claude::detect_usage_limit(log))
-            })
-            .map(|s| s.to_string());
 
         let is_error = if let Some(ref error) = result.error {
             self.handle_run_error(&result, error);

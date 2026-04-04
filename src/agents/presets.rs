@@ -271,7 +271,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                     timeout: 120,
                 },
                 Step {
-                    cmd: "ruby -c **/*.rb 2>&1",
+                    cmd: "find . -name '*.rb' -exec ruby -c {} + 2>&1",
                     timeout: 60,
                 },
                 Step {
@@ -366,7 +366,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 timeout: 30,
             },
             Step {
-                cmd: "zig build 2>&1",
+                cmd: "zig fmt --check . 2>&1",
                 timeout: 120,
             },
             Step {
@@ -388,7 +388,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
                 timeout: 120,
             },
             Step {
-                cmd: "luac -p *.lua 2>&1",
+                cmd: "find . -name '*.lua' -exec luac -p {} + 2>&1",
                 timeout: 60,
             },
             Step {
