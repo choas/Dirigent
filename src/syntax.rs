@@ -31,6 +31,7 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
 ///
 /// Post-processes the LayoutJob to fix egui_extras bugs:
 /// - Strips incorrect underlines (egui_extras checks ITALIC instead of UNDERLINE)
+/// - Strips strikethrough for safety
 /// - Clears per-section background colors and expansion to avoid colored rectangles
 pub(crate) fn highlight(
     ctx: &egui::Context,
@@ -49,6 +50,7 @@ pub(crate) fn highlight(
     );
     for section in &mut job.sections {
         section.format.underline = egui::Stroke::NONE;
+        section.format.strikethrough = egui::Stroke::NONE;
         section.format.background = egui::Color32::TRANSPARENT;
         section.format.expand_bg = 0.0;
     }
