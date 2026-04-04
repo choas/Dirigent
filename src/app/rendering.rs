@@ -163,6 +163,8 @@ impl DirigentApp {
             self.git.pr_findings_excluded.clear();
         } else if self.git.show_import_pr {
             self.git.show_import_pr = false;
+        } else if self.git.show_move_to_branch {
+            self.git.show_move_to_branch = false;
         } else if self.git.show_create_pr {
             self.git.show_create_pr = false;
         } else if self.show_about {
@@ -192,6 +194,7 @@ impl DirigentApp {
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);
+        self.render_move_to_branch_dialog(ctx);
     }
 
     /// Render the circular send button, vertically centered next to a text input.

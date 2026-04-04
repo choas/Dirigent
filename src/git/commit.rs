@@ -274,6 +274,66 @@ pub(crate) fn git_pull(repo_path: &Path, strategy: PullStrategy) -> crate::error
     ))
 }
 
+/// Create a new branch at the current HEAD, then reset the current branch back
+/// to its remote tracking branch (`origin/<branch>`).
+///
+/// This effectively "moves" all local-only commits from the current branch to
+/// the new branch, leaving the current branch in sync with the remote.
+///
+/// Returns `Ok(new_branch_name)` on success.
+pub(crate) fn move_to_new_branch(
+    repo_path: &Path,
+    new_branch_name: &str,
+) -> crate::error::Result<String> {
+    use std::process::Command;
+
+    let repo = Repository::discover(repo_path)?;
+
+    // Determine the current branch name
+    let head = repo
+        .head()
+        .map_err(|e| DirigentError::GitCommand(format!("cannot determine HEAD: {}", e)))?;
+    let current_branch = head
+        .shorthand()
+        .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
+        .to_string();
+
+    // Determine the remote tracking ref to reset to
+    let remote_ref = format!("origin/{}", current_branch);
+    repo.refname_to_id(&format!("refs/remotes/{}", remote_ref))
+        .map_err(|_| {
+            DirigentError::GitCommand(format!(
+                "no remote tracking branch '{}' — cannot move commits",
+                remote_ref
+            ))
+        })?;
+
+    // Create the new branch at current HEAD
+    let output = Command::new("git")
+        .args(["branch", new_branch_name])
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    // Reset current branch back to the remote
+    let output = Command::new("git")
+        .args(["reset", "--hard", &remote_ref])
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(format!(
+            "git reset failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    Ok(new_branch_name.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

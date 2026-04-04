@@ -15,8 +15,8 @@ fn short_hash(hash: &str) -> String {
 
 pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};
 pub(crate) use commit::{
-    commit_all, commit_diff, generate_commit_message, git_pull, git_push, revert_files,
-    PullStrategy,
+    commit_all, commit_diff, generate_commit_message, git_pull, git_push, move_to_new_branch,
+    revert_files, PullStrategy,
 };
 pub(crate) use diff::{get_working_diff, parse_diff_file_paths_for_repo};
 pub(crate) use history::{count_commits, get_commit_diff, read_commit_history, CommitInfo};

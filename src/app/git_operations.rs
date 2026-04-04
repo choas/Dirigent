@@ -703,6 +703,69 @@ impl DirigentApp {
         ));
     }
 
+    /// Open the Move to Branch dialog.
+    pub(super) fn open_move_to_branch_dialog(&mut self) {
+        self.git.move_to_branch_name.clear();
+        self.git.show_move_to_branch = true;
+    }
+
+    /// Start an async move-to-branch operation: create a new branch at HEAD,
+    /// then reset the current branch to its remote tracking branch.
+    pub(super) fn start_move_to_branch(&mut self) {
+        let name = self.git.move_to_branch_name.trim().to_string();
+        if name.is_empty() {
+            self.set_status_message("Branch name cannot be empty".into());
+            return;
+        }
+        if self.git.moving_to_branch {
+            return;
+        }
+        self.git.moving_to_branch = true;
+        self.git.show_move_to_branch = false;
+        let (tx, rx) = mpsc::channel();
+        self.git.move_to_branch_rx = Some(rx);
+        let root = self.project_root.clone();
+        let branch_name = name.clone();
+        std::thread::spawn(move || {
+            let result = git::move_to_new_branch(&root, &branch_name).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Moving commits to branch '{}'...", name));
+    }
+
+    /// Check for completed move-to-branch operation.
+    pub(super) fn process_move_to_branch_result(&mut self) {
+        let rx = match self.git.move_to_branch_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.moving_to_branch = false;
+                self.git.move_to_branch_rx = None;
+                self.set_status_message("Move to branch failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.moving_to_branch = false;
+        self.git.move_to_branch_rx = None;
+        match result {
+            Ok(branch_name) => {
+                self.set_status_message(format!(
+                    "Moved commits to '{}' — open Worktrees to switch and create a PR",
+                    branch_name
+                ));
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => {
+                self.set_status_message(format!("Move to branch failed: {}", e));
+            }
+        }
+    }
+
     pub(super) fn reload_git_info(&mut self) {
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);

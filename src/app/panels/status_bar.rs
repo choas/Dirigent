@@ -34,6 +34,28 @@ impl DirigentApp {
                 ui.separator();
                 ui.label(egui::RichText::new(summary).monospace().small());
             }
+
+            // Show "Move to Branch" button when on main/master with commits ahead
+            let is_default = info.branch == "main" || info.branch == "master";
+            if is_default && self.git.ahead_of_remote > 0 {
+                ui.separator();
+                if ui
+                    .small_button(
+                        egui::RichText::new(format!(
+                            "\u{2192} Move {} to branch",
+                            self.git.ahead_of_remote
+                        ))
+                        .small(),
+                    )
+                    .on_hover_text(format!(
+                        "Move {} commit(s) from '{}' to a new branch for a PR",
+                        self.git.ahead_of_remote, info.branch
+                    ))
+                    .clicked()
+                {
+                    self.open_move_to_branch_dialog();
+                }
+            }
         } else if ui
             .add(
                 egui::Label::new(
@@ -159,7 +181,8 @@ impl DirigentApp {
             || self.git.pushing
             || self.git.pulling
             || self.git.creating_pr
-            || self.git.notifying_pr;
+            || self.git.notifying_pr
+            || self.git.moving_to_branch;
         let expired = !busy
             && matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 6);
         if expired {

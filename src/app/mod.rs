@@ -510,6 +510,10 @@ impl DirigentApp {
                 new_pattern_field: "text".to_string(),
                 editing_pattern: None,
                 hovered_graph_row: None,
+                show_move_to_branch: false,
+                move_to_branch_name: String::new(),
+                moving_to_branch: false,
+                move_to_branch_rx: None,
             },
             settings,
             semantic,
@@ -805,6 +809,7 @@ impl eframe::App for DirigentApp {
         self.process_pr_result();
         self.process_import_pr_result();
         self.process_pr_notify_result();
+        self.process_move_to_branch_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

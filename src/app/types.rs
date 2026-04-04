@@ -449,4 +449,11 @@ pub(crate) struct GitState {
     pub(super) editing_pattern: Option<(i64, String, String)>,
     /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
     pub(super) hovered_graph_row: Option<usize>,
+    /// Whether the Move to Branch dialog is open.
+    pub(super) show_move_to_branch: bool,
+    /// Branch name input for the Move to Branch dialog.
+    pub(super) move_to_branch_name: String,
+    /// Whether a move-to-branch operation is in progress.
+    pub(super) moving_to_branch: bool,
+    pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
