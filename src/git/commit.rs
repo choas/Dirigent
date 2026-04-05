@@ -275,7 +275,7 @@ pub(crate) fn git_pull(repo_path: &Path, strategy: PullStrategy) -> crate::error
 }
 
 /// Create a new branch at the current HEAD, then reset the current branch back
-/// to its remote tracking branch (`origin/<branch>`).
+/// to its configured upstream tracking branch.
 ///
 /// This effectively "moves" all local-only commits from the current branch to
 /// the new branch, leaving the current branch in sync with the remote.
@@ -298,15 +298,26 @@ pub(crate) fn move_to_new_branch(
         .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
         .to_string();
 
-    // Determine the remote tracking ref to reset to
-    let remote_ref = format!("origin/{}", current_branch);
-    repo.refname_to_id(&format!("refs/remotes/{}", remote_ref))
-        .map_err(|_| {
+    // Determine the remote tracking ref to reset to via the configured upstream
+    let local_branch = repo
+        .find_branch(&current_branch, BranchType::Local)
+        .map_err(|e| {
             DirigentError::GitCommand(format!(
-                "no remote tracking branch '{}' — cannot move commits",
-                remote_ref
+                "cannot find local branch '{}': {}",
+                current_branch, e
             ))
         })?;
+    let upstream = local_branch.upstream().map_err(|_| {
+        DirigentError::GitCommand(format!(
+            "no upstream configured for '{}' — cannot move commits",
+            current_branch
+        ))
+    })?;
+    let remote_ref = upstream
+        .get()
+        .shorthand()
+        .ok_or_else(|| DirigentError::GitCommand("upstream ref has no shorthand name".into()))?
+        .to_string();
 
     // Refuse to proceed if the working tree has uncommitted changes,
     // because `git reset --hard` below would destroy them.
