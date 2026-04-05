@@ -706,6 +706,7 @@ impl DirigentApp {
     /// Open the Move to Branch dialog.
     pub(super) fn open_move_to_branch_dialog(&mut self) {
         self.git.move_to_branch_name.clear();
+        self.git.move_to_branch_needs_focus = true;
         self.git.show_move_to_branch = true;
     }
 

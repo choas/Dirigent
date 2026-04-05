@@ -451,6 +451,8 @@ pub(crate) struct GitState {
     pub(super) hovered_graph_row: Option<usize>,
     /// Whether the Move to Branch dialog is open.
     pub(super) show_move_to_branch: bool,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) move_to_branch_needs_focus: bool,
     /// Branch name input for the Move to Branch dialog.
     pub(super) move_to_branch_name: String,
     /// Whether a move-to-branch operation is in progress.

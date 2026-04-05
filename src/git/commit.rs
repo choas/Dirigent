@@ -308,6 +308,16 @@ pub(crate) fn move_to_new_branch(
             ))
         })?;
 
+    // Refuse to proceed if the working tree has uncommitted changes,
+    // because `git reset --hard` below would destroy them.
+    let dirty = super::status::get_dirty_files(repo_path);
+    if !dirty.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "cannot move commits: working tree has uncommitted changes — commit or stash first"
+                .into(),
+        ));
+    }
+
     // Create the new branch at current HEAD
     let output = Command::new("git")
         .args(["branch", new_branch_name])

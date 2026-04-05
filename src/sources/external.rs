@@ -1235,12 +1235,18 @@ fn fetch_notion_single_page(
     }
 
     if !todo_texts.is_empty() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
         let mut items: Vec<SourceItem> = todo_texts
             .iter()
-            .enumerate()
-            .map(|(idx, text)| {
+            .map(|text| {
+                // Use a content-based hash for stable IDs that survive reordering
+                let mut hasher = DefaultHasher::new();
+                text.hash(&mut hasher);
+                let hash = hasher.finish();
                 SourceItem::new(
-                    format!("{}-todo-{}", id, idx),
+                    format!("{}-todo-{:x}", id, hash),
                     format!("{}: {}", title, text),
                     source_label,
                 )

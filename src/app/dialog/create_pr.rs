@@ -58,7 +58,10 @@ impl DirigentApp {
                             {
                                 do_create = true;
                             }
-                            if ui.button("Cancel").clicked() {
+                            if ui
+                                .add_enabled(!self.git.creating_pr, egui::Button::new("Cancel"))
+                                .clicked()
+                            {
                                 dismiss = true;
                             }
                         });

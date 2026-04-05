@@ -55,9 +55,10 @@ impl DirigentApp {
                         .hint_text("e.g. feature/my-changes"),
                 );
 
-                // Auto-focus the text field
-                if response.gained_focus() || !response.has_focus() {
+                // Auto-focus the text field on initial dialog open only
+                if self.git.move_to_branch_needs_focus {
                     response.request_focus();
+                    self.git.move_to_branch_needs_focus = false;
                 }
 
                 // Enter to confirm

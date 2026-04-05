@@ -114,7 +114,8 @@ impl DirigentApp {
             || self.git.show_pull_unmerged
             || self.git.show_merge_conflicts
             || self.git.show_import_pr
-            || self.git.show_pr_filter;
+            || self.git.show_pr_filter
+            || self.git.show_move_to_branch;
         if !has_modal {
             return;
         }

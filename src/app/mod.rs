@@ -511,6 +511,7 @@ impl DirigentApp {
                 editing_pattern: None,
                 hovered_graph_row: None,
                 show_move_to_branch: false,
+                move_to_branch_needs_focus: false,
                 move_to_branch_name: String::new(),
                 moving_to_branch: false,
                 move_to_branch_rx: None,
