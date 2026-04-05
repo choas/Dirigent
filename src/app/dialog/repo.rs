@@ -220,6 +220,164 @@ impl DirigentApp {
         }
     }
 
+    // ── Move to Branch dialog ─────────────────────────────────────────
+
+    /// Dialog to move commits from main/master to a new branch.
+    pub(in crate::app) fn render_move_to_branch_dialog(&mut self, ctx: &egui::Context) {
+        if !self.git.show_move_to_branch {
+            return;
+        }
+
+        let ahead = self.git.ahead_of_remote;
+        let current_branch = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch.clone())
+            .unwrap_or_else(|| "main".to_string());
+
+        let mut open = true;
+        let mut do_move = false;
+
+        egui::Window::new("Move Commits to Branch")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_size([400.0, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Move {} commit{} from '{}' to a new branch:",
+                    ahead,
+                    if ahead == 1 { "" } else { "s" },
+                    current_branch,
+                ));
+                ui.add_space(8.0);
+
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.git.move_to_branch_name)
+                        .desired_width(300.0)
+                        .hint_text("new-branch-name")
+                        .font(egui::TextStyle::Monospace),
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let name = self.git.move_to_branch_name.trim();
+                    if !name.is_empty() {
+                        do_move = true;
+                    }
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        self.git.show_move_to_branch = false;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let name = self.git.move_to_branch_name.trim();
+                        if ui
+                            .add_enabled(!name.is_empty(), egui::Button::new("Move & Switch"))
+                            .clicked()
+                        {
+                            do_move = true;
+                        }
+                    });
+                });
+            });
+
+        if !open {
+            self.git.show_move_to_branch = false;
+        }
+
+        if do_move {
+            let name = self.git.move_to_branch_name.trim().to_string();
+            self.git.show_move_to_branch = false;
+            match git::move_commits_to_branch(&self.project_root, &name, &current_branch) {
+                Ok(()) => {
+                    self.set_status_message(format!(
+                        "Moved {} commit(s) to '{}' and switched",
+                        ahead, name
+                    ));
+                    self.reload_git_info();
+                    self.reload_commit_history();
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to move commits: {}", e));
+                }
+            }
+        }
+    }
+
+    // ── Switch Branch dialog ────────────────────────────────────────
+
+    /// Dialog to switch to a different branch.
+    pub(in crate::app) fn render_switch_branch_dialog(&mut self, ctx: &egui::Context) {
+        if !self.git.show_switch_branch {
+            return;
+        }
+
+        let mut open = true;
+        let mut switch_to: Option<String> = None;
+
+        egui::Window::new("Switch Branch")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([350.0, 300.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                if let Some(ref info) = self.git.info {
+                    ui.label(
+                        egui::RichText::new(format!("Current: {}", info.branch))
+                            .small()
+                            .color(self.semantic.secondary_text),
+                    );
+                    ui.add_space(4.0);
+                }
+
+                if self.git.available_branches.is_empty() {
+                    self.empty_label(ui, "No other branches available");
+                } else {
+                    egui::ScrollArea::vertical()
+                        .max_height(250.0)
+                        .show(ui, |ui| {
+                            for branch in &self.git.available_branches {
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        egui::RichText::new(branch).monospace(),
+                                    )
+                                    .clicked()
+                                {
+                                    switch_to = Some(branch.clone());
+                                }
+                            }
+                        });
+                }
+            });
+
+        if !open {
+            self.git.show_switch_branch = false;
+        }
+
+        if let Some(branch) = switch_to {
+            self.git.show_switch_branch = false;
+            match git::checkout_branch(&self.project_root, &branch) {
+                Ok(()) => {
+                    self.set_status_message(format!("Switched to '{}'", branch));
+                    self.reload_git_info();
+                    self.reload_commit_history();
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to switch branch: {}", e));
+                }
+            }
+        }
+    }
+
     // ── Worktree panel ───────────────────────────────────────────────
 
     /// Worktree panel.

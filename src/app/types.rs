@@ -421,6 +421,12 @@ pub(crate) struct GitState {
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the "Move to Branch" dialog is open.
+    pub(super) show_move_to_branch: bool,
+    /// Branch name input for the move-to-branch dialog.
+    pub(super) move_to_branch_name: String,
+    /// Whether the "Switch Branch" dialog is open.
+    pub(super) show_switch_branch: bool,
     /// Archived worktree DBs (cached list).
     pub(super) archived_dbs: Vec<git::ArchivedDb>,
     /// Whether the archived DBs section is expanded in the worktree panel.

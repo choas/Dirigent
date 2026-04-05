@@ -165,6 +165,10 @@ impl DirigentApp {
             self.git.show_import_pr = false;
         } else if self.git.show_create_pr {
             self.git.show_create_pr = false;
+        } else if self.git.show_move_to_branch {
+            self.git.show_move_to_branch = false;
+        } else if self.git.show_switch_branch {
+            self.git.show_switch_branch = false;
         } else if self.show_about {
             self.show_about = false;
         } else if self.git.show_worktree_panel {
@@ -178,6 +182,8 @@ impl DirigentApp {
     /// Render all floating dialog windows.
     pub(super) fn render_floating_dialogs(&mut self, ctx: &egui::Context) {
         self.render_repo_picker(ctx);
+        self.render_move_to_branch_dialog(ctx);
+        self.render_switch_branch_dialog(ctx);
         self.render_worktree_panel(ctx);
         self.render_force_remove_dialog(ctx);
         self.render_delete_archive_dialog(ctx);

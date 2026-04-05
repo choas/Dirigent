@@ -79,6 +79,18 @@ impl DirigentApp {
         self.set_status_message(label.to_string());
     }
 
+    /// Open the "Move to Branch" dialog.
+    pub(super) fn open_move_to_branch_dialog(&mut self) {
+        self.git.move_to_branch_name.clear();
+        self.git.show_move_to_branch = true;
+    }
+
+    /// Open the "Switch Branch" dialog with available branches populated.
+    pub(super) fn open_switch_branch_dialog(&mut self) {
+        self.git.available_branches = git::list_branches(&self.project_root).unwrap_or_default();
+        self.git.show_switch_branch = true;
+    }
+
     /// Open the Create PR dialog with pre-filled fields.
     pub(super) fn open_create_pr_dialog(&mut self) {
         let branch = self
