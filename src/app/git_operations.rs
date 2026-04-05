@@ -746,6 +746,10 @@ impl DirigentApp {
                 self.git.moving_to_branch = false;
                 self.git.move_to_branch_rx = None;
                 self.set_status_message("Move to branch failed unexpectedly".into());
+                // The operation is non-atomic: the new branch may have been
+                // created before the failure, so refresh state.
+                self.reload_git_info();
+                self.reload_commit_history();
                 return;
             }
             Ok(r) => r,
@@ -758,13 +762,15 @@ impl DirigentApp {
                     "Moved commits to '{}' — open Worktrees to switch and create a PR",
                     branch_name
                 ));
-                self.reload_git_info();
-                self.reload_commit_history();
             }
             Err(e) => {
                 self.set_status_message(format!("Move to branch failed: {}", e));
             }
         }
+        // Always refresh: the operation is non-atomic (branch created before
+        // reset), so even failures may have changed repo state.
+        self.reload_git_info();
+        self.reload_commit_history();
     }
 
     pub(super) fn reload_git_info(&mut self) {

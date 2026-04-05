@@ -320,7 +320,7 @@ pub(crate) fn move_to_new_branch(
 
     // Create the new branch at current HEAD
     let output = Command::new("git")
-        .args(["branch", new_branch_name])
+        .args(["branch", "--", new_branch_name])
         .current_dir(repo_path)
         .output()?;
     if !output.status.success() {

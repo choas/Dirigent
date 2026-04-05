@@ -1240,9 +1240,12 @@ fn fetch_notion_single_page(
 
         let mut items: Vec<SourceItem> = todo_texts
             .iter()
-            .map(|text| {
-                // Use a content-based hash for stable IDs that survive reordering
+            .enumerate()
+            .map(|(idx, text)| {
+                // Include the index so that duplicate todo texts on the same
+                // page produce distinct IDs instead of colliding.
                 let mut hasher = DefaultHasher::new();
+                idx.hash(&mut hasher);
                 text.hash(&mut hasher);
                 let hash = hasher.finish();
                 SourceItem::new(
