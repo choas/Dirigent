@@ -373,6 +373,12 @@ pub(crate) struct GitState {
     pub(super) commit_history_total: usize,
     pub(super) commit_history_limit: usize,
     pub(super) show_log: bool,
+    /// Graph layout rows corresponding to `commit_history` (one per commit).
+    pub(super) graph_rows: Vec<git::graph::GraphRow>,
+    /// Maximum number of simultaneous lanes in the current graph.
+    pub(super) graph_max_lanes: usize,
+    /// Cache key for commit history: (HEAD hash, limit) — skip reload if unchanged.
+    pub(super) history_cache_key: (String, usize),
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,
@@ -441,4 +447,15 @@ pub(crate) struct GitState {
     pub(super) new_pattern_field: String,
     /// Pattern id currently being edited (None = not editing).
     pub(super) editing_pattern: Option<(i64, String, String)>,
+    /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
+    pub(super) hovered_graph_row: Option<usize>,
+    /// Whether the Move to Branch dialog is open.
+    pub(super) show_move_to_branch: bool,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) move_to_branch_needs_focus: bool,
+    /// Branch name input for the Move to Branch dialog.
+    pub(super) move_to_branch_name: String,
+    /// Whether a move-to-branch operation is in progress.
+    pub(super) moving_to_branch: bool,
+    pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }

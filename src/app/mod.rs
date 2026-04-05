@@ -109,6 +109,8 @@ pub struct DirigentApp {
     cues: Vec<Cue>,
     archived_cue_count: usize,
     archived_cue_limit: usize,
+    /// Cached archived count for current source filter (avoids DB query per frame).
+    cached_filtered_archived_count: usize,
 
     // Claude execution & running logs
     pub(super) claude: ClaudeRunState,
@@ -420,6 +422,8 @@ impl DirigentApp {
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
+        let (graph_rows, graph_max_lanes) = git::graph::compute_graph(&commit_history);
+
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
             if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
@@ -450,6 +454,7 @@ impl DirigentApp {
             },
             cues,
             archived_cue_count,
+            cached_filtered_archived_count: archived_cue_count,
             archived_cue_limit: 50,
             claude: ClaudeRunState::new(),
             diff_review: None,
@@ -461,6 +466,9 @@ impl DirigentApp {
                 commit_history_total,
                 commit_history_limit: 10,
                 show_log: false,
+                graph_rows,
+                graph_max_lanes,
+                history_cache_key: (String::new(), 0),
                 worktrees,
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
@@ -501,6 +509,12 @@ impl DirigentApp {
                 new_pattern_text: String::new(),
                 new_pattern_field: "text".to_string(),
                 editing_pattern: None,
+                hovered_graph_row: None,
+                show_move_to_branch: false,
+                move_to_branch_needs_focus: false,
+                move_to_branch_name: String::new(),
+                moving_to_branch: false,
+                move_to_branch_rx: None,
             },
             settings,
             semantic,
@@ -677,6 +691,10 @@ impl DirigentApp {
             .all_cues_limited_archived(self.archived_cue_limit)
             .unwrap_or_default();
         self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+        self.cached_filtered_archived_count = match &self.sources.filter {
+            Some(label) => self.db.archived_cue_count_by_source(label).unwrap_or(0),
+            None => self.archived_cue_count,
+        };
         self.latest_exec_cache = self
             .db
             .get_all_latest_execution_metrics()
@@ -792,6 +810,7 @@ impl eframe::App for DirigentApp {
         self.process_pr_result();
         self.process_import_pr_result();
         self.process_pr_notify_result();
+        self.process_move_to_branch_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

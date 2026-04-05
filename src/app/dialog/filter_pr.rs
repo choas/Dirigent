@@ -583,8 +583,11 @@ impl DirigentApp {
         self.git.pr_findings_pending.clear();
         self.git.pr_findings_excluded.clear();
 
-        // Clear source filter so newly imported cues are visible in the pool
+        // Clear source filter so newly imported cues are visible in the pool.
+        // handle_pr_findings -> reload_cues refreshes both counts from DB,
+        // but may return early when findings is empty, so sync the cache here.
         self.sources.filter = None;
+        self.cached_filtered_archived_count = self.archived_cue_count;
 
         self.handle_pr_findings(findings);
     }

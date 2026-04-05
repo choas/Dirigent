@@ -1221,6 +1221,46 @@ fn fetch_notion_single_page(
     }
 
     let lines = fetch_notion_block_lines(client, token, page_id).unwrap_or_default();
+
+    // Separate unchecked to-do lines from other content.
+    // Checked to-dos are already filtered out by format_todo_block.
+    let mut todo_texts = Vec::new();
+    let mut other_lines = Vec::new();
+    for line in &lines {
+        if let Some(todo_text) = line.strip_prefix("- [ ] ") {
+            todo_texts.push(todo_text.to_string());
+        } else {
+            other_lines.push(line.clone());
+        }
+    }
+
+    if !todo_texts.is_empty() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut items: Vec<SourceItem> = todo_texts
+            .iter()
+            .enumerate()
+            .map(|(idx, text)| {
+                // Include the index so that duplicate todo texts on the same
+                // page produce distinct IDs instead of colliding.
+                let mut hasher = DefaultHasher::new();
+                idx.hash(&mut hasher);
+                text.hash(&mut hasher);
+                let hash = hasher.finish();
+                SourceItem::new(
+                    format!("{}-todo-{:x}", id, hash),
+                    format!("{}: {}", title, text),
+                    source_label,
+                )
+            })
+            .collect();
+        // Also include non-to-do sections (headings, paragraphs, etc.)
+        let sections = split_h3_sections(&other_lines);
+        items.extend(sections_to_items(sections, &id, &title, source_label));
+        return Ok(items);
+    }
+
     let sections = split_h3_sections(&lines);
     let items = sections_to_items(sections, &id, &title, source_label);
     if !items.is_empty() {
@@ -1369,13 +1409,15 @@ fn block_rich_text(block: &serde_json::Value, key: &str) -> Option<String> {
 
 fn format_todo_block(block: &serde_json::Value) -> Option<String> {
     let obj = block.get("to_do")?;
-    let text = rich_text_plain(obj);
     let checked = obj
         .get("checked")
         .and_then(|c| c.as_bool())
         .unwrap_or(false);
-    let marker = if checked { "[x]" } else { "[ ]" };
-    Some(format!("- {} {}", marker, text))
+    if checked {
+        return None; // Skip completed to-dos
+    }
+    let text = rich_text_plain(obj);
+    Some(format!("- [ ] {}", text))
 }
 
 fn format_code_block(block: &serde_json::Value) -> Option<String> {

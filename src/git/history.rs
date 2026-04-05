@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::path::Path;
 
-use git2::Repository;
+use git2::{Oid, Repository};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CommitInfo {
@@ -10,6 +11,10 @@ pub(crate) struct CommitInfo {
     pub body: String,
     pub author: String,
     pub time_ago: String,
+    pub parent_hashes: Vec<String>,
+    pub branch_labels: Vec<String>,
+    pub tag_labels: Vec<String>,
+    pub is_merge: bool,
 }
 
 pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
@@ -18,13 +23,51 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         Err(_) => return Vec::new(),
     };
 
+    // Build branch label map: Oid -> Vec<branch name>
+    let mut branch_map = build_branch_map(&repo);
+    // Build tag label map: Oid -> Vec<tag name>
+    let tag_map = build_tag_map(&repo);
+
     let mut revwalk = match repo.revwalk() {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
 
-    if revwalk.push_head().is_err() {
-        return Vec::new();
+    // Topological + time sorting ensures proper graph layout when
+    // multiple branch histories are interleaved.
+    revwalk
+        .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+        .ok();
+
+    // Detect detached HEAD and record its OID for labeling.
+    let head_detached = repo.head_detached().unwrap_or(false);
+    let head_oid = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id());
+
+    // Push HEAD (works for both normal and detached HEAD).
+    if let Some(oid) = head_oid {
+        revwalk.push(oid).ok();
+        // Add "HEAD" label for detached HEAD so the graph shows it.
+        if head_detached {
+            branch_map
+                .entry(oid)
+                .or_default()
+                .insert(0, "HEAD".to_string());
+        }
+    }
+
+    // Push all local branch tips to include orphan branches
+    // (branches with no common ancestor with HEAD).
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            let (branch_ref, _) = branch;
+            if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                revwalk.push(commit.id()).ok();
+            }
+        }
     }
 
     let now = std::time::SystemTime::now()
@@ -48,6 +91,10 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         let message = full_message.lines().next().unwrap_or("").to_string();
         let body = full_message.trim().to_string();
         let author = commit.author().name().unwrap_or("").to_string();
+        let parent_hashes: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
+        let is_merge = parent_hashes.len() > 1;
+        let branch_labels = branch_map.get(&commit.id()).cloned().unwrap_or_default();
+        let tag_labels = tag_map.get(&commit.id()).cloned().unwrap_or_default();
         let secs = commit.time().seconds();
         let diff = now - secs;
         let time_ago = if diff < 60 {
@@ -66,9 +113,44 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
             body,
             author,
             time_ago,
+            parent_hashes,
+            branch_labels,
+            tag_labels,
+            is_merge,
         });
     }
     commits
+}
+
+fn build_branch_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
+    let mut map: HashMap<Oid, Vec<String>> = HashMap::new();
+    if let Ok(branches) = repo.branches(None) {
+        for branch in branches.flatten() {
+            let (branch_ref, _branch_type) = branch;
+            if let Some(name) = branch_ref.name().ok().flatten() {
+                if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                    map.entry(commit.id()).or_default().push(name.to_string());
+                }
+            }
+        }
+    }
+    map
+}
+
+fn build_tag_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
+    let mut map: HashMap<Oid, Vec<String>> = HashMap::new();
+    if let Ok(tag_names) = repo.tag_names(None) {
+        for name in tag_names.iter().flatten() {
+            if let Ok(reference) = repo.revparse_single(name) {
+                let oid = reference
+                    .peel_to_commit()
+                    .map(|c| c.id())
+                    .unwrap_or_else(|_| reference.id());
+                map.entry(oid).or_default().push(name.to_string());
+            }
+        }
+    }
+    map
 }
 
 pub(crate) fn count_commits(path: &Path) -> usize {
@@ -80,8 +162,20 @@ pub(crate) fn count_commits(path: &Path) -> usize {
         Ok(r) => r,
         Err(_) => return 0,
     };
-    if revwalk.push_head().is_err() {
-        return 0;
+    // Push HEAD.
+    if let Ok(head) = repo.head() {
+        if let Some(oid) = head.target() {
+            revwalk.push(oid).ok();
+        }
+    }
+    // Push all local branch tips to count orphan branch commits too.
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            let (branch_ref, _) = branch;
+            if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                revwalk.push(commit.id()).ok();
+            }
+        }
     }
     revwalk.count()
 }

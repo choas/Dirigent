@@ -249,6 +249,30 @@ impl SemanticColors {
             ))
     }
 
+    /// Lane colors for the git graph — a palette of distinguishable colors that adapt
+    /// to light/dark themes.
+    pub fn lane_colors(&self) -> [egui::Color32; 6] {
+        if self.is_dark {
+            [
+                self.accent,                            // lane 0: theme accent
+                self.success,                           // lane 1: green
+                self.warning,                           // lane 2: yellow
+                egui::Color32::from_rgb(198, 120, 221), // lane 3: purple
+                self.danger,                            // lane 4: red
+                egui::Color32::from_rgb(86, 182, 194),  // lane 5: cyan
+            ]
+        } else {
+            [
+                self.accent,                           // lane 0: theme accent
+                self.success,                          // lane 1: green
+                self.warning,                          // lane 2: yellow
+                egui::Color32::from_rgb(140, 70, 170), // lane 3: purple
+                self.danger,                           // lane 4: red
+                egui::Color32::from_rgb(40, 140, 155), // lane 5: cyan
+            ]
+        }
+    }
+
     /// Contrasting text color for use on accent-colored backgrounds.
     pub fn accent_text(&self) -> egui::Color32 {
         let [r, g, b, _] = self.accent.to_array();
