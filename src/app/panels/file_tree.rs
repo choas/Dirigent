@@ -257,7 +257,7 @@ impl DirigentApp {
 
         // Precompute graph column width: each lane = 12px, cap at 6 lanes.
         let lane_width = 12.0_f32;
-        let visible_lanes = self.git.graph_max_lanes.min(6).max(1);
+        let visible_lanes = self.git.graph_max_lanes.clamp(1, 6);
         let has_overflow = self.git.graph_max_lanes > 6;
         let extra_for_ellipsis = if has_overflow { 1.0_f32 } else { 0.0 };
         let graph_col_width = (visible_lanes as f32 + extra_for_ellipsis + 0.5) * lane_width;
