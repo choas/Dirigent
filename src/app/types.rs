@@ -146,7 +146,14 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
     // Handle image files: decode into ColorImage instead of reading as text
     if is_image_extension(&ext) {
         let bytes = std::fs::read(path).ok()?;
-        let img = image::load_from_memory(&bytes).ok()?.into_rgba8();
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut reader = image::ImageReader::new(cursor).with_guessed_format().ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(8192);
+        limits.max_image_height = Some(8192);
+        limits.max_alloc = Some(20 * 1024 * 1024);
+        reader.limits(limits);
+        let img = reader.decode().ok()?.into_rgba8();
         let size = [img.width() as usize, img.height() as usize];
         let pixels = img.into_raw();
         let color_image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
