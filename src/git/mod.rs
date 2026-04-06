@@ -29,6 +29,5 @@ pub(crate) use status::{
     format_status_summary, get_ahead_of_remote, get_dirty_files, read_git_info, GitInfo,
 };
 pub(crate) use worktree::{
-    checkout_branch, create_worktree, list_branches, list_worktrees,
-    remove_worktree, WorktreeInfo,
+    checkout_branch, create_worktree, list_branches, list_worktrees, remove_worktree, WorktreeInfo,
 };

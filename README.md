@@ -13,6 +13,7 @@
   <a href="#prerequisites">Prerequisites</a> &middot;
   <a href="#building">Building</a> &middot;
   <a href="#usage">Usage</a> &middot;
+  <a href="#documentation">Documentation</a> &middot;
   <a href="#license">License</a>
 </p>
 
@@ -121,6 +122,18 @@ On macOS, the bundled .app can also be launched from Finder or the Dock. When la
 
 Dirigent stores its database (`Dirigent.db`) and settings (`settings.json`) in a `.Dirigent/` directory inside your project root. This directory is local to each project and should be added to `.gitignore`.
 
+## Documentation
+
+Detailed documentation is organized following the [Diataxis](https://diataxis.fr/) framework:
+
+| Type | Document | Description |
+|------|----------|-------------|
+| Tutorial | [Getting Started](docs/tutorial.md) | Step-by-step walkthrough from install to first cue |
+| How-To Guides | [How-To Guides](docs/how-to.md) | Task-oriented recipes (cue commands, agents, PR creation, LSP, etc.) |
+| Reference | [Reference](docs/reference.md) | Complete settings, keyboard shortcuts, cue commands, playbook, and environment variables |
+| Explanation | [Explanation](docs/explanation.md) | Architecture, design decisions, and core concepts |
+| How-To Guide | [Observability Setup](docs/observability-setup.md) | OpenTelemetry + Grafana local observability stack |
+
 ## Architecture
 
 ```
@@ -214,6 +227,7 @@ src/
 │   ├── archive.rs            — Worktree DB archival before removal
 │   ├── commit.rs             — Commit creation
 │   ├── diff.rs               — Diff generation
+│   ├── graph.rs              — Branch/commit graph visualization
 │   ├── history.rs            — Commit history queries
 │   ├── merge.rs              — Merge and conflict resolution
 │   ├── pr.rs                 — GitHub pull request operations
@@ -271,7 +285,7 @@ src/
 
 ## Status
 
-Dirigent is in active development (v0.3.5, 750+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.3.5, 800+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
