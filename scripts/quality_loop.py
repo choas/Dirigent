@@ -416,6 +416,21 @@ def build_config(args: argparse.Namespace) -> Config:
                 sys.exit(1)
             os.environ[env_key] = str(flag)
 
+    # Auto-detect latest PR number if not provided
+    if not os.environ.get("GH_PR_NUMBER"):
+        repo = os.environ.get("GH_REPO", "")
+        gh_args = ["gh", "pr", "list", "--limit", "1", "--state", "all", "--json", "number", "--jq", ".[0].number"]
+        if repo:
+            gh_args.extend(["-R", repo])
+        try:
+            result = subprocess.run(gh_args, capture_output=True, text=True, timeout=15)
+            pr_num = result.stdout.strip()
+            if result.returncode == 0 and pr_num:
+                print(f"[info] Auto-detected latest PR number: {pr_num}")
+                os.environ["GH_PR_NUMBER"] = pr_num
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
     required = ["SONAR_TOKEN", "SONAR_URL", "SONAR_PROJECT_KEY", "GH_REPO", "GH_PR_NUMBER"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
