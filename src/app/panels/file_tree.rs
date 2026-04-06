@@ -765,14 +765,16 @@ fn paint_graph_connections(
         if vis_from == vis_to {
             continue;
         }
-        // Only draw explicit connection if not already drawn by ForkRight/MergeLeft.
-        let target_segment = graph
-            .lanes
-            .get(to_lane)
-            .filter(|_| to_lane < ctx.max_visible_lanes);
-        if target_segment == Some(&LaneSegment::ForkRight)
-            || target_segment == Some(&LaneSegment::MergeLeft)
-        {
+        // Only draw explicit connection if not already drawn by ForkRight/MergeLeft
+        // on *either* the source or target lane.
+        let is_merge_or_fork = |lane: usize| -> bool {
+            lane < ctx.max_visible_lanes
+                && matches!(
+                    graph.lanes.get(lane),
+                    Some(&LaneSegment::ForkRight) | Some(&LaneSegment::MergeLeft)
+                )
+        };
+        if is_merge_or_fork(from_lane) || is_merge_or_fork(to_lane) {
             continue;
         }
         let from_x = ctx.graph_left + (vis_from as f32 + 0.5) * ctx.lane_width;
@@ -807,7 +809,8 @@ fn paint_graph_column(
     let top = row_rect.top();
     let bot = row_rect.bottom();
     let mid_y = row_rect.center().y;
-    let commit_x = ctx.graph_left + (graph.column as f32 + 0.5) * ctx.lane_width;
+    let clamped_column = graph.column.min(ctx.max_visible_lanes);
+    let commit_x = ctx.graph_left + (clamped_column as f32 + 0.5) * ctx.lane_width;
 
     for (lane_idx, segment) in graph.lanes.iter().take(ctx.max_visible_lanes).enumerate() {
         let x = ctx.graph_left + (lane_idx as f32 + 0.5) * ctx.lane_width;

@@ -76,9 +76,9 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         .as_secs() as i64;
 
     revwalk
-        .take(limit)
         .flatten()
         .filter_map(|oid| commit_to_info(&repo, oid, &branch_map, &tag_map, now))
+        .take(limit)
         .collect()
 }
 

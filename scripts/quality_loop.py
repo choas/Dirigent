@@ -1149,7 +1149,7 @@ def _build_compile_fix_prompt(tools: ToolCommands, test_output: str) -> str:
         "== Build/test errors ==",
         test_output,
         "",
-        tools.verify_instructions,
+        f"{tools.verify_instructions} Do not modify tests.",
     ])
 
 
@@ -1453,6 +1453,8 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
 
 
 def main() -> None:
+    from datetime import datetime, timezone
+
     args = parse_args()
     cfg = build_config(args)
 
@@ -1476,7 +1478,11 @@ def main() -> None:
             if passed:
                 print("  Baseline tests now green.")
                 # Commit the baseline fix before entering the quality loop
-                git_commit_push(cfg.start_iteration - 1 if cfg.start_iteration > 1 else 0)
+                baseline_iter = cfg.start_iteration - 1 if cfg.start_iteration > 1 else 0
+                baseline_cr_since = datetime.now(timezone.utc).isoformat()
+                pushed = _commit_and_wait(cfg, baseline_iter)
+                if pushed:
+                    _save_cr_since(cfg, baseline_cr_since)
                 break
             if attempt < max_baseline_retries - 1:
                 print(f"[warn] Still failing (attempt {attempt + 1}/{max_baseline_retries}). Retrying ...")
