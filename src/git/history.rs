@@ -75,51 +75,56 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let mut commits = Vec::new();
-    for oid in revwalk.take(limit) {
-        let oid = match oid {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        let commit = match repo.find_commit(oid) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let hash = format!("{}", commit.id());
-        let short_hash = super::short_hash(&hash);
-        let full_message = commit.message().unwrap_or("");
-        let message = full_message.lines().next().unwrap_or("").to_string();
-        let body = full_message.trim().to_string();
-        let author = commit.author().name().unwrap_or("").to_string();
-        let parent_hashes: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
-        let is_merge = parent_hashes.len() > 1;
-        let branch_labels = branch_map.get(&commit.id()).cloned().unwrap_or_default();
-        let tag_labels = tag_map.get(&commit.id()).cloned().unwrap_or_default();
-        let secs = commit.time().seconds();
-        let diff = now - secs;
-        let time_ago = if diff < 60 {
-            "just now".to_string()
-        } else if diff < 3600 {
-            format!("{}m ago", diff / 60)
-        } else if diff < 86400 {
-            format!("{}h ago", diff / 3600)
-        } else {
-            format!("{}d ago", diff / 86400)
-        };
-        commits.push(CommitInfo {
-            full_hash: hash,
-            short_hash,
-            message,
-            body,
-            author,
-            time_ago,
-            parent_hashes,
-            branch_labels,
-            tag_labels,
-            is_merge,
-        });
+    revwalk
+        .take(limit)
+        .flatten()
+        .filter_map(|oid| commit_to_info(&repo, oid, &branch_map, &tag_map, now))
+        .collect()
+}
+
+fn commit_to_info(
+    repo: &Repository,
+    oid: Oid,
+    branch_map: &HashMap<Oid, Vec<String>>,
+    tag_map: &HashMap<Oid, Vec<String>>,
+    now: i64,
+) -> Option<CommitInfo> {
+    let commit = repo.find_commit(oid).ok()?;
+    let hash = format!("{}", commit.id());
+    let short_hash = super::short_hash(&hash);
+    let full_message = commit.message().unwrap_or("");
+    let message = full_message.lines().next().unwrap_or("").to_string();
+    let body = full_message.trim().to_string();
+    let author = commit.author().name().unwrap_or("").to_string();
+    let parent_hashes: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
+    let is_merge = parent_hashes.len() > 1;
+    let branch_labels = branch_map.get(&commit.id()).cloned().unwrap_or_default();
+    let tag_labels = tag_map.get(&commit.id()).cloned().unwrap_or_default();
+    let time_ago = format_time_ago(now - commit.time().seconds());
+    Some(CommitInfo {
+        full_hash: hash,
+        short_hash,
+        message,
+        body,
+        author,
+        time_ago,
+        parent_hashes,
+        branch_labels,
+        tag_labels,
+        is_merge,
+    })
+}
+
+fn format_time_ago(diff: i64) -> String {
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
     }
-    commits
 }
 
 fn build_branch_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {

@@ -214,21 +214,25 @@ impl DirigentApp {
         );
     }
 
-    /// Render an image file in the code viewer area.
-    fn render_image_viewer(&mut self, ui: &mut egui::Ui, active_idx: usize) {
-        // Lazily create the texture from the stored ColorImage
-        if self.viewer.tabs[active_idx].image_texture.is_none() {
-            if let Some(color_image) = self.viewer.tabs[active_idx].image_data.take() {
-                let name = self.viewer.tabs[active_idx]
+    /// Lazily create the texture from the stored ColorImage.
+    fn ensure_image_texture(&mut self, ui: &egui::Ui, tab_idx: usize) {
+        if self.viewer.tabs[tab_idx].image_texture.is_none() {
+            if let Some(color_image) = self.viewer.tabs[tab_idx].image_data.take() {
+                let name = self.viewer.tabs[tab_idx]
                     .file_path
                     .to_string_lossy()
                     .to_string();
                 let texture =
                     ui.ctx()
                         .load_texture(name, color_image, egui::TextureOptions::LINEAR);
-                self.viewer.tabs[active_idx].image_texture = Some(texture);
+                self.viewer.tabs[tab_idx].image_texture = Some(texture);
             }
         }
+    }
+
+    /// Render an image file in the code viewer area.
+    fn render_image_viewer(&mut self, ui: &mut egui::Ui, active_idx: usize) {
+        self.ensure_image_texture(ui, active_idx);
 
         let texture = match self.viewer.tabs[active_idx].image_texture.clone() {
             Some(t) => t,

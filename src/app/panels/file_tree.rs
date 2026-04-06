@@ -258,8 +258,7 @@ impl DirigentApp {
         // Precompute graph column width: each lane = 12px, cap at 6 lanes.
         let lane_width = 12.0_f32;
         let visible_lanes = self.git.graph_max_lanes.clamp(1, 6);
-        let has_overflow = self.git.graph_max_lanes > 6;
-        let extra_for_ellipsis = if has_overflow { 1.0_f32 } else { 0.0 };
+        let extra_for_ellipsis = (self.git.graph_max_lanes > 6) as u8 as f32;
         let graph_col_width = (visible_lanes as f32 + extra_for_ellipsis + 0.5) * lane_width;
 
         // Compute branch lineage highlight from previous frame's hovered row.
@@ -639,24 +638,7 @@ fn render_commit_row(
     );
 
     // Branch/tag labels as colored badges.
-    if !commit.branch_labels.is_empty() || !commit.tag_labels.is_empty() {
-        let label_galley = ui.painter().layout_no_wrap(
-            label.clone(),
-            egui::FontId::monospace(ui.text_style_height(&egui::TextStyle::Small) * 0.85),
-            text_color,
-        );
-        let mut badge_x = text_x + label_galley.size().x + 6.0;
-        let badge_font = egui::FontId::proportional(9.0);
-        for (i, branch_name) in commit.branch_labels.iter().enumerate() {
-            let color = lane_colors[i % lane_colors.len()];
-            badge_x = paint_ref_badge(ui, badge_x, text_y, branch_name, color, &badge_font);
-        }
-        for tag_name in &commit.tag_labels {
-            let color = semantic.warning; // tags use warning/yellow
-            badge_x = paint_ref_badge(ui, badge_x, text_y, tag_name, color, &badge_font);
-        }
-        let _ = badge_x; // suppress unused
-    }
+    paint_commit_badges(ui, commit, text_x, text_y, &label, text_color, semantic);
 
     // Hover tooltip.
     let hover_text = format_commit_hover(commit, is_unpushed);
@@ -664,6 +646,104 @@ fn render_commit_row(
     let response = response.on_hover_text(hover_text);
 
     (response.clicked(), hovered)
+}
+
+/// Resolve color and stroke width based on highlight state.
+fn resolve_lane_style(
+    base_color: egui::Color32,
+    is_highlighted: bool,
+    any_highlight_active: bool,
+    base_line_width: f32,
+) -> (egui::Color32, f32) {
+    if !any_highlight_active {
+        return (base_color, base_line_width);
+    }
+    if is_highlighted {
+        (base_color, base_line_width * 1.6)
+    } else {
+        (base_color.linear_multiply(0.25), base_line_width)
+    }
+}
+
+/// Paint a single lane segment (vertical line, commit dot, fork, or merge).
+fn paint_lane_segment(
+    painter: &egui::Painter,
+    segment: &crate::git::graph::LaneSegment,
+    x: f32,
+    top: f32,
+    bot: f32,
+    mid_y: f32,
+    commit_x: f32,
+    stroke: egui::Stroke,
+    is_highlighted: bool,
+    color: egui::Color32,
+) {
+    use crate::git::graph::LaneSegment;
+    match segment {
+        LaneSegment::Straight => {
+            painter.line_segment([egui::pos2(x, top), egui::pos2(x, bot)], stroke);
+        }
+        LaneSegment::Commit => {
+            painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y - 3.0)], stroke);
+            painter.line_segment([egui::pos2(x, mid_y + 3.0), egui::pos2(x, bot)], stroke);
+            let dot_radius = if is_highlighted { 4.0 } else { 3.0 };
+            painter.circle_filled(egui::pos2(x, mid_y), dot_radius, color);
+        }
+        LaneSegment::ForkRight => {
+            painter.line_segment([egui::pos2(commit_x, top), egui::pos2(x, mid_y)], stroke);
+            painter.line_segment([egui::pos2(x, mid_y), egui::pos2(x, bot)], stroke);
+        }
+        LaneSegment::MergeLeft => {
+            painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y)], stroke);
+            painter.line_segment([egui::pos2(x, mid_y), egui::pos2(commit_x, bot)], stroke);
+        }
+        LaneSegment::Empty => {}
+    }
+}
+
+/// Draw connection diagonals for merge/fork lines.
+fn paint_graph_connections(
+    painter: &egui::Painter,
+    graph: &crate::git::graph::GraphRow,
+    graph_left: f32,
+    lane_width: f32,
+    mid_y: f32,
+    base_line_width: f32,
+    max_visible_lanes: usize,
+    lane_colors: &[egui::Color32; 6],
+    highlight_lane: Option<usize>,
+    any_highlight_active: bool,
+) {
+    use crate::git::graph::LaneSegment;
+
+    for &(from_lane, to_lane) in &graph.connections {
+        let vis_from = from_lane.min(max_visible_lanes);
+        let vis_to = to_lane.min(max_visible_lanes);
+        if vis_from == vis_to {
+            continue;
+        }
+        // Only draw explicit connection if not already drawn by ForkRight/MergeLeft.
+        let target_segment = graph
+            .lanes
+            .get(to_lane)
+            .filter(|_| to_lane < max_visible_lanes);
+        if target_segment == Some(&LaneSegment::ForkRight)
+            || target_segment == Some(&LaneSegment::MergeLeft)
+        {
+            continue;
+        }
+        let from_x = graph_left + (vis_from as f32 + 0.5) * lane_width;
+        let to_x = graph_left + (vis_to as f32 + 0.5) * lane_width;
+        let color_idx = to_lane.min(lane_colors.len() - 1);
+        let base_color = lane_colors[color_idx % lane_colors.len()];
+        let conn_hl = highlight_lane == Some(from_lane) || highlight_lane == Some(to_lane);
+        let (color, conn_width) =
+            resolve_lane_style(base_color, conn_hl, any_highlight_active, base_line_width);
+        painter.line_segment(
+            [egui::pos2(from_x, mid_y), egui::pos2(to_x, mid_y)],
+            egui::Stroke::new(conn_width, color),
+        );
+    }
 }
 
 /// Paint the graph column (lane lines + commit dot) for one row.
@@ -675,7 +755,7 @@ fn paint_graph_column(
     ui: &egui::Ui,
     row_rect: egui::Rect,
     graph: &crate::git::graph::GraphRow,
-    graph_col_width: f32,
+    _graph_col_width: f32,
     lane_width: f32,
     row_height: f32,
     lane_colors: &[egui::Color32; 6],
@@ -690,80 +770,28 @@ fn paint_graph_column(
     let bot = row_rect.bottom();
     let mid_y = row_rect.center().y;
     let base_line_width = 1.5;
-
-    // Clip to graph column area.
-    let _graph_rect =
-        egui::Rect::from_min_size(row_rect.min, egui::vec2(graph_col_width, row_height));
+    let commit_x = graph_left + (graph.column as f32 + 0.5) * lane_width;
 
     let max_visible_lanes = 6;
-    for (lane_idx, segment) in graph.lanes.iter().enumerate() {
-        if lane_idx >= max_visible_lanes {
-            break; // Cap at 6 visible lanes.
-        }
+    for (lane_idx, segment) in graph.lanes.iter().take(max_visible_lanes).enumerate() {
         let x = graph_left + (lane_idx as f32 + 0.5) * lane_width;
         let base_color = lane_colors[lane_idx % lane_colors.len()];
-
-        // Determine color and stroke width based on highlight state.
         let is_hl = highlight_lane == Some(lane_idx);
-        let (color, line_width) = if any_highlight_active {
-            if is_hl {
-                (base_color, base_line_width * 1.6)
-            } else {
-                (base_color.linear_multiply(0.25), base_line_width)
-            }
-        } else {
-            (base_color, base_line_width)
-        };
+        let (color, line_width) =
+            resolve_lane_style(base_color, is_hl, any_highlight_active, base_line_width);
 
-        match segment {
-            LaneSegment::Straight => {
-                painter.line_segment(
-                    [egui::pos2(x, top), egui::pos2(x, bot)],
-                    egui::Stroke::new(line_width, color),
-                );
-            }
-            LaneSegment::Commit => {
-                // Line above and below the dot.
-                painter.line_segment(
-                    [egui::pos2(x, top), egui::pos2(x, mid_y - 3.0)],
-                    egui::Stroke::new(line_width, color),
-                );
-                painter.line_segment(
-                    [egui::pos2(x, mid_y + 3.0), egui::pos2(x, bot)],
-                    egui::Stroke::new(line_width, color),
-                );
-                // Commit dot.
-                let dot_radius = if is_hl { 4.0 } else { 3.0 };
-                painter.circle_filled(egui::pos2(x, mid_y), dot_radius, color);
-            }
-            LaneSegment::ForkRight => {
-                // Diagonal from commit lane to this lane (top to mid).
-                let commit_x = graph_left + (graph.column as f32 + 0.5) * lane_width;
-                painter.line_segment(
-                    [egui::pos2(commit_x, top), egui::pos2(x, mid_y)],
-                    egui::Stroke::new(line_width, color),
-                );
-                // Continue down.
-                painter.line_segment(
-                    [egui::pos2(x, mid_y), egui::pos2(x, bot)],
-                    egui::Stroke::new(line_width, color),
-                );
-            }
-            LaneSegment::MergeLeft => {
-                // Line from top to mid.
-                painter.line_segment(
-                    [egui::pos2(x, top), egui::pos2(x, mid_y)],
-                    egui::Stroke::new(line_width, color),
-                );
-                // Diagonal from this lane to commit lane.
-                let commit_x = graph_left + (graph.column as f32 + 0.5) * lane_width;
-                painter.line_segment(
-                    [egui::pos2(x, mid_y), egui::pos2(commit_x, bot)],
-                    egui::Stroke::new(line_width, color),
-                );
-            }
-            LaneSegment::Empty => {}
-        }
+        paint_lane_segment(
+            painter,
+            segment,
+            x,
+            top,
+            bot,
+            mid_y,
+            commit_x,
+            egui::Stroke::new(line_width, color),
+            is_hl,
+            color,
+        );
     }
 
     // Ellipsis column: show "···" when this row has active lanes beyond the visible cap.
@@ -784,43 +812,50 @@ fn paint_graph_column(
         );
     }
 
-    // Draw connection diagonals for merge/fork lines.
-    for &(from_lane, to_lane) in &graph.connections {
-        // Cap overflow lanes to the ellipsis column position.
-        let vis_from = from_lane.min(max_visible_lanes);
-        let vis_to = to_lane.min(max_visible_lanes);
-        if vis_from == vis_to {
-            continue;
-        }
-        let from_x = graph_left + (vis_from as f32 + 0.5) * lane_width;
-        let to_x = graph_left + (vis_to as f32 + 0.5) * lane_width;
-        let color_idx = to_lane.min(lane_colors.len() - 1);
-        let base_color = lane_colors[color_idx % lane_colors.len()];
-        let conn_involves_hl = highlight_lane == Some(from_lane) || highlight_lane == Some(to_lane);
-        let (color, conn_width) = if any_highlight_active {
-            if conn_involves_hl {
-                (base_color, base_line_width * 1.6)
-            } else {
-                (base_color.linear_multiply(0.25), base_line_width)
-            }
-        } else {
-            (base_color, base_line_width)
-        };
-        // Only draw explicit connection if not already drawn by ForkRight/MergeLeft.
-        let target_segment = if to_lane < max_visible_lanes {
-            graph.lanes.get(to_lane)
-        } else {
-            None
-        };
-        if target_segment != Some(&LaneSegment::ForkRight)
-            && target_segment != Some(&LaneSegment::MergeLeft)
-        {
-            painter.line_segment(
-                [egui::pos2(from_x, mid_y), egui::pos2(to_x, mid_y)],
-                egui::Stroke::new(conn_width, color),
-            );
-        }
+    paint_graph_connections(
+        painter,
+        graph,
+        graph_left,
+        lane_width,
+        mid_y,
+        base_line_width,
+        max_visible_lanes,
+        lane_colors,
+        highlight_lane,
+        any_highlight_active,
+    );
+}
+
+/// Paint branch/tag ref badges next to the commit message.
+fn paint_commit_badges(
+    ui: &egui::Ui,
+    commit: &crate::git::CommitInfo,
+    text_x: f32,
+    text_y: f32,
+    label: &str,
+    text_color: egui::Color32,
+    semantic: &SemanticColors,
+) {
+    if commit.branch_labels.is_empty() && commit.tag_labels.is_empty() {
+        return;
     }
+    let lane_colors = semantic.lane_colors();
+    let label_galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        egui::FontId::monospace(ui.text_style_height(&egui::TextStyle::Small) * 0.85),
+        text_color,
+    );
+    let mut badge_x = text_x + label_galley.size().x + 6.0;
+    let badge_font = egui::FontId::proportional(9.0);
+    for (i, branch_name) in commit.branch_labels.iter().enumerate() {
+        let color = lane_colors[i % lane_colors.len()];
+        badge_x = paint_ref_badge(ui, badge_x, text_y, branch_name, color, &badge_font);
+    }
+    for tag_name in &commit.tag_labels {
+        let color = semantic.warning; // tags use warning/yellow
+        badge_x = paint_ref_badge(ui, badge_x, text_y, tag_name, color, &badge_font);
+    }
+    let _ = badge_x; // suppress unused
 }
 
 /// Paint a small rounded badge for a branch or tag ref. Returns x position after badge.

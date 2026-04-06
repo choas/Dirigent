@@ -144,35 +144,63 @@ impl DirigentApp {
         }
         if self.git.pending_force_remove.is_some() {
             self.git.pending_force_remove = None;
-        } else if self.git.pending_delete_archive.is_some() {
+            return;
+        }
+        if self.git.pending_delete_archive.is_some() {
             self.git.pending_delete_archive = None;
-        } else if self.pending_file_delete.is_some() {
+            return;
+        }
+        if self.pending_file_delete.is_some() {
             self.pending_file_delete = None;
-        } else if self.rename_target.is_some() {
+            return;
+        }
+        if self.rename_target.is_some() {
             self.rename_target = None;
-        } else if self.git_init_confirm.is_some() {
+            return;
+        }
+        if self.git_init_confirm.is_some() {
             self.git_init_confirm = None;
-        } else if self.git.show_merge_conflicts {
+            return;
+        }
+        if self.git.show_merge_conflicts {
             self.git.show_merge_conflicts = false;
-        } else if self.git.show_pull_diverged {
+            return;
+        }
+        if self.git.show_pull_diverged {
             self.git.show_pull_diverged = false;
-        } else if self.git.show_pull_unmerged {
+            return;
+        }
+        if self.git.show_pull_unmerged {
             self.git.show_pull_unmerged = false;
-        } else if self.git.show_pr_filter {
+            return;
+        }
+        if self.git.show_pr_filter {
             self.git.show_pr_filter = false;
             self.git.pr_findings_pending.clear();
             self.git.pr_findings_excluded.clear();
-        } else if self.git.show_import_pr {
+            return;
+        }
+        if self.git.show_import_pr {
             self.git.show_import_pr = false;
-        } else if self.git.show_move_to_branch {
+            return;
+        }
+        if self.git.show_move_to_branch {
             self.git.show_move_to_branch = false;
-        } else if self.git.show_create_pr {
+            return;
+        }
+        if self.git.show_create_pr {
             self.git.show_create_pr = false;
-        } else if self.show_about {
+            return;
+        }
+        if self.show_about {
             self.show_about = false;
-        } else if self.git.show_worktree_panel {
+            return;
+        }
+        if self.git.show_worktree_panel {
             self.git.show_worktree_panel = false;
-        } else if self.show_repo_picker {
+            return;
+        }
+        if self.show_repo_picker {
             self.show_repo_picker = false;
             self.cached_existing_repos.clear();
         }
