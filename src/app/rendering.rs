@@ -145,6 +145,11 @@ impl DirigentApp {
         if self.git.dismiss_topmost_modal() {
             return;
         }
+        self.dismiss_app_modal();
+    }
+
+    /// Dismiss the topmost app-level (non-git) modal dialog.
+    fn dismiss_app_modal(&mut self) {
         if self.pending_file_delete.is_some() {
             self.pending_file_delete = None;
             return;
