@@ -9,7 +9,6 @@ use super::symbols;
 use super::{
     DirigentApp, ELAPSED_REPAINT, FS_RESCAN_DEBOUNCE, LOG_SYNC_INTERVAL, REPAINT_FAST, REPAINT_SLOW,
 };
-use crate::db::CueStatus;
 use crate::git;
 use crate::settings;
 
@@ -161,7 +160,7 @@ impl DirigentApp {
 
     /// Schedule repaint intervals based on current application state.
     pub(super) fn schedule_repaints(&self, ctx: &egui::Context) {
-        let has_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
+        let has_running = self.cached_has_running_cue;
         if has_running {
             let interval = if self.claude.show_log.is_some() {
                 REPAINT_FAST

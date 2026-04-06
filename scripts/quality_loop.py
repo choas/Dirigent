@@ -6,8 +6,10 @@ Run with --help for full usage instructions.
 """
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -243,8 +245,10 @@ class Config:
     gh_pr_number: str
     tools: ToolCommands
     max_iterations: int = 8
+    start_iteration: int = 1
     poll_interval: int = 30
     poll_timeout: int = 900
+    skip_sonar_first: bool = False
     dry_run: bool = False
 
 
@@ -360,10 +364,14 @@ def parse_args() -> argparse.Namespace:
         help="GitHub repo (overrides GH_REPO in .env)")
     parser.add_argument("--max-iterations", type=int, metavar="N",
         help="Hard stop after N iterations (default: 8)")
+    parser.add_argument("--start-iteration", type=int, metavar="N",
+        help="Starting iteration number for commits (default: auto-detect from git log)")
     parser.add_argument("--poll-interval", type=int, metavar="SECONDS",
         help="Seconds between CI/CodeRabbit polls (default: 30)")
     parser.add_argument("--poll-timeout", type=int, metavar="SECONDS",
         help="Max wait time per push before continuing (default: 900)")
+    parser.add_argument("--skip-sonar-first", action="store_true",
+        help="Skip SonarQube scan on the first iteration (use cached results)")
     parser.add_argument("--dry-run", action="store_true",
         help="Collect and print all signals, but do not invoke Claude Code or push")
     parser.add_argument("--env-file", metavar="PATH", default=".env",
@@ -408,6 +416,23 @@ def build_config(args: argparse.Namespace) -> Config:
                 sys.exit(1)
             os.environ[env_key] = str(flag)
 
+    # Auto-detect latest PR number if not provided
+    if not os.environ.get("GH_PR_NUMBER"):
+        repo = os.environ.get("GH_REPO", "")
+        gh_args = ["gh", "pr", "view", "--json", "number", "--jq", ".number"]
+        if repo:
+            gh_args.extend(["-R", repo])
+        try:
+            result = subprocess.run(gh_args, capture_output=True, text=True, timeout=15)
+            pr_num = result.stdout.strip()
+            if result.returncode == 0 and pr_num and pr_num.isdigit():
+                print(f"[info] Auto-detected latest PR number: {pr_num}")
+                os.environ["GH_PR_NUMBER"] = pr_num
+        except subprocess.TimeoutExpired:
+            print("[warn] PR auto-detection timed out; skipping. Set GH_PR_NUMBER manually.")
+        except FileNotFoundError:
+            print("[warn] 'gh' CLI not found; skipping PR auto-detection. Set GH_PR_NUMBER manually.")
+
     required = ["SONAR_TOKEN", "SONAR_URL", "SONAR_PROJECT_KEY", "GH_REPO", "GH_PR_NUMBER"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
@@ -446,8 +471,10 @@ def build_config(args: argparse.Namespace) -> Config:
         gh_pr_number=os.environ["GH_PR_NUMBER"],
         tools=tools,
         max_iterations=int(os.environ.get("MAX_ITERATIONS", 8)),
+        start_iteration=args.start_iteration if args.start_iteration is not None else _detect_last_iteration() + 1,
         poll_interval=int(os.environ.get("POLL_INTERVAL", 30)),
         poll_timeout=int(os.environ.get("POLL_TIMEOUT", 900)),
+        skip_sonar_first=args.skip_sonar_first,
         dry_run=args.dry_run,
     )
 
@@ -538,13 +565,23 @@ def gh(*args, capture=True) -> str:
 # Generic test / lint / format
 # ---------------------------------------------------------------------------
 
-def run_tests(tools: ToolCommands) -> bool:
-    """Returns True if all tests pass. Returns True if no test command configured."""
+def run_tests(tools: ToolCommands) -> tuple[bool, str]:
+    """Returns (passed, error_output). Returns (True, "") if no test command configured."""
     if not tools.test_cmd:
         print("  (no test command configured -- skipping)")
-        return True
-    result = run_shell(tools.test_cmd, check=False)
-    return result.returncode == 0
+        return True, ""
+    result = run_shell(tools.test_cmd, check=False, capture=True)
+    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    if result.returncode != 0:
+        # Show last 40 lines so user can see what failed
+        lines = output.splitlines()
+        tail = lines[-40:] if len(lines) > 40 else lines
+        print(f"  Test output (exit {result.returncode}):")
+        for line in tail:
+            print(f"    {line}")
+    else:
+        print("  Tests passed.")
+    return result.returncode == 0, output
 
 
 def lint_issues(tools: ToolCommands) -> list[str]:
@@ -799,35 +836,105 @@ def pr_checks_passing(cfg: Config) -> bool:
 
 
 def coderabbit_comments(cfg: Config, since: str = "") -> list[str]:
-    """Return unresolved review comments left by coderabbitai[bot]."""
+    """Return review comments and review-body findings left by coderabbitai[bot].
+
+    Fetches from two endpoints:
+      - /pulls/{n}/comments  -- line-level review comments
+      - /pulls/{n}/reviews   -- review bodies (contain grouped nitpick details)
+    """
+    if since:
+        print(f"  Filtering comments created after: {since}")
+    results = []
+
+    # 1) Line-level review comments
     output = gh(
         "api",
         f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/comments",
         "--paginate",
     )
-    if not output:
-        print("  [warn] No response from GitHub API for PR comments.")
-        return []
-    try:
-        comments = json.loads(output)
-    except json.JSONDecodeError:
-        print("  [warn] Failed to parse PR comments response as JSON.")
-        return []
-
-    unresolved = []
-    for c in comments:
-        user = c.get("user", {}).get("login", "")
-        if "coderabbitai" not in user:
-            continue
-        if since and c.get("created_at", "") <= since:
-            continue
-        body = c.get("body", "")
-        if any(kw in body.lower() for kw in ("suggestion", "consider", "should", "nitpick", "issue")):
+    if output:
+        try:
+            comments = json.loads(output)
+        except json.JSONDecodeError:
+            comments = []
+        cr_total = 0
+        cr_skipped_since = 0
+        for c in comments:
+            user = c.get("user", {}).get("login", "")
+            if "coderabbitai" not in user:
+                continue
+            cr_total += 1
+            created = c.get("created_at", "")
+            if since and created <= since:
+                cr_skipped_since += 1
+                continue
+            body = c.get("body", "").strip()
+            if not body:
+                continue
             path = c.get("path", "")
             line = c.get("line") or c.get("original_line") or "?"
-            unresolved.append(f"{path}:{line} -- {body[:300]}")
+            results.append(f"{path}:{line} -- {body[:500]}")
+        print(f"  PR comments: {cr_total} from coderabbit, {cr_skipped_since} skipped (before since), {len(results)} kept")
+    else:
+        print("  [warn] No response from GitHub API for PR comments.")
 
-    return unresolved
+    # 2) Review bodies (contain nitpick details and summaries)
+    review_count_before = len(results)
+    output = gh(
+        "api",
+        f"/repos/{cfg.gh_repo}/pulls/{cfg.gh_pr_number}/reviews",
+        "--paginate",
+    )
+    if output:
+        try:
+            reviews = json.loads(output)
+        except json.JSONDecodeError:
+            reviews = []
+        cr_total = 0
+        cr_skipped_since = 0
+        for r in reviews:
+            user = r.get("user", {}).get("login", "")
+            if "coderabbitai" not in user:
+                continue
+            cr_total += 1
+            submitted = r.get("submitted_at", "")
+            if since and submitted <= since:
+                cr_skipped_since += 1
+                continue
+            body = r.get("body", "").strip()
+            if not body:
+                continue
+            # Skip pure summary lines like "Actionable comments posted: 4"
+            if body.startswith("Actionable comments posted:"):
+                continue
+            results.append(f"[review] {body[:500]}")
+        print(f"  PR reviews: {cr_total} from coderabbit, {cr_skipped_since} skipped (before since), {len(results) - review_count_before} kept")
+    else:
+        print("  [warn] No response from GitHub API for PR reviews.")
+
+    return results
+
+
+def _coderabbit_review_pending(cfg: Config) -> bool:
+    """Return True if CodeRabbit has a pending status check (review in progress)."""
+    output = gh(
+        "pr", "view", cfg.gh_pr_number,
+        "--repo", cfg.gh_repo,
+        "--json", "statusCheckRollup",
+    )
+    try:
+        data = json.loads(output)
+        checks = data.get("statusCheckRollup", [])
+        for c in checks:
+            name = (c.get("name") or c.get("context") or "").lower()
+            if "coderabbit" not in name:
+                continue
+            result = _check_result(c)
+            if result is None:
+                return True  # CodeRabbit check exists but has no conclusion yet
+        return False
+    except json.JSONDecodeError:
+        return False
 
 
 def coderabbit_summary_posted(cfg: Config) -> bool:
@@ -1026,6 +1133,26 @@ def build_dedup_prompt(tools: ToolCommands, dup_group: list[str]) -> str:
     return "\n".join(parts)
 
 
+def _build_compile_fix_prompt(tools: ToolCommands, test_output: str) -> str:
+    """Build a prompt for Claude to fix compilation or test errors."""
+    # Truncate very long output to keep the prompt manageable
+    max_len = 8000
+    if len(test_output) > max_len:
+        test_output = "... (truncated) ...\n" + test_output[-max_len:]
+
+    return "\n".join([
+        f"You are a code quality agent for a {tools.lang_name} project.",
+        "The code is failing to compile or tests are failing after recent changes.",
+        "Fix the compilation/test errors below. Do not change any functionality",
+        "beyond what is needed to fix these errors.",
+        "",
+        "== Build/test errors ==",
+        test_output,
+        "",
+        f"{tools.verify_instructions} Do not modify tests.",
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Git
 # ---------------------------------------------------------------------------
@@ -1039,6 +1166,22 @@ def _get_dirty_files() -> set[str]:
     """Return the set of tracked file paths with uncommitted changes."""
     result = run(["git", "diff", "--name-only", "HEAD"], check=False, capture=True)
     return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
+
+
+def _detect_last_iteration() -> int:
+    """Detect the last quality loop iteration number from git log. Returns 0 if none found."""
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-50"],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return 0
+    highest = 0
+    for line in result.stdout.splitlines():
+        m = re.search(r"quality loop iteration (\d+)", line)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest
 
 
 def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
@@ -1091,20 +1234,26 @@ class Signals:
         return sum(len(g) for g in self.dup_groups)
 
 
-def collect_signals(cfg: Config, cr_since: str = "") -> Signals:
+def collect_signals(cfg: Config, cr_since: str = "", skip_sonar: bool = False) -> Signals:
     """Collect all quality signals."""
-    print("\n[1/6] Running SonarQube scan ...")
-    scan_ok = sonar_scan(cfg)
-    s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
-    print(f"  SonarQube issues: {len(s_issues)}")
+    if skip_sonar:
+        print("\n[1/6] SonarQube scan -- skipped (--skip-sonar-first)")
+        print("\n[2/6] SonarQube security hotspots -- skipped")
+        print("\n[3/6] SonarQube duplications -- skipped")
+        s_issues, h_issues, d_groups = [], [], []
+    else:
+        print("\n[1/6] Running SonarQube scan ...")
+        scan_ok = sonar_scan(cfg)
+        s_issues = format_sonar_issues(sonar_issues(cfg)) if scan_ok else []
+        print(f"  SonarQube issues: {len(s_issues)}")
 
-    print("\n[2/6] Fetching SonarQube security hotspots ...")
-    h_issues = format_sonar_hotspots(sonar_hotspots(cfg)) if scan_ok else []
-    print(f"  Security hotspots: {len(h_issues)}")
+        print("\n[2/6] Fetching SonarQube security hotspots ...")
+        h_issues = format_sonar_hotspots(sonar_hotspots(cfg)) if scan_ok else []
+        print(f"  Security hotspots: {len(h_issues)}")
 
-    print("\n[3/6] Fetching SonarQube duplications ...")
-    d_groups = sonar_duplications_detailed(cfg) if scan_ok else []
-    print(f"  Duplication groups: {len(d_groups)}")
+        print("\n[3/6] Fetching SonarQube duplications ...")
+        d_groups = sonar_duplications_detailed(cfg) if scan_ok else []
+        print(f"  Duplication groups: {len(d_groups)}")
 
     print("\n[4/6] Running lint ...")
     l_issues = lint_issues(cfg.tools)
@@ -1116,7 +1265,17 @@ def collect_signals(cfg: Config, cr_since: str = "") -> Signals:
 
     print("\n[6/6] Fetching CodeRabbit comments ...")
     cr_issues = coderabbit_comments(cfg, since=cr_since)
-    print(f"  CodeRabbit comments: {len(cr_issues)}")
+    if not cr_issues:
+        cr_wait_minutes = 15
+        print(f"  No comments yet. Waiting {cr_wait_minutes}m for CodeRabbit to finish reviewing ...")
+        for remaining in range(cr_wait_minutes, 0, -1):
+            print(f"\r  CodeRabbit wait: {remaining:2d}m remaining ", end="", flush=True)
+            time.sleep(60)
+        print("\r  CodeRabbit wait: done.              ", flush=True)
+        cr_issues = coderabbit_comments(cfg, since=cr_since)
+    cr_all = len(cr_issues)
+    cr_issues = _filter_unseen_comments(cfg, cr_issues)
+    print(f"  CodeRabbit comments: {len(cr_issues)} new ({cr_all} total, {cr_all - len(cr_issues)} already seen)")
 
     return Signals(
         sonar=s_issues, hotspots=h_issues, dup_groups=d_groups,
@@ -1125,7 +1284,10 @@ def collect_signals(cfg: Config, cr_since: str = "") -> Signals:
 
 
 def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
-    """Invoke Claude Code, auto-format, and verify tests still pass."""
+    """Invoke Claude Code, auto-format, and verify tests still pass.
+    If tests/compilation break, retries by asking Claude to fix the errors."""
+    max_compile_retries = 3
+
     print("  Invoking Claude Code ...")
     success = claude_fix(prompt, iteration)
     if not success:
@@ -1135,12 +1297,26 @@ def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
         print("\n  Running format fix ...")
         fmt_fix(cfg.tools)
 
-    print("\n  Running tests (regression guard) ...")
-    if not run_tests(cfg.tools):
-        print("[error] Tests broke after changes. Stopping.")
-        print("  Check the diff, fix manually, and re-run.")
-        sys.exit(1)
-    print("  Tests still green.")
+    for attempt in range(max_compile_retries + 1):
+        print("\n  Running tests (regression guard) ...")
+        passed, test_output = run_tests(cfg.tools)
+        if passed:
+            return
+
+        if attempt == max_compile_retries:
+            print(f"[error] Tests still failing after {max_compile_retries} fix attempts. Stopping.")
+            print("  Check the diff, fix manually, and re-run.")
+            sys.exit(1)
+
+        print(f"\n[warn] Tests/compilation broke after changes (attempt {attempt + 1}/{max_compile_retries}). Asking Claude Code to fix ...")
+        fix_prompt = _build_compile_fix_prompt(cfg.tools, test_output)
+        success = claude_fix(fix_prompt, iteration)
+        if not success:
+            print("[warn] Claude Code exited with an error. Continuing anyway.")
+
+        if cfg.tools.fmt_fix_cmd:
+            print("\n  Running format fix ...")
+            fmt_fix(cfg.tools)
 
 
 def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
@@ -1169,11 +1345,15 @@ def _cr_since_path(cfg: Config) -> Path:
 def _load_cr_since(cfg: Config) -> str:
     """Load persisted cr_since timestamp, or return empty string."""
     p = _cr_since_path(cfg)
+    print(f"  cr_since file: {p}")
     if p.exists():
         ts = p.read_text().strip()
         if ts:
             print(f"  Resuming with CodeRabbit comments since {ts}")
             return ts
+        print("  cr_since file exists but is empty.")
+    else:
+        print("  cr_since file not found -- fetching all comments.")
     return ""
 
 
@@ -1182,12 +1362,48 @@ def _save_cr_since(cfg: Config, ts: str) -> None:
     _cr_since_path(cfg).write_text(ts)
 
 
-def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
+def _cr_seen_path(cfg: Config) -> Path:
+    """Path to the file that stores hashes of already-seen CodeRabbit comments."""
+    return Path(f"/tmp/quality_loop_cr_seen_{cfg.gh_repo.replace('/', '_')}_{cfg.gh_pr_number}.txt")
+
+
+def _load_seen_cr_hashes(cfg: Config) -> set[str]:
+    """Load set of hashes for CodeRabbit comments already processed."""
+    p = _cr_seen_path(cfg)
+    if p.exists():
+        return set(line.strip() for line in p.read_text().splitlines() if line.strip())
+    return set()
+
+
+def _save_seen_cr_hashes(cfg: Config, hashes: set[str]) -> None:
+    """Persist seen CodeRabbit comment hashes."""
+    _cr_seen_path(cfg).write_text("\n".join(sorted(hashes)) + "\n")
+
+
+def _hash_comment(comment: str) -> str:
+    """Create a short hash of a CodeRabbit comment string."""
+    return hashlib.sha256(comment.encode()).hexdigest()[:16]
+
+
+def _filter_unseen_comments(cfg: Config, comments: list[str]) -> list[str]:
+    """Filter out CodeRabbit comments we've already seen. Updates the seen set."""
+    seen = _load_seen_cr_hashes(cfg)
+    unseen = []
+    for c in comments:
+        h = _hash_comment(c)
+        if h not in seen:
+            unseen.append(c)
+            seen.add(h)
+    _save_seen_cr_hashes(cfg, seen)
+    return unseen
+
+
+def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool = False) -> str:
     """Run one quality loop iteration. Returns updated cr_since timestamp,
     or empty string to signal that all issues are resolved."""
     from datetime import datetime, timezone
 
-    signals = collect_signals(cfg, cr_since=cr_since)
+    signals = collect_signals(cfg, cr_since=cr_since, skip_sonar=skip_sonar)
     total = signals.main_total + signals.dup_total
 
     if total == 0:
@@ -1237,23 +1453,52 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str) -> str:
 
 
 def main() -> None:
+    from datetime import datetime, timezone
+
     args = parse_args()
     cfg = build_config(args)
+
+    if cfg.start_iteration > 1:
+        print(f"  Resuming from iteration {cfg.start_iteration} (detected from git log)")
 
     if cfg.dry_run:
         print("[dry-run] No Claude Code invocations or git pushes will happen.")
 
     banner("Baseline: tests")
-    if not run_tests(cfg.tools):
-        print("[error] Tests failed before the loop even started. Fix them first.")
-        sys.exit(1)
-    print("  Baseline tests green.")
+    passed, test_output = run_tests(cfg.tools)
+    if not passed:
+        max_baseline_retries = 3
+        print(f"[warn] Baseline tests/compilation failing. Asking Claude Code to fix (up to {max_baseline_retries} attempts) ...")
+        for attempt in range(max_baseline_retries):
+            fix_prompt = _build_compile_fix_prompt(cfg.tools, test_output)
+            claude_fix(fix_prompt, 0)
+            if cfg.tools.fmt_fix_cmd:
+                fmt_fix(cfg.tools)
+            passed, test_output = run_tests(cfg.tools)
+            if passed:
+                print("  Baseline tests now green.")
+                # Commit the baseline fix before entering the quality loop
+                baseline_iter = cfg.start_iteration - 1 if cfg.start_iteration > 1 else 0
+                baseline_cr_since = datetime.now(timezone.utc).isoformat()
+                pushed = _commit_and_wait(cfg, baseline_iter)
+                if pushed:
+                    _save_cr_since(cfg, baseline_cr_since)
+                break
+            if attempt < max_baseline_retries - 1:
+                print(f"[warn] Still failing (attempt {attempt + 1}/{max_baseline_retries}). Retrying ...")
+        else:
+            print(f"[error] Could not fix baseline failures after {max_baseline_retries} attempts. Fix manually.")
+            sys.exit(1)
+    else:
+        print("  Baseline tests green.")
 
     cr_since = _load_cr_since(cfg)
 
-    for iteration in range(1, cfg.max_iterations + 1):
-        banner(f"Iteration {iteration}/{cfg.max_iterations}")
-        cr_since = _run_iteration(cfg, iteration, cr_since)
+    end_iteration = cfg.start_iteration + cfg.max_iterations
+    for iteration in range(cfg.start_iteration, end_iteration):
+        banner(f"Iteration {iteration}/{end_iteration - 1}")
+        skip_sonar = cfg.skip_sonar_first and iteration == cfg.start_iteration
+        cr_since = _run_iteration(cfg, iteration, cr_since, skip_sonar=skip_sonar)
         if not cr_since:
             banner("All signals clean -- loop complete!")
             sys.exit(0)

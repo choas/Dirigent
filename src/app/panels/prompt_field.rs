@@ -151,14 +151,20 @@ impl DirigentApp {
     }
 
     /// Render prompt refinement hints and suggestions below the input.
-    fn render_prompt_hints_and_suggestions(&self, ui: &mut egui::Ui) {
+    fn render_prompt_hints_and_suggestions(&mut self, ui: &mut egui::Ui) {
         if !self.settings.prompt_suggestions_enabled {
             return;
         }
-        let hints = prompt_hints::analyze(&self.global_prompt_input);
-        if !hints.is_empty() {
+        // Only re-analyze when the input text has actually changed.
+        if self.global_prompt_input != self.cached_prompt_input {
+            self.cached_prompt_input = self.global_prompt_input.clone();
+            self.cached_prompt_hints = prompt_hints::analyze(&self.global_prompt_input);
+            self.cached_prompt_suggestions =
+                prompt_suggestions::analyse_prompt(&self.global_prompt_input, false);
+        }
+        if !self.cached_prompt_hints.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                for hint in &hints {
+                for hint in &self.cached_prompt_hints {
                     ui.label(
                         egui::RichText::new(format!("\u{26A0} {}", hint.label))
                             .small()
@@ -169,10 +175,9 @@ impl DirigentApp {
             });
         }
 
-        let suggestions = prompt_suggestions::analyse_prompt(&self.global_prompt_input, false);
-        if !suggestions.is_empty() {
+        if !self.cached_prompt_suggestions.is_empty() {
             ui.add_space(SPACE_XS);
-            for suggestion in &suggestions {
+            for suggestion in &self.cached_prompt_suggestions {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("\u{26A0} {}", suggestion.label))

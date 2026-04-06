@@ -119,10 +119,61 @@ pub(super) struct TabState {
     pub(super) scroll_offset: f32,
     /// Parsed symbols for outline and breadcrumb.
     pub(super) symbols: Vec<symbols::FileSymbol>,
+    /// Decoded image data for image files (lazily turned into a texture).
+    pub(super) image_data: Option<eframe::egui::ColorImage>,
+    /// Cached texture handle for the image (created on first render).
+    pub(super) image_texture: Option<eframe::egui::TextureHandle>,
+    /// Current zoom level for image viewer (1.0 = fit to area).
+    pub(super) image_zoom: f32,
+}
+
+/// Check if a file extension corresponds to a supported image format.
+fn is_image_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico"
+    )
 }
 
 /// Read a file from disk and build a TabState with markdown parsing and symbol extraction.
 pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Handle image files: decode into ColorImage instead of reading as text
+    if is_image_extension(&ext) {
+        let bytes = std::fs::read(path).ok()?;
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut reader = image::ImageReader::new(cursor).with_guessed_format().ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(16384);
+        limits.max_image_height = Some(16384);
+        limits.max_alloc = Some(256 * 1024 * 1024);
+        reader.limits(limits);
+        let img = reader.decode().ok()?.into_rgba8();
+        let size = [img.width() as usize, img.height() as usize];
+        let pixels = img.into_raw();
+        let color_image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+        return Some(TabState {
+            file_path: path.clone(),
+            content: Vec::new(),
+            selection_start: None,
+            selection_end: None,
+            cue_input: String::new(),
+            cue_images: Vec::new(),
+            markdown_blocks: None,
+            markdown_rendered: false,
+            scroll_offset: 0.0,
+            symbols: Vec::new(),
+            image_data: Some(color_image),
+            image_texture: None,
+            image_zoom: 1.0,
+        });
+    }
+
     let content = std::fs::read_to_string(path).ok()?;
     let is_md = path
         .extension()
@@ -135,11 +186,6 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         None
     };
     let lines: Vec<String> = content.lines().map(String::from).collect();
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_string();
     let file_symbols = symbols::parse_symbols(&lines, &ext);
     Some(TabState {
         file_path: path.clone(),
@@ -152,6 +198,9 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         markdown_rendered: true,
         scroll_offset: 0.0,
         symbols: file_symbols,
+        image_data: None,
+        image_texture: None,
+        image_zoom: 1.0,
     })
 }
 
@@ -373,6 +422,12 @@ pub(crate) struct GitState {
     pub(super) commit_history_total: usize,
     pub(super) commit_history_limit: usize,
     pub(super) show_log: bool,
+    /// Graph layout rows corresponding to `commit_history` (one per commit).
+    pub(super) graph_rows: Vec<git::graph::GraphRow>,
+    /// Maximum number of simultaneous lanes in the current graph.
+    pub(super) graph_max_lanes: usize,
+    /// Cache key for commit history: (HEAD hash, limit) — skip reload if unchanged.
+    pub(super) history_cache_key: (String, usize),
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
     pub(super) show_worktree_panel: bool,
@@ -421,10 +476,6 @@ pub(crate) struct GitState {
     /// Whether a PR notification (reply to PR comments) is in progress.
     pub(super) notifying_pr: bool,
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the "Move to Branch" dialog is open.
-    pub(super) show_move_to_branch: bool,
-    /// Branch name input for the move-to-branch dialog.
-    pub(super) move_to_branch_name: String,
     /// Whether the "Switch Branch" dialog is open.
     pub(super) show_switch_branch: bool,
     /// Archived worktree DBs (cached list).
@@ -447,4 +498,69 @@ pub(crate) struct GitState {
     pub(super) new_pattern_field: String,
     /// Pattern id currently being edited (None = not editing).
     pub(super) editing_pattern: Option<(i64, String, String)>,
+    /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
+    pub(super) hovered_graph_row: Option<usize>,
+    /// Whether the Move to Branch dialog is open.
+    pub(super) show_move_to_branch: bool,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) move_to_branch_needs_focus: bool,
+    /// Branch name input for the Move to Branch dialog.
+    pub(super) move_to_branch_name: String,
+    /// Whether a move-to-branch operation is in progress.
+    pub(super) moving_to_branch: bool,
+    pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
+}
+
+impl GitState {
+    /// Dismiss the topmost git-related modal dialog (priority order).
+    /// Returns `true` if a modal was dismissed.
+    pub(super) fn dismiss_topmost_modal(&mut self) -> bool {
+        if self.pending_force_remove.is_some() {
+            self.pending_force_remove = None;
+            return true;
+        }
+        if self.pending_delete_archive.is_some() {
+            self.pending_delete_archive = None;
+            return true;
+        }
+        if self.show_merge_conflicts {
+            self.show_merge_conflicts = false;
+            return true;
+        }
+        if self.show_pull_diverged {
+            self.show_pull_diverged = false;
+            return true;
+        }
+        if self.show_pull_unmerged {
+            self.show_pull_unmerged = false;
+            return true;
+        }
+        if self.show_pr_filter {
+            self.show_pr_filter = false;
+            self.pr_findings_pending.clear();
+            self.pr_findings_excluded.clear();
+            return true;
+        }
+        if self.show_import_pr {
+            self.show_import_pr = false;
+            return true;
+        }
+        if self.show_move_to_branch {
+            self.show_move_to_branch = false;
+            return true;
+        }
+        if self.show_create_pr {
+            self.show_create_pr = false;
+            return true;
+        }
+        if self.show_switch_branch {
+            self.show_switch_branch = false;
+            return true;
+        }
+        if self.show_worktree_panel {
+            self.show_worktree_panel = false;
+            return true;
+        }
+        false
+    }
 }

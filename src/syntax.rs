@@ -28,6 +28,11 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
 
 /// Convenience wrapper around `egui_extras::syntax_highlighting::highlight_with`
 /// that uses our custom syntax settings (which include Kotlin, Dart, etc.).
+///
+/// Post-processes the LayoutJob to fix egui_extras bugs:
+/// - Strips incorrect underlines (egui_extras checks ITALIC instead of UNDERLINE)
+/// - Strips strikethrough for safety
+/// - Clears per-section background colors and expansion to avoid colored rectangles
 pub(crate) fn highlight(
     ctx: &egui::Context,
     style: &egui::Style,
@@ -35,14 +40,21 @@ pub(crate) fn highlight(
     code: &str,
     language: &str,
 ) -> egui::text::LayoutJob {
-    egui_extras::syntax_highlighting::highlight_with(
+    let mut job = egui_extras::syntax_highlighting::highlight_with(
         ctx,
         style,
         theme,
         code,
         language,
         &SYNTAX_SETTINGS,
-    )
+    );
+    for section in &mut job.sections {
+        section.format.underline = egui::Stroke::NONE;
+        section.format.strikethrough = egui::Stroke::NONE;
+        section.format.background = egui::Color32::TRANSPARENT;
+        section.format.expand_bg = 0.0;
+    }
+    job
 }
 
 // ---------------------------------------------------------------------------

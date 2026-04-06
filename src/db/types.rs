@@ -5,7 +5,7 @@ use crate::settings::CliProvider;
 /// (cue_id, text, file_path, line_number, line_number_end, attached_images)
 pub(crate) type CueHistoryRow = (i64, String, String, usize, Option<usize>, Vec<String>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CueStatus {
     Inbox,
     Ready,

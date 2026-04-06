@@ -7,6 +7,7 @@ mod filter_pr;
 mod git_init;
 mod import_pr;
 mod merge_conflicts;
+mod move_to_branch;
 mod play_variables;
 mod pull_diverged;
 mod pull_unmerged;
