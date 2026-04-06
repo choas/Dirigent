@@ -258,7 +258,7 @@ impl DirigentApp {
         // Precompute graph column width: each lane = 12px, cap at 6 lanes.
         let lane_width = 12.0_f32;
         let visible_lanes = self.git.graph_max_lanes.clamp(1, 6);
-        let extra_for_ellipsis = (self.git.graph_max_lanes > 6) as u8 as f32;
+        let extra_for_ellipsis = (self.git.graph_max_lanes > 6) as f32;
         let graph_col_width = (visible_lanes as f32 + extra_for_ellipsis + 0.5) * lane_width;
 
         // Compute branch lineage highlight from previous frame's hovered row.
