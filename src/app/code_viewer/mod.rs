@@ -100,6 +100,14 @@ impl DirigentApp {
 
         ui.separator();
 
+        // Image viewer
+        if self.viewer.tabs[active_idx].image_data.is_some()
+            || self.viewer.tabs[active_idx].image_texture.is_some()
+        {
+            self.render_image_viewer(ui, active_idx);
+            return;
+        }
+
         let should_render_md = is_markdown && self.viewer.tabs[active_idx].markdown_rendered;
         if should_render_md {
             self.render_markdown_scroll(ui, active_idx);
@@ -121,7 +129,7 @@ impl DirigentApp {
         file_path: &Path,
         rel_path: &str,
     ) {
-        let lines_with_cues = self.lines_with_cues();
+        let lines_with_cues = self.lines_with_cues_cached(rel_path);
         let num_lines = self.viewer.tabs[active_idx].content.len();
         let line_height = 16.0;
         let mut diag_lines =
@@ -204,6 +212,88 @@ impl DirigentApp {
             &diag_messages,
             &symbol_lines,
         );
+    }
+
+    /// Lazily create the texture from the stored ColorImage.
+    fn ensure_image_texture(&mut self, ui: &egui::Ui, tab_idx: usize) {
+        if self.viewer.tabs[tab_idx].image_texture.is_none() {
+            if let Some(color_image) = self.viewer.tabs[tab_idx].image_data.take() {
+                let name = self.viewer.tabs[tab_idx]
+                    .file_path
+                    .to_string_lossy()
+                    .to_string();
+                let texture =
+                    ui.ctx()
+                        .load_texture(name, color_image, egui::TextureOptions::LINEAR);
+                self.viewer.tabs[tab_idx].image_texture = Some(texture);
+            }
+        }
+    }
+
+    /// Render an image file in the code viewer area.
+    fn render_image_viewer(&mut self, ui: &mut egui::Ui, active_idx: usize) {
+        self.ensure_image_texture(ui, active_idx);
+
+        let texture = match self.viewer.tabs[active_idx].image_texture.clone() {
+            Some(t) => t,
+            None => return,
+        };
+        let image_size = texture.size_vec2();
+        let zoom = self.viewer.tabs[active_idx].image_zoom;
+        ui.add_space(SPACE_SM);
+        ui.horizontal(|ui| {
+            ui.add_space(SPACE_SM);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}\u{00d7}{} px",
+                    image_size.x as u32, image_size.y as u32,
+                ))
+                .weak(),
+            );
+            ui.add_space(SPACE_MD);
+            if ui.button("\u{2212}").clicked() {
+                self.viewer.tabs[active_idx].image_zoom = (zoom / 1.25).max(0.1);
+            }
+            ui.label(format!("{}%", (zoom * 100.0) as u32));
+            if ui.button("+").clicked() {
+                self.viewer.tabs[active_idx].image_zoom = (zoom * 1.25).min(10.0);
+            }
+            if ui.button("Fit").clicked() {
+                self.viewer.tabs[active_idx].image_zoom = 1.0;
+            }
+        });
+        ui.separator();
+
+        // Handle scroll-wheel zoom (Cmd/Ctrl + scroll)
+        let zoom = self.viewer.tabs[active_idx].image_zoom;
+        let scroll = ui.input(|i| {
+            if i.modifiers.command {
+                i.smooth_scroll_delta.y
+            } else {
+                0.0
+            }
+        });
+        if scroll != 0.0 {
+            let factor = if scroll > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            self.viewer.tabs[active_idx].image_zoom = (zoom * factor).clamp(0.1, 10.0);
+        }
+
+        let zoom = self.viewer.tabs[active_idx].image_zoom;
+        egui::ScrollArea::both()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let available = ui.available_size();
+                // Fit image within the available area while preserving aspect ratio
+                let base_scale = (available.x / image_size.x)
+                    .min(available.y / image_size.y)
+                    .min(1.0); // don't upscale at zoom=1
+                let scale = base_scale * zoom;
+                let display_size = egui::vec2(image_size.x * scale, image_size.y * scale);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(SPACE_SM);
+                    ui.add(egui::Image::new(&texture).fit_to_exact_size(display_size));
+                });
+            });
     }
 
     /// Render the splash screen shown when no file is open.

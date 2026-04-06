@@ -194,6 +194,9 @@ pub struct DirigentApp {
     // Expanded activity logbooks (cue IDs with open logbook)
     logbook_expanded: HashSet<i64>,
 
+    // Cached activity logbook data (avoids DB queries every frame for expanded cues)
+    activity_cache: HashMap<i64, (Vec<crate::db::ActivityEntry>, Vec<crate::db::AgentRunEntry>)>,
+
     // Expanded agent output entries in activity logbook (agent_run IDs)
     agent_output_expanded: HashSet<(i64, String)>,
 
@@ -240,6 +243,20 @@ pub struct DirigentApp {
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
     goto_def_gen: u64,
     goto_def_cancel: Arc<AtomicBool>,
+
+    // Cached prompt analysis (avoids re-analysis every frame when input unchanged)
+    cached_prompt_input: String,
+    cached_prompt_hints: Vec<crate::prompt_hints::PromptHint>,
+    cached_prompt_suggestions: Vec<crate::prompt_suggestions::PromptSuggestion>,
+
+    // Cached cue-derived data (recomputed only in reload_cues, not every frame)
+    cached_has_running_cue: bool,
+    cached_heading_text: String,
+    cached_unique_labels: Vec<String>,
+    /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
+    cue_generation: u64,
+    /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
+    cached_lines_with_cues: Option<(String, u64, HashMap<usize, bool>)>,
 
     // Prompt history search
     prompt_history_query: String,
@@ -376,7 +393,7 @@ impl DirigentApp {
             )
         } else {
             let file_tree = FileTree::scan(&project_root).ok();
-            let cues = db.all_cues_limited_archived(50).unwrap_or_default();
+            let cues = db.all_cues_limited_archived(10).unwrap_or_default();
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
@@ -424,6 +441,10 @@ impl DirigentApp {
 
         let (graph_rows, graph_max_lanes) = git::graph::compute_graph(&commit_history);
 
+        let initial_has_running = cues.iter().any(|c| c.status == CueStatus::Ready);
+        let initial_heading = cue_pool::helpers::build_heading_text(&cues);
+        let initial_labels = cue_pool::helpers::collect_unique_labels(&cues, &settings.sources);
+
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
             if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
@@ -455,7 +476,7 @@ impl DirigentApp {
             cues,
             archived_cue_count,
             cached_filtered_archived_count: archived_cue_count,
-            archived_cue_limit: 50,
+            archived_cue_limit: 10,
             claude: ClaudeRunState::new(),
             diff_review: None,
             git: GitState {
@@ -565,6 +586,7 @@ impl DirigentApp {
             cue_move_flash: HashMap::new(),
             cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
+            activity_cache: HashMap::new(),
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
@@ -584,6 +606,16 @@ impl DirigentApp {
             goto_def_rx,
             goto_def_gen: 0,
             goto_def_cancel: Arc::new(AtomicBool::new(false)),
+
+            cached_prompt_input: String::new(),
+            cached_prompt_hints: Vec::new(),
+            cached_prompt_suggestions: Vec::new(),
+
+            cached_has_running_cue: initial_has_running,
+            cached_heading_text: initial_heading,
+            cached_unique_labels: initial_labels,
+            cue_generation: 0,
+            cached_lines_with_cues: None,
 
             prompt_history_query: String::new(),
             prompt_history_results: Vec::new(),
@@ -703,6 +735,16 @@ impl DirigentApp {
             .db
             .get_cue_ids_with_activity_prefix("Marked done in Notion")
             .unwrap_or_default();
+        // Invalidate activity cache so expanded logbooks pick up new data.
+        self.activity_cache.clear();
+        // Recompute cue-derived caches (avoids scanning all cues every frame).
+        self.cached_has_running_cue = self.cues.iter().any(|c| c.status == CueStatus::Ready);
+        self.cached_heading_text = crate::app::cue_pool::helpers::build_heading_text(&self.cues);
+        self.cached_unique_labels = crate::app::cue_pool::helpers::collect_unique_labels(
+            &self.cues,
+            &self.settings.sources,
+        );
+        self.cue_generation = self.cue_generation.wrapping_add(1);
     }
 
     /// Activate an Inbox cue: move to Ready, log activity, and trigger Claude.
@@ -752,8 +794,7 @@ impl DirigentApp {
         if self.run_queue.is_empty() {
             return;
         }
-        // Check if any cues are currently running
-        let any_running = self.cues.iter().any(|c| c.status == CueStatus::Ready);
+        let any_running = self.cached_has_running_cue;
         if !any_running {
             let id = self.run_queue.remove(0);
             self.activate_inbox_cue(id, "Queued run started");

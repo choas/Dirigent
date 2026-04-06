@@ -1,7 +1,7 @@
 mod actions;
 mod bulk_actions;
 mod cue_card;
-mod helpers;
+pub(in crate::app) mod helpers;
 mod history;
 mod markdown_import;
 
@@ -17,10 +17,7 @@ type ReuseCueData = (String, String, usize, Option<usize>, Vec<String>);
 
 use crate::settings;
 
-use helpers::{
-    build_heading_text, build_section_header, collect_unique_labels,
-    filter_cues_by_status_and_source, format_import_message, render_cue_pool_buttons,
-};
+use helpers::{build_section_header, format_import_message, render_cue_pool_buttons};
 use markdown_import::{parse_markdown_sections, pick_markdown_file};
 
 impl DirigentApp {
@@ -54,13 +51,16 @@ impl DirigentApp {
                     let cues_owned = std::mem::take(&mut self.cues);
                     let source_filter = self.sources.filter.clone();
                     let filtered_archived_count = self.cached_filtered_archived_count;
+
+                    // Single pass: group cues by status (avoids 6 separate full scans).
+                    let grouped = helpers::group_cues_by_status(&cues_owned, &source_filter);
                     for &status in CueStatus::all() {
-                        let section_cues: Vec<&Cue> =
-                            filter_cues_by_status_and_source(&cues_owned, status, &source_filter);
+                        let section_cues =
+                            grouped.get(&status).map(|v| v.as_slice()).unwrap_or(&[]);
                         self.render_cue_section(
                             ui,
                             status,
-                            &section_cues,
+                            section_cues,
                             &mut actions,
                             &mut load_more_archived,
                             filtered_archived_count,
@@ -69,7 +69,7 @@ impl DirigentApp {
                     self.cues = cues_owned;
 
                     if load_more_archived {
-                        self.archived_cue_limit += 50;
+                        self.archived_cue_limit += 10;
                         self.reload_cues();
                     }
 
@@ -86,7 +86,7 @@ impl DirigentApp {
 
     fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool) {
         let mut result = (None, false, false);
-        let heading_text = build_heading_text(&self.cues);
+        let heading_text = &self.cached_heading_text;
         let font_size = self.settings.font_size;
         ui.horizontal(|ui| {
             ui.label(
@@ -223,8 +223,7 @@ impl DirigentApp {
     }
 
     fn render_source_filter(&mut self, ui: &mut egui::Ui) {
-        let unique_labels = collect_unique_labels(&self.cues, &self.settings.sources);
-        if unique_labels.is_empty() {
+        if self.cached_unique_labels.is_empty() {
             return;
         }
         ui.horizontal(|ui| {
@@ -238,13 +237,10 @@ impl DirigentApp {
                         self.sources.filter = None;
                         self.cached_filtered_archived_count = self.archived_cue_count;
                     }
-                    for label in &unique_labels {
-                        let count = self
-                            .cues
-                            .iter()
-                            .filter(|c| c.source_label.as_deref() == Some(label.as_str()))
-                            .count();
-                        let display = format!("{} ({})", label, count);
+                    // Clone the cached labels to avoid holding a borrow on self.
+                    let labels = self.cached_unique_labels.clone();
+                    for label in &labels {
+                        let display = label.to_string();
                         let selected = self.sources.filter.as_deref() == Some(label.as_str());
                         if ui.selectable_label(selected, &display).clicked() {
                             self.sources.filter = Some(label.clone());
@@ -301,7 +297,7 @@ impl DirigentApp {
         if !self.settings.lava_lamp_enabled {
             return;
         }
-        if !self.cues.iter().any(|c| c.status == CueStatus::Ready) {
+        if !self.cached_has_running_cue {
             return;
         }
         let margin = 8.0;

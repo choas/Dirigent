@@ -26,6 +26,114 @@ pub(crate) struct GraphRow {
     pub connections: Vec<(usize, usize)>,
 }
 
+/// Allocate a lane for `hash`, reusing an empty slot or appending a new one.
+fn allocate_lane(lanes: &mut Vec<Option<String>>, hash: String) -> usize {
+    let col = lanes
+        .iter()
+        .position(|s| s.is_none())
+        .unwrap_or(lanes.len());
+    if col == lanes.len() {
+        lanes.push(Some(hash));
+    } else {
+        lanes[col] = Some(hash);
+    }
+    col
+}
+
+/// Find the lane waiting for `hash`, or allocate a new one.
+fn find_or_allocate_lane(lanes: &mut Vec<Option<String>>, hash: &str) -> usize {
+    lanes
+        .iter()
+        .position(|slot| slot.as_deref() == Some(hash))
+        .unwrap_or_else(|| allocate_lane(lanes, hash.to_string()))
+}
+
+/// Build initial lane segments: active lanes get Straight, commit lane gets Commit.
+fn build_segments(lanes: &[Option<String>], col: usize) -> Vec<LaneSegment> {
+    let mut segments = vec![LaneSegment::Empty; lanes.len()];
+    for (i, slot) in lanes.iter().enumerate() {
+        if slot.is_some() && i != col {
+            segments[i] = LaneSegment::Straight;
+        }
+    }
+    segments[col] = LaneSegment::Commit;
+    segments
+}
+
+/// Collapse any lanes (other than `col`) that are waiting for `hash`.
+/// Marks collapsed lanes as MergeLeft (unless the segment is Empty).
+fn collapse_lanes_for(
+    lanes: &mut [Option<String>],
+    segments: &mut [LaneSegment],
+    connections: &mut Vec<(usize, usize)>,
+    col: usize,
+    hash: &str,
+) {
+    for i in 0..lanes.len() {
+        if i != col && lanes[i].as_deref() == Some(hash) {
+            connections.push((i, col));
+            if segments[i] != LaneSegment::Empty {
+                segments[i] = LaneSegment::MergeLeft;
+            }
+            lanes[i] = None;
+        }
+    }
+}
+
+/// Route a single additional parent (not the first) into lanes.
+fn route_additional_parent(
+    lanes: &mut Vec<Option<String>>,
+    segments: &mut Vec<LaneSegment>,
+    connections: &mut Vec<(usize, usize)>,
+    col: usize,
+    parent_hash: &str,
+) {
+    let existing = lanes
+        .iter()
+        .position(|slot| slot.as_deref() == Some(parent_hash));
+
+    if let Some(parent_lane) = existing {
+        // The parent already has an active lane that continues past this row,
+        // so keep it Straight. The (col, parent_lane) connection entry lets
+        // paint_graph_connections draw the merge connector separately.
+        connections.push((col, parent_lane));
+    } else {
+        let new_lane = allocate_lane(lanes, parent_hash.to_string());
+        if new_lane >= segments.len() {
+            segments.push(LaneSegment::ForkRight);
+        } else {
+            segments[new_lane] = LaneSegment::ForkRight;
+        }
+        connections.push((col, new_lane));
+    }
+}
+
+/// Route all parents of a commit into lanes.
+fn route_parents(
+    lanes: &mut Vec<Option<String>>,
+    segments: &mut Vec<LaneSegment>,
+    connections: &mut Vec<(usize, usize)>,
+    col: usize,
+    parents: &[String],
+) {
+    if parents.is_empty() {
+        lanes[col] = None;
+        return;
+    }
+
+    lanes[col] = Some(parents[0].clone());
+
+    for (pidx, parent_hash) in parents.iter().enumerate().skip(1) {
+        if parents[..pidx].iter().any(|p| p == parent_hash) {
+            continue;
+        }
+        route_additional_parent(lanes, segments, connections, col, parent_hash);
+    }
+
+    // Collapse duplicate lanes for the first parent.
+    collapse_lanes_for(lanes, segments, connections, col, &parents[0]);
+}
+
 /// Compute the graph layout for a list of commits (in topological order, newest first).
 ///
 /// Returns one `GraphRow` per commit, plus the maximum number of simultaneous lanes.
@@ -38,120 +146,30 @@ pub(crate) fn compute_graph(commits: &[CommitInfo]) -> (Vec<GraphRow>, usize) {
         return (Vec::new(), 0);
     }
 
-    // Active lanes: each slot tracks the commit hash that lane is "waiting for".
-    // When a commit appears whose hash matches a lane slot, it is placed there.
     let mut lanes: Vec<Option<String>> = Vec::new();
     let mut rows: Vec<GraphRow> = Vec::with_capacity(commits.len());
     let mut max_lanes: usize = 0;
 
     for commit in commits {
-        let hash = &commit.full_hash;
-
-        // Find which lane this commit occupies (if any lane is waiting for it).
-        let commit_lane = lanes.iter().position(|slot| slot.as_deref() == Some(hash));
-
-        let col = if let Some(c) = commit_lane {
-            c
-        } else {
-            // No lane waiting for this commit — allocate a new one.
-            // This happens for the first commit, orphan branch roots,
-            // and detached HEAD commits.
-            let new_col = lanes
-                .iter()
-                .position(|s| s.is_none())
-                .unwrap_or(lanes.len());
-            if new_col == lanes.len() {
-                lanes.push(Some(hash.clone()));
-            } else {
-                lanes[new_col] = Some(hash.clone());
-            }
-            new_col
-        };
-
-        // Build the lane segments for this row.
-        let lane_count = lanes.len();
-        let mut segments = vec![LaneSegment::Empty; lane_count];
+        let col = find_or_allocate_lane(&mut lanes, &commit.full_hash);
+        let mut segments = build_segments(&lanes, col);
         let mut connections: Vec<(usize, usize)> = Vec::new();
 
-        // Mark all active lanes as straight-through (except the commit lane).
-        for (i, slot) in lanes.iter().enumerate() {
-            if slot.is_some() && i != col {
-                segments[i] = LaneSegment::Straight;
-            }
-        }
-        segments[col] = LaneSegment::Commit;
+        collapse_lanes_for(
+            &mut lanes,
+            &mut segments,
+            &mut connections,
+            col,
+            &commit.full_hash,
+        );
+        route_parents(
+            &mut lanes,
+            &mut segments,
+            &mut connections,
+            col,
+            &commit.parent_hashes,
+        );
 
-        // Collapse any OTHER lanes that were also waiting for this commit.
-        // This happens when multiple child commits listed this commit as a parent,
-        // creating duplicate lane reservations.
-        for i in 0..lanes.len() {
-            if i != col && lanes[i].as_deref() == Some(hash) {
-                connections.push((i, col));
-                segments[i] = LaneSegment::MergeLeft;
-                lanes[i] = None;
-            }
-        }
-
-        // Now route parents into lanes.
-        let parents = &commit.parent_hashes;
-
-        if parents.is_empty() {
-            // Root commit (or orphan branch root) — clear this lane.
-            lanes[col] = None;
-        } else {
-            // First parent continues in the same lane.
-            lanes[col] = Some(parents[0].clone());
-
-            // Additional parents (merge/octopus) need their own lanes.
-            for (pidx, parent_hash) in parents.iter().enumerate().skip(1) {
-                // Skip duplicate parent hashes (degenerate octopus case).
-                if parents[..pidx].iter().any(|p| p == parent_hash) {
-                    continue;
-                }
-
-                // Check if parent is already in an existing lane.
-                let existing = lanes
-                    .iter()
-                    .position(|slot| slot.as_deref() == Some(parent_hash.as_str()));
-
-                if let Some(parent_lane) = existing {
-                    // Parent already tracked — draw a merge line.
-                    connections.push((col, parent_lane));
-                    if segments[parent_lane] == LaneSegment::Straight {
-                        segments[parent_lane] = LaneSegment::MergeLeft;
-                    }
-                } else {
-                    // Allocate a new lane for this parent.
-                    let new_lane = lanes
-                        .iter()
-                        .position(|s| s.is_none())
-                        .unwrap_or(lanes.len());
-                    if new_lane == lanes.len() {
-                        lanes.push(Some(parent_hash.clone()));
-                        segments.push(LaneSegment::ForkRight);
-                    } else {
-                        lanes[new_lane] = Some(parent_hash.clone());
-                        segments[new_lane] = LaneSegment::ForkRight;
-                    }
-                    connections.push((col, new_lane));
-                }
-            }
-
-            // Collapse duplicate lanes for the first parent (if another lane was also
-            // waiting for the same hash).
-            let first_parent = &parents[0];
-            for i in 0..lanes.len() {
-                if i != col && lanes[i].as_deref() == Some(first_parent.as_str()) {
-                    connections.push((i, col));
-                    if segments[i] != LaneSegment::Empty {
-                        segments[i] = LaneSegment::MergeLeft;
-                    }
-                    lanes[i] = None;
-                }
-            }
-        }
-
-        // Trim trailing empty lanes.
         while lanes.last() == Some(&None) {
             lanes.pop();
         }

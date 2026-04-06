@@ -75,51 +75,59 @@ pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> 
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let mut commits = Vec::new();
-    for oid in revwalk.take(limit) {
-        let oid = match oid {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        let commit = match repo.find_commit(oid) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let hash = format!("{}", commit.id());
-        let short_hash = super::short_hash(&hash);
-        let full_message = commit.message().unwrap_or("");
-        let message = full_message.lines().next().unwrap_or("").to_string();
-        let body = full_message.trim().to_string();
-        let author = commit.author().name().unwrap_or("").to_string();
-        let parent_hashes: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
-        let is_merge = parent_hashes.len() > 1;
-        let branch_labels = branch_map.get(&commit.id()).cloned().unwrap_or_default();
-        let tag_labels = tag_map.get(&commit.id()).cloned().unwrap_or_default();
-        let secs = commit.time().seconds();
-        let diff = now - secs;
-        let time_ago = if diff < 60 {
-            "just now".to_string()
-        } else if diff < 3600 {
-            format!("{}m ago", diff / 60)
-        } else if diff < 86400 {
-            format!("{}h ago", diff / 3600)
-        } else {
-            format!("{}d ago", diff / 86400)
-        };
-        commits.push(CommitInfo {
-            full_hash: hash,
-            short_hash,
-            message,
-            body,
-            author,
-            time_ago,
-            parent_hashes,
-            branch_labels,
-            tag_labels,
-            is_merge,
-        });
+    revwalk
+        .flatten()
+        .filter_map(|oid| commit_to_info(&repo, oid, &branch_map, &tag_map, now))
+        .take(limit)
+        .collect()
+}
+
+fn commit_to_info(
+    repo: &Repository,
+    oid: Oid,
+    branch_map: &HashMap<Oid, Vec<String>>,
+    tag_map: &HashMap<Oid, Vec<String>>,
+    now: i64,
+) -> Option<CommitInfo> {
+    let commit = repo.find_commit(oid).ok()?;
+    let hash = format!("{}", commit.id());
+    let short_hash = super::short_hash(&hash);
+    let full_message = commit.message().unwrap_or("");
+    let message = full_message.lines().next().unwrap_or("").to_string();
+    let body = full_message.trim().to_string();
+    let author = commit.author().name().unwrap_or("").to_string();
+    let parent_hashes: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
+    let is_merge = parent_hashes.len() > 1;
+    let branch_labels = branch_map.get(&commit.id()).cloned().unwrap_or_default();
+    let tag_labels = tag_map.get(&commit.id()).cloned().unwrap_or_default();
+    let time_ago = format_time_ago(now - commit.time().seconds());
+    Some(CommitInfo {
+        full_hash: hash,
+        short_hash,
+        message,
+        body,
+        author,
+        time_ago,
+        parent_hashes,
+        branch_labels,
+        tag_labels,
+        is_merge,
+    })
+}
+
+fn format_time_ago(diff: i64) -> String {
+    if diff <= 0 {
+        return "just now".to_string();
     }
-    commits
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
+    }
 }
 
 fn build_branch_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
@@ -158,17 +166,21 @@ pub(crate) fn count_commits(path: &Path) -> usize {
         Ok(r) => r,
         Err(_) => return 0,
     };
+
     let mut revwalk = match repo.revwalk() {
         Ok(r) => r,
         Err(_) => return 0,
     };
-    // Push HEAD.
+
+    // Walk the same ref set as read_commit_history: HEAD + local branch tips.
+    // Previously this walked all references (including remote-tracking branches,
+    // tags, stash, notes), causing the total count to diverge from the history
+    // that is actually displayed.
     if let Ok(head) = repo.head() {
-        if let Some(oid) = head.target() {
-            revwalk.push(oid).ok();
+        if let Ok(commit) = head.peel_to_commit() {
+            revwalk.push(commit.id()).ok();
         }
     }
-    // Push all local branch tips to count orphan branch commits too.
     if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
         for branch in branches.flatten() {
             let (branch_ref, _) = branch;
@@ -177,6 +189,7 @@ pub(crate) fn count_commits(path: &Path) -> usize {
             }
         }
     }
+
     revwalk.count()
 }
 

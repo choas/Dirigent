@@ -9,10 +9,16 @@ impl DirigentApp {
         if !self.logbook_expanded.contains(&cue.id) {
             return;
         }
-        let entries = match self.db.get_activities(cue.id) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
+        // Use cached activity data to avoid DB queries every frame.
+        if !self.activity_cache.contains_key(&cue.id) {
+            let entries = self.db.get_activities(cue.id).unwrap_or_default();
+            let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
+            self.activity_cache.insert(cue.id, (entries, agent_runs));
+        }
+        // Clone out of cache to avoid holding a borrow on self during rendering.
+        let cached = self.activity_cache.get(&cue.id).unwrap();
+        let entries = cached.0.clone();
+        let agent_runs = cached.1.clone();
         if entries.is_empty() {
             ui.label(
                 egui::RichText::new("No activity yet")
@@ -21,7 +27,6 @@ impl DirigentApp {
             );
             return;
         }
-        let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
         for entry in &entries {
             let agent_kind = detect_agent_kind(&entry.event);
             ui.horizontal(|ui| {
