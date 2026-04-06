@@ -119,10 +119,51 @@ pub(super) struct TabState {
     pub(super) scroll_offset: f32,
     /// Parsed symbols for outline and breadcrumb.
     pub(super) symbols: Vec<symbols::FileSymbol>,
+    /// Decoded image data for image files (lazily turned into a texture).
+    pub(super) image_data: Option<eframe::egui::ColorImage>,
+    /// Cached texture handle for the image (created on first render).
+    pub(super) image_texture: Option<eframe::egui::TextureHandle>,
+}
+
+/// Check if a file extension corresponds to a supported image format.
+fn is_image_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico"
+    )
 }
 
 /// Read a file from disk and build a TabState with markdown parsing and symbol extraction.
 pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Handle image files: decode into ColorImage instead of reading as text
+    if is_image_extension(&ext) {
+        let bytes = std::fs::read(path).ok()?;
+        let img = image::load_from_memory(&bytes).ok()?.into_rgba8();
+        let size = [img.width() as usize, img.height() as usize];
+        let pixels = img.into_raw();
+        let color_image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+        return Some(TabState {
+            file_path: path.clone(),
+            content: Vec::new(),
+            selection_start: None,
+            selection_end: None,
+            cue_input: String::new(),
+            cue_images: Vec::new(),
+            markdown_blocks: None,
+            markdown_rendered: false,
+            scroll_offset: 0.0,
+            symbols: Vec::new(),
+            image_data: Some(color_image),
+            image_texture: None,
+        });
+    }
+
     let content = std::fs::read_to_string(path).ok()?;
     let is_md = path
         .extension()
@@ -135,11 +176,6 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         None
     };
     let lines: Vec<String> = content.lines().map(String::from).collect();
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_string();
     let file_symbols = symbols::parse_symbols(&lines, &ext);
     Some(TabState {
         file_path: path.clone(),
@@ -152,6 +188,8 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         markdown_rendered: true,
         scroll_offset: 0.0,
         symbols: file_symbols,
+        image_data: None,
+        image_texture: None,
     })
 }
 

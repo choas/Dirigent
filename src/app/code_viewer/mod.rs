@@ -100,6 +100,12 @@ impl DirigentApp {
 
         ui.separator();
 
+        // Image viewer
+        if self.viewer.tabs[active_idx].image_data.is_some() {
+            self.render_image_viewer(ui, active_idx);
+            return;
+        }
+
         let should_render_md = is_markdown && self.viewer.tabs[active_idx].markdown_rendered;
         if should_render_md {
             self.render_markdown_scroll(ui, active_idx);
@@ -204,6 +210,54 @@ impl DirigentApp {
             &diag_messages,
             &symbol_lines,
         );
+    }
+
+    /// Render an image file in the code viewer area.
+    fn render_image_viewer(&mut self, ui: &mut egui::Ui, active_idx: usize) {
+        // Lazily create the texture from the stored ColorImage
+        if self.viewer.tabs[active_idx].image_texture.is_none() {
+            if let Some(color_image) = self.viewer.tabs[active_idx].image_data.take() {
+                let name = self.viewer.tabs[active_idx]
+                    .file_path
+                    .to_string_lossy()
+                    .to_string();
+                let texture =
+                    ui.ctx()
+                        .load_texture(name, color_image, egui::TextureOptions::LINEAR);
+                self.viewer.tabs[active_idx].image_texture = Some(texture);
+            }
+        }
+
+        if let Some(ref texture) = self.viewer.tabs[active_idx].image_texture {
+            let image_size = texture.size_vec2();
+            ui.add_space(SPACE_SM);
+            ui.horizontal(|ui| {
+                ui.add_space(SPACE_SM);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}\u{00d7}{} px",
+                        image_size.x as u32, image_size.y as u32,
+                    ))
+                    .weak(),
+                );
+            });
+            ui.separator();
+
+            egui::ScrollArea::both()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    let available = ui.available_size();
+                    // Fit image within the available area while preserving aspect ratio
+                    let scale = (available.x / image_size.x)
+                        .min(available.y / image_size.y)
+                        .min(1.0); // don't upscale
+                    let display_size = egui::vec2(image_size.x * scale, image_size.y * scale);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(SPACE_SM);
+                        ui.add(egui::Image::new(texture).fit_to_exact_size(display_size));
+                    });
+                });
+        }
     }
 
     /// Render the splash screen shown when no file is open.
