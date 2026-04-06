@@ -43,11 +43,7 @@ impl DirigentApp {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.archived_cue_limit = 10;
-        self.cues = self
-            .db
-            .all_cues_limited_archived(self.archived_cue_limit)
-            .unwrap_or_default();
-        self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
+        self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
