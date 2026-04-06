@@ -285,15 +285,17 @@ impl DirigentApp {
                     let highlight_lane = lineage.as_ref().filter(|l| l.rows[idx]).map(|l| l.lane);
                     let (clicked, hovered) = render_commit_row(
                         ui,
-                        commit,
-                        is_unpushed,
-                        max_msg_chars,
-                        graph_row,
-                        graph_col_width,
-                        lane_width,
-                        &self.semantic,
-                        highlight_lane,
-                        lineage.is_some(),
+                        &CommitRowParams {
+                            commit,
+                            is_unpushed,
+                            max_msg_chars,
+                            graph_row,
+                            graph_col_width,
+                            lane_width,
+                            semantic: &self.semantic,
+                            highlight_lane,
+                            any_highlight_active: lineage.is_some(),
+                        },
                     );
                     if clicked {
                         clicked_commit = Some((
@@ -549,23 +551,22 @@ fn compute_branch_lineage(
     Some(BranchLineage { rows, lane })
 }
 
-/// Render one commit row: graph column on the left, commit text on the right.
-/// Returns (clicked, hovered).
-#[allow(clippy::too_many_arguments)]
-fn render_commit_row(
-    ui: &mut egui::Ui,
-    commit: &crate::git::CommitInfo,
+/// Parameters for rendering a single commit row.
+struct CommitRowParams<'a> {
+    commit: &'a crate::git::CommitInfo,
     is_unpushed: bool,
     max_msg_chars: usize,
-    graph_row: Option<&crate::git::graph::GraphRow>,
+    graph_row: Option<&'a crate::git::graph::GraphRow>,
     graph_col_width: f32,
     lane_width: f32,
-    semantic: &SemanticColors,
+    semantic: &'a SemanticColors,
     highlight_lane: Option<usize>,
     any_highlight_active: bool,
-) -> (bool, bool) {
-    let is_dark = semantic.is_dark();
-    let lane_colors = semantic.lane_colors();
+}
+
+fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, bool) {
+    let is_dark = params.semantic.is_dark();
+    let lane_colors = params.semantic.lane_colors();
     let row_height = ui.text_style_height(&egui::TextStyle::Small) + 4.0;
     let full_width = ui.available_width();
 
@@ -574,7 +575,7 @@ fn render_commit_row(
         ui.allocate_exact_size(egui::vec2(full_width, row_height), egui::Sense::click());
 
     // Branch lineage highlight (tinted row background).
-    if highlight_lane.is_some() {
+    if params.highlight_lane.is_some() {
         let tint = if is_dark {
             egui::Color32::from_white_alpha(8)
         } else {
@@ -594,36 +595,35 @@ fn render_commit_row(
     }
 
     // Paint graph column.
-    if let Some(graph) = graph_row {
-        paint_graph_column(
-            ui,
-            row_rect,
-            graph,
-            graph_col_width,
-            lane_width,
-            row_height,
-            &lane_colors,
-            highlight_lane,
-            any_highlight_active,
-        );
+    if let Some(graph) = params.graph_row {
+        let gctx = GraphPaintCtx {
+            graph_left: row_rect.left(),
+            lane_width: params.lane_width,
+            base_line_width: 1.5,
+            max_visible_lanes: 6,
+            lane_colors: &lane_colors,
+            highlight_lane: params.highlight_lane,
+            any_highlight_active: params.any_highlight_active,
+        };
+        paint_graph_column(ui, row_rect, graph, row_height, &gctx);
     }
 
     // Paint commit text to the right of the graph column.
-    let text_x = row_rect.left() + graph_col_width + 2.0;
+    let text_x = row_rect.left() + params.graph_col_width + 2.0;
     let text_y = row_rect.center().y;
 
-    let msg = if commit.message.len() > max_msg_chars + 3 {
+    let msg = if params.commit.message.len() > params.max_msg_chars + 3 {
         format!(
             "{}...",
-            super::super::truncate_str(&commit.message, max_msg_chars)
+            super::super::truncate_str(&params.commit.message, params.max_msg_chars)
         )
     } else {
-        commit.message.clone()
+        params.commit.message.clone()
     };
-    let dot = if is_unpushed { "\u{25CF} " } else { "" };
-    let label = format!("{}{} {}", dot, commit.short_hash, msg);
+    let dot = if params.is_unpushed { "\u{25CF} " } else { "" };
+    let label = format!("{}{} {}", dot, params.commit.short_hash, msg);
 
-    let text_color = if is_unpushed {
+    let text_color = if params.is_unpushed {
         ui.visuals().warn_fg_color
     } else {
         ui.visuals().text_color()
@@ -638,14 +638,49 @@ fn render_commit_row(
     );
 
     // Branch/tag labels as colored badges.
-    paint_commit_badges(ui, commit, text_x, text_y, &label, text_color, semantic);
+    paint_commit_badges(
+        ui,
+        params.commit,
+        text_x,
+        text_y,
+        &label,
+        text_color,
+        params.semantic,
+    );
 
     // Hover tooltip.
-    let hover_text = format_commit_hover(commit, is_unpushed);
+    let hover_text = format_commit_hover(params.commit, params.is_unpushed);
     let hovered = response.hovered();
     let response = response.on_hover_text(hover_text);
 
     (response.clicked(), hovered)
+}
+
+/// Geometric layout for painting a single lane segment.
+struct LaneLayout {
+    x: f32,
+    top: f32,
+    bot: f32,
+    mid_y: f32,
+    commit_x: f32,
+}
+
+/// Visual style for painting a lane segment.
+struct LaneStyle {
+    stroke: egui::Stroke,
+    is_highlighted: bool,
+    color: egui::Color32,
+}
+
+/// Shared context for graph painting functions.
+struct GraphPaintCtx<'a> {
+    graph_left: f32,
+    lane_width: f32,
+    base_line_width: f32,
+    max_visible_lanes: usize,
+    lane_colors: &'a [egui::Color32; 6],
+    highlight_lane: Option<usize>,
+    any_highlight_active: bool,
 }
 
 /// Resolve color and stroke width based on highlight state.
@@ -669,33 +704,46 @@ fn resolve_lane_style(
 fn paint_lane_segment(
     painter: &egui::Painter,
     segment: &crate::git::graph::LaneSegment,
-    x: f32,
-    top: f32,
-    bot: f32,
-    mid_y: f32,
-    commit_x: f32,
-    stroke: egui::Stroke,
-    is_highlighted: bool,
-    color: egui::Color32,
+    layout: &LaneLayout,
+    style: &LaneStyle,
 ) {
     use crate::git::graph::LaneSegment;
+    let LaneLayout {
+        x,
+        top,
+        bot,
+        mid_y,
+        commit_x,
+    } = *layout;
     match segment {
         LaneSegment::Straight => {
-            painter.line_segment([egui::pos2(x, top), egui::pos2(x, bot)], stroke);
+            painter.line_segment([egui::pos2(x, top), egui::pos2(x, bot)], style.stroke);
         }
         LaneSegment::Commit => {
-            painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y - 3.0)], stroke);
-            painter.line_segment([egui::pos2(x, mid_y + 3.0), egui::pos2(x, bot)], stroke);
-            let dot_radius = if is_highlighted { 4.0 } else { 3.0 };
-            painter.circle_filled(egui::pos2(x, mid_y), dot_radius, color);
+            painter.line_segment(
+                [egui::pos2(x, top), egui::pos2(x, mid_y - 3.0)],
+                style.stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(x, mid_y + 3.0), egui::pos2(x, bot)],
+                style.stroke,
+            );
+            let dot_radius = if style.is_highlighted { 4.0 } else { 3.0 };
+            painter.circle_filled(egui::pos2(x, mid_y), dot_radius, style.color);
         }
         LaneSegment::ForkRight => {
-            painter.line_segment([egui::pos2(commit_x, top), egui::pos2(x, mid_y)], stroke);
-            painter.line_segment([egui::pos2(x, mid_y), egui::pos2(x, bot)], stroke);
+            painter.line_segment(
+                [egui::pos2(commit_x, top), egui::pos2(x, mid_y)],
+                style.stroke,
+            );
+            painter.line_segment([egui::pos2(x, mid_y), egui::pos2(x, bot)], style.stroke);
         }
         LaneSegment::MergeLeft => {
-            painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y)], stroke);
-            painter.line_segment([egui::pos2(x, mid_y), egui::pos2(commit_x, bot)], stroke);
+            painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y)], style.stroke);
+            painter.line_segment(
+                [egui::pos2(x, mid_y), egui::pos2(commit_x, bot)],
+                style.stroke,
+            );
         }
         LaneSegment::Empty => {}
     }
@@ -705,20 +753,14 @@ fn paint_lane_segment(
 fn paint_graph_connections(
     painter: &egui::Painter,
     graph: &crate::git::graph::GraphRow,
-    graph_left: f32,
-    lane_width: f32,
     mid_y: f32,
-    base_line_width: f32,
-    max_visible_lanes: usize,
-    lane_colors: &[egui::Color32; 6],
-    highlight_lane: Option<usize>,
-    any_highlight_active: bool,
+    ctx: &GraphPaintCtx,
 ) {
     use crate::git::graph::LaneSegment;
 
     for &(from_lane, to_lane) in &graph.connections {
-        let vis_from = from_lane.min(max_visible_lanes);
-        let vis_to = to_lane.min(max_visible_lanes);
+        let vis_from = from_lane.min(ctx.max_visible_lanes);
+        let vis_to = to_lane.min(ctx.max_visible_lanes);
         if vis_from == vis_to {
             continue;
         }
@@ -726,19 +768,23 @@ fn paint_graph_connections(
         let target_segment = graph
             .lanes
             .get(to_lane)
-            .filter(|_| to_lane < max_visible_lanes);
+            .filter(|_| to_lane < ctx.max_visible_lanes);
         if target_segment == Some(&LaneSegment::ForkRight)
             || target_segment == Some(&LaneSegment::MergeLeft)
         {
             continue;
         }
-        let from_x = graph_left + (vis_from as f32 + 0.5) * lane_width;
-        let to_x = graph_left + (vis_to as f32 + 0.5) * lane_width;
-        let color_idx = to_lane.min(lane_colors.len() - 1);
-        let base_color = lane_colors[color_idx % lane_colors.len()];
-        let conn_hl = highlight_lane == Some(from_lane) || highlight_lane == Some(to_lane);
-        let (color, conn_width) =
-            resolve_lane_style(base_color, conn_hl, any_highlight_active, base_line_width);
+        let from_x = ctx.graph_left + (vis_from as f32 + 0.5) * ctx.lane_width;
+        let to_x = ctx.graph_left + (vis_to as f32 + 0.5) * ctx.lane_width;
+        let color_idx = to_lane.min(ctx.lane_colors.len() - 1);
+        let base_color = ctx.lane_colors[color_idx % ctx.lane_colors.len()];
+        let conn_hl = ctx.highlight_lane == Some(from_lane) || ctx.highlight_lane == Some(to_lane);
+        let (color, conn_width) = resolve_lane_style(
+            base_color,
+            conn_hl,
+            ctx.any_highlight_active,
+            ctx.base_line_width,
+        );
         painter.line_segment(
             [egui::pos2(from_x, mid_y), egui::pos2(to_x, mid_y)],
             egui::Stroke::new(conn_width, color),
@@ -747,61 +793,55 @@ fn paint_graph_connections(
 }
 
 /// Paint the graph column (lane lines + commit dot) for one row.
-///
-/// `highlight_lane`: if `Some(lane)`, that lane is part of the highlighted branch lineage.
-/// `any_highlight_active`: true when any row is being highlighted (dims non-highlighted lanes).
-#[allow(clippy::too_many_arguments)]
 fn paint_graph_column(
     ui: &egui::Ui,
     row_rect: egui::Rect,
     graph: &crate::git::graph::GraphRow,
-    _graph_col_width: f32,
-    lane_width: f32,
     row_height: f32,
-    lane_colors: &[egui::Color32; 6],
-    highlight_lane: Option<usize>,
-    any_highlight_active: bool,
+    ctx: &GraphPaintCtx<'_>,
 ) {
     use crate::git::graph::LaneSegment;
 
     let painter = ui.painter();
-    let graph_left = row_rect.left();
     let top = row_rect.top();
     let bot = row_rect.bottom();
     let mid_y = row_rect.center().y;
-    let base_line_width = 1.5;
-    let commit_x = graph_left + (graph.column as f32 + 0.5) * lane_width;
+    let commit_x = ctx.graph_left + (graph.column as f32 + 0.5) * ctx.lane_width;
 
-    let max_visible_lanes = 6;
-    for (lane_idx, segment) in graph.lanes.iter().take(max_visible_lanes).enumerate() {
-        let x = graph_left + (lane_idx as f32 + 0.5) * lane_width;
-        let base_color = lane_colors[lane_idx % lane_colors.len()];
-        let is_hl = highlight_lane == Some(lane_idx);
-        let (color, line_width) =
-            resolve_lane_style(base_color, is_hl, any_highlight_active, base_line_width);
+    for (lane_idx, segment) in graph.lanes.iter().take(ctx.max_visible_lanes).enumerate() {
+        let x = ctx.graph_left + (lane_idx as f32 + 0.5) * ctx.lane_width;
+        let base_color = ctx.lane_colors[lane_idx % ctx.lane_colors.len()];
+        let is_hl = ctx.highlight_lane == Some(lane_idx);
+        let (color, line_width) = resolve_lane_style(
+            base_color,
+            is_hl,
+            ctx.any_highlight_active,
+            ctx.base_line_width,
+        );
 
-        paint_lane_segment(
-            painter,
-            segment,
+        let layout = LaneLayout {
             x,
             top,
             bot,
             mid_y,
             commit_x,
-            egui::Stroke::new(line_width, color),
-            is_hl,
+        };
+        let style = LaneStyle {
+            stroke: egui::Stroke::new(line_width, color),
+            is_highlighted: is_hl,
             color,
-        );
+        };
+        paint_lane_segment(painter, segment, &layout, &style);
     }
 
     // Ellipsis column: show "···" when this row has active lanes beyond the visible cap.
     let has_overflow = graph
         .lanes
         .iter()
-        .skip(max_visible_lanes)
+        .skip(ctx.max_visible_lanes)
         .any(|s| *s != LaneSegment::Empty);
     if has_overflow {
-        let ellipsis_x = graph_left + (max_visible_lanes as f32 + 0.5) * lane_width;
+        let ellipsis_x = ctx.graph_left + (ctx.max_visible_lanes as f32 + 0.5) * ctx.lane_width;
         let color = ui.visuals().text_color().gamma_multiply(0.4);
         painter.text(
             egui::pos2(ellipsis_x, mid_y),
@@ -812,18 +852,7 @@ fn paint_graph_column(
         );
     }
 
-    paint_graph_connections(
-        painter,
-        graph,
-        graph_left,
-        lane_width,
-        mid_y,
-        base_line_width,
-        max_visible_lanes,
-        lane_colors,
-        highlight_lane,
-        any_highlight_active,
-    );
+    paint_graph_connections(painter, graph, mid_y, ctx);
 }
 
 /// Paint branch/tag ref badges next to the commit message.
