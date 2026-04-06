@@ -121,7 +121,7 @@ impl DirigentApp {
         file_path: &Path,
         rel_path: &str,
     ) {
-        let lines_with_cues = self.lines_with_cues();
+        let lines_with_cues = self.lines_with_cues_cached(rel_path);
         let num_lines = self.viewer.tabs[active_idx].content.len();
         let line_height = 16.0;
         let mut diag_lines =

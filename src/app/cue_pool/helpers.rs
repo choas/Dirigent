@@ -6,7 +6,7 @@ use crate::db::{Cue, CueStatus};
 use crate::settings;
 
 /// Build the heading text showing cue counts.
-pub(super) fn build_heading_text(cues: &[Cue]) -> String {
+pub(in crate::app) fn build_heading_text(cues: &[Cue]) -> String {
     let inbox = cues.iter().filter(|c| c.status == CueStatus::Inbox).count();
     let review = cues
         .iter()
@@ -73,7 +73,7 @@ pub(super) fn render_cue_pool_buttons(
 }
 
 /// Collect unique source labels from cues and settings.
-pub(super) fn collect_unique_labels(
+pub(in crate::app) fn collect_unique_labels(
     cues: &[Cue],
     sources: &[crate::settings::SourceConfig],
 ) -> Vec<String> {
