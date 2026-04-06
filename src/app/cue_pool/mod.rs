@@ -18,8 +18,8 @@ type ReuseCueData = (String, String, usize, Option<usize>, Vec<String>);
 use crate::settings;
 
 use helpers::{
-    build_heading_text, build_section_header, collect_unique_labels,
-    filter_cues_by_status_and_source, format_import_message, render_cue_pool_buttons,
+    build_heading_text, build_section_header, collect_unique_labels, format_import_message,
+    render_cue_pool_buttons,
 };
 use markdown_import::{parse_markdown_sections, pick_markdown_file};
 
@@ -54,13 +54,16 @@ impl DirigentApp {
                     let cues_owned = std::mem::take(&mut self.cues);
                     let source_filter = self.sources.filter.clone();
                     let filtered_archived_count = self.cached_filtered_archived_count;
+
+                    // Single pass: group cues by status (avoids 6 separate full scans).
+                    let grouped = helpers::group_cues_by_status(&cues_owned, &source_filter);
                     for &status in CueStatus::all() {
-                        let section_cues: Vec<&Cue> =
-                            filter_cues_by_status_and_source(&cues_owned, status, &source_filter);
+                        let section_cues =
+                            grouped.get(&status).map(|v| v.as_slice()).unwrap_or(&[]);
                         self.render_cue_section(
                             ui,
                             status,
-                            &section_cues,
+                            section_cues,
                             &mut actions,
                             &mut load_more_archived,
                             filtered_archived_count,

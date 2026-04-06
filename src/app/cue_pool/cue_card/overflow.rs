@@ -37,6 +37,8 @@ impl DirigentApp {
             if is_expanded {
                 self.logbook_expanded.remove(&cue.id);
             } else {
+                // Invalidate cache so we fetch fresh data when expanding.
+                self.activity_cache.remove(&cue.id);
                 self.logbook_expanded.insert(cue.id);
             }
         }

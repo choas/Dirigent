@@ -194,6 +194,9 @@ pub struct DirigentApp {
     // Expanded activity logbooks (cue IDs with open logbook)
     logbook_expanded: HashSet<i64>,
 
+    // Cached activity logbook data (avoids DB queries every frame for expanded cues)
+    activity_cache: HashMap<i64, (Vec<crate::db::ActivityEntry>, Vec<crate::db::AgentRunEntry>)>,
+
     // Expanded agent output entries in activity logbook (agent_run IDs)
     agent_output_expanded: HashSet<(i64, String)>,
 
@@ -240,6 +243,11 @@ pub struct DirigentApp {
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
     goto_def_gen: u64,
     goto_def_cancel: Arc<AtomicBool>,
+
+    // Cached prompt analysis (avoids re-analysis every frame when input unchanged)
+    cached_prompt_input: String,
+    cached_prompt_hints: Vec<crate::prompt_hints::PromptHint>,
+    cached_prompt_suggestions: Vec<crate::prompt_suggestions::PromptSuggestion>,
 
     // Prompt history search
     prompt_history_query: String,
@@ -565,6 +573,7 @@ impl DirigentApp {
             cue_move_flash: HashMap::new(),
             cue_text_expanded: HashSet::new(),
             logbook_expanded: HashSet::new(),
+            activity_cache: HashMap::new(),
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
             opencode_models: Vec::new(),
@@ -584,6 +593,10 @@ impl DirigentApp {
             goto_def_rx,
             goto_def_gen: 0,
             goto_def_cancel: Arc::new(AtomicBool::new(false)),
+
+            cached_prompt_input: String::new(),
+            cached_prompt_hints: Vec::new(),
+            cached_prompt_suggestions: Vec::new(),
 
             prompt_history_query: String::new(),
             prompt_history_results: Vec::new(),
@@ -703,6 +716,8 @@ impl DirigentApp {
             .db
             .get_cue_ids_with_activity_prefix("Marked done in Notion")
             .unwrap_or_default();
+        // Invalidate activity cache so expanded logbooks pick up new data.
+        self.activity_cache.clear();
     }
 
     /// Activate an Inbox cue: move to Ready, log activity, and trigger Claude.

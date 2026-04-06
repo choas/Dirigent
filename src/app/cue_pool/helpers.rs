@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use eframe::egui;
 
@@ -91,23 +91,22 @@ pub(super) fn collect_unique_labels(
     labels.into_iter().collect()
 }
 
-/// Filter cues by status and optional source label.
-pub(super) fn filter_cues_by_status_and_source<'a>(
+/// Group cues by status in a single pass (replaces 6× filter_cues_by_status_and_source).
+/// Cues within each group are in reverse order (newest first), matching the old behaviour.
+pub(super) fn group_cues_by_status<'a>(
     cues: &'a [Cue],
-    status: CueStatus,
     source_filter: &Option<String>,
-) -> Vec<&'a Cue> {
-    cues.iter()
-        .rev()
-        .filter(|c| c.status == status)
-        .filter(|c| {
-            if let Some(ref filter) = source_filter {
-                c.source_label.as_deref() == Some(filter.as_str())
-            } else {
-                true
+) -> HashMap<CueStatus, Vec<&'a Cue>> {
+    let mut map: HashMap<CueStatus, Vec<&Cue>> = HashMap::new();
+    for cue in cues.iter().rev() {
+        if let Some(ref filter) = source_filter {
+            if cue.source_label.as_deref() != Some(filter.as_str()) {
+                continue;
             }
-        })
-        .collect()
+        }
+        map.entry(cue.status).or_default().push(cue);
+    }
+    map
 }
 
 /// Build section header text for a cue status column.
