@@ -116,8 +116,8 @@ fn commit_to_info(
 }
 
 fn format_time_ago(diff: i64) -> String {
-    if diff < 0 {
-        return "in the future".to_string();
+    if diff <= 0 {
+        return "just now".to_string();
     }
     if diff < 60 {
         "just now".to_string()
