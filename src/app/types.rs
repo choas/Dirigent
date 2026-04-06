@@ -123,6 +123,8 @@ pub(super) struct TabState {
     pub(super) image_data: Option<eframe::egui::ColorImage>,
     /// Cached texture handle for the image (created on first render).
     pub(super) image_texture: Option<eframe::egui::TextureHandle>,
+    /// Current zoom level for image viewer (1.0 = fit to area).
+    pub(super) image_zoom: f32,
 }
 
 /// Check if a file extension corresponds to a supported image format.
@@ -161,6 +163,7 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
             symbols: Vec::new(),
             image_data: Some(color_image),
             image_texture: None,
+            image_zoom: 1.0,
         });
     }
 
@@ -190,6 +193,7 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         symbols: file_symbols,
         image_data: None,
         image_texture: None,
+        image_zoom: 1.0,
     })
 }
 
