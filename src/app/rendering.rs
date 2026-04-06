@@ -142,12 +142,7 @@ impl DirigentApp {
             self.pending_play = self.pending_play.take().filter(|_| keep_pending_play);
             return;
         }
-        if self.git.pending_force_remove.is_some() {
-            self.git.pending_force_remove = None;
-            return;
-        }
-        if self.git.pending_delete_archive.is_some() {
-            self.git.pending_delete_archive = None;
+        if self.git.dismiss_topmost_modal() {
             return;
         }
         if self.pending_file_delete.is_some() {
@@ -162,42 +157,8 @@ impl DirigentApp {
             self.git_init_confirm = None;
             return;
         }
-        if self.git.show_merge_conflicts {
-            self.git.show_merge_conflicts = false;
-            return;
-        }
-        if self.git.show_pull_diverged {
-            self.git.show_pull_diverged = false;
-            return;
-        }
-        if self.git.show_pull_unmerged {
-            self.git.show_pull_unmerged = false;
-            return;
-        }
-        if self.git.show_pr_filter {
-            self.git.show_pr_filter = false;
-            self.git.pr_findings_pending.clear();
-            self.git.pr_findings_excluded.clear();
-            return;
-        }
-        if self.git.show_import_pr {
-            self.git.show_import_pr = false;
-            return;
-        }
-        if self.git.show_move_to_branch {
-            self.git.show_move_to_branch = false;
-            return;
-        }
-        if self.git.show_create_pr {
-            self.git.show_create_pr = false;
-            return;
-        }
         if self.show_about {
             self.show_about = false;
-            return;
-        }
-        if self.git.show_worktree_panel {
-            self.git.show_worktree_panel = false;
             return;
         }
         if self.show_repo_picker {

@@ -43,11 +43,6 @@ impl DirigentApp {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.archived_cue_limit = 10;
-        self.cues = self
-            .db
-            .all_cues_limited_archived(self.archived_cue_limit)
-            .unwrap_or_default();
-        self.archived_cue_count = self.db.archived_cue_count().unwrap_or(0);
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
@@ -61,6 +56,7 @@ impl DirigentApp {
         let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
         self.git.commit_history = git::read_commit_history(&self.project_root, limit);
         self.git.commit_history_total = git::count_commits(&self.project_root);
+        self.git.history_cache_key = (String::new(), 0);
         self.expanded_dirs = HashSet::new();
         self.diff_review = None;
         self.prompt_history_query = String::new();
@@ -68,10 +64,13 @@ impl DirigentApp {
         self.prompt_history_active = false;
         self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
         self.cached_total_cost = self.db.total_cost().unwrap_or(0.0);
-        self.latest_exec_cache = self
-            .db
-            .get_all_latest_execution_metrics()
-            .unwrap_or_default();
+        self.cached_prompt_input.clear();
+        self.cached_prompt_hints.clear();
+        self.cached_prompt_suggestions.clear();
+        self.cached_lines_with_cues = None;
+        self.cue_warnings.clear();
+        // Reload cues and all cue-derived caches (archived counts, labels, activity, etc.)
+        self.reload_cues();
 
         // Load project-specific settings if the new repo has them,
         // carrying over recent_repos from the current session.

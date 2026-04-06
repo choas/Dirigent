@@ -425,7 +425,7 @@ def build_config(args: argparse.Namespace) -> Config:
         try:
             result = subprocess.run(gh_args, capture_output=True, text=True, timeout=15)
             pr_num = result.stdout.strip()
-            if result.returncode == 0 and pr_num:
+            if result.returncode == 0 and pr_num and pr_num.isdigit():
                 print(f"[info] Auto-detected latest PR number: {pr_num}")
                 os.environ["GH_PR_NUMBER"] = pr_num
         except (subprocess.TimeoutExpired, FileNotFoundError):

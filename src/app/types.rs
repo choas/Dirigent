@@ -146,7 +146,14 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
     // Handle image files: decode into ColorImage instead of reading as text
     if is_image_extension(&ext) {
         let bytes = std::fs::read(path).ok()?;
-        let img = image::load_from_memory(&bytes).ok()?.into_rgba8();
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut reader = image::ImageReader::new(cursor).with_guessed_format().ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(16384);
+        limits.max_image_height = Some(16384);
+        limits.max_alloc = Some(256 * 1024 * 1024);
+        reader.limits(limits);
+        let img = reader.decode().ok()?.into_rgba8();
         let size = [img.width() as usize, img.height() as usize];
         let pixels = img.into_raw();
         let color_image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
@@ -500,4 +507,54 @@ pub(crate) struct GitState {
     /// Whether a move-to-branch operation is in progress.
     pub(super) moving_to_branch: bool,
     pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
+}
+
+impl GitState {
+    /// Dismiss the topmost git-related modal dialog (priority order).
+    /// Returns `true` if a modal was dismissed.
+    pub(super) fn dismiss_topmost_modal(&mut self) -> bool {
+        if self.pending_force_remove.is_some() {
+            self.pending_force_remove = None;
+            return true;
+        }
+        if self.pending_delete_archive.is_some() {
+            self.pending_delete_archive = None;
+            return true;
+        }
+        if self.show_merge_conflicts {
+            self.show_merge_conflicts = false;
+            return true;
+        }
+        if self.show_pull_diverged {
+            self.show_pull_diverged = false;
+            return true;
+        }
+        if self.show_pull_unmerged {
+            self.show_pull_unmerged = false;
+            return true;
+        }
+        if self.show_pr_filter {
+            self.show_pr_filter = false;
+            self.pr_findings_pending.clear();
+            self.pr_findings_excluded.clear();
+            return true;
+        }
+        if self.show_import_pr {
+            self.show_import_pr = false;
+            return true;
+        }
+        if self.show_move_to_branch {
+            self.show_move_to_branch = false;
+            return true;
+        }
+        if self.show_create_pr {
+            self.show_create_pr = false;
+            return true;
+        }
+        if self.show_worktree_panel {
+            self.show_worktree_panel = false;
+            return true;
+        }
+        false
+    }
 }
