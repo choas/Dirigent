@@ -563,13 +563,23 @@ def gh(*args, capture=True) -> str:
 # Generic test / lint / format
 # ---------------------------------------------------------------------------
 
-def run_tests(tools: ToolCommands) -> bool:
-    """Returns True if all tests pass. Returns True if no test command configured."""
+def run_tests(tools: ToolCommands) -> tuple[bool, str]:
+    """Returns (passed, error_output). Returns (True, "") if no test command configured."""
     if not tools.test_cmd:
         print("  (no test command configured -- skipping)")
-        return True
-    result = run_shell(tools.test_cmd, check=False)
-    return result.returncode == 0
+        return True, ""
+    result = run_shell(tools.test_cmd, check=False, capture=True)
+    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    if result.returncode != 0:
+        # Show last 40 lines so user can see what failed
+        lines = output.splitlines()
+        tail = lines[-40:] if len(lines) > 40 else lines
+        print(f"  Test output (exit {result.returncode}):")
+        for line in tail:
+            print(f"    {line}")
+    else:
+        print("  Tests passed.")
+    return result.returncode == 0, output
 
 
 def lint_issues(tools: ToolCommands) -> list[str]:
@@ -1121,6 +1131,26 @@ def build_dedup_prompt(tools: ToolCommands, dup_group: list[str]) -> str:
     return "\n".join(parts)
 
 
+def _build_compile_fix_prompt(tools: ToolCommands, test_output: str) -> str:
+    """Build a prompt for Claude to fix compilation or test errors."""
+    # Truncate very long output to keep the prompt manageable
+    max_len = 8000
+    if len(test_output) > max_len:
+        test_output = "... (truncated) ...\n" + test_output[-max_len:]
+
+    return "\n".join([
+        f"You are a code quality agent for a {tools.lang_name} project.",
+        "The code is failing to compile or tests are failing after recent changes.",
+        "Fix the compilation/test errors below. Do not change any functionality",
+        "beyond what is needed to fix these errors.",
+        "",
+        "== Build/test errors ==",
+        test_output,
+        "",
+        tools.verify_instructions,
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Git
 # ---------------------------------------------------------------------------
@@ -1252,7 +1282,10 @@ def collect_signals(cfg: Config, cr_since: str = "", skip_sonar: bool = False) -
 
 
 def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
-    """Invoke Claude Code, auto-format, and verify tests still pass."""
+    """Invoke Claude Code, auto-format, and verify tests still pass.
+    If tests/compilation break, retries by asking Claude to fix the errors."""
+    max_compile_retries = 3
+
     print("  Invoking Claude Code ...")
     success = claude_fix(prompt, iteration)
     if not success:
@@ -1262,12 +1295,26 @@ def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
         print("\n  Running format fix ...")
         fmt_fix(cfg.tools)
 
-    print("\n  Running tests (regression guard) ...")
-    if not run_tests(cfg.tools):
-        print("[error] Tests broke after changes. Stopping.")
-        print("  Check the diff, fix manually, and re-run.")
-        sys.exit(1)
-    print("  Tests still green.")
+    for attempt in range(max_compile_retries + 1):
+        print("\n  Running tests (regression guard) ...")
+        passed, test_output = run_tests(cfg.tools)
+        if passed:
+            return
+
+        if attempt == max_compile_retries:
+            print(f"[error] Tests still failing after {max_compile_retries} fix attempts. Stopping.")
+            print("  Check the diff, fix manually, and re-run.")
+            sys.exit(1)
+
+        print(f"\n[warn] Tests/compilation broke after changes (attempt {attempt + 1}/{max_compile_retries}). Asking Claude Code to fix ...")
+        fix_prompt = _build_compile_fix_prompt(cfg.tools, test_output)
+        success = claude_fix(fix_prompt, iteration)
+        if not success:
+            print("[warn] Claude Code exited with an error. Continuing anyway.")
+
+        if cfg.tools.fmt_fix_cmd:
+            print("\n  Running format fix ...")
+            fmt_fix(cfg.tools)
 
 
 def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
@@ -1414,10 +1461,28 @@ def main() -> None:
         print("[dry-run] No Claude Code invocations or git pushes will happen.")
 
     banner("Baseline: tests")
-    if not run_tests(cfg.tools):
-        print("[error] Tests failed before the loop even started. Fix them first.")
-        sys.exit(1)
-    print("  Baseline tests green.")
+    passed, test_output = run_tests(cfg.tools)
+    if not passed:
+        max_baseline_retries = 3
+        print(f"[warn] Baseline tests/compilation failing. Asking Claude Code to fix (up to {max_baseline_retries} attempts) ...")
+        for attempt in range(max_baseline_retries):
+            fix_prompt = _build_compile_fix_prompt(cfg.tools, test_output)
+            claude_fix(fix_prompt, 0)
+            if cfg.tools.fmt_fix_cmd:
+                fmt_fix(cfg.tools)
+            passed, test_output = run_tests(cfg.tools)
+            if passed:
+                print("  Baseline tests now green.")
+                # Commit the baseline fix before entering the quality loop
+                git_commit_push(cfg.start_iteration - 1 if cfg.start_iteration > 1 else 0)
+                break
+            if attempt < max_baseline_retries - 1:
+                print(f"[warn] Still failing (attempt {attempt + 1}/{max_baseline_retries}). Retrying ...")
+        else:
+            print(f"[error] Could not fix baseline failures after {max_baseline_retries} attempts. Fix manually.")
+            sys.exit(1)
+    else:
+        print("  Baseline tests green.")
 
     cr_since = _load_cr_since(cfg)
 
