@@ -240,34 +240,7 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                if let Some(ref info) = self.git.info {
-                    ui.label(
-                        egui::RichText::new(format!("Current: {}", info.branch))
-                            .small()
-                            .color(self.semantic.secondary_text),
-                    );
-                    ui.add_space(4.0);
-                }
-
-                if self.git.available_branches.is_empty() {
-                    self.empty_label(ui, "No other branches available");
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(250.0)
-                        .show(ui, |ui| {
-                            for branch in &self.git.available_branches {
-                                if ui
-                                    .selectable_label(
-                                        false,
-                                        egui::RichText::new(branch).monospace(),
-                                    )
-                                    .clicked()
-                                {
-                                    switch_to = Some(branch.clone());
-                                }
-                            }
-                        });
-                }
+                self.render_switch_branch_body(ui, &mut switch_to);
             });
 
         if !open {
@@ -275,16 +248,51 @@ impl DirigentApp {
         }
 
         if let Some(branch) = switch_to {
-            self.git.show_switch_branch = false;
-            match git::checkout_branch(&self.project_root, &branch) {
-                Ok(()) => {
-                    self.set_status_message(format!("Switched to '{}'", branch));
-                    self.reload_git_info();
-                    self.reload_commit_history();
+            self.perform_branch_switch(&branch);
+        }
+    }
+
+    /// Body of the Switch Branch dialog: current branch label and branch list.
+    fn render_switch_branch_body(&self, ui: &mut egui::Ui, switch_to: &mut Option<String>) {
+        if let Some(ref info) = self.git.info {
+            ui.label(
+                egui::RichText::new(format!("Current: {}", info.branch))
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+            ui.add_space(4.0);
+        }
+
+        if self.git.available_branches.is_empty() {
+            self.empty_label(ui, "No other branches available");
+            return;
+        }
+
+        egui::ScrollArea::vertical()
+            .max_height(250.0)
+            .show(ui, |ui| {
+                for branch in &self.git.available_branches {
+                    if ui
+                        .selectable_label(false, egui::RichText::new(branch).monospace())
+                        .clicked()
+                    {
+                        *switch_to = Some(branch.clone());
+                    }
                 }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to switch branch: {}", e));
-                }
+            });
+    }
+
+    /// Execute a branch switch and update state accordingly.
+    fn perform_branch_switch(&mut self, branch: &str) {
+        self.git.show_switch_branch = false;
+        match git::checkout_branch(&self.project_root, branch) {
+            Ok(()) => {
+                self.set_status_message(format!("Switched to '{}'", branch));
+                self.reload_git_info();
+                self.reload_commit_history();
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to switch branch: {}", e));
             }
         }
     }
