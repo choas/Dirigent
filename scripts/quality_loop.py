@@ -419,7 +419,7 @@ def build_config(args: argparse.Namespace) -> Config:
     # Auto-detect latest PR number if not provided
     if not os.environ.get("GH_PR_NUMBER"):
         repo = os.environ.get("GH_REPO", "")
-        gh_args = ["gh", "pr", "list", "--limit", "1", "--state", "all", "--json", "number", "--jq", ".[0].number"]
+        gh_args = ["gh", "pr", "view", "--json", "number", "--jq", ".number"]
         if repo:
             gh_args.extend(["-R", repo])
         try:
