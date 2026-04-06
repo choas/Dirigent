@@ -310,49 +310,6 @@ pub(crate) fn checkout_branch(repo_path: &Path, branch: &str) -> crate::error::R
     Ok(())
 }
 
-/// Move commits that are ahead of the remote on the current (default) branch
-/// to a new branch. Steps:
-/// 1. Create the new branch at HEAD
-/// 2. Reset the current branch back to `origin/<branch>`
-/// 3. Checkout the new branch
-///
-/// Returns Ok(()) on success.
-pub(crate) fn move_commits_to_branch(
-    repo_path: &Path,
-    new_branch: &str,
-    current_branch: &str,
-) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    // 1. Create the new branch at HEAD
-    let output = Command::new("git")
-        .args(["branch", new_branch])
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-
-    // 2. Reset current branch to origin/<branch>
-    let remote_ref = format!("origin/{}", current_branch);
-    let output = Command::new("git")
-        .args(["reset", "--hard", &remote_ref])
-        .current_dir(repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-
-    // 3. Checkout the new branch
-    checkout_branch(repo_path, new_branch)?;
-
-    Ok(())
-}
-
 pub(crate) fn remove_worktree(
     repo_path: &Path,
     wt_path: &Path,
