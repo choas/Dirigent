@@ -72,7 +72,7 @@ impl DirigentApp {
                     self.cues = cues_owned;
 
                     if load_more_archived {
-                        self.archived_cue_limit += 50;
+                        self.archived_cue_limit += 10;
                         self.reload_cues();
                     }
 

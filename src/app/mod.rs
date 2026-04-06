@@ -384,7 +384,7 @@ impl DirigentApp {
             )
         } else {
             let file_tree = FileTree::scan(&project_root).ok();
-            let cues = db.all_cues_limited_archived(50).unwrap_or_default();
+            let cues = db.all_cues_limited_archived(10).unwrap_or_default();
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
             let git_info = git::read_git_info(&project_root);
             let dirty_files = git::get_dirty_files(&project_root);
@@ -463,7 +463,7 @@ impl DirigentApp {
             cues,
             archived_cue_count,
             cached_filtered_archived_count: archived_cue_count,
-            archived_cue_limit: 50,
+            archived_cue_limit: 10,
             claude: ClaudeRunState::new(),
             diff_review: None,
             git: GitState {

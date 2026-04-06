@@ -42,7 +42,7 @@ impl DirigentApp {
         self.fs_changed
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
-        self.archived_cue_limit = 50;
+        self.archived_cue_limit = 10;
         self.cues = self
             .db
             .all_cues_limited_archived(self.archived_cue_limit)
