@@ -172,16 +172,20 @@ pub(crate) fn count_commits(path: &Path) -> usize {
         Err(_) => return 0,
     };
 
-    // Push all reference targets to walk commits across all branches/tags,
-    // equivalent to `git rev-list --all`.
-    if let Ok(references) = repo.references() {
-        for reference in references.flatten() {
-            if let Some(target) = reference.target() {
-                revwalk.push(target).ok();
-            } else if let Ok(resolved) = reference.resolve() {
-                if let Some(target) = resolved.target() {
-                    revwalk.push(target).ok();
-                }
+    // Walk the same ref set as read_commit_history: HEAD + local branch tips.
+    // Previously this walked all references (including remote-tracking branches,
+    // tags, stash, notes), causing the total count to diverge from the history
+    // that is actually displayed.
+    if let Ok(head) = repo.head() {
+        if let Ok(commit) = head.peel_to_commit() {
+            revwalk.push(commit.id()).ok();
+        }
+    }
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            let (branch_ref, _) = branch;
+            if let Ok(commit) = branch_ref.get().peel_to_commit() {
+                revwalk.push(commit.id()).ok();
             }
         }
     }

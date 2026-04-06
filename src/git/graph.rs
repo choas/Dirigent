@@ -93,10 +93,10 @@ fn route_additional_parent(
         .position(|slot| slot.as_deref() == Some(parent_hash));
 
     if let Some(parent_lane) = existing {
+        // The parent already has an active lane that continues past this row,
+        // so keep it Straight. The (col, parent_lane) connection entry lets
+        // paint_graph_connections draw the merge connector separately.
         connections.push((col, parent_lane));
-        if segments[parent_lane] == LaneSegment::Straight {
-            segments[parent_lane] = LaneSegment::MergeLeft;
-        }
     } else {
         let new_lane = allocate_lane(lanes, parent_hash.to_string());
         if new_lane >= segments.len() {

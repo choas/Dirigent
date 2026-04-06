@@ -428,8 +428,10 @@ def build_config(args: argparse.Namespace) -> Config:
             if result.returncode == 0 and pr_num and pr_num.isdigit():
                 print(f"[info] Auto-detected latest PR number: {pr_num}")
                 os.environ["GH_PR_NUMBER"] = pr_num
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+        except subprocess.TimeoutExpired:
+            print("[warn] PR auto-detection timed out; skipping. Set GH_PR_NUMBER manually.")
+        except FileNotFoundError:
+            print("[warn] 'gh' CLI not found; skipping PR auto-detection. Set GH_PR_NUMBER manually.")
 
     required = ["SONAR_TOKEN", "SONAR_URL", "SONAR_PROJECT_KEY", "GH_REPO", "GH_PR_NUMBER"]
     missing = [k for k in required if not os.environ.get(k)]

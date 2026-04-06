@@ -734,7 +734,7 @@ fn paint_lane_segment(
         }
         LaneSegment::ForkRight => {
             painter.line_segment(
-                [egui::pos2(commit_x, top), egui::pos2(x, mid_y)],
+                [egui::pos2(commit_x, mid_y), egui::pos2(x, mid_y)],
                 style.stroke,
             );
             painter.line_segment([egui::pos2(x, mid_y), egui::pos2(x, bot)], style.stroke);
@@ -742,7 +742,7 @@ fn paint_lane_segment(
         LaneSegment::MergeLeft => {
             painter.line_segment([egui::pos2(x, top), egui::pos2(x, mid_y)], style.stroke);
             painter.line_segment(
-                [egui::pos2(x, mid_y), egui::pos2(commit_x, bot)],
+                [egui::pos2(x, mid_y), egui::pos2(commit_x, mid_y)],
                 style.stroke,
             );
         }
@@ -835,7 +835,9 @@ fn paint_graph_column(
         paint_lane_segment(painter, segment, &layout, &style);
     }
 
-    // Ellipsis column: show "···" when this row has active lanes beyond the visible cap.
+    // Ellipsis / overflow column: show "···" when this row has active lanes beyond
+    // the visible cap.  If the commit itself is in the overflow region, paint a
+    // commit dot there instead of just an ellipsis so the row is never markerless.
     let has_overflow = graph
         .lanes
         .iter()
@@ -843,14 +845,20 @@ fn paint_graph_column(
         .any(|s| *s != LaneSegment::Empty);
     if has_overflow {
         let ellipsis_x = ctx.graph_left + (ctx.max_visible_lanes as f32 + 0.5) * ctx.lane_width;
-        let color = ui.visuals().text_color().gamma_multiply(0.4);
-        painter.text(
-            egui::pos2(ellipsis_x, mid_y),
-            egui::Align2::CENTER_CENTER,
-            "\u{00B7}\u{00B7}\u{00B7}",
-            egui::FontId::monospace(row_height * 0.7),
-            color,
-        );
+        if graph.column >= ctx.max_visible_lanes {
+            // Commit is hidden beyond the visible lanes — draw dot here.
+            let dot_color = ctx.lane_colors[graph.column % ctx.lane_colors.len()];
+            painter.circle_filled(egui::pos2(ellipsis_x, mid_y), 3.0, dot_color);
+        } else {
+            let color = ui.visuals().text_color().gamma_multiply(0.4);
+            painter.text(
+                egui::pos2(ellipsis_x, mid_y),
+                egui::Align2::CENTER_CENTER,
+                "\u{00B7}\u{00B7}\u{00B7}",
+                egui::FontId::monospace(row_height * 0.7),
+                color,
+            );
+        }
     }
 
     paint_graph_connections(painter, graph, mid_y, ctx);
