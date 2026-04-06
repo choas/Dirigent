@@ -162,20 +162,31 @@ fn build_tag_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
 }
 
 pub(crate) fn count_commits(path: &Path) -> usize {
-    // Use `git rev-list --count --all` which is much faster than walking
-    // the entire history via revwalk (O(1) with pack index vs O(n)).
-    use std::process::Command;
-    let output = Command::new("git")
-        .args(["rev-list", "--count", "--all"])
-        .current_dir(path)
-        .output();
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0),
-        _ => 0,
+    let repo = match Repository::discover(path) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+
+    let mut revwalk = match repo.revwalk() {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+
+    // Push all reference targets to walk commits across all branches/tags,
+    // equivalent to `git rev-list --all`.
+    if let Ok(references) = repo.references() {
+        for reference in references.flatten() {
+            if let Some(target) = reference.target() {
+                revwalk.push(target).ok();
+            } else if let Ok(resolved) = reference.resolve() {
+                if let Some(target) = resolved.target() {
+                    revwalk.push(target).ok();
+                }
+            }
+        }
     }
+
+    revwalk.count()
 }
 
 pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
