@@ -2,6 +2,37 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.3.6] - 2026-04-07
+
+### Added
+- Git graph visualization with lane coloring, hover highlighting, lane collapsing (max 6 lanes), and octopus merge support
+- Image preview in Code View when clicking image files
+- Switch Branch feature for moving uncommitted changes to a new branch
+- Commit diff viewer (click commit ID in Git Log to see diff)
+- OpenTelemetry tracing and agent audit polling
+- Diataxis-style documentation structure
+- Playbook plays for dependency version pinning and zero-day security testing
+
+### Fixed
+- PR auto-detect returning incorrect results
+- Prompt field slow typing and cursor movement
+- Slow loading with many cues or commits (performance optimization)
+- Red borders in Nord theme code viewer
+- Workflow Plan close button not working
+- Notion source not splitting todo list items
+- PR creation failing with too many commits
+- Casting `bool` as `f32` compiler errors
+- All compiler warnings resolved
+
+### Changed
+- Archived cues limit reduced from 50 to 10 for performance
+- Extensive SonarQube-driven code quality improvements (cognitive complexity, parameter counts, code duplication)
+- Security hardening: Trello API key exposure, Sentry PII settings, ObjC interop safety, command validation
+- Unwrap audit across codebase (replaced unsafe `.unwrap()` calls)
+- Quality loop script improvements (multi-language, CodeRabbit integration, resilience)
+- Dependency pinning for reproducible builds
+- Updated README documentation
+
 ## [0.3.5] - 2026-04-02
 
 ### Added
