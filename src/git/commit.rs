@@ -150,9 +150,12 @@ pub(crate) fn generate_commit_message(cue_text: &str) -> String {
         cue_text.to_string()
     };
     if cue_text.len() > 68 {
-        format!("Dirigent: {}\n\n{}", summary, cue_text)
+        format!(
+            "Dirigent: {}\n\n{}\n\nhttps://github.com/choas/Dirigent",
+            summary, cue_text
+        )
     } else {
-        format!("Dirigent: {}", summary)
+        format!("Dirigent: {}\n\nhttps://github.com/choas/Dirigent", summary)
     }
 }
 
@@ -362,7 +365,10 @@ mod tests {
     #[test]
     fn generate_commit_message_short() {
         let msg = generate_commit_message("Fix typo");
-        assert_eq!(msg, "Dirigent: Fix typo");
+        assert_eq!(
+            msg,
+            "Dirigent: Fix typo\n\nhttps://github.com/choas/Dirigent"
+        );
     }
 
     #[test]
@@ -373,13 +379,20 @@ mod tests {
         assert!(msg.starts_with("Dirigent: "));
         assert!(msg.contains("..."));
         assert!(msg.contains(&long_text));
+        assert!(msg.ends_with("https://github.com/choas/Dirigent"));
     }
 
     #[test]
     fn generate_commit_message_boundary_68() {
         let exactly_68 = "B".repeat(68);
         let msg = generate_commit_message(&exactly_68);
-        assert_eq!(msg, format!("Dirigent: {}", exactly_68));
+        assert_eq!(
+            msg,
+            format!(
+                "Dirigent: {}\n\nhttps://github.com/choas/Dirigent",
+                exactly_68
+            )
+        );
         assert!(!msg.contains("..."));
     }
 }
