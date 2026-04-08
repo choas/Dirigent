@@ -41,14 +41,19 @@ cd Dirigent
 cargo build --release
 ```
 
-The binary is at `target/release/Dirigent`.
+The binary is at `target/release/dirigent`. To install it as a CLI command (requires `~/.cargo/bin` in PATH):
+
+```bash
+cargo install --path .
+```
 
 ## 3. Open a project
 
 Launch Dirigent with a path to a Git repository:
 
 ```bash
-./target/release/Dirigent /path/to/your/project
+dirigent /path/to/your/project
+dirigent .
 ```
 
 If you omit the path, Dirigent opens the **repository picker** so you can browse to a project. On macOS you can also double-click the `.app` bundle.

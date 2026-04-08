@@ -13,7 +13,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.2</string>
     <key>CFBundleExecutable</key>
-    <string>Dirigent</string>
+    <string>dirigent</string>
     <key>CFBundleIconFile</key>
     <string>Dirigent</string>
     <key>CFBundlePackageType</key>

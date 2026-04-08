@@ -1,6 +1,6 @@
 APP_NAME := Dirigent
 APP_BUNDLE := $(APP_NAME).app
-BINARY := target/release/$(APP_NAME)
+BINARY := target/release/dirigent
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 DMG := $(APP_NAME)-$(VERSION).dmg
 ENTITLEMENTS := assets/Dirigent.entitlements
@@ -14,10 +14,13 @@ IDENTITY ?= $(CODESIGN_IDENTITY)
 APPLE_ID ?= $(NOTARIZE_APPLE_ID)
 TEAM_ID ?= $(NOTARIZE_TEAM_ID)
 
-.PHONY: build bundle sign dmg notarize clean
+.PHONY: build install bundle sign dmg notarize clean
 
 build:
 	cargo build --release
+
+install:
+	cargo install --path .
 
 bundle: build
 	@rm -rf $(APP_BUNDLE)
