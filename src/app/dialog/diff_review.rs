@@ -133,7 +133,7 @@ impl DirigentApp {
         ctx: &DiffHeaderContext<'_>,
         actions: &mut DiffReviewActions,
     ) {
-        let prefix = if ctx.read_only { "Commit" } else { "Cue" };
+        let prefix = if ctx.read_only { "Message" } else { "Cue" };
         let arrow = if ctx.prompt_expanded {
             "\u{25BC}"
         } else {
