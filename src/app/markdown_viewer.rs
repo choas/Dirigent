@@ -135,6 +135,7 @@ fn render_heading(
     ui.add_space(SPACE_SM);
     let scale = heading_scale(level);
     let resp = ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         if indent > 0.0 {
             ui.add_space(indent);
         }
@@ -154,6 +155,7 @@ fn render_heading(
 fn render_paragraph(ui: &mut egui::Ui, segments: &[TextSegment], ctx: &RenderCtx) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         if indent > 0.0 {
             ui.add_space(indent);
         }
@@ -265,12 +267,14 @@ fn render_list_item_inline_first(
     match first_block {
         MarkdownBlock::Paragraph { segments } => {
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(indent + SPACE_MD);
                 ui.label(
                     egui::RichText::new(prefix)
                         .size(ctx.font_size)
                         .color(ctx.semantic.secondary_text),
                 );
+                ui.add_space(SPACE_XS);
                 for seg in segments {
                     render_segment(ui, seg, ctx.font_size, false, ctx);
                 }
@@ -292,15 +296,18 @@ fn render_checkbox_in_list(
 ) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         ui.label(
             egui::RichText::new(prefix)
                 .size(ctx.font_size)
                 .color(ctx.semantic.secondary_text),
         );
+        ui.add_space(SPACE_XS);
         let icon = checkbox_icon(checked);
         let color = checkbox_color(checked, ctx.semantic);
         ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        ui.add_space(SPACE_XS);
         for seg in segments {
             render_segment(ui, seg, ctx.font_size, false, ctx);
         }
@@ -316,6 +323,7 @@ fn render_list_item_fallback(
 ) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         ui.label(
             egui::RichText::new(prefix)
@@ -515,6 +523,7 @@ fn render_table_header(
                         ui.set_min_width(width);
                         ui.set_max_width(width);
                         ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             for seg in cell {
                                 render_segment(ui, seg, ctx.font_size, true, ctx);
                             }
@@ -585,6 +594,7 @@ fn render_table_row(
                     ui.set_min_width(width);
                     ui.set_max_width(width);
                     ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         for seg in cell {
                             render_segment(ui, seg, ctx.font_size, false, ctx);
                         }
@@ -614,10 +624,12 @@ fn render_thematic_break(ui: &mut egui::Ui, ctx: &RenderCtx) {
 fn render_checkbox(ui: &mut egui::Ui, checked: bool, segments: &[TextSegment], ctx: &RenderCtx) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         let icon = checkbox_icon(checked);
         let color = checkbox_color(checked, ctx.semantic);
         ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        ui.add_space(SPACE_XS);
         for seg in segments {
             render_segment(ui, seg, ctx.font_size, false, ctx);
         }
