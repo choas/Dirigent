@@ -1180,24 +1180,33 @@ def _iteration_state_path() -> Path:
 def _detect_last_iteration() -> int:
     """Detect the last quality loop iteration number.
 
-    Checks both git log (commit messages) and a persisted state file,
-    returning whichever is higher. The state file guards against Claude Code
-    committing changes with its own message format, which would cause the
-    git-log-only approach to miss iterations.
+    Uses three signals (highest wins):
+    1. Git log marker commits ("quality loop iteration N")
+    2. Persisted state file (guards against Claude committing with its own messages)
+    3. Orphan commit detection: counts non-marker commits after the last marker
+       that look like Claude Code output, grouped by time proximity (gap > 10 min
+       = separate iteration). This catches iterations where Claude committed on
+       its own and no marker was written.
     """
-    # Check git log
+    from datetime import datetime
+
+    # --- Signal 1: git log markers ---
     git_highest = 0
+    marker_sha = ""
     result = subprocess.run(
-        ["git", "log", "--oneline", "-50"],
+        ["git", "log", "--format=%H %s", "-50"],
         check=False, capture_output=True, text=True,
     )
     if result.returncode == 0 and result.stdout:
         for line in result.stdout.splitlines():
             m = re.search(r"quality loop iteration (\d+)", line)
             if m:
-                git_highest = max(git_highest, int(m.group(1)))
+                n = int(m.group(1))
+                if n > git_highest:
+                    git_highest = n
+                    marker_sha = line.split()[0]
 
-    # Check persisted state file
+    # --- Signal 2: persisted state file ---
     file_highest = 0
     state_path = _iteration_state_path()
     if state_path.exists():
@@ -1206,7 +1215,42 @@ def _detect_last_iteration() -> int:
         except (ValueError, OSError):
             pass
 
-    highest = max(git_highest, file_highest)
+    # --- Signal 3: orphan commit detection (timestamp grouping) ---
+    orphan_highest = 0
+    if git_highest > 0 and marker_sha:
+        gap_result = subprocess.run(
+            ["git", "log", "--format=%aI %s", f"{marker_sha}..HEAD"],
+            check=False, capture_output=True, text=True,
+        )
+        if gap_result.returncode == 0 and gap_result.stdout:
+            # Collect timestamps of commits that look like Claude Code output
+            _skip = ("Dirigent:", "Merge", "release:", "docs:", "quality loop", "quality_loop")
+            timestamps: list[datetime] = []
+            for line in gap_result.stdout.splitlines():
+                parts = line.split(" ", 1)
+                if len(parts) < 2:
+                    continue
+                ts_str, msg = parts
+                if any(p in msg for p in _skip):
+                    continue
+                if re.match(r"(feat|fix|chore|refactor):", msg):
+                    try:
+                        timestamps.append(datetime.fromisoformat(ts_str))
+                    except ValueError:
+                        pass
+
+            if timestamps:
+                timestamps.sort()
+                groups = 1
+                for i in range(1, len(timestamps)):
+                    gap_seconds = abs((timestamps[i] - timestamps[i - 1]).total_seconds())
+                    if gap_seconds > 600:  # 10-minute gap = new iteration
+                        groups += 1
+                orphan_highest = git_highest + groups
+                print(f"  [note] Found {len(timestamps)} orphan commit(s) after marker {git_highest} "
+                      f"({groups} estimated iteration(s) by timestamp grouping)")
+
+    highest = max(git_highest, file_highest, orphan_highest)
     if file_highest > git_highest and file_highest > 0:
         print(f"  [note] git log shows iteration {git_highest}, but state file has {file_highest} -- using {highest}")
     return highest
@@ -1503,7 +1547,6 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
     new_cr_since = datetime.now(timezone.utc).isoformat()
     pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None,
                               sha_before_claude=sha_before_claude)
-    _save_iteration(iteration)
     if pushed:
         _save_cr_since(cfg, new_cr_since)
 
@@ -1557,6 +1600,7 @@ def main() -> None:
         banner(f"Iteration {iteration}/{end_iteration - 1}")
         skip_sonar = cfg.skip_sonar_first and iteration == cfg.start_iteration
         cr_since = _run_iteration(cfg, iteration, cr_since, skip_sonar=skip_sonar)
+        _save_iteration(iteration)
         if not cr_since:
             banner("All signals clean -- loop complete!")
             sys.exit(0)
