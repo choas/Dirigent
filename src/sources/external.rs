@@ -1274,16 +1274,19 @@ fn fetch_notion_single_page(
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
+        // Count occurrences per text so that duplicate todo texts on the
+        // same page produce distinct but position-stable IDs.
+        let mut text_occurrence: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
         let mut items: Vec<SourceItem> = todo_texts
             .iter()
-            .enumerate()
-            .map(|(idx, text)| {
-                // Include the index so that duplicate todo texts on the same
-                // page produce distinct IDs instead of colliding.
+            .map(|text| {
+                let occurrence = text_occurrence.entry(text).or_insert(0);
                 let mut hasher = DefaultHasher::new();
-                idx.hash(&mut hasher);
                 text.hash(&mut hasher);
+                occurrence.hash(&mut hasher);
                 let hash = hasher.finish();
+                *occurrence += 1;
                 SourceItem::new(
                     format!("{}-todo-{:x}", id, hash),
                     format!("{}: {}", title, text),
