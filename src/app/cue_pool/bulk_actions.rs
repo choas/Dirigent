@@ -175,13 +175,19 @@ impl DirigentApp {
                 .map(|s| s.starts_with("pr"))
                 .unwrap_or(false)
         });
+        let show_archive_all = section_cues.len() >= 2;
+        if !show_archive_all && !has_pr_cues {
+            return;
+        }
         ui.horizontal(|ui| {
-            if ui
-                .small_button(icon("\u{1F4E6} Archive All", self.settings.font_size))
-                .on_hover_text("Move all Done cues to Archived")
-                .clicked()
-            {
-                actions.push((0, CueAction::ArchiveAllDone));
+            if show_archive_all {
+                if ui
+                    .small_button(icon("\u{1F4E6} Archive All", self.settings.font_size))
+                    .on_hover_text("Move all Done cues to Archived")
+                    .clicked()
+                {
+                    actions.push((0, CueAction::ArchiveAllDone));
+                }
             }
             if has_pr_cues {
                 self.render_push_and_notify_button(ui, actions);
