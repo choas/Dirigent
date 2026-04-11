@@ -120,7 +120,7 @@ impl DirigentApp {
             AgentStatus::Error => {
                 self.set_status_message(format!("{} error", label));
             }
-            _ => {}
+            AgentStatus::Idle | AgentStatus::Running => {}
         }
     }
 
@@ -159,7 +159,7 @@ impl DirigentApp {
                 }
             }
             AgentStatus::Error => format!("{} error ({})", label, dur),
-            _ => format!("{} completed ({})", label, dur),
+            AgentStatus::Idle | AgentStatus::Running => format!("{} completed ({})", label, dur),
         };
         let _ = self.db.log_activity(cue_id, &event);
     }

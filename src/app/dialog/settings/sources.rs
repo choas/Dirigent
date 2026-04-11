@@ -209,7 +209,7 @@ impl DirigentApp {
             SourceKind::Trello => self.render_source_trello_fields(ui, i),
             SourceKind::Asana => self.render_source_asana_fields(ui, i),
             SourceKind::Notion => self.render_source_notion_fields(ui, i),
-            _ => self.render_source_custom_fields(ui, i),
+            SourceKind::Custom | SourceKind::Mcp => self.render_source_custom_fields(ui, i),
         }
     }
 
