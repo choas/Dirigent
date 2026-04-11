@@ -1265,8 +1265,20 @@ def _save_iteration(iteration: int) -> None:
     """Persist the last completed iteration number to disk (atomic write)."""
     target = _iteration_state_path()
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(str(iteration))
-    tmp.replace(target)
+    try:
+        fd = tmp.open("w")
+        fd.write(str(iteration))
+        fd.flush()
+        os.fsync(fd.fileno())
+        fd.close()
+        tmp.replace(target)
+    except OSError as exc:
+        print(f"  [error] failed to save iteration state: {exc}")
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None, sha_before: str = "") -> bool:
