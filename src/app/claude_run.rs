@@ -123,34 +123,21 @@ fn build_provider_config(
     provider: &CliProvider,
     matched_command: &Option<CueCommand>,
 ) -> ProviderConfig {
-    let (model, cli_path, mut extra_args, env_vars, default_pre, default_post) = match provider {
-        CliProvider::Claude => (
-            settings.claude_model.clone(),
-            settings.claude_cli_path.clone(),
-            settings.claude_extra_args.clone(),
-            settings.claude_env_vars.clone(),
-            settings.claude_pre_run_script.clone(),
-            settings.claude_post_run_script.clone(),
-        ),
-        CliProvider::OpenCode => (
-            settings.opencode_model.clone(),
-            settings.opencode_cli_path.clone(),
-            settings.opencode_extra_args.clone(),
-            settings.opencode_env_vars.clone(),
-            settings.opencode_pre_run_script.clone(),
-            settings.opencode_post_run_script.clone(),
-        ),
-    };
+    let pf = settings.provider_fields(provider);
+    let model = pf.model.to_string();
+    let cli_path = pf.cli_path.to_string();
+    let mut extra_args = pf.extra_args.to_string();
+    let env_vars = pf.env_vars.to_string();
     let pre_run_script = matched_command
         .as_ref()
         .filter(|cmd| !cmd.pre_agent.is_empty())
         .map(|cmd| cmd.pre_agent.clone())
-        .unwrap_or(default_pre);
+        .unwrap_or_else(|| pf.pre_run_script.to_string());
     let post_run_script = matched_command
         .as_ref()
         .filter(|cmd| !cmd.post_agent.is_empty())
         .map(|cmd| cmd.post_agent.clone())
-        .unwrap_or(default_post);
+        .unwrap_or_else(|| pf.post_run_script.to_string());
     // Append command-specific CLI args (e.g. --plan) to the provider extra_args.
     if let Some(cmd) = matched_command.as_ref() {
         let cmd_args = cmd.cli_args.trim();
@@ -885,15 +872,27 @@ impl DirigentApp {
         }
     }
 
+    /// Maximum size (in bytes) of a single cue's running log buffer.
+    /// Once exceeded the oldest half is discarded to keep memory bounded.
+    const RUNNING_LOG_CAP: usize = 2 * 1024 * 1024; // 2 MiB
+
     /// Drain the log channel, appending text to the per-cue log buffers.
     pub(super) fn drain_log_channel(&mut self) {
         for update in self.claude.log_rx.try_iter() {
-            self.claude
+            let buf = &mut self
+                .claude
                 .running_logs
                 .entry(update.cue_id)
                 .or_insert_with(|| (String::new(), update.provider.clone()))
-                .0
-                .push_str(&update.text);
+                .0;
+            buf.push_str(&update.text);
+            // Trim to cap: keep the most recent half when the limit is exceeded.
+            if buf.len() > Self::RUNNING_LOG_CAP {
+                let keep_from = buf.len() - Self::RUNNING_LOG_CAP / 2;
+                let start = buf.ceil_char_boundary(keep_from);
+                let trimmed = buf[start..].to_string();
+                *buf = format!("… (log truncated) …\n{}", trimmed);
+            }
         }
     }
 

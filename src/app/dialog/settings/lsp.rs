@@ -384,7 +384,7 @@ impl DirigentApp {
                 "Install the `{}` language server so it is available on PATH.\n\n{}",
                 name, hint
             );
-            if let Ok(cue_id) = self.db.insert_cue(&prompt, "", 0, None, &[]) {
+            if let Ok(cue_id) = self.db.insert_global_cue(&prompt) {
                 self.reload_cues();
                 self.set_status_message(format!("Created install cue for {} (#{cue_id})", name));
             }

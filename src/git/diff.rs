@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use git2::{Repository, StatusOptions};
+use git2::Repository;
 
 /// Get the working-tree diff for specific files (or all files if empty).
 /// Returns the `git diff` output, or None if there are no changes.
@@ -98,9 +98,7 @@ fn find_untracked_files(repo_path: &Path) -> HashSet<String> {
         Ok(r) => r,
         Err(_) => return result,
     };
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+    if let Some(statuses) = super::collect_statuses(&repo) {
         for entry in statuses.iter() {
             let s = entry.status();
             if s.intersects(git2::Status::WT_NEW) && !s.intersects(git2::Status::INDEX_NEW) {

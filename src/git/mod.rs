@@ -8,9 +8,18 @@ mod pr;
 mod status;
 mod worktree;
 
+use git2::{Repository, StatusOptions, Statuses};
+
 /// Shorten a full git hash to 7 characters.
 fn short_hash(hash: &str) -> String {
     hash.chars().take(7).collect()
+}
+
+/// Collect git statuses including untracked files (the common case).
+fn collect_statuses(repo: &Repository) -> Option<Statuses<'_>> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    repo.statuses(Some(&mut opts)).ok()
 }
 
 pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};

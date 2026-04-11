@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use git2::{BranchType, Repository, StatusOptions};
+use git2::{BranchType, Repository};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GitInfo {
@@ -62,11 +62,9 @@ fn resolve_last_commit(repo: &Repository) -> (String, String) {
 }
 
 fn count_status_entries(repo: &Repository) -> (usize, usize, usize, usize) {
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-    let statuses = match repo.statuses(Some(&mut opts)) {
-        Ok(s) => s,
-        Err(_) => return (0, 0, 0, 0),
+    let statuses = match super::collect_statuses(repo) {
+        Some(s) => s,
+        None => return (0, 0, 0, 0),
     };
     let mut m = 0;
     let mut a = 0;
@@ -118,11 +116,9 @@ pub(crate) fn get_dirty_files(path: &Path) -> HashMap<String, char> {
         Ok(r) => r,
         Err(_) => return result,
     };
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-    let statuses = match repo.statuses(Some(&mut opts)) {
-        Ok(s) => s,
-        Err(_) => return result,
+    let statuses = match super::collect_statuses(&repo) {
+        Some(s) => s,
+        None => return result,
     };
     for entry in statuses.iter() {
         if let (Some(letter), Some(p)) = (status_letter(entry.status()), entry.path()) {
