@@ -126,12 +126,12 @@ pub(super) fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
     // Matches: src/main.rs:10:5: error: something went wrong
     //          src/app.ts(15,3): error TS2345: something
     let re = Regex::new(
-        r"(?m)^(.+?):(\d+)(?::(\d+))?:\s*(?:(error|warning|warn|info|note|hint))(?:\[.*?\])?:\s*(.+)$"
+        r"(?mi)^(.+?):(\d+)(?::(\d+))?:\s*(?:(error|warning|warn|info|note|hint))(?:\[.*?\])?:\s*(.+)$"
     ).expect("hardcoded diagnostic regex");
 
     // MSVC / TypeScript pattern: file(line,col): error CODE: message
     let re_paren =
-        Regex::new(r"(?m)^(.+?)\((\d+),(\d+)\):\s*(?:(error|warning))(?:\s+\w+)?:\s*(.+)$")
+        Regex::new(r"(?mi)^(.+?)\((\d+),(\d+)\):\s*(?:(error|warning))(?:\s+\w+)?:\s*(.+)$")
             .expect("hardcoded diagnostic regex");
 
     for cap in re.captures_iter(output) {
@@ -145,7 +145,8 @@ pub(super) fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
             continue;
         }
         let col = cap.get(3).and_then(|m| m.as_str().parse().ok());
-        let severity = match &cap[4] {
+        let sev_lower: String = cap[4].to_ascii_lowercase();
+        let severity = match sev_lower.as_str() {
             "error" => Severity::Error,
             "warning" | "warn" => Severity::Warning,
             _ => Severity::Info,
@@ -167,7 +168,8 @@ pub(super) fn parse_generic_diagnostics(output: &str) -> Vec<Diagnostic> {
             continue;
         }
         let col: Option<usize> = cap[3].parse().ok();
-        let severity = match &cap[4] {
+        let sev_lower: String = cap[4].to_ascii_lowercase();
+        let severity = match sev_lower.as_str() {
             "error" => Severity::Error,
             _ => Severity::Warning,
         };
