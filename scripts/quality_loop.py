@@ -1087,6 +1087,7 @@ def build_fix_prompt(
         f"You are a code quality agent for a {tools.lang_name} project.",
         "Fix ALL of the following issues. Do not change any functionality --",
         "only improve code quality. After each fix, ensure the code still compiles/runs.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
     ]
     if sonar:
@@ -1122,6 +1123,7 @@ def build_dedup_prompt(tools: ToolCommands, dup_group: list[str]) -> str:
         "Reduce code duplication as described below. Extract shared logic into",
         "functions, modules, or helper methods. Do not change any functionality.",
         "After each change, ensure the code still compiles/runs.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
         "== SonarQube duplications ==",
     ]
@@ -1145,6 +1147,7 @@ def _build_compile_fix_prompt(tools: ToolCommands, test_output: str) -> str:
         "The code is failing to compile or tests are failing after recent changes.",
         "Fix the compilation/test errors below. Do not change any functionality",
         "beyond what is needed to fix these errors.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
         "== Build/test errors ==",
         test_output,
@@ -1168,24 +1171,74 @@ def _get_dirty_files() -> set[str]:
     return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
 
 
+def _iteration_state_path() -> Path:
+    """Path to the file that persists the last completed iteration number."""
+    repo_id = Path.cwd().name
+    return Path(f"/tmp/quality_loop_iteration_{repo_id}.txt")
+
+
 def _detect_last_iteration() -> int:
-    """Detect the last quality loop iteration number from git log. Returns 0 if none found."""
+    """Detect the last quality loop iteration number.
+
+    Checks both git log (commit messages) and a persisted state file,
+    returning whichever is higher. The state file guards against Claude Code
+    committing changes with its own message format, which would cause the
+    git-log-only approach to miss iterations.
+    """
+    # Check git log
+    git_highest = 0
     result = subprocess.run(
         ["git", "log", "--oneline", "-50"],
         check=False, capture_output=True, text=True,
     )
-    if result.returncode != 0 or not result.stdout:
-        return 0
-    highest = 0
-    for line in result.stdout.splitlines():
-        m = re.search(r"quality loop iteration (\d+)", line)
-        if m:
-            highest = max(highest, int(m.group(1)))
+    if result.returncode == 0 and result.stdout:
+        for line in result.stdout.splitlines():
+            m = re.search(r"quality loop iteration (\d+)", line)
+            if m:
+                git_highest = max(git_highest, int(m.group(1)))
+
+    # Check persisted state file
+    file_highest = 0
+    state_path = _iteration_state_path()
+    if state_path.exists():
+        try:
+            file_highest = int(state_path.read_text().strip())
+        except (ValueError, OSError):
+            pass
+
+    highest = max(git_highest, file_highest)
+    if file_highest > git_highest and file_highest > 0:
+        print(f"  [note] git log shows iteration {git_highest}, but state file has {file_highest} -- using {highest}")
     return highest
 
 
-def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
-    """Commit and push changes. Returns True if push succeeded."""
+def _save_iteration(iteration: int) -> None:
+    """Persist the last completed iteration number to disk."""
+    _iteration_state_path().write_text(str(iteration))
+
+
+def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None, sha_before: str = "") -> bool:
+    """Commit and push changes. Returns True if push succeeded.
+
+    If sha_before is provided and Claude Code has made its own commits since
+    that SHA, those commits are soft-reset and re-committed under a single
+    quality-loop marker commit so that iteration detection stays accurate.
+    """
+    # Detect commits Claude Code made on its own (despite the "do not commit" instruction)
+    claude_committed = False
+    if sha_before:
+        current = current_sha()
+        if current != sha_before:
+            count_result = run(
+                ["git", "rev-list", "--count", f"{sha_before}..HEAD"],
+                check=False, capture=True,
+            )
+            n_commits = int(count_result.stdout.strip()) if count_result.returncode == 0 else 0
+            if n_commits > 0:
+                print(f"  [note] Claude Code created {n_commits} commit(s) -- squashing into quality loop marker.")
+                run(["git", "reset", "--soft", sha_before], check=False)
+                claude_committed = True
+
     if files_to_stage:
         result = run(["git", "add", "--"] + files_to_stage, check=False)
     else:
@@ -1197,7 +1250,7 @@ def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) 
         ["git", "diff", "--cached", "--quiet"],
         check=False,
     )
-    if result.returncode == 0:
+    if result.returncode == 0 and not claude_committed:
         print("  Nothing to commit -- skipping push.")
         return False
     result = run(["git", "commit", "-m", f"chore: quality loop iteration {iteration}"], check=False)
@@ -1319,10 +1372,12 @@ def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
             fmt_fix(cfg.tools)
 
 
-def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
+def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None,
+                     sha_before_claude: str = "") -> bool:
     """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
     sha_before = current_sha()
-    pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
+    pushed = git_commit_push(iteration, files_to_stage=files_to_stage,
+                             sha_before=sha_before_claude or sha_before)
     sha_after = current_sha()
 
     if sha_before == sha_after:
@@ -1411,6 +1466,7 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
 
     print(f"\n  Total issues: {total} ({signals.main_total} main + {signals.dup_total} duplication).")
 
+    sha_before_claude = current_sha()
     dirty_before = _get_dirty_files()
 
     # --- Main Claude call: sonar issues, hotspots, lint, fmt, coderabbit ---
@@ -1445,7 +1501,9 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
     new_files = sorted(dirty_after - dirty_before)
 
     new_cr_since = datetime.now(timezone.utc).isoformat()
-    pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
+    pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None,
+                              sha_before_claude=sha_before_claude)
+    _save_iteration(iteration)
     if pushed:
         _save_cr_since(cfg, new_cr_since)
 
@@ -1459,7 +1517,7 @@ def main() -> None:
     cfg = build_config(args)
 
     if cfg.start_iteration > 1:
-        print(f"  Resuming from iteration {cfg.start_iteration} (detected from git log)")
+        print(f"  Resuming from iteration {cfg.start_iteration} (detected from git log / state file)")
 
     if cfg.dry_run:
         print("[dry-run] No Claude Code invocations or git pushes will happen.")
