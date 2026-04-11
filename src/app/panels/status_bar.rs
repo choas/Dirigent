@@ -4,6 +4,69 @@ use super::super::{icon_small, DirigentApp};
 use crate::agents::{AgentKind, AgentStatus};
 use crate::git;
 
+/// Return the current process RSS in megabytes (macOS only).
+#[cfg(target_os = "macos")]
+fn get_memory_usage_mb() -> Option<u64> {
+    use std::mem;
+
+    #[allow(non_camel_case_types)]
+    type mach_port_t = u32;
+    #[allow(non_camel_case_types)]
+    type kern_return_t = i32;
+    #[allow(non_camel_case_types)]
+    type task_flavor_t = u32;
+    #[allow(non_camel_case_types)]
+    type task_info_t = *mut i32;
+    #[allow(non_camel_case_types)]
+    type mach_msg_type_number_t = u32;
+
+    const MACH_TASK_BASIC_INFO: task_flavor_t = 20;
+    const MACH_TASK_BASIC_INFO_COUNT: mach_msg_type_number_t = 12; // sizeof(mach_task_basic_info) / sizeof(natural_t)
+
+    #[repr(C)]
+    #[allow(non_camel_case_types)]
+    struct mach_task_basic_info {
+        virtual_size: u64,
+        resident_size: u64,
+        resident_size_max: u64,
+        user_time: [i32; 2],   // time_value_t
+        system_time: [i32; 2], // time_value_t
+        policy: i32,
+        suspend_count: i32,
+    }
+
+    extern "C" {
+        fn mach_task_self() -> mach_port_t;
+        fn task_info(
+            target_task: mach_port_t,
+            flavor: task_flavor_t,
+            task_info_out: task_info_t,
+            task_info_outCnt: *mut mach_msg_type_number_t,
+        ) -> kern_return_t;
+    }
+
+    unsafe {
+        let mut info: mach_task_basic_info = mem::zeroed();
+        let mut count = MACH_TASK_BASIC_INFO_COUNT;
+        let kr = task_info(
+            mach_task_self(),
+            MACH_TASK_BASIC_INFO,
+            &mut info as *mut _ as task_info_t,
+            &mut count,
+        );
+        if kr == 0 {
+            Some(info.resident_size / (1024 * 1024))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn get_memory_usage_mb() -> Option<u64> {
+    None
+}
+
 impl DirigentApp {
     pub(in super::super) fn render_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
@@ -138,17 +201,32 @@ impl DirigentApp {
         }
     }
 
-    /// Render the cached total cost (right-aligned) in the status bar.
+    /// Render right-aligned info (memory usage, total cost) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
-        if self.cached_total_cost > 0.0 {
+        let mem = get_memory_usage_mb();
+        if self.cached_total_cost > 0.0 || mem.is_some() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("${:.2}", self.cached_total_cost))
-                        .monospace()
-                        .small()
-                        .color(self.semantic.muted_text()),
-                )
-                .on_hover_text("Total project cost across all runs");
+                if let Some(mb) = mem {
+                    ui.label(
+                        egui::RichText::new(format!("{mb} MB"))
+                            .monospace()
+                            .small()
+                            .color(self.semantic.muted_text()),
+                    )
+                    .on_hover_text("Process memory (RSS)");
+                }
+                if self.cached_total_cost > 0.0 {
+                    if mem.is_some() {
+                        ui.separator();
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("${:.2}", self.cached_total_cost))
+                            .monospace()
+                            .small()
+                            .color(self.semantic.muted_text()),
+                    )
+                    .on_hover_text("Total project cost across all runs");
+                }
             });
         }
     }
