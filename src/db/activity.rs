@@ -20,10 +20,10 @@ impl Database {
         Ok(())
     }
 
-    /// Get all activity entries for a cue, ordered oldest first.
+    /// Get activity entries for a cue (most recent 500), ordered oldest first.
     pub fn get_activities(&self, cue_id: i64) -> Result<Vec<ActivityEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT timestamp, event FROM cue_activity_log WHERE cue_id = ?1 ORDER BY id ASC",
+            "SELECT timestamp, event FROM (SELECT id, timestamp, event FROM cue_activity_log WHERE cue_id = ?1 ORDER BY id DESC LIMIT 500) ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], |row| {
             Ok(ActivityEntry {

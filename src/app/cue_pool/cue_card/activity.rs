@@ -10,7 +10,12 @@ impl DirigentApp {
             return;
         }
         // Use cached activity data to avoid DB queries every frame.
+        // Cap cache size to prevent unbounded memory growth.
+        const ACTIVITY_CACHE_CAP: usize = 50;
         if !self.activity_cache.contains_key(&cue.id) {
+            if self.activity_cache.len() >= ACTIVITY_CACHE_CAP {
+                self.activity_cache.clear();
+            }
             let entries = self.db.get_activities(cue.id).unwrap_or_default();
             let agent_runs = self.db.get_agent_runs_for_cue(cue.id).unwrap_or_default();
             self.activity_cache.insert(cue.id, (entries, agent_runs));
