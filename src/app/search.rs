@@ -444,6 +444,72 @@ impl DirigentApp {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_binary_ext_known_extensions() {
+        assert!(is_binary_ext(Path::new("image.png")));
+        assert!(is_binary_ext(Path::new("archive.zip")));
+        assert!(is_binary_ext(Path::new("data.db")));
+        assert!(is_binary_ext(Path::new("font.woff2")));
+        assert!(is_binary_ext(Path::new("lib.dylib")));
+    }
+
+    #[test]
+    fn is_binary_ext_text_extensions() {
+        assert!(!is_binary_ext(Path::new("main.rs")));
+        assert!(!is_binary_ext(Path::new("index.html")));
+        assert!(!is_binary_ext(Path::new("Cargo.toml")));
+        assert!(!is_binary_ext(Path::new("README.md")));
+    }
+
+    #[test]
+    fn is_binary_ext_no_extension() {
+        assert!(!is_binary_ext(Path::new("Makefile")));
+        assert!(!is_binary_ext(Path::new(".gitignore")));
+    }
+
+    #[test]
+    fn collect_files_from_tree() {
+        let tree = vec![
+            FileEntry {
+                name: "src".into(),
+                path: PathBuf::from("src"),
+                is_dir: true,
+                is_ignored: false,
+                children: vec![FileEntry {
+                    name: "main.rs".into(),
+                    path: PathBuf::from("src/main.rs"),
+                    is_dir: false,
+                    is_ignored: false,
+                    children: vec![],
+                }],
+            },
+            FileEntry {
+                name: "README.md".into(),
+                path: PathBuf::from("README.md"),
+                is_dir: false,
+                is_ignored: false,
+                children: vec![],
+            },
+        ];
+        let mut files = Vec::new();
+        collect_files(&tree, &mut files);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], PathBuf::from("src/main.rs"));
+        assert_eq!(files[1], PathBuf::from("README.md"));
+    }
+
+    #[test]
+    fn collect_files_empty_tree() {
+        let mut files = Vec::new();
+        collect_files(&[], &mut files);
+        assert!(files.is_empty());
+    }
+}
+
 pub(super) fn update_diff_search_matches(review: &mut super::DiffReview) {
     review.search_matches.clear();
     review.search_current = None;

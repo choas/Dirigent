@@ -208,3 +208,37 @@ pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> 
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_time_ago_just_now() {
+        assert_eq!(format_time_ago(0), "just now");
+        assert_eq!(format_time_ago(-5), "just now");
+        assert_eq!(format_time_ago(30), "just now");
+        assert_eq!(format_time_ago(59), "just now");
+    }
+
+    #[test]
+    fn format_time_ago_minutes() {
+        assert_eq!(format_time_ago(60), "1m ago");
+        assert_eq!(format_time_ago(120), "2m ago");
+        assert_eq!(format_time_ago(3599), "59m ago");
+    }
+
+    #[test]
+    fn format_time_ago_hours() {
+        assert_eq!(format_time_ago(3600), "1h ago");
+        assert_eq!(format_time_ago(7200), "2h ago");
+        assert_eq!(format_time_ago(86399), "23h ago");
+    }
+
+    #[test]
+    fn format_time_ago_days() {
+        assert_eq!(format_time_ago(86400), "1d ago");
+        assert_eq!(format_time_ago(172800), "2d ago");
+        assert_eq!(format_time_ago(864000), "10d ago");
+    }
+}
