@@ -1173,7 +1173,10 @@ def _get_dirty_files() -> set[str]:
 
 def _iteration_state_path() -> Path:
     """Path to the file that persists the last completed iteration number."""
-    repo_id = Path.cwd().name
+    import hashlib
+    cwd = str(Path.cwd().resolve())
+    path_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
+    repo_id = f"{Path.cwd().name}_{path_hash}"
     return Path(f"/tmp/quality_loop_iteration_{repo_id}.txt")
 
 
