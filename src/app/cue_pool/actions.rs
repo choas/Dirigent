@@ -177,12 +177,51 @@ impl DirigentApp {
         self.follow_up_queue.remove(&id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
+        self.reply_inputs.remove(&id);
+        self.cue_move_flash.remove(&id);
+        self.latest_exec_cache.remove(&id);
+        self.cue_warnings.remove(&id);
+        self.tag_inputs.remove(&id);
+        self.claude.running_logs.remove(&id);
+        self.claude.exec_ids.remove(&id);
+        self.claude.start_times.remove(&id);
+        self.notion_done_cache.remove(&id);
         let _ = self.db.delete_cue(id);
     }
 
     fn process_navigate(&mut self, file_path: &str, line: usize, _line_end: Option<usize>) {
         self.push_nav_history();
         let full_path = self.project_root.join(file_path);
+        // Reject paths with lexical traversal components before canonicalization,
+        // so that non-existent paths cannot bypass the canonicalize guard.
+        let rel = std::path::Path::new(file_path);
+        if rel.is_absolute()
+            || rel.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            eprintln!(
+                "[navigate] rejecting path with traversal or absolute components: {:?}",
+                file_path
+            );
+            return;
+        }
+        // Prevent path traversal: reject paths that escape the project root.
+        if let (Ok(canon_root), Ok(canon_path)) = (
+            std::fs::canonicalize(&self.project_root),
+            std::fs::canonicalize(&full_path),
+        ) {
+            if !canon_path.starts_with(&canon_root) {
+                eprintln!(
+                    "[navigate] rejecting path outside project root: {:?}",
+                    file_path
+                );
+                return;
+            }
+        }
         if self.viewer.current_file() != Some(&full_path) {
             self.load_file(full_path);
         } else {
@@ -340,7 +379,12 @@ impl DirigentApp {
             .iter()
             .map(|c| format!("- {}", c.text.trim()))
             .collect();
-        let commit_msg = format!("{}\n\n{}", subject, cue_details.join("\n\n"),);
+        let commit_msg = format!(
+            "{}\n\n{}\n\n{}",
+            subject,
+            cue_details.join("\n\n"),
+            git::DIRIGENT_FOOTER,
+        );
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
         match git::commit_all(&self.project_root, &commit_msg) {
             Ok(hash) => {

@@ -4,6 +4,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::DirigentError;
 
+/// Percent-encode a string for safe use as a URL query parameter value.
+/// Encodes all characters that are not unreserved per RFC 3986.
+fn url_encode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push('%');
+                result.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                result.push(char::from(b"0123456789ABCDEF"[(b & 0x0F) as usize]));
+            }
+        }
+    }
+    result
+}
+
 /// Print a warning to stderr at most once per flag.
 fn warn_once(flag: &AtomicBool, msg: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
@@ -257,7 +276,8 @@ pub(crate) fn fetch_sonarqube_issues(
     // ── 1. Standard issues (/api/issues/search) ──
     let issues_url = format!(
         "{}/api/issues/search?componentKeys={}&resolved=false&ps=100",
-        base, project_key,
+        base,
+        url_encode(project_key),
     );
     let resp = sonar_get(&client, &issues_url, token)?;
 
@@ -313,7 +333,8 @@ fn fetch_sonar_hotspots(
 ) -> crate::error::Result<Vec<SourceItem>> {
     let url = format!(
         "{}/api/hotspots/search?projectKey={}&ps=100&status=TO_REVIEW",
-        base, project_key,
+        base,
+        url_encode(project_key),
     );
     let resp = sonar_get(client, &url, token)?;
     let hotspots = resp
@@ -337,7 +358,8 @@ fn fetch_sonar_duplications(
 ) -> crate::error::Result<Vec<SourceItem>> {
     let url = format!(
         "{}/api/measures/component?component={}&metricKeys=duplicated_lines_density,duplicated_blocks,duplicated_lines,duplicated_files",
-        base, project_key,
+        base,
+        url_encode(project_key),
     );
     let resp = sonar_get(client, &url, token)?;
     let measures = resp
@@ -390,7 +412,8 @@ fn fetch_sonar_duplicated_files(
         "{}/api/measures/component_tree?component={}&metricKeys=duplicated_blocks,duplicated_lines\
          &qualifiers=FIL&metricSort=duplicated_blocks&metricSortFilter=withMeasuresOnly\
          &s=metric&asc=false&ps=100",
-        base, project_key,
+        base,
+        url_encode(project_key),
     );
     let resp = sonar_get(client, &url, token)?;
     let components = resp.get("components").and_then(|v| v.as_array());
@@ -439,15 +462,30 @@ fn fetch_sonar_duplicated_files(
 /// Extract the file path from a SonarQube component string.
 /// SonarQube components are typically `project-key:src/file.rs`; this strips the
 /// project key prefix and returns just the relative path portion.
+///
+/// Rejects paths that contain `..` segments or are absolute, to prevent path
+/// traversal attacks via malicious SonarQube data.
 fn sonar_component_to_path(component: &str) -> String {
     if component.is_empty() {
         return String::new();
     }
-    component
-        .split(':')
-        .next_back()
-        .unwrap_or(component)
-        .to_string()
+    let path = component.split(':').next_back().unwrap_or(component);
+    // Reject absolute paths and path traversal attempts.
+    if std::path::Path::new(path).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        eprintln!(
+            "[sonar] rejecting component path with traversal: {:?}",
+            path
+        );
+        return String::new();
+    }
+    path.to_string()
 }
 
 /// Format a SonarQube finding location suffix like `(file.rs:10, rule: S123)`.
@@ -1238,16 +1276,19 @@ fn fetch_notion_single_page(
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
+        // Count occurrences per text so that duplicate todo texts on the
+        // same page produce distinct but position-stable IDs.
+        let mut text_occurrence: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
         let mut items: Vec<SourceItem> = todo_texts
             .iter()
-            .enumerate()
-            .map(|(idx, text)| {
-                // Include the index so that duplicate todo texts on the same
-                // page produce distinct IDs instead of colliding.
+            .map(|text| {
+                let occurrence = text_occurrence.entry(text).or_insert(0);
                 let mut hasher = DefaultHasher::new();
-                idx.hash(&mut hasher);
                 text.hash(&mut hasher);
+                occurrence.hash(&mut hasher);
                 let hash = hasher.finish();
+                *occurrence += 1;
                 SourceItem::new(
                     format!("{}-todo-{:x}", id, hash),
                     format!("{}: {}", title, text),

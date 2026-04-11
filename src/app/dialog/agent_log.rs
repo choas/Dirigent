@@ -300,7 +300,7 @@ impl DirigentApp {
 
     /// Insert a cue, reload the pool, and close the agent log.
     fn create_cue_and_close_log(&mut self, cue_text: &str) {
-        match self.db.insert_cue(cue_text, "", 0, None, &[]) {
+        match self.db.insert_global_cue(cue_text) {
             Ok(_id) => {
                 self.reload_cues();
                 self.agent_state.show_output = None;

@@ -127,6 +127,59 @@ PR inline comment location is no longer embedded in the cue text.
     }
 
     #[test]
+    fn truncate_with_ellipsis_short_string() {
+        let mut s = "hello".to_string();
+        truncate_with_ellipsis(&mut s, 10);
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_exact_boundary() {
+        let mut s = "hello".to_string();
+        truncate_with_ellipsis(&mut s, 5);
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_truncates_ascii() {
+        let mut s = "hello world".to_string();
+        truncate_with_ellipsis(&mut s, 5);
+        assert_eq!(s, "hello...");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_utf8_boundary() {
+        // 'é' is 2 bytes; truncating at byte 1 must back up to char boundary
+        let mut s = "é".to_string();
+        truncate_with_ellipsis(&mut s, 1);
+        assert_eq!(s, "...");
+    }
+
+    #[test]
+    fn is_severity_label_matches_warning() {
+        assert!(is_severity_label("_\u{26a0} Warning"));
+    }
+
+    #[test]
+    fn is_severity_label_matches_bug() {
+        assert!(is_severity_label("_\u{1f41b} Bug"));
+    }
+
+    #[test]
+    fn is_severity_label_rejects_normal_text() {
+        assert!(!is_severity_label("regular line"));
+    }
+
+    #[test]
+    fn is_details_open_detects_tags() {
+        assert!(is_details_open("<details>"));
+        assert!(is_details_open("<details open>"));
+        assert!(is_details_open("<summary>Title</summary>"));
+        assert!(!is_details_open("regular text"));
+        assert!(!is_details_open("</details>"));
+    }
+
+    #[test]
     fn extract_finding_text_strips_qodo_decorative_lines() {
         let body = r#"<img src="https://www.qodo.ai/logo.svg" width="80" alt="Qodo Logo">
 <br/>

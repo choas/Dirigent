@@ -229,3 +229,48 @@ fn handle_script_error(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_double_quotes() {
+        assert_eq!(strip_surrounding_quotes(r#""value""#), "value");
+    }
+
+    #[test]
+    fn strip_single_quotes() {
+        assert_eq!(strip_surrounding_quotes("'value'"), "value");
+    }
+
+    #[test]
+    fn strip_mismatched_quotes_unchanged() {
+        assert_eq!(strip_surrounding_quotes(r#""value'"#), r#""value'"#);
+        assert_eq!(strip_surrounding_quotes("'value\""), "'value\"");
+    }
+
+    #[test]
+    fn strip_no_quotes_unchanged() {
+        assert_eq!(strip_surrounding_quotes("value"), "value");
+    }
+
+    #[test]
+    fn strip_empty_string() {
+        assert_eq!(strip_surrounding_quotes(""), "");
+    }
+
+    #[test]
+    fn strip_only_quotes() {
+        assert_eq!(strip_surrounding_quotes(r#""""#), "");
+        assert_eq!(strip_surrounding_quotes("''"), "");
+    }
+
+    #[test]
+    fn strip_preserves_inner_quotes() {
+        assert_eq!(
+            strip_surrounding_quotes(r#""it's a \"test\"""#),
+            r#"it's a \"test\""#
+        );
+    }
+}

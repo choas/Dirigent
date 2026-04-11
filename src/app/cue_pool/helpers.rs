@@ -168,9 +168,10 @@ fn build_single_cue_subject(cue: &Cue) -> String {
         trimmed
     };
     if trimmed.is_empty() {
-        return "Dirigent".to_string();
+        return "chore: dirigent commit".to_string();
     }
-    let prefix = "Dirigent: ";
+    let commit_type = crate::git::detect_commit_type(trimmed);
+    let prefix = format!("{}: ", commit_type);
     let allowed = 72 - prefix.len();
     if trimmed.len() > allowed {
         format!(
@@ -201,17 +202,21 @@ fn build_multi_cue_subject(review_cues: &[&Cue]) -> String {
         })
         .collect();
     if short_names.is_empty() {
-        return format!("Dirigent: {} cues", review_cues.len());
+        return format!("chore: {} cues", review_cues.len());
     }
-    let combined = short_names.join(", ");
-    if combined.len() <= 62 {
-        return format!("Dirigent: {}", combined);
+    // Detect type from the combined cue texts.
+    let combined_text = short_names.join(", ");
+    let commit_type = crate::git::detect_commit_type(&combined_text);
+    let prefix = format!("{}: ", commit_type);
+    let allowed = 72 - prefix.len();
+    if combined_text.len() <= allowed {
+        return format!("{}{}", prefix, combined_text);
     }
-    let truncated = crate::app::truncate_str(&combined, 59);
+    let truncated = crate::app::truncate_str(&combined_text, allowed - 3);
     if truncated.is_empty() {
-        format!("Dirigent: {} cues", review_cues.len())
+        format!("{}{} cues", prefix, review_cues.len())
     } else {
-        format!("Dirigent: {}...", truncated)
+        format!("{}{}...", prefix, truncated)
     }
 }
 

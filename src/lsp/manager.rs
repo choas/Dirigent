@@ -72,7 +72,7 @@ pub(crate) struct LspManager {
     /// Servers that have completed initialization.
     initialized: HashMap<String, bool>,
     /// Log of LSP status messages (server_name -> latest status).
-    pub status_log: Vec<String>,
+    status_log: Vec<String>,
     /// Per-server error messages (server_name -> error string). Cleared on successful start.
     pub failed_servers: HashMap<String, String>,
     /// Servers pending graceful shutdown: name -> (shutdown_request_id, when_initiated).
@@ -113,8 +113,25 @@ pub(crate) struct LspManager {
     pub hover_char: u32,
 }
 
+/// Maximum number of status log entries to keep in memory.
+const STATUS_LOG_CAP: usize = 200;
+
 #[allow(dead_code)]
 impl LspManager {
+    /// Append a status message, evicting the oldest entries when the cap is reached.
+    pub(crate) fn log(&mut self, msg: String) {
+        if self.status_log.len() >= STATUS_LOG_CAP {
+            let drain_count = STATUS_LOG_CAP / 2;
+            self.status_log.drain(..drain_count);
+        }
+        self.status_log.push(msg);
+    }
+
+    /// Read-only access to the status log.
+    pub(crate) fn status_log(&self) -> &[String] {
+        &self.status_log
+    }
+
     pub fn new(project_root: PathBuf, shell_init: &str) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         LspManager {
@@ -210,7 +227,7 @@ impl LspManager {
     fn start_one(&mut self, cfg: &LspServerConfig) {
         let msg = format!("Starting LSP: {} ({})", cfg.name, cfg.command);
         eprintln!("[lsp] {}", msg);
-        self.status_log.push(msg);
+        self.log(msg);
         self.failed_servers.remove(&cfg.id);
 
         match LspClient::spawn(
@@ -229,7 +246,7 @@ impl LspManager {
             Err(e) => {
                 let msg = format!("Failed to start {}: {}", cfg.name, e);
                 eprintln!("[lsp] {}", msg);
-                self.status_log.push(msg.clone());
+                self.log(msg.clone());
                 self.failed_servers.insert(cfg.id.clone(), msg);
             }
         }
@@ -248,7 +265,7 @@ impl LspManager {
             self.extension_map.retain(|_, v| v != name);
             let msg = format!("Stopping LSP: {}", name);
             eprintln!("[lsp] {}", msg);
-            self.status_log.push(msg);
+            self.log(msg);
         }
     }
 
@@ -273,7 +290,7 @@ impl LspManager {
         self.pending_init.remove(name);
         let msg = format!("Force-stopped LSP: {}", name);
         eprintln!("[lsp] {}", msg);
-        self.status_log.push(msg);
+        self.log(msg);
     }
 
     /// Reconcile running servers with the desired configuration.
@@ -356,7 +373,7 @@ impl LspManager {
             self.cleanup_server_requests(&name);
             let msg = format!("LSP server exited: {}", name);
             eprintln!("[lsp] {}", msg);
-            self.status_log.push(msg.clone());
+            self.log(msg.clone());
             self.failed_servers.insert(name.clone(), msg);
             self.clients.remove(&name);
             self.initialized.remove(&name);
@@ -397,7 +414,7 @@ impl LspManager {
         self.pending_init.remove(name);
         let msg = format!("Stopped LSP: {}", name);
         eprintln!("[lsp] {}", msg);
-        self.status_log.push(msg);
+        self.log(msg);
     }
 
     /// Handle a message from a specific server.
@@ -419,7 +436,7 @@ impl LspManager {
             LspMessage::ServerExited(reason) => {
                 let msg = format!("LSP {}: {}", server_name, reason);
                 eprintln!("[lsp] {}", msg);
-                self.status_log.push(msg);
+                self.log(msg);
             }
         }
     }
@@ -494,7 +511,7 @@ impl LspManager {
     fn handle_initialize_failure(&mut self, server_name: &str, error: &Option<serde_json::Value>) {
         let msg = format!("LSP {} initialize failed: {:?}", server_name, error);
         eprintln!("[lsp] {}", msg);
-        self.status_log.push(msg.clone());
+        self.log(msg.clone());
         self.failed_servers.insert(server_name.to_string(), msg);
         if let Some(client) = self.clients.remove(server_name) {
             client.kill();
@@ -518,7 +535,7 @@ impl LspManager {
         self.initialized.insert(server_name.to_string(), true);
         let msg = format!("LSP {} initialized", server_name);
         eprintln!("[lsp] {}", msg);
-        self.status_log.push(msg);
+        self.log(msg);
     }
 
     /// Handle a tracked response (hover, definition, references, documentSymbol).

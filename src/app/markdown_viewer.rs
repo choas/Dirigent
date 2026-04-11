@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use eframe::egui;
 
 use super::markdown_parser::{MarkdownBlock, TextSegment};
@@ -13,13 +15,22 @@ impl DirigentApp {
             .and_then(|t| t.markdown_blocks.as_ref());
         if let Some(blocks) = blocks_ref {
             let mut heading_counter = 0usize;
+            let anchor_click: RefCell<Option<String>> = RefCell::new(None);
             let ctx = RenderCtx {
                 font_size: self.settings.font_size,
                 syntax_theme: &self.viewer.syntax_theme,
                 semantic: &self.semantic,
                 indent_level: 0,
+                anchor_click: &anchor_click,
             };
             render_blocks(ui, blocks, &ctx, scroll_target, &mut heading_counter);
+
+            // If an internal anchor link was clicked, resolve it to a heading index.
+            if let Some(anchor) = anchor_click.into_inner() {
+                if let Some(idx) = find_heading_index_by_slug(blocks, &anchor) {
+                    self.viewer.scroll_to_heading = Some(idx);
+                }
+            }
         }
     }
 }
@@ -30,6 +41,8 @@ struct RenderCtx<'a> {
     syntax_theme: &'a egui_extras::syntax_highlighting::CodeTheme,
     semantic: &'a crate::settings::SemanticColors,
     indent_level: usize,
+    /// Set when an internal `#anchor` link is clicked during rendering.
+    anchor_click: &'a RefCell<Option<String>>,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -43,6 +56,7 @@ impl<'a> RenderCtx<'a> {
             syntax_theme: self.syntax_theme,
             semantic: self.semantic,
             indent_level: self.indent_level + 1,
+            anchor_click: self.anchor_click,
         }
     }
 }
@@ -121,11 +135,12 @@ fn render_heading(
     ui.add_space(SPACE_SM);
     let scale = heading_scale(level);
     let resp = ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         if indent > 0.0 {
             ui.add_space(indent);
         }
         for seg in segments {
-            render_segment(ui, seg, ctx.font_size * scale, true, ctx.semantic);
+            render_segment(ui, seg, ctx.font_size * scale, true, ctx);
         }
     });
     if should_scroll {
@@ -140,11 +155,12 @@ fn render_heading(
 fn render_paragraph(ui: &mut egui::Ui, segments: &[TextSegment], ctx: &RenderCtx) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         if indent > 0.0 {
             ui.add_space(indent);
         }
         for seg in segments {
-            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+            render_segment(ui, seg, ctx.font_size, false, ctx);
         }
     });
     ui.add_space(SPACE_SM);
@@ -163,6 +179,27 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx:
             ..Default::default()
         })
         .show(ui, |ui| {
+            // Header row with optional language label and copy button.
+            ui.horizontal(|ui| {
+                if let Some(lang) = language {
+                    ui.label(
+                        egui::RichText::new(lang)
+                            .size(ctx.font_size * 0.85)
+                            .color(ctx.semantic.secondary_text)
+                            .monospace(),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("\u{1F4CB}")
+                        .on_hover_text("Copy code")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(code.to_string());
+                    }
+                });
+            });
+            ui.add_space(SPACE_XS);
             render_code_block_body(ui, language, code, ctx);
         });
     ui.add_space(SPACE_SM);
@@ -251,14 +288,16 @@ fn render_list_item_inline_first(
     match first_block {
         MarkdownBlock::Paragraph { segments } => {
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(indent + SPACE_MD);
                 ui.label(
                     egui::RichText::new(prefix)
                         .size(ctx.font_size)
                         .color(ctx.semantic.secondary_text),
                 );
+                ui.add_space(SPACE_XS);
                 for seg in segments {
-                    render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+                    render_segment(ui, seg, ctx.font_size, false, ctx);
                 }
             });
         }
@@ -278,17 +317,20 @@ fn render_checkbox_in_list(
 ) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         ui.label(
             egui::RichText::new(prefix)
                 .size(ctx.font_size)
                 .color(ctx.semantic.secondary_text),
         );
+        ui.add_space(SPACE_XS);
         let icon = checkbox_icon(checked);
         let color = checkbox_color(checked, ctx.semantic);
         ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        ui.add_space(SPACE_XS);
         for seg in segments {
-            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+            render_segment(ui, seg, ctx.font_size, false, ctx);
         }
     });
 }
@@ -302,6 +344,7 @@ fn render_list_item_fallback(
 ) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         ui.label(
             egui::RichText::new(prefix)
@@ -337,6 +380,7 @@ fn render_block_quote(
                     syntax_theme: ctx.syntax_theme,
                     semantic: ctx.semantic,
                     indent_level: 0,
+                    anchor_click: ctx.anchor_click,
                 },
                 heading_counter,
             );
@@ -500,8 +544,9 @@ fn render_table_header(
                         ui.set_min_width(width);
                         ui.set_max_width(width);
                         ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             for seg in cell {
-                                render_segment(ui, seg, ctx.font_size, true, ctx.semantic);
+                                render_segment(ui, seg, ctx.font_size, true, ctx);
                             }
                         });
                     });
@@ -570,8 +615,9 @@ fn render_table_row(
                     ui.set_min_width(width);
                     ui.set_max_width(width);
                     ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         for seg in cell {
-                            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+                            render_segment(ui, seg, ctx.font_size, false, ctx);
                         }
                     });
                 });
@@ -599,12 +645,14 @@ fn render_thematic_break(ui: &mut egui::Ui, ctx: &RenderCtx) {
 fn render_checkbox(ui: &mut egui::Ui, checked: bool, segments: &[TextSegment], ctx: &RenderCtx) {
     let indent = ctx.indent();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent + SPACE_MD);
         let icon = checkbox_icon(checked);
         let color = checkbox_color(checked, ctx.semantic);
         ui.label(egui::RichText::new(icon).size(ctx.font_size).color(color));
+        ui.add_space(SPACE_XS);
         for seg in segments {
-            render_segment(ui, seg, ctx.font_size, false, ctx.semantic);
+            render_segment(ui, seg, ctx.font_size, false, ctx);
         }
     });
     ui.add_space(SPACE_XS);
@@ -649,8 +697,9 @@ fn render_segment(
     seg: &TextSegment,
     font_size: f32,
     heading_bold: bool,
-    semantic: &crate::settings::SemanticColors,
+    ctx: &RenderCtx,
 ) {
+    let semantic = ctx.semantic;
     match seg {
         TextSegment::Plain(t) => {
             let mut rt = egui::RichText::new(t).size(font_size);
@@ -681,12 +730,24 @@ fn render_segment(
             ui.label(rt);
         }
         TextSegment::Link { text, url } => {
-            ui.hyperlink_to(
-                egui::RichText::new(text)
-                    .size(font_size)
-                    .color(semantic.accent),
-                url,
-            );
+            if let Some(anchor) = url.strip_prefix('#') {
+                // Internal anchor link — render as clickable text that scrolls to heading.
+                let resp = ui.link(
+                    egui::RichText::new(text)
+                        .size(font_size)
+                        .color(semantic.accent),
+                );
+                if resp.clicked() {
+                    *ctx.anchor_click.borrow_mut() = Some(anchor.to_string());
+                }
+            } else {
+                ui.hyperlink_to(
+                    egui::RichText::new(text)
+                        .size(font_size)
+                        .color(semantic.accent),
+                    url,
+                );
+            }
         }
         TextSegment::Strikethrough(t) => {
             ui.label(egui::RichText::new(t).size(font_size).strikethrough());
@@ -723,4 +784,76 @@ fn render_segment(
             ui.end_row();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Internal anchor link helpers
+// ---------------------------------------------------------------------------
+
+/// Convert heading text into a GitHub-style anchor slug.
+/// Lowercase, spaces → hyphens, strip non-alphanumeric (except hyphens).
+fn heading_to_slug(segments: &[TextSegment]) -> String {
+    let plain = segments_plain_text(segments);
+    plain
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() {
+                Some(c.to_ascii_lowercase())
+            } else if c == ' ' || c == '-' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Walk all blocks (recursively) and find the 0-based heading index whose slug matches `anchor`.
+/// Handles duplicate headings using GitHub-style disambiguation: the first occurrence of a slug
+/// is bare, the second gets `-1`, the third `-2`, etc.
+fn find_heading_index_by_slug(blocks: &[MarkdownBlock], anchor: &str) -> Option<usize> {
+    let mut counter = 0usize;
+    let mut slug_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    find_heading_in_blocks(blocks, anchor, &mut counter, &mut slug_counts)
+}
+
+fn find_heading_in_blocks(
+    blocks: &[MarkdownBlock],
+    anchor: &str,
+    counter: &mut usize,
+    slug_counts: &mut std::collections::HashMap<String, usize>,
+) -> Option<usize> {
+    for block in blocks {
+        match block {
+            MarkdownBlock::Heading { segments, .. } => {
+                let base_slug = heading_to_slug(segments);
+                let occurrence = slug_counts.entry(base_slug.clone()).or_insert(0);
+                let actual_slug = if *occurrence == 0 {
+                    base_slug
+                } else {
+                    format!("{}-{}", base_slug, occurrence)
+                };
+                *occurrence += 1;
+                if actual_slug == anchor {
+                    return Some(*counter);
+                }
+                *counter += 1;
+            }
+            MarkdownBlock::List { items, .. } => {
+                for item in items {
+                    if let Some(idx) = find_heading_in_blocks(item, anchor, counter, slug_counts) {
+                        return Some(idx);
+                    }
+                }
+            }
+            MarkdownBlock::BlockQuote { blocks } => {
+                if let Some(idx) = find_heading_in_blocks(blocks, anchor, counter, slug_counts) {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }

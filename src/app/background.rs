@@ -63,6 +63,10 @@ impl DirigentApp {
                 self.lsp.notify_file_changed(path);
             }
         }
+        // Re-run in-file search so matches stay in sync with updated content
+        if self.search.in_file_active && !self.search.in_file_query.is_empty() {
+            self.update_search_in_file_matches();
+        }
     }
 
     /// Poll background receivers for file tree, search, and go-to-definition results.

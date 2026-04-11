@@ -418,4 +418,43 @@ mod tests {
         assert_eq!(items[0].text, "has ] bracket");
         assert_eq!(items[1].text, "has [ bracket");
     }
+
+    // -- parse_paginated_json --
+
+    #[test]
+    fn paginated_json_empty_string() {
+        let items = parse_paginated_json("").unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn paginated_json_whitespace_only() {
+        let items = parse_paginated_json("   \n  ").unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn paginated_json_single_array() {
+        let items = parse_paginated_json(r#"[{"a":1},{"a":2}]"#).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["a"], 1);
+    }
+
+    #[test]
+    fn paginated_json_concatenated_arrays() {
+        let items = parse_paginated_json(r#"[{"a":1}][{"a":2},{"a":3}]"#).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[2]["a"], 3);
+    }
+
+    #[test]
+    fn paginated_json_single_empty_array() {
+        let items = parse_paginated_json("[]").unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn paginated_json_malformed_returns_error() {
+        assert!(parse_paginated_json("{not valid").is_err());
+    }
 }

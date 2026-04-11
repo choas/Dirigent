@@ -783,6 +783,120 @@ mod tests {
     }
 
     #[test]
+    fn classify_hunk_line_addition() {
+        let mut old = 10;
+        let mut new = 20;
+        let dl = classify_hunk_line("+added", &mut old, &mut new).unwrap();
+        assert_eq!(dl.kind, DiffLineKind::Addition);
+        assert_eq!(dl.content, "added");
+        assert_eq!(dl.old_lineno, None);
+        assert_eq!(dl.new_lineno, Some(20));
+        assert_eq!(old, 10);
+        assert_eq!(new, 21);
+    }
+
+    #[test]
+    fn classify_hunk_line_deletion() {
+        let mut old = 10;
+        let mut new = 20;
+        let dl = classify_hunk_line("-removed", &mut old, &mut new).unwrap();
+        assert_eq!(dl.kind, DiffLineKind::Deletion);
+        assert_eq!(dl.content, "removed");
+        assert_eq!(dl.old_lineno, Some(10));
+        assert_eq!(dl.new_lineno, None);
+        assert_eq!(old, 11);
+        assert_eq!(new, 20);
+    }
+
+    #[test]
+    fn classify_hunk_line_context() {
+        let mut old = 5;
+        let mut new = 5;
+        let dl = classify_hunk_line(" context line", &mut old, &mut new).unwrap();
+        assert_eq!(dl.kind, DiffLineKind::Context);
+        assert_eq!(dl.content, "context line");
+        assert_eq!(dl.old_lineno, Some(5));
+        assert_eq!(dl.new_lineno, Some(5));
+        assert_eq!(old, 6);
+        assert_eq!(new, 6);
+    }
+
+    #[test]
+    fn classify_hunk_line_empty_is_context() {
+        let mut old = 1;
+        let mut new = 1;
+        let dl = classify_hunk_line("", &mut old, &mut new).unwrap();
+        assert_eq!(dl.kind, DiffLineKind::Context);
+        assert_eq!(dl.content, "");
+    }
+
+    #[test]
+    fn classify_hunk_line_unrecognized_returns_none() {
+        let mut old = 1;
+        let mut new = 1;
+        assert!(classify_hunk_line("No newline at end of file", &mut old, &mut new).is_none());
+    }
+
+    #[test]
+    fn count_file_changes_mixed() {
+        let file = FileDiff {
+            new_path: "test.rs".into(),
+            hunks: vec![DiffHunk {
+                new_start: 1,
+                lines: vec![
+                    DiffLine {
+                        kind: DiffLineKind::Context,
+                        old_lineno: Some(1),
+                        new_lineno: Some(1),
+                        content: "ctx".into(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Deletion,
+                        old_lineno: Some(2),
+                        new_lineno: None,
+                        content: "old".into(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        old_lineno: None,
+                        new_lineno: Some(2),
+                        content: "new1".into(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        old_lineno: None,
+                        new_lineno: Some(3),
+                        content: "new2".into(),
+                    },
+                ],
+            }],
+        };
+        let (adds, dels) = count_file_changes(&file);
+        assert_eq!(adds, 2);
+        assert_eq!(dels, 1);
+    }
+
+    #[test]
+    fn count_file_changes_empty() {
+        let file = FileDiff {
+            new_path: "empty.rs".into(),
+            hunks: vec![],
+        };
+        let (adds, dels) = count_file_changes(&file);
+        assert_eq!(adds, 0);
+        assert_eq!(dels, 0);
+    }
+
+    #[test]
+    fn toggle_collapsed_inserts_and_removes() {
+        let mut set = HashSet::new();
+        toggle_collapsed(&mut set, 3);
+        assert!(set.contains(&3));
+        toggle_collapsed(&mut set, 3);
+        assert!(!set.contains(&3));
+    }
+
+    #[test]
     fn build_side_by_side_pairs_context_lines() {
         let lines = vec![DiffLine {
             kind: DiffLineKind::Context,

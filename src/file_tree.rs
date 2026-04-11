@@ -122,3 +122,95 @@ fn scan_directory(
 
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(name: &str, children: Vec<FileEntry>) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: PathBuf::from(name),
+            is_dir: true,
+            is_ignored: false,
+            children,
+        }
+    }
+
+    fn file(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: PathBuf::from(name),
+            is_dir: false,
+            is_ignored: false,
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn collapse_single_child_chain() {
+        // src -> main -> java -> App.java  =>  src/main/java/App.java (file)
+        let tree = vec![dir(
+            "src",
+            vec![dir("main", vec![dir("java", vec![file("App.java")])])],
+        )];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].name, "src/main/java/App.java");
+        assert!(!collapsed[0].is_dir);
+    }
+
+    #[test]
+    fn collapse_stops_at_multiple_children() {
+        // src -> main -> {Foo.rs, Bar.rs}
+        let tree = vec![dir(
+            "src",
+            vec![dir("main", vec![file("Foo.rs"), file("Bar.rs")])],
+        )];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].name, "src/main");
+        assert!(collapsed[0].is_dir);
+        assert_eq!(collapsed[0].children.len(), 2);
+    }
+
+    #[test]
+    fn collapse_preserves_flat_structure() {
+        let tree = vec![file("README.md"), file("Cargo.toml")];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed.len(), 2);
+        assert_eq!(collapsed[0].name, "README.md");
+    }
+
+    #[test]
+    fn collapse_propagates_ignored_flag() {
+        let mut parent = dir("vendor", vec![dir("lib", vec![file("x.js")])]);
+        parent.is_ignored = true;
+        let collapsed = collapse_single_child_dirs(vec![parent]);
+        assert!(collapsed[0].is_ignored);
+    }
+
+    #[test]
+    fn collapse_file_is_identity() {
+        let f = file("hello.txt");
+        let result = collapse_entry(f);
+        assert_eq!(result.name, "hello.txt");
+        assert!(!result.is_dir);
+    }
+
+    #[test]
+    fn collapse_dir_with_mixed_children() {
+        // src -> {lib (dir with files), main.rs (file)}
+        let tree = vec![dir(
+            "src",
+            vec![
+                dir("lib", vec![file("a.rs"), file("b.rs")]),
+                file("main.rs"),
+            ],
+        )];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed[0].name, "src");
+        assert!(collapsed[0].is_dir);
+        assert_eq!(collapsed[0].children.len(), 2);
+    }
+}

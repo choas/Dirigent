@@ -81,6 +81,7 @@ impl DirigentApp {
 
         if close {
             self.claude.show_log = None;
+            self.claude.conversation_history.clear();
         }
 
         if let Some(reply) = reply_send {

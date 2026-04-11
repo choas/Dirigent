@@ -65,12 +65,59 @@ fn which(name: &str) -> Option<String> {
     None
 }
 
+/// Validate `agent_shell_init` against common dangerous patterns.
+/// The field is intentionally shell code (e.g. `source ~/.nvm/nvm.sh`), so we
+/// cannot restrict by character set.  Instead we reject known dangerous commands
+/// that have no legitimate place in an init snippet.
+fn validate_shell_init(init: &str) -> bool {
+    if init.is_empty() {
+        return true;
+    }
+    let lower = init.to_ascii_lowercase();
+    // Reject network exfiltration / code download patterns.
+    let blocked = [
+        "curl ",
+        "curl\t",
+        "wget ",
+        "wget\t",
+        "nc ",
+        "nc\t",
+        "ncat ",
+        "python -c",
+        "python3 -c",
+        "ruby -e",
+        "perl -e",
+        "php -r",
+        "bash -i",
+        "zsh -i",
+        "/dev/tcp/",
+        "/dev/udp/",
+        "mkfifo",
+        "telnet ",
+        "xterm ",
+    ];
+    for pat in &blocked {
+        if lower.contains(pat) {
+            return false;
+        }
+    }
+    true
+}
+
 pub(crate) fn load_settings(project_root: &Path) -> Settings {
     let path = project_root.join(".Dirigent").join("settings.json");
     let mut settings = match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => Settings::default(),
     };
+    // Reject shell_init values that contain known dangerous patterns.
+    if !validate_shell_init(&settings.agent_shell_init) {
+        eprintln!(
+            "[settings] rejecting agent_shell_init with blocked command pattern: {:?}",
+            settings.agent_shell_init
+        );
+        settings.agent_shell_init = String::new();
+    }
     // Auto-detect CLI paths on first launch (when paths are empty)
     if settings.claude_cli_path.is_empty() {
         settings.claude_cli_path = which("claude").unwrap_or_default();

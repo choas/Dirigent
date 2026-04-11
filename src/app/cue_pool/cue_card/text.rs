@@ -26,8 +26,8 @@ struct InlineFileRef {
 fn file_ref_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        // Optional "Dirigent:" prefix, path with at least one `/`, file extension, `:line`.
-        Regex::new(r"(?:Dirigent:)?((?:[\w.\-]+/)+[\w.\-]+\.\w+):(\d+)")
+        // Optional "Dirigent:" prefix, optional directories, file extension, `:line`.
+        Regex::new(r"(?:Dirigent:)?((?:[\w.\-]+/)*[\w.\-]+\.\w+):(\d+)")
             .expect("hardcoded file-reference regex")
     })
 }

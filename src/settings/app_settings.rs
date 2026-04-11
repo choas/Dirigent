@@ -95,6 +95,40 @@ pub(crate) struct Settings {
     pub allow_dangerous_skip_permissions: bool,
 }
 
+/// Common per-provider fields extracted from [`Settings`].
+pub(crate) struct ProviderFields<'a> {
+    pub model: &'a str,
+    pub cli_path: &'a str,
+    pub extra_args: &'a str,
+    pub env_vars: &'a str,
+    pub pre_run_script: &'a str,
+    pub post_run_script: &'a str,
+}
+
+impl Settings {
+    /// Return the provider-specific fields for the given CLI provider.
+    pub(crate) fn provider_fields(&self, provider: &CliProvider) -> ProviderFields<'_> {
+        match provider {
+            CliProvider::Claude => ProviderFields {
+                model: &self.claude_model,
+                cli_path: &self.claude_cli_path,
+                extra_args: &self.claude_extra_args,
+                env_vars: &self.claude_env_vars,
+                pre_run_script: &self.claude_pre_run_script,
+                post_run_script: &self.claude_post_run_script,
+            },
+            CliProvider::OpenCode => ProviderFields {
+                model: &self.opencode_model,
+                cli_path: &self.opencode_cli_path,
+                extra_args: &self.opencode_extra_args,
+                env_vars: &self.opencode_env_vars,
+                pre_run_script: &self.opencode_pre_run_script,
+                post_run_script: &self.opencode_post_run_script,
+            },
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }

@@ -1087,6 +1087,7 @@ def build_fix_prompt(
         f"You are a code quality agent for a {tools.lang_name} project.",
         "Fix ALL of the following issues. Do not change any functionality --",
         "only improve code quality. After each fix, ensure the code still compiles/runs.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
     ]
     if sonar:
@@ -1122,6 +1123,7 @@ def build_dedup_prompt(tools: ToolCommands, dup_group: list[str]) -> str:
         "Reduce code duplication as described below. Extract shared logic into",
         "functions, modules, or helper methods. Do not change any functionality.",
         "After each change, ensure the code still compiles/runs.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
         "== SonarQube duplications ==",
     ]
@@ -1145,6 +1147,7 @@ def _build_compile_fix_prompt(tools: ToolCommands, test_output: str) -> str:
         "The code is failing to compile or tests are failing after recent changes.",
         "Fix the compilation/test errors below. Do not change any functionality",
         "beyond what is needed to fix these errors.",
+        "IMPORTANT: Do NOT run git commit. Only edit the files -- the caller handles committing.",
         "",
         "== Build/test errors ==",
         test_output,
@@ -1168,24 +1171,140 @@ def _get_dirty_files() -> set[str]:
     return set(result.stdout.strip().splitlines()) if result.stdout.strip() else set()
 
 
+def _iteration_state_path() -> Path:
+    """Path to the file that persists the last completed iteration number."""
+    import hashlib
+    cwd = str(Path.cwd().resolve())
+    path_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
+    repo_id = f"{Path.cwd().name}_{path_hash}"
+    state_dir = Path.home() / ".cache" / "quality_loop"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / f"iteration_{repo_id}.txt"
+
+
 def _detect_last_iteration() -> int:
-    """Detect the last quality loop iteration number from git log. Returns 0 if none found."""
+    """Detect the last quality loop iteration number.
+
+    Uses three signals (highest wins):
+    1. Git log marker commits ("quality loop iteration N")
+    2. Persisted state file (guards against Claude committing with its own messages)
+    3. Orphan commit detection: counts non-marker commits after the last marker
+       that look like Claude Code output, grouped by time proximity (gap > 10 min
+       = separate iteration). This catches iterations where Claude committed on
+       its own and no marker was written.
+    """
+    from datetime import datetime
+
+    # --- Signal 1: git log markers ---
+    git_highest = 0
+    marker_sha = ""
     result = subprocess.run(
-        ["git", "log", "--oneline", "-50"],
+        ["git", "log", "--format=%H %s", "-50"],
         check=False, capture_output=True, text=True,
     )
-    if result.returncode != 0 or not result.stdout:
-        return 0
-    highest = 0
-    for line in result.stdout.splitlines():
-        m = re.search(r"quality loop iteration (\d+)", line)
-        if m:
-            highest = max(highest, int(m.group(1)))
+    if result.returncode == 0 and result.stdout:
+        for line in result.stdout.splitlines():
+            m = re.search(r"quality loop iteration (\d+)", line)
+            if m:
+                n = int(m.group(1))
+                if n > git_highest:
+                    git_highest = n
+                    marker_sha = line.split()[0]
+
+    # --- Signal 2: persisted state file ---
+    file_highest = 0
+    state_path = _iteration_state_path()
+    if state_path.exists():
+        try:
+            file_highest = int(state_path.read_text().strip())
+        except (ValueError, OSError):
+            pass
+
+    # --- Signal 3: orphan commit detection (timestamp grouping) ---
+    orphan_highest = 0
+    if git_highest > 0 and marker_sha:
+        gap_result = subprocess.run(
+            ["git", "log", "--format=%aI %s", f"{marker_sha}..HEAD"],
+            check=False, capture_output=True, text=True,
+        )
+        if gap_result.returncode == 0 and gap_result.stdout:
+            # Collect timestamps of commits that look like Claude Code output
+            _skip = ("Dirigent:", "Merge", "release:", "docs:", "quality loop", "quality_loop")
+            timestamps: list[datetime] = []
+            for line in gap_result.stdout.splitlines():
+                parts = line.split(" ", 1)
+                if len(parts) < 2:
+                    continue
+                ts_str, msg = parts
+                if any(p in msg for p in _skip):
+                    continue
+                if re.match(r"(feat|fix|chore|refactor):", msg):
+                    try:
+                        timestamps.append(datetime.fromisoformat(ts_str))
+                    except ValueError:
+                        pass
+
+            if timestamps:
+                timestamps.sort()
+                groups = 1
+                for i in range(1, len(timestamps)):
+                    gap_seconds = abs((timestamps[i] - timestamps[i - 1]).total_seconds())
+                    if gap_seconds > 600:  # 10-minute gap = new iteration
+                        groups += 1
+                orphan_highest = git_highest + groups
+                print(f"  [note] Found {len(timestamps)} orphan commit(s) after marker {git_highest} "
+                      f"({groups} estimated iteration(s) by timestamp grouping)")
+
+    highest = max(git_highest, file_highest, orphan_highest)
+    if file_highest > git_highest and file_highest > 0:
+        print(f"  [note] git log shows iteration {git_highest}, but state file has {file_highest} -- using {highest}")
     return highest
 
 
-def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
-    """Commit and push changes. Returns True if push succeeded."""
+def _save_iteration(iteration: int) -> None:
+    """Persist the last completed iteration number to disk (atomic write)."""
+    target = _iteration_state_path()
+    tmp = target.with_suffix(".tmp")
+    try:
+        with tmp.open("w") as fd:
+            fd.write(str(iteration))
+            fd.flush()
+            os.fsync(fd.fileno())
+        tmp.replace(target)
+    except OSError as exc:
+        print(f"  [error] failed to save iteration state: {exc}")
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None, sha_before: str = "") -> bool:
+    """Commit and push changes. Returns True if push succeeded.
+
+    If sha_before is provided and Claude Code has made its own commits since
+    that SHA, those commits are soft-reset and re-committed under a single
+    quality-loop marker commit so that iteration detection stays accurate.
+    """
+    # Detect commits Claude Code made on its own (despite the "do not commit" instruction)
+    claude_committed = False
+    if sha_before:
+        current = current_sha()
+        if current != sha_before:
+            count_result = run(
+                ["git", "rev-list", "--count", f"{sha_before}..HEAD"],
+                check=False, capture=True,
+            )
+            n_commits = int(count_result.stdout.strip()) if count_result.returncode == 0 else 0
+            if n_commits > 0:
+                print(f"  [note] Claude Code created {n_commits} commit(s) -- squashing into quality loop marker.")
+                reset_result = run(["git", "reset", "--soft", sha_before], check=False)
+                if reset_result.returncode != 0:
+                    print("  [error] git reset --soft failed -- aborting squash.")
+                    return False
+                claude_committed = True
+
     if files_to_stage:
         result = run(["git", "add", "--"] + files_to_stage, check=False)
     else:
@@ -1197,7 +1316,7 @@ def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None) 
         ["git", "diff", "--cached", "--quiet"],
         check=False,
     )
-    if result.returncode == 0:
+    if result.returncode == 0 and not claude_committed:
         print("  Nothing to commit -- skipping push.")
         return False
     result = run(["git", "commit", "-m", f"chore: quality loop iteration {iteration}"], check=False)
@@ -1319,10 +1438,12 @@ def _apply_fixes(cfg: Config, prompt: str, iteration: int) -> None:
             fmt_fix(cfg.tools)
 
 
-def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None) -> bool:
+def _commit_and_wait(cfg: Config, iteration: int, files_to_stage: Optional[list[str]] = None,
+                     sha_before_claude: str = "") -> bool:
     """Commit, push, and wait for CI/CodeRabbit if the push succeeded."""
     sha_before = current_sha()
-    pushed = git_commit_push(iteration, files_to_stage=files_to_stage)
+    pushed = git_commit_push(iteration, files_to_stage=files_to_stage,
+                             sha_before=sha_before_claude or sha_before)
     sha_after = current_sha()
 
     if sha_before == sha_after:
@@ -1411,6 +1532,7 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
 
     print(f"\n  Total issues: {total} ({signals.main_total} main + {signals.dup_total} duplication).")
 
+    sha_before_claude = current_sha()
     dirty_before = _get_dirty_files()
 
     # --- Main Claude call: sonar issues, hotspots, lint, fmt, coderabbit ---
@@ -1444,12 +1566,15 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
     dirty_after = _get_dirty_files()
     new_files = sorted(dirty_after - dirty_before)
 
-    new_cr_since = datetime.now(timezone.utc).isoformat()
-    pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None)
+    pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None,
+                              sha_before_claude=sha_before_claude)
     if pushed:
+        new_cr_since = datetime.now(timezone.utc).isoformat()
         _save_cr_since(cfg, new_cr_since)
+        _save_iteration(iteration)
+        return new_cr_since
 
-    return new_cr_since
+    return cr_since
 
 
 def main() -> None:
@@ -1459,7 +1584,7 @@ def main() -> None:
     cfg = build_config(args)
 
     if cfg.start_iteration > 1:
-        print(f"  Resuming from iteration {cfg.start_iteration} (detected from git log)")
+        print(f"  Resuming from iteration {cfg.start_iteration} (detected from git log / state file)")
 
     if cfg.dry_run:
         print("[dry-run] No Claude Code invocations or git pushes will happen.")

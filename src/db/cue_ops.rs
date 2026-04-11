@@ -61,6 +61,11 @@ impl Database {
         Ok(id)
     }
 
+    /// Convenience wrapper for creating a cue that is not attached to any file.
+    pub fn insert_global_cue(&self, text: &str) -> Result<i64> {
+        self.insert_cue(text, "", 0, None, &[])
+    }
+
     pub fn update_cue_status(&self, id: i64, status: CueStatus) -> Result<()> {
         self.conn.execute(
             "UPDATE cues SET status = ?1 WHERE id = ?2",

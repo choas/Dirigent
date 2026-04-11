@@ -362,18 +362,20 @@ fn run_workflow_analysis(
 ) -> Result<(WorkflowPlan, Option<String>), String> {
     use crate::settings::CliProvider;
 
+    let pf = settings.provider_fields(provider);
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let response_text = match provider {
         CliProvider::Claude => {
-            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let result = crate::claude::invoke_claude_streaming(
                 prompt,
                 project_root,
-                &settings.claude_model,
-                &settings.claude_cli_path,
-                &settings.claude_extra_args,
-                &settings.claude_env_vars,
-                &settings.claude_pre_run_script,
-                &settings.claude_post_run_script,
+                pf.model,
+                pf.cli_path,
+                pf.extra_args,
+                pf.env_vars,
+                pf.pre_run_script,
+                pf.post_run_script,
                 settings.allow_dangerous_skip_permissions,
                 |_| {},
                 cancel,
@@ -382,14 +384,13 @@ fn run_workflow_analysis(
             result.stdout
         }
         CliProvider::OpenCode => {
-            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let config = crate::opencode::OpenCodeRunConfig {
-                model: &settings.opencode_model,
-                cli_path: &settings.opencode_cli_path,
-                extra_args: &settings.opencode_extra_args,
-                env_vars: &settings.opencode_env_vars,
-                pre_run_script: &settings.opencode_pre_run_script,
-                post_run_script: &settings.opencode_post_run_script,
+                model: pf.model,
+                cli_path: pf.cli_path,
+                extra_args: pf.extra_args,
+                env_vars: pf.env_vars,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
             };
             let result = crate::opencode::invoke_opencode_streaming(
                 prompt,

@@ -300,4 +300,52 @@ mod tests {
         let cue = db.get_cue(id).unwrap().unwrap();
         assert!(cue.attached_images.is_empty());
     }
+
+    // -- clamp_cue_text --
+
+    const CUE_TEXT_LIMIT: usize = 100_000;
+
+    #[test]
+    fn clamp_cue_text_short_string_unchanged() {
+        let text = "short text";
+        assert_eq!(Database::clamp_cue_text(text), text);
+    }
+
+    #[test]
+    fn clamp_cue_text_at_limit_unchanged() {
+        let text = "a".repeat(CUE_TEXT_LIMIT);
+        assert_eq!(Database::clamp_cue_text(&text), text.as_str());
+    }
+
+    #[test]
+    fn clamp_cue_text_over_limit_truncated() {
+        let text = "a".repeat(CUE_TEXT_LIMIT + 100);
+        let clamped = Database::clamp_cue_text(&text);
+        assert_eq!(clamped.len(), CUE_TEXT_LIMIT);
+    }
+
+    #[test]
+    fn clamp_cue_text_respects_utf8_boundary() {
+        // Build a string where the limit falls inside a multi-byte char
+        let mut text = "a".repeat(CUE_TEXT_LIMIT - 1);
+        text.push('\u{00E9}'); // é = 2 bytes, so total = limit + 1
+        text.push('x');
+        let clamped = Database::clamp_cue_text(&text);
+        assert!(clamped.len() <= CUE_TEXT_LIMIT);
+        assert!(clamped.is_char_boundary(clamped.len()));
+        // The é should be excluded since it would straddle the boundary
+        assert_eq!(clamped.len(), CUE_TEXT_LIMIT - 1);
+    }
+
+    // -- CueStatus::label --
+
+    #[test]
+    fn cue_status_label_all_variants() {
+        for status in CueStatus::all() {
+            let label = status.label();
+            assert!(!label.is_empty());
+        }
+        assert_eq!(CueStatus::Inbox.label(), "Inbox");
+        assert_eq!(CueStatus::Done.label(), "Done");
+    }
 }

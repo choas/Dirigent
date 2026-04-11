@@ -8,7 +8,10 @@ pub(super) fn is_skippable_markup(trimmed: &str) -> bool {
         || trimmed.starts_with("</blockquote")
         || trimmed.starts_with("![")
         // Full-line image tags (logos, dividers, badges)
-        || (trimmed.starts_with("<img ") && !trimmed.to_ascii_lowercase().contains("alt=\"action required\""))
+        || (trimmed.starts_with("<img ") && {
+            let lower = trimmed.to_ascii_lowercase();
+            !lower.contains("alt=\"action required\"") && !lower.contains("alt='action required'")
+        })
         || trimmed.starts_with("<br")
         || trimmed == "<br/>"
         || trimmed == "<br />"
@@ -217,6 +220,80 @@ fn decode_html_entity(entity: &str) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_entity_named() {
+        assert_eq!(decode_html_entity("amp"), Some('&'));
+        assert_eq!(decode_html_entity("lt"), Some('<'));
+        assert_eq!(decode_html_entity("gt"), Some('>'));
+        assert_eq!(decode_html_entity("quot"), Some('"'));
+        assert_eq!(decode_html_entity("apos"), Some('\''));
+        assert_eq!(decode_html_entity("nbsp"), Some('\u{00A0}'));
+        assert_eq!(decode_html_entity("mdash"), Some('\u{2014}'));
+    }
+
+    #[test]
+    fn decode_entity_numeric_decimal() {
+        assert_eq!(decode_html_entity("#60"), Some('<'));
+        assert_eq!(decode_html_entity("#62"), Some('>'));
+        assert_eq!(decode_html_entity("#8212"), Some('\u{2014}'));
+    }
+
+    #[test]
+    fn decode_entity_numeric_hex() {
+        assert_eq!(decode_html_entity("#x3C"), Some('<'));
+        assert_eq!(decode_html_entity("#X3E"), Some('>'));
+        assert_eq!(decode_html_entity("#x1F600"), Some('\u{1F600}'));
+    }
+
+    #[test]
+    fn decode_entity_unknown_returns_none() {
+        assert_eq!(decode_html_entity("bogus"), None);
+        assert_eq!(decode_html_entity("#xZZZZ"), None);
+    }
+
+    #[test]
+    fn is_skippable_markup_comments() {
+        assert!(is_skippable_markup("<!-- comment -->"));
+        assert!(is_skippable_markup("<!---->"));
+    }
+
+    #[test]
+    fn is_skippable_markup_structural_tags() {
+        assert!(is_skippable_markup("<sub>text</sub>"));
+        assert!(is_skippable_markup("</sub>"));
+        assert!(is_skippable_markup("<blockquote>"));
+        assert!(is_skippable_markup("<br/>"));
+        assert!(is_skippable_markup("<br />"));
+        assert!(is_skippable_markup("<br>"));
+    }
+
+    #[test]
+    fn is_skippable_markup_images() {
+        assert!(is_skippable_markup(r#"<img src="logo.png" alt="Logo">"#));
+        // "Action required" alt text should NOT be skipped
+        assert!(!is_skippable_markup(
+            r#"<img src="icon.png" alt="Action required">"#
+        ));
+    }
+
+    #[test]
+    fn is_skippable_markup_markdown_images() {
+        assert!(is_skippable_markup("![alt text](image.png)"));
+    }
+
+    #[test]
+    fn is_skippable_markup_link_wrapping_image() {
+        assert!(is_skippable_markup(
+            r#"<a href="url"><img src="logo.png" alt="logo"></a>"#
+        ));
+    }
+
+    #[test]
+    fn is_skippable_markup_normal_text() {
+        assert!(!is_skippable_markup("regular text"));
+        assert!(!is_skippable_markup("<a href='url'>link</a>"));
+    }
 
     #[test]
     fn strip_html_tags_preserves_text() {

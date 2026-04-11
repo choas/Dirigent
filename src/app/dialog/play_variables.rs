@@ -128,7 +128,7 @@ impl DirigentApp {
             })
             .collect();
         let final_prompt = settings::substitute_play_variables(&pending.prompt, &resolved);
-        match self.db.insert_cue(&final_prompt, "", 0, None, &[]) {
+        match self.db.insert_global_cue(&final_prompt) {
             Ok(_) => self.reload_cues(),
             Err(e) => {
                 self.set_status_message(format!("Failed to create cue: {e}"));

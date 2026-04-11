@@ -1,3 +1,6 @@
+/// Maximum number of cues that may run in parallel within a single step.
+const MAX_PARALLEL_CUES: usize = 5;
+
 /// A workflow plan produced by LLM analysis of Inbox cues.
 #[derive(Clone)]
 pub(crate) struct WorkflowPlan {
@@ -29,10 +32,12 @@ pub(crate) enum WorkflowStepStatus {
 impl WorkflowPlan {
     /// Build a workflow plan from parsed LLM JSON output.
     pub fn from_steps(steps: Vec<WorkflowStep>) -> Self {
-        WorkflowPlan {
+        let mut plan = WorkflowPlan {
             steps,
             current_step: 0,
-        }
+        };
+        plan.enforce_parallel_limit();
+        plan
     }
 
     /// Build a simple sequential fallback plan (one cue per step).
@@ -53,6 +58,38 @@ impl WorkflowPlan {
             steps,
             current_step: 0,
         }
+    }
+
+    /// Split any step with more than `MAX_PARALLEL_CUES` cues into multiple
+    /// consecutive steps of at most that size, preserving order and metadata.
+    fn enforce_parallel_limit(&mut self) {
+        let mut new_steps = Vec::with_capacity(self.steps.len());
+        for step in self.steps.drain(..) {
+            if step.cue_ids.len() <= MAX_PARALLEL_CUES {
+                new_steps.push(step);
+            } else {
+                for chunk in step.cue_ids.chunks(MAX_PARALLEL_CUES) {
+                    new_steps.push(WorkflowStep {
+                        id: 0, // re-indexed below
+                        cue_ids: chunk.to_vec(),
+                        label: step.label.clone(),
+                        rationale: step.rationale.clone(),
+                        pause_after: false,
+                        status: step.status,
+                    });
+                }
+                // Preserve pause_after only on the last sub-step.
+                if step.pause_after {
+                    if let Some(last) = new_steps.last_mut() {
+                        last.pause_after = true;
+                    }
+                }
+            }
+        }
+        for (i, s) in new_steps.iter_mut().enumerate() {
+            s.id = i;
+        }
+        self.steps = new_steps;
     }
 
     /// Check if all steps are completed.
@@ -107,9 +144,13 @@ pub(crate) fn build_workflow_prompt(cues: &[crate::db::Cue]) -> String {
          Rules:\n\
          - Every cue ID listed above MUST appear exactly once in the output.\n\
          - Minimize the number of sequential steps (maximize parallelism where safe).\n\
-         - A step with multiple cue_ids means those cues run in parallel.\n\
-         - Order steps so that dependencies are respected.\n",
+         - A step with multiple cue_ids means those cues run in parallel.\n",
     );
+    prompt.push_str(&format!(
+        "         - Each step may contain at most {} cue_ids. Split larger groups into separate steps.\n\
+         - Order steps so that dependencies are respected.\n",
+        MAX_PARALLEL_CUES,
+    ));
     prompt
 }
 

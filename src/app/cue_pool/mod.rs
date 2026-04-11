@@ -107,8 +107,10 @@ impl DirigentApp {
         };
         let vars = settings::parse_play_variables(&prompt);
         if vars.is_empty() {
-            let _ = self.db.insert_cue(&prompt, "", 0, None, &[]);
-            self.reload_cues();
+            match self.db.insert_global_cue(&prompt) {
+                Ok(_) => self.reload_cues(),
+                Err(e) => self.set_status_message(format!("Failed to create cue: {}", e)),
+            }
             return;
         }
         let mut auto_resolved = HashMap::new();
@@ -139,8 +141,10 @@ impl DirigentApp {
                 .map(|(i, v)| (v.token.clone(), auto_resolved[&i].clone()))
                 .collect();
             let final_prompt = settings::substitute_play_variables(&prompt, &resolved);
-            let _ = self.db.insert_cue(&final_prompt, "", 0, None, &[]);
-            self.reload_cues();
+            match self.db.insert_global_cue(&final_prompt) {
+                Ok(_) => self.reload_cues(),
+                Err(e) => self.set_status_message(format!("Failed to create cue: {}", e)),
+            }
         } else {
             self.pending_play = Some(PendingPlay {
                 prompt,

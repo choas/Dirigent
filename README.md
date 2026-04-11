@@ -80,7 +80,22 @@ cd Dirigent
 cargo build --release
 ```
 
-The binary will be at `target/release/Dirigent`.
+The binary will be at `target/release/dirigent`.
+
+### Install to PATH
+
+If `~/.cargo/bin` is in your PATH (the Rust default), install Dirigent as a CLI command:
+
+```bash
+cargo install --path .
+```
+
+Then run from anywhere:
+
+```bash
+dirigent /path/to/your/project
+dirigent .
+```
 
 ### macOS .app bundle
 

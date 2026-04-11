@@ -79,7 +79,20 @@ fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Ve
         if should_skip_comment(body) {
             continue;
         }
-        let path = comment.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let raw_path = comment.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        // Reject paths with traversal components or absolute paths from the API.
+        let path = if std::path::Path::new(raw_path).components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        }) {
+            ""
+        } else {
+            raw_path
+        };
         let line = comment
             .get("line")
             .or_else(|| comment.get("original_line"))
