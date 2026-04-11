@@ -144,10 +144,13 @@ pub(crate) fn build_workflow_prompt(cues: &[crate::db::Cue]) -> String {
          Rules:\n\
          - Every cue ID listed above MUST appear exactly once in the output.\n\
          - Minimize the number of sequential steps (maximize parallelism where safe).\n\
-         - A step with multiple cue_ids means those cues run in parallel.\n\
-         - Each step may contain at most {MAX_PARALLEL_CUES} cue_ids. Split larger groups into separate steps.\n\
-         - Order steps so that dependencies are respected.\n",
+         - A step with multiple cue_ids means those cues run in parallel.\n",
     );
+    prompt.push_str(&format!(
+        "         - Each step may contain at most {} cue_ids. Split larger groups into separate steps.\n\
+         - Order steps so that dependencies are respected.\n",
+        MAX_PARALLEL_CUES,
+    ));
     prompt
 }
 

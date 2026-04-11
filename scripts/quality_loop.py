@@ -1177,7 +1177,9 @@ def _iteration_state_path() -> Path:
     cwd = str(Path.cwd().resolve())
     path_hash = hashlib.sha256(cwd.encode()).hexdigest()[:12]
     repo_id = f"{Path.cwd().name}_{path_hash}"
-    return Path(f"/tmp/quality_loop_iteration_{repo_id}.txt")
+    state_dir = Path.home() / ".cache" / "quality_loop"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / f"iteration_{repo_id}.txt"
 
 
 def _detect_last_iteration() -> int:
@@ -1260,8 +1262,11 @@ def _detect_last_iteration() -> int:
 
 
 def _save_iteration(iteration: int) -> None:
-    """Persist the last completed iteration number to disk."""
-    _iteration_state_path().write_text(str(iteration))
+    """Persist the last completed iteration number to disk (atomic write)."""
+    target = _iteration_state_path()
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(str(iteration))
+    tmp.replace(target)
 
 
 def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None, sha_before: str = "") -> bool:
@@ -1283,7 +1288,10 @@ def git_commit_push(iteration: int, files_to_stage: Optional[list[str]] = None, 
             n_commits = int(count_result.stdout.strip()) if count_result.returncode == 0 else 0
             if n_commits > 0:
                 print(f"  [note] Claude Code created {n_commits} commit(s) -- squashing into quality loop marker.")
-                run(["git", "reset", "--soft", sha_before], check=False)
+                reset_result = run(["git", "reset", "--soft", sha_before], check=False)
+                if reset_result.returncode != 0:
+                    print("  [error] git reset --soft failed -- aborting squash.")
+                    return False
                 claude_committed = True
 
     if files_to_stage:

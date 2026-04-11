@@ -55,7 +55,7 @@ impl DirigentApp {
     fn log_lsp_error(&mut self, result: Result<(), String>) {
         if let Err(e) = result {
             eprintln!("[lsp] {}", e);
-            self.lsp.status_log.push(e);
+            self.lsp.log(e);
         }
     }
 
@@ -413,15 +413,16 @@ impl DirigentApp {
     }
 
     fn render_lsp_status_log(&self, ui: &mut egui::Ui) {
-        if !self.lsp.status_log.is_empty() {
+        if !self.lsp.status_log().is_empty() {
             ui.add_space(SPACE_SM);
             ui.label(
                 egui::RichText::new("Status Log")
                     .small()
                     .color(self.semantic.secondary_text),
             );
-            let start = self.lsp.status_log.len().saturating_sub(5);
-            for entry in &self.lsp.status_log[start..] {
+            let log = self.lsp.status_log();
+            let start = log.len().saturating_sub(5);
+            for entry in &log[start..] {
                 ui.label(egui::RichText::new(entry).small().monospace());
             }
         }

@@ -8,7 +8,10 @@ pub(super) fn is_skippable_markup(trimmed: &str) -> bool {
         || trimmed.starts_with("</blockquote")
         || trimmed.starts_with("![")
         // Full-line image tags (logos, dividers, badges)
-        || (trimmed.starts_with("<img ") && !trimmed.to_ascii_lowercase().contains("alt=\"action required\""))
+        || (trimmed.starts_with("<img ") && {
+            let lower = trimmed.to_ascii_lowercase();
+            !lower.contains("alt=\"action required\"") && !lower.contains("alt='action required'")
+        })
         || trimmed.starts_with("<br")
         || trimmed == "<br/>"
         || trimmed == "<br />"

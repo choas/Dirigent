@@ -135,10 +135,10 @@ impl Database {
         Ok(map)
     }
 
-    /// Get executions for a cue (most recent 100), ordered by id (oldest first).
+    /// Get all executions for a cue, ordered by id (oldest first).
     pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM (SELECT * FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 100) ORDER BY id ASC",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], row_to_execution)?;
         let mut execs = Vec::new();

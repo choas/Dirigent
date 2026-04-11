@@ -449,7 +449,7 @@ impl DirigentApp {
         if settings.lsp_enabled {
             if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
                 eprintln!("[lsp] Failed to start servers: {}", e);
-                lsp_manager.status_log.push(e);
+                lsp_manager.log(e);
             }
         }
 
@@ -807,8 +807,12 @@ impl DirigentApp {
     fn dismiss_central_overlays(&mut self) {
         self.show_settings = false;
         self.diff_review = None;
+        // Only clear conversation history when dismissing the log overlay, not
+        // when opening it (process_show_running_log loads history first).
+        if self.claude.show_log.is_some() {
+            self.claude.conversation_history.clear();
+        }
         self.claude.show_log = None;
-        self.claude.conversation_history.clear();
         self.agent_state.show_output = None;
         self.show_agent_runs_for_cue = None;
         // workflow_plan is NOT cleared here — it stays until explicitly cancelled.

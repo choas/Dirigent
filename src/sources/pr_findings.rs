@@ -84,7 +84,9 @@ fn process_inline_comments(comments: &[serde_json::Value], pr_number: u32) -> Ve
         let path = if std::path::Path::new(raw_path).components().any(|c| {
             matches!(
                 c,
-                std::path::Component::ParentDir | std::path::Component::RootDir
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
             )
         }) {
             ""

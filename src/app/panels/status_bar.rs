@@ -201,10 +201,10 @@ impl DirigentApp {
         }
     }
 
-    /// Render right-aligned info (memory usage, total cost) in the status bar.
+    /// Render right-aligned info (memory usage) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
         let mem = get_memory_usage_mb();
-        if self.cached_total_cost > 0.0 || mem.is_some() {
+        if mem.is_some() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(mb) = mem {
                     ui.label(
@@ -214,18 +214,6 @@ impl DirigentApp {
                             .color(self.semantic.muted_text()),
                     )
                     .on_hover_text("Process memory (RSS)");
-                }
-                if self.cached_total_cost > 0.0 {
-                    if mem.is_some() {
-                        ui.separator();
-                    }
-                    ui.label(
-                        egui::RichText::new(format!("${:.2}", self.cached_total_cost))
-                            .monospace()
-                            .small()
-                            .color(self.semantic.muted_text()),
-                    )
-                    .on_hover_text("Total project cost across all runs");
                 }
             });
         }

@@ -474,7 +474,9 @@ fn sonar_component_to_path(component: &str) -> String {
     if std::path::Path::new(path).components().any(|c| {
         matches!(
             c,
-            std::path::Component::ParentDir | std::path::Component::RootDir
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
         )
     }) {
         eprintln!(

@@ -809,33 +809,46 @@ fn heading_to_slug(segments: &[TextSegment]) -> String {
 }
 
 /// Walk all blocks (recursively) and find the 0-based heading index whose slug matches `anchor`.
+/// Handles duplicate headings using GitHub-style disambiguation: the first occurrence of a slug
+/// is bare, the second gets `-1`, the third `-2`, etc.
 fn find_heading_index_by_slug(blocks: &[MarkdownBlock], anchor: &str) -> Option<usize> {
     let mut counter = 0usize;
-    find_heading_in_blocks(blocks, anchor, &mut counter)
+    let mut slug_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    find_heading_in_blocks(blocks, anchor, &mut counter, &mut slug_counts)
 }
 
 fn find_heading_in_blocks(
     blocks: &[MarkdownBlock],
     anchor: &str,
     counter: &mut usize,
+    slug_counts: &mut std::collections::HashMap<String, usize>,
 ) -> Option<usize> {
     for block in blocks {
         match block {
             MarkdownBlock::Heading { segments, .. } => {
-                if heading_to_slug(segments) == anchor {
+                let base_slug = heading_to_slug(segments);
+                let occurrence = slug_counts.entry(base_slug.clone()).or_insert(0);
+                let actual_slug = if *occurrence == 0 {
+                    base_slug
+                } else {
+                    format!("{}-{}", base_slug, occurrence)
+                };
+                *occurrence += 1;
+                if actual_slug == anchor {
                     return Some(*counter);
                 }
                 *counter += 1;
             }
             MarkdownBlock::List { items, .. } => {
                 for item in items {
-                    if let Some(idx) = find_heading_in_blocks(item, anchor, counter) {
+                    if let Some(idx) = find_heading_in_blocks(item, anchor, counter, slug_counts) {
                         return Some(idx);
                     }
                 }
             }
             MarkdownBlock::BlockQuote { blocks } => {
-                if let Some(idx) = find_heading_in_blocks(blocks, anchor, counter) {
+                if let Some(idx) = find_heading_in_blocks(blocks, anchor, counter, slug_counts) {
                     return Some(idx);
                 }
             }

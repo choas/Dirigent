@@ -14,7 +14,7 @@ IDENTITY ?= $(CODESIGN_IDENTITY)
 APPLE_ID ?= $(NOTARIZE_APPLE_ID)
 TEAM_ID ?= $(NOTARIZE_TEAM_ID)
 
-.PHONY: build install bundle sign dmg notarize clean
+.PHONY: all test build install bundle sign dmg notarize clean
 
 build:
 	cargo build --release

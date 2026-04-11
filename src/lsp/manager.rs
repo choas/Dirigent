@@ -72,7 +72,7 @@ pub(crate) struct LspManager {
     /// Servers that have completed initialization.
     initialized: HashMap<String, bool>,
     /// Log of LSP status messages (server_name -> latest status).
-    pub status_log: Vec<String>,
+    status_log: Vec<String>,
     /// Per-server error messages (server_name -> error string). Cleared on successful start.
     pub failed_servers: HashMap<String, String>,
     /// Servers pending graceful shutdown: name -> (shutdown_request_id, when_initiated).
@@ -119,12 +119,17 @@ const STATUS_LOG_CAP: usize = 200;
 #[allow(dead_code)]
 impl LspManager {
     /// Append a status message, evicting the oldest entries when the cap is reached.
-    fn log(&mut self, msg: String) {
+    pub(crate) fn log(&mut self, msg: String) {
         if self.status_log.len() >= STATUS_LOG_CAP {
             let drain_count = STATUS_LOG_CAP / 2;
             self.status_log.drain(..drain_count);
         }
         self.status_log.push(msg);
+    }
+
+    /// Read-only access to the status log.
+    pub(crate) fn status_log(&self) -> &[String] {
+        &self.status_log
     }
 
     pub fn new(project_root: PathBuf, shell_init: &str) -> Self {
