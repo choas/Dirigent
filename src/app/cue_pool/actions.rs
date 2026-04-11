@@ -177,6 +177,14 @@ impl DirigentApp {
         self.follow_up_queue.remove(&id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
+        self.reply_inputs.remove(&id);
+        self.cue_move_flash.remove(&id);
+        self.latest_exec_cache.remove(&id);
+        self.cue_warnings.remove(&id);
+        self.tag_inputs.remove(&id);
+        self.claude.running_logs.remove(&id);
+        self.claude.exec_ids.remove(&id);
+        self.claude.start_times.remove(&id);
         let _ = self.db.delete_cue(id);
     }
 

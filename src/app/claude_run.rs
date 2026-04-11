@@ -618,6 +618,7 @@ impl DirigentApp {
         if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
             let _ = self.db.update_execution_log(result.exec_id, log_text);
         }
+        self.claude.running_logs.remove(&result.cue_id);
         self.claude.exec_ids.remove(&result.cue_id);
         self.claude.start_times.remove(&result.cue_id);
     }

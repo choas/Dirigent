@@ -808,6 +808,7 @@ impl DirigentApp {
         self.show_settings = false;
         self.diff_review = None;
         self.claude.show_log = None;
+        self.claude.conversation_history.clear();
         self.agent_state.show_output = None;
         self.show_agent_runs_for_cue = None;
         // workflow_plan is NOT cleared here — it stays until explicitly cancelled.
