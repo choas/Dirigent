@@ -348,7 +348,12 @@ impl DirigentApp {
             .iter()
             .map(|c| format!("- {}", c.text.trim()))
             .collect();
-        let commit_msg = format!("{}\n\n{}", subject, cue_details.join("\n\n"),);
+        let commit_msg = format!(
+            "{}\n\n{}\n\n{}",
+            subject,
+            cue_details.join("\n\n"),
+            git::DIRIGENT_FOOTER,
+        );
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
         match git::commit_all(&self.project_root, &commit_msg) {
             Ok(hash) => {

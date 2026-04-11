@@ -1,11 +1,16 @@
 use std::path::Path;
 
+use commitlint_rs::message::Message as LintMessage;
+use commitlint_rs::rule::Rules as LintRules;
 use git2::{BranchType, Repository, Signature};
 
 use crate::error::DirigentError;
 
 use super::diff::parse_diff_paths;
 use super::merge::stage_files;
+
+/// Footer appended to every Dirigent-generated commit message.
+pub(crate) const DIRIGENT_FOOTER: &str = "Dirigent: https://github.com/choas/Dirigent";
 
 /// Strategy for resolving diverged branches during pull.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,21 +148,153 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
     )
 }
 
-pub(crate) fn generate_commit_message(cue_text: &str) -> String {
-    let summary = if cue_text.len() > 68 {
-        format!("{}...", crate::app::truncate_str(cue_text, 65))
+/// Detect the conventional commit type from cue text using keyword heuristics.
+pub(crate) fn detect_commit_type(text: &str) -> &'static str {
+    let lower = text.to_lowercase();
+    let first_word = lower.split_whitespace().next().unwrap_or("");
+
+    // If the text already starts with a known conventional type prefix, use it.
+    for &ct in CONVENTIONAL_TYPES {
+        if first_word == ct
+            || first_word.starts_with(&format!("{ct}:"))
+            || first_word.starts_with(&format!("{ct}("))
+        {
+            return ct;
+        }
+    }
+
+    // Keyword-based heuristics (order matters — more specific first).
+    if lower.contains("fix") || lower.contains("bug") || lower.contains("crash") {
+        "fix"
+    } else if lower.contains("refactor")
+        || lower.contains("rename")
+        || lower.contains("move ")
+        || lower.contains("extract")
+    {
+        "refactor"
+    } else if lower.contains("readme")
+        || lower.contains("documentation")
+        || lower.starts_with("doc")
+    {
+        "docs"
+    } else if lower.contains("test") {
+        "test"
+    } else if lower.contains("format") || lower.contains("whitespace") || lower.contains("lint") {
+        "style"
+    } else if lower.contains("performance") || lower.contains("optimiz") || lower.contains("speed")
+    {
+        "perf"
+    } else if lower.contains("dependenc") || lower.contains("upgrade") || lower.contains("cargo") {
+        "build"
+    } else if lower.contains(" ci") || lower.contains("pipeline") || lower.contains("workflow") {
+        "ci"
+    } else if lower.contains("cleanup") || lower.contains("chore") {
+        "chore"
+    } else if lower.contains("revert") {
+        "revert"
     } else {
-        cue_text.to_string()
-    };
-    if cue_text.len() > 68 {
-        format!(
-            "Dirigent: {}\n\n{}\n\nhttps://github.com/choas/Dirigent",
-            summary, cue_text
-        )
-    } else {
-        format!("Dirigent: {}\n\nhttps://github.com/choas/Dirigent", summary)
+        "feat"
     }
 }
+
+/// Strip an existing conventional commit type prefix (e.g. "feat: " or "fix(scope): ").
+fn strip_type_prefix(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    // skip word chars (the type)
+    while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+        i += 1;
+    }
+    // optional scope in parens
+    if i < bytes.len() && bytes[i] == b'(' {
+        if let Some(close) = text[i..].find(')') {
+            i += close + 1;
+        }
+    }
+    // optional '!'
+    if i < bytes.len() && bytes[i] == b'!' {
+        i += 1;
+    }
+    // colon + optional space
+    if i < bytes.len() && bytes[i] == b':' {
+        i += 1;
+        if i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+        return &text[i..];
+    }
+    text
+}
+
+/// Format description for conventional commit: lowercase first char, drop trailing period.
+fn format_description(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut chars = trimmed.chars();
+    let first = chars.next().unwrap();
+    let rest: String = chars.collect();
+    let desc = format!("{}{}", first.to_lowercase(), rest);
+    desc.trim_end_matches('.').to_string()
+}
+
+/// Validate a raw commit message using commitlint-rs rules.
+/// Returns a list of violation messages (empty = valid).
+pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
+    let msg = LintMessage::new(raw.to_string());
+    let rules = LintRules::default();
+    rules
+        .validate(&msg)
+        .into_iter()
+        .map(|v| v.message)
+        .collect()
+}
+
+/// Generate a conventional commit message from cue text.
+///
+/// Format: `type: description\n\n[body]\n\nDirigent: https://github.com/choas/Dirigent`
+pub(crate) fn generate_commit_message(cue_text: &str) -> String {
+    let commit_type = detect_commit_type(cue_text);
+    let raw_desc = strip_type_prefix(cue_text);
+    let description = format_description(raw_desc);
+
+    // Build subject line within 72-char limit.
+    let prefix = format!("{}: ", commit_type);
+    let max_desc = 72 - prefix.len();
+    let subject_desc = if description.len() > max_desc {
+        format!(
+            "{}...",
+            crate::app::truncate_str(&description, max_desc - 3)
+        )
+    } else {
+        description.clone()
+    };
+
+    let subject = format!("{}{}", prefix, subject_desc);
+
+    let msg = if cue_text.len() > 68 {
+        format!("{}\n\n{}\n\n{}", subject, cue_text, DIRIGENT_FOOTER)
+    } else {
+        format!("{}\n\n{}", subject, DIRIGENT_FOOTER)
+    };
+
+    // Validate with commitlint-rs — log any issues for diagnostics.
+    let violations = lint_commit_message(&msg);
+    if !violations.is_empty() {
+        eprintln!(
+            "[commitlint] generated message has {} violation(s): {}",
+            violations.len(),
+            violations.join("; ")
+        );
+    }
+
+    msg
+}
+
+const CONVENTIONAL_TYPES: &[&str] = &[
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
 
 /// Push the current branch to its remote (typically `origin`).
 /// When there is no remote tracking branch (e.g. a new worktree branch), pushes with
@@ -362,37 +499,111 @@ pub(crate) fn move_to_new_branch(
 mod tests {
     use super::*;
 
+    // --- detect_commit_type ---
+
+    #[test]
+    fn detect_type_fix_keyword() {
+        assert_eq!(detect_commit_type("Fix typo in readme"), "fix");
+        assert_eq!(detect_commit_type("resolve a bug in login"), "fix");
+    }
+
+    #[test]
+    fn detect_type_explicit_prefix() {
+        assert_eq!(detect_commit_type("refactor: extract helper"), "refactor");
+        assert_eq!(detect_commit_type("docs(readme): update"), "docs");
+    }
+
+    #[test]
+    fn detect_type_defaults_to_feat() {
+        assert_eq!(detect_commit_type("add dark mode toggle"), "feat");
+    }
+
+    #[test]
+    fn detect_type_various_keywords() {
+        assert_eq!(detect_commit_type("rename the function"), "refactor");
+        assert_eq!(detect_commit_type("add unit test for parser"), "test");
+        assert_eq!(detect_commit_type("optimize database queries"), "perf");
+        assert_eq!(detect_commit_type("update dependencies"), "build");
+    }
+
+    // --- strip_type_prefix ---
+
+    #[test]
+    fn strip_prefix_present() {
+        assert_eq!(strip_type_prefix("feat: add button"), "add button");
+        assert_eq!(strip_type_prefix("fix(ui): align text"), "align text");
+        assert_eq!(
+            strip_type_prefix("feat!: breaking change"),
+            "breaking change"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_absent() {
+        assert_eq!(strip_type_prefix("add button"), "add button");
+        assert_eq!(strip_type_prefix("Fix the login bug"), "Fix the login bug");
+    }
+
+    // --- format_description ---
+
+    #[test]
+    fn format_desc_lowercase_and_strip_period() {
+        assert_eq!(format_description("Add button."), "add button");
+        assert_eq!(format_description("fix typo"), "fix typo");
+        assert_eq!(format_description("  Trim me  "), "trim me");
+    }
+
+    // --- generate_commit_message ---
+
     #[test]
     fn generate_commit_message_short() {
         let msg = generate_commit_message("Fix typo");
-        assert_eq!(
-            msg,
-            "Dirigent: Fix typo\n\nhttps://github.com/choas/Dirigent"
-        );
+        assert!(msg.starts_with("fix: fix typo"));
+        assert!(msg.ends_with(DIRIGENT_FOOTER));
+        // Validate with commitlint-rs
+        assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
     fn generate_commit_message_long_truncates() {
-        let long_text = "A".repeat(100);
+        let long_text = format!("Add {}", "feature ".repeat(20));
         let msg = generate_commit_message(&long_text);
-        // Should have truncated summary with "..." and full body
-        assert!(msg.starts_with("Dirigent: "));
-        assert!(msg.contains("..."));
-        assert!(msg.contains(&long_text));
-        assert!(msg.ends_with("https://github.com/choas/Dirigent"));
+        let subject = msg.lines().next().unwrap();
+        assert!(subject.len() <= 72, "subject too long: {}", subject.len());
+        assert!(subject.contains("..."));
+        assert!(msg.contains(&long_text)); // full text in body
+        assert!(msg.ends_with(DIRIGENT_FOOTER));
+        assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
-    fn generate_commit_message_boundary_68() {
-        let exactly_68 = "B".repeat(68);
-        let msg = generate_commit_message(&exactly_68);
-        assert_eq!(
-            msg,
-            format!(
-                "Dirigent: {}\n\nhttps://github.com/choas/Dirigent",
-                exactly_68
-            )
-        );
-        assert!(!msg.contains("..."));
+    fn generate_commit_message_short_no_body() {
+        let msg = generate_commit_message("add dark mode");
+        // Short message should NOT have the cue text repeated as body
+        let parts: Vec<&str> = msg.split("\n\n").collect();
+        assert_eq!(parts.len(), 2); // subject + footer only
+        assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    #[test]
+    fn generate_commit_message_preserves_existing_prefix() {
+        let msg = generate_commit_message("docs: update readme");
+        assert!(msg.starts_with("docs: update readme"));
+        assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    // --- lint_commit_message ---
+
+    #[test]
+    fn lint_valid_message() {
+        let msg = format!("feat: add dark mode\n\n{}", DIRIGENT_FOOTER);
+        assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    #[test]
+    fn lint_missing_type() {
+        // A message without conventional type prefix triggers violations
+        let violations = lint_commit_message("just a plain message");
+        assert!(!violations.is_empty());
     }
 }
