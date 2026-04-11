@@ -1566,13 +1566,15 @@ def _run_iteration(cfg: Config, iteration: int, cr_since: str, skip_sonar: bool 
     dirty_after = _get_dirty_files()
     new_files = sorted(dirty_after - dirty_before)
 
-    new_cr_since = datetime.now(timezone.utc).isoformat()
     pushed = _commit_and_wait(cfg, iteration, files_to_stage=new_files or None,
                               sha_before_claude=sha_before_claude)
     if pushed:
+        new_cr_since = datetime.now(timezone.utc).isoformat()
         _save_cr_since(cfg, new_cr_since)
+        _save_iteration(iteration)
+        return new_cr_since
 
-    return new_cr_since
+    return cr_since
 
 
 def main() -> None:
@@ -1622,7 +1624,6 @@ def main() -> None:
         banner(f"Iteration {iteration}/{end_iteration - 1}")
         skip_sonar = cfg.skip_sonar_first and iteration == cfg.start_iteration
         cr_since = _run_iteration(cfg, iteration, cr_since, skip_sonar=skip_sonar)
-        _save_iteration(iteration)
         if not cr_since:
             banner("All signals clean -- loop complete!")
             sys.exit(0)
