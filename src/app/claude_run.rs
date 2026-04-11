@@ -819,6 +819,7 @@ impl DirigentApp {
             .find(|c| c.id == result.cue_id)
             .map(|c| c.text.clone())
             .unwrap_or_default();
+        self.reload_settings_from_disk();
         self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
     }
 
