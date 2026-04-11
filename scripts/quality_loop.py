@@ -1266,11 +1266,10 @@ def _save_iteration(iteration: int) -> None:
     target = _iteration_state_path()
     tmp = target.with_suffix(".tmp")
     try:
-        fd = tmp.open("w")
-        fd.write(str(iteration))
-        fd.flush()
-        os.fsync(fd.fileno())
-        fd.close()
+        with tmp.open("w") as fd:
+            fd.write(str(iteration))
+            fd.flush()
+            os.fsync(fd.fileno())
         tmp.replace(target)
     except OSError as exc:
         print(f"  [error] failed to save iteration state: {exc}")
