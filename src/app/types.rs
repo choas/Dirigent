@@ -99,6 +99,8 @@ pub(super) enum CueAction {
     TogglePause(usize),
     /// Remove a cue from the workflow plan.
     RemoveFromWorkflow(i64),
+    /// Move all Done cues to Archived.
+    ArchiveAllDone,
 }
 
 /// State for a single open file tab.
