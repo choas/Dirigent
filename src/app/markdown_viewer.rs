@@ -179,6 +179,27 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx:
             ..Default::default()
         })
         .show(ui, |ui| {
+            // Header row with optional language label and copy button.
+            ui.horizontal(|ui| {
+                if let Some(lang) = language {
+                    ui.label(
+                        egui::RichText::new(lang)
+                            .size(ctx.font_size * 0.85)
+                            .color(ctx.semantic.secondary_text)
+                            .monospace(),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("\u{1F4CB}")
+                        .on_hover_text("Copy code")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(code.to_string());
+                    }
+                });
+            });
+            ui.add_space(SPACE_XS);
             render_code_block_body(ui, language, code, ctx);
         });
     ui.add_space(SPACE_SM);
