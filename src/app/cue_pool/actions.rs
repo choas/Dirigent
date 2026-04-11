@@ -191,6 +191,19 @@ impl DirigentApp {
     fn process_navigate(&mut self, file_path: &str, line: usize, _line_end: Option<usize>) {
         self.push_nav_history();
         let full_path = self.project_root.join(file_path);
+        // Prevent path traversal: reject paths that escape the project root.
+        if let (Ok(canon_root), Ok(canon_path)) = (
+            std::fs::canonicalize(&self.project_root),
+            std::fs::canonicalize(&full_path),
+        ) {
+            if !canon_path.starts_with(&canon_root) {
+                eprintln!(
+                    "[navigate] rejecting path outside project root: {:?}",
+                    file_path
+                );
+                return;
+            }
+        }
         if self.viewer.current_file() != Some(&full_path) {
             self.load_file(full_path);
         } else {
