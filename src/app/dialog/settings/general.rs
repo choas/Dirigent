@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, CustomTheme, ThemeChoice};
+use crate::settings::{CliProvider, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -71,7 +71,7 @@ impl DirigentApp {
                 .clicked()
             {
                 self.custom_theme_edit = Some(CustomThemeEdit {
-                    theme: CustomTheme::default(),
+                    theme: self.settings.theme.to_custom_theme(),
                     editing_index: None,
                     ai_prompt: String::new(),
                     ai_generating: false,

@@ -149,6 +149,29 @@ impl ThemeChoice {
         self.palette().apply(self.is_dark())
     }
 
+    /// Convert this theme's palette into a `CustomTheme`, suitable as a starting point.
+    pub fn to_custom_theme(&self) -> CustomTheme {
+        let p = self.palette();
+        let accent = self.semantic_colors().accent;
+        let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
+        CustomTheme {
+            name: String::new(),
+            is_dark: self.is_dark(),
+            panel_fill: rgb(p.panel_fill),
+            window_fill: rgb(p.window_fill),
+            extreme_bg: rgb(p.extreme_bg),
+            faint_bg: rgb(p.faint_bg),
+            text: rgb(p.text),
+            selection: rgb(p.selection),
+            noninteractive: rgb(p.noninteractive),
+            inactive: rgb(p.inactive),
+            hovered: rgb(p.hovered),
+            active: rgb(p.active),
+            hyperlink: rgb(p.hyperlink),
+            accent: rgb(accent),
+        }
+    }
+
     fn palette(&self) -> ThemePalette {
         use ThemeChoice::*;
         match self {
