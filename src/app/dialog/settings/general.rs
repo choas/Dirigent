@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, ThemeChoice};
+use crate::settings::{CliProvider, FontWeight, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -325,6 +325,20 @@ impl DirigentApp {
 
         ui.label("Font Size:");
         ui.add(egui::Slider::new(&mut self.settings.font_size, 8.0..=32.0).step_by(0.5));
+        ui.end_row();
+
+        ui.label("Font Weight:");
+        egui::ComboBox::from_id_salt("font_weight_combo")
+            .selected_text(self.settings.font_weight.display_name())
+            .show_ui(ui, |ui| {
+                for weight in FontWeight::all() {
+                    ui.selectable_value(
+                        &mut self.settings.font_weight,
+                        weight.clone(),
+                        weight.display_name(),
+                    );
+                }
+            });
         ui.end_row();
     }
 

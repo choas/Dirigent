@@ -1,37 +1,71 @@
 use eframe::egui;
 
+use crate::settings::FontWeight;
+
 use super::{DirigentApp, FONT_SCALE_HEADING, FONT_SCALE_SMALL};
 
-/// Try to load a font from the system by name. Returns (bytes, ttc_index).
-fn load_system_font(name: &str) -> Option<(Vec<u8>, u32)> {
-    // Known font paths on macOS
-    let candidates: &[(&str, u32)] = match name {
-        "Menlo" => &[("/System/Library/Fonts/Menlo.ttc", 0)],
-        "Monaco" => &[("/System/Library/Fonts/Monaco.ttf", 0)],
-        "SF Mono" => &[("/System/Library/Fonts/SFNSMono.ttf", 0)],
-        "Courier New" => &[
-            ("/System/Library/Fonts/Supplemental/Courier New.ttf", 0),
-            ("/Library/Fonts/Courier New.ttf", 0),
-        ],
-        _ => &[],
-    };
-
-    for &(path, index) in candidates {
-        if let Ok(data) = std::fs::read(path) {
-            return Some((data, index));
-        }
-    }
-
-    // Try common font directories with various extensions
+/// Common font directory paths on macOS.
+fn font_dirs() -> Vec<String> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let dirs = [
+    vec![
         "/System/Library/Fonts".to_string(),
         "/System/Library/Fonts/Supplemental".to_string(),
         "/Library/Fonts".to_string(),
         format!("{}/Library/Fonts", home),
-    ];
+    ]
+}
+
+/// Try to load a font from the system by name and weight. Returns (bytes, ttc_index).
+fn load_system_font(name: &str, weight: &FontWeight) -> Option<(Vec<u8>, u32)> {
+    // Known font paths on macOS — Menlo.ttc face indices: 0=Regular, 1=Bold
+    let known: Vec<(&str, u32)> = match name {
+        "Menlo" => vec![(
+            "/System/Library/Fonts/Menlo.ttc",
+            if weight.is_bold() { 1 } else { 0 },
+        )],
+        "Monaco" => vec![("/System/Library/Fonts/Monaco.ttf", 0)],
+        "SF Mono" => vec![("/System/Library/Fonts/SFNSMono.ttf", 0)],
+        "Courier New" => {
+            if weight.is_bold() {
+                vec![
+                    ("/System/Library/Fonts/Supplemental/Courier New Bold.ttf", 0),
+                    ("/Library/Fonts/Courier New Bold.ttf", 0),
+                ]
+            } else {
+                vec![
+                    ("/System/Library/Fonts/Supplemental/Courier New.ttf", 0),
+                    ("/Library/Fonts/Courier New.ttf", 0),
+                ]
+            }
+        }
+        _ => vec![],
+    };
+
+    for (path, index) in &known {
+        if let Ok(data) = std::fs::read(path) {
+            return Some((data, *index));
+        }
+    }
+
+    let dirs = font_dirs();
     let exts = ["ttf", "ttc", "otf"];
 
+    // Try weight-suffixed filenames (e.g. "JetBrains Mono-Bold.ttf")
+    if *weight != FontWeight::Regular {
+        let suffix = weight.file_suffix();
+        for dir in &dirs {
+            for ext in &exts {
+                for sep in &["-", " "] {
+                    let path = format!("{}/{}{}{}.{}", dir, name, sep, suffix, ext);
+                    if let Ok(data) = std::fs::read(&path) {
+                        return Some((data, 0));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to base font name
     for dir in &dirs {
         for ext in &exts {
             let path = format!("{}/{}.{}", dir, name, ext);
@@ -80,7 +114,8 @@ impl DirigentApp {
 
         // Load the user's chosen font from the system and register it with egui
         let mut font_def = egui::FontDefinitions::default();
-        if let Some((font_bytes, index)) = load_system_font(font_family) {
+        if let Some((font_bytes, index)) = load_system_font(font_family, &self.settings.font_weight)
+        {
             let mut font_data = egui::FontData::from_owned(font_bytes);
             font_data.index = index;
             font_def
