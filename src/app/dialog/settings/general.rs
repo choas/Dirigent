@@ -26,10 +26,10 @@ impl DirigentApp {
             .spacing([SPACE_MD, SPACE_SM])
             .show(ui, |ui| {
                 self.render_settings_theme_row(ui);
+                self.render_settings_font_row(ui);
                 self.render_settings_provider_row(ui);
                 self.render_settings_model_row(ui, refresh_models);
                 self.render_settings_cli_paths_row(ui);
-                self.render_settings_font_row(ui);
                 self.render_settings_misc_rows(ui);
             });
     }

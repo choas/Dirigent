@@ -112,7 +112,13 @@ impl DirigentApp {
         let font_family = &self.settings.font_family;
         let size = self.settings.font_size;
 
-        // Load the user's chosen font from the system and register it with egui
+        // Load the user's chosen font from the system and register it with egui.
+        // Use a weight-qualified key so egui treats different weights as distinct fonts.
+        let font_key = format!(
+            "{}-{}",
+            font_family,
+            self.settings.font_weight.file_suffix()
+        );
         let mut font_def = egui::FontDefinitions::default();
         if let Some((font_bytes, index)) = load_system_font(font_family, &self.settings.font_weight)
         {
@@ -120,17 +126,17 @@ impl DirigentApp {
             font_data.index = index;
             font_def
                 .font_data
-                .insert(font_family.clone(), font_data.into());
+                .insert(font_key.clone(), font_data.into());
             font_def
                 .families
                 .entry(egui::FontFamily::Monospace)
                 .or_default()
-                .insert(0, font_family.clone());
+                .insert(0, font_key.clone());
             font_def
                 .families
                 .entry(egui::FontFamily::Proportional)
                 .or_default()
-                .insert(0, font_family.clone());
+                .insert(0, font_key.clone());
         }
         // Add symbol fallback fonts so icons render even when the chosen
         // code font lacks glyphs like ▶, ●, ↺, etc.
