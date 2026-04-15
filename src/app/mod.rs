@@ -79,7 +79,7 @@ use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
 use crate::git;
 use crate::lsp::LspManager;
-use crate::settings::{self, SemanticColors, Settings};
+use crate::settings::{self, CustomTheme, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
@@ -302,6 +302,24 @@ pub struct DirigentApp {
     show_workflow_graph: bool,
     /// Snapshot of Inbox cue IDs when the workflow plan was created, for change detection.
     workflow_inbox_snapshot: Vec<i64>,
+
+    // Custom theme editor dialog
+    custom_theme_edit: Option<CustomThemeEdit>,
+}
+
+/// State for the custom theme editor dialog.
+pub(super) struct CustomThemeEdit {
+    pub theme: CustomTheme,
+    /// Index into `settings.custom_themes` when editing; `None` for a new theme.
+    pub editing_index: Option<usize>,
+    /// AI prompt text for generating theme colors.
+    pub ai_prompt: String,
+    /// Whether AI generation is in progress.
+    pub ai_generating: bool,
+    /// Channel to receive AI-generated theme data.
+    pub ai_rx: Option<mpsc::Receiver<Result<CustomTheme, String>>>,
+    /// Last error from AI generation.
+    pub ai_error: Option<String>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -645,6 +663,8 @@ impl DirigentApp {
             workflow_warning: None,
             show_workflow_graph: false,
             workflow_inbox_snapshot: Vec::new(),
+
+            custom_theme_edit: None,
         }
     }
 

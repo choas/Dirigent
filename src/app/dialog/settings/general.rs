@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use crate::app::{DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, ThemeChoice};
+use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
+use crate::settings::{CliProvider, CustomTheme, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -36,23 +36,72 @@ impl DirigentApp {
 
     fn render_settings_theme_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Theme:");
-        let theme_label = self.settings.theme.display_name();
-        egui::ComboBox::from_id_salt("theme_combo")
-            .selected_text(theme_label)
-            .show_ui(ui, |ui| {
-                let mut prev_was_dark = true;
-                for variant in ThemeChoice::all_variants() {
-                    if prev_was_dark && !variant.is_dark() {
-                        ui.separator();
-                        prev_was_dark = false;
+        ui.horizontal(|ui| {
+            let theme_label = self.settings.theme.display_name().to_string();
+            egui::ComboBox::from_id_salt("theme_combo")
+                .selected_text(&theme_label)
+                .show_ui(ui, |ui| {
+                    let mut prev_was_dark = true;
+                    for variant in ThemeChoice::all_variants() {
+                        if prev_was_dark && !variant.is_dark() {
+                            ui.separator();
+                            prev_was_dark = false;
+                        }
+                        ui.selectable_value(
+                            &mut self.settings.theme,
+                            variant.clone(),
+                            variant.display_name(),
+                        );
                     }
-                    ui.selectable_value(
-                        &mut self.settings.theme,
-                        variant.clone(),
-                        variant.display_name(),
-                    );
+                    // Custom themes section
+                    if !self.settings.custom_themes.is_empty() {
+                        ui.separator();
+                        for ct in &self.settings.custom_themes {
+                            ui.selectable_value(
+                                &mut self.settings.theme,
+                                ThemeChoice::Custom(ct.clone()),
+                                &ct.name,
+                            );
+                        }
+                    }
+                });
+            if ui
+                .small_button("+")
+                .on_hover_text("New custom theme")
+                .clicked()
+            {
+                self.custom_theme_edit = Some(CustomThemeEdit {
+                    theme: CustomTheme::default(),
+                    editing_index: None,
+                    ai_prompt: String::new(),
+                    ai_generating: false,
+                    ai_rx: None,
+                    ai_error: None,
+                });
+            }
+            // Edit button for current custom theme
+            if let ThemeChoice::Custom(ref ct) = self.settings.theme {
+                if ui
+                    .small_button("\u{270E}")
+                    .on_hover_text("Edit custom theme")
+                    .clicked()
+                {
+                    let idx = self
+                        .settings
+                        .custom_themes
+                        .iter()
+                        .position(|t| t.name == ct.name);
+                    self.custom_theme_edit = Some(CustomThemeEdit {
+                        theme: ct.clone(),
+                        editing_index: idx,
+                        ai_prompt: String::new(),
+                        ai_generating: false,
+                        ai_rx: None,
+                        ai_error: None,
+                    });
                 }
-            });
+            }
+        });
         ui.end_row();
     }
 

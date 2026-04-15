@@ -116,7 +116,8 @@ impl DirigentApp {
             || self.git.show_import_pr
             || self.git.show_pr_filter
             || self.git.show_move_to_branch
-            || self.git.show_switch_branch;
+            || self.git.show_switch_branch
+            || self.custom_theme_edit.is_some();
         if !has_modal {
             return;
         }
@@ -151,6 +152,10 @@ impl DirigentApp {
 
     /// Dismiss the topmost app-level (non-git) modal dialog.
     fn dismiss_app_modal(&mut self) {
+        if self.custom_theme_edit.is_some() {
+            self.custom_theme_edit = None;
+            return;
+        }
         if self.pending_file_delete.is_some() {
             self.pending_file_delete = None;
             return;
@@ -192,6 +197,7 @@ impl DirigentApp {
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);
+        self.render_custom_theme_dialog(ctx);
     }
 
     /// Render the circular send button, vertically centered next to a text input.

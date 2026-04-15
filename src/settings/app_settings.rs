@@ -6,12 +6,15 @@ use crate::lsp::{default_lsp_servers, LspServerConfig};
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
 use super::providers::{CliProvider, SourceConfig};
-use super::theme::ThemeChoice;
+use super::theme::{CustomTheme, ThemeChoice};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub theme: ThemeChoice,
+    /// User-defined custom themes.
+    #[serde(default)]
+    pub custom_themes: Vec<CustomTheme>,
     pub cli_provider: CliProvider,
     pub claude_model: String,
     /// Extra model identifiers to show in the Claude model dropdown.
@@ -145,6 +148,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             theme: ThemeChoice::Dark,
+            custom_themes: Vec::new(),
             cli_provider: CliProvider::default(),
             claude_model: "claude-opus-4-6".to_string(),
             claude_custom_models: Vec::new(),

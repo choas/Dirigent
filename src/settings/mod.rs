@@ -18,4 +18,4 @@ pub(crate) use playbook::{
 pub(crate) use providers::{CliProvider, NotionPageType, SourceConfig, SourceKind};
 pub(crate) use recent::{add_global_recent_project, add_recent_repo, load_global_recent_projects};
 pub(crate) use semantic_colors::SemanticColors;
-pub(crate) use theme::ThemeChoice;
+pub(crate) use theme::{CustomTheme, ThemeChoice};
