@@ -54,4 +54,5 @@ pub(crate) enum BreadcrumbAction {
     CloseFile,
     ShowFileDiff,
     ToggleMarkdown,
+    SearchInFile,
 }
