@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
+use crate::db::CueStatus;
 use crate::settings::{self, SourceKind};
 use crate::sources::{self, SourceItem};
 
 use super::tasks::TaskHandle;
-use super::DirigentApp;
+use super::{CueAction, DirigentApp};
 
 /// State for external cue source polling.
 pub(crate) struct SourceState {
@@ -113,6 +114,7 @@ impl DirigentApp {
         }
 
         let mut new_count = 0;
+        let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
             match self.db.cue_exists_by_source_ref(&item.external_id) {
                 Ok(true) => {
@@ -133,24 +135,40 @@ impl DirigentApp {
                 Ok(false) => {}
                 Err(_) => continue,
             }
-            if self
-                .db
-                .insert_cue_from_source(
-                    &item.text,
-                    &item.source_label,
-                    &item.source_id,
-                    &item.external_id,
-                    &item.file_path,
-                    item.line_number,
-                )
-                .is_ok()
-            {
+            let runnable = item.text.contains("{runnable}");
+            let text = if runnable {
+                item.text.replace("{runnable}", "").trim().to_string()
+            } else {
+                item.text.clone()
+            };
+            if let Ok(cue_id) = self.db.insert_cue_from_source(
+                &text,
+                &item.source_label,
+                &item.source_id,
+                &item.external_id,
+                &item.file_path,
+                item.line_number,
+            ) {
                 new_count += 1;
+                if runnable {
+                    auto_run_ids.push(cue_id);
+                }
             }
         }
         if new_count > 0 {
             self.reload_cues();
-            self.set_status_message(format!("{} new cue(s) from sources", new_count));
+            let auto_count = auto_run_ids.len();
+            if auto_count > 0 {
+                for cue_id in auto_run_ids {
+                    self.process_cue_action(cue_id, CueAction::MoveTo(CueStatus::Ready));
+                }
+                self.set_status_message(format!(
+                    "{} new cue(s) from sources ({} auto-running)",
+                    new_count, auto_count
+                ));
+            } else {
+                self.set_status_message(format!("{} new cue(s) from sources", new_count));
+            }
         }
     }
 }
