@@ -142,6 +142,9 @@ impl DirigentApp {
             CueAction::ArchiveAllDone => {
                 self.process_archive_all_done();
             }
+            CueAction::DeleteAllArchived => {
+                self.process_delete_all_archived();
+            }
         }
         self.reload_cues();
     }
@@ -537,6 +540,30 @@ impl DirigentApp {
         }
         let plural = if done_ids.len() == 1 { "" } else { "s" };
         self.set_status_message(format!("Archived {} Done cue{}", done_ids.len(), plural));
+    }
+
+    fn process_delete_all_archived(&mut self) {
+        if self.archived_cue_count == 0 {
+            self.set_status_message("No cues in Archived".into());
+            return;
+        }
+        // Clean up in-memory state for the archived cues we have loaded.
+        let archived_ids: Vec<i64> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Archived)
+            .map(|c| c.id)
+            .collect();
+        for cue_id in &archived_ids {
+            self.latest_exec_cache.remove(cue_id);
+            self.cue_warnings.remove(cue_id);
+            self.notion_done_cache.remove(cue_id);
+        }
+        // Delete all archived cues from the DB (including those not loaded).
+        let total = self.archived_cue_count;
+        let _ = self.db.delete_all_archived();
+        let plural = if total == 1 { "" } else { "s" };
+        self.set_status_message(format!("Deleted {} archived cue{}", total, plural));
     }
 
     fn process_notion_done(&mut self, cue_id: i64) {

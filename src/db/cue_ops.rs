@@ -107,6 +107,18 @@ impl Database {
         Ok(())
     }
 
+    /// Delete all archived cues and their related records.
+    pub fn delete_all_archived(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "DELETE FROM cue_activity_log WHERE cue_id IN (SELECT id FROM cues WHERE status = 'archived');
+             DELETE FROM executions WHERE cue_id IN (SELECT id FROM cues WHERE status = 'archived');
+             DELETE FROM cues WHERE status = 'archived';",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
         let mut cues = Vec::new();
