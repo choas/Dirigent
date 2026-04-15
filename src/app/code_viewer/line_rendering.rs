@@ -16,13 +16,10 @@ pub(crate) fn path_matches_diagnostic(rel_path: &str, diag_file: &str) -> bool {
 
 /// Build a scroll area with the correct vertical offset.
 pub(crate) fn build_scroll_area(scroll_offset: Option<f32>, tab_offset: f32) -> egui::ScrollArea {
-    let mut scroll_area = egui::ScrollArea::both().auto_shrink([false; 2]);
-    if let Some(offset) = scroll_offset {
-        scroll_area = scroll_area.vertical_scroll_offset(offset);
-    } else if tab_offset > 0.0 {
-        scroll_area = scroll_area.vertical_scroll_offset(tab_offset);
-    }
-    scroll_area
+    let offset = scroll_offset.unwrap_or(tab_offset);
+    egui::ScrollArea::both()
+        .auto_shrink([false; 2])
+        .vertical_scroll_offset(offset)
 }
 
 /// Build diagnostic severity lookup: line_num -> worst severity for this file.

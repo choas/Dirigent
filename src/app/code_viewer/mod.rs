@@ -185,7 +185,8 @@ impl DirigentApp {
         };
 
         let scroll_area =
-            build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset);
+            build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset)
+                .id_salt(("code_scroll", &file_path));
         let ctx = CodeLineContext {
             active_idx,
             sel_start,
@@ -356,6 +357,7 @@ impl DirigentApp {
         }
         egui::ScrollArea::both()
             .auto_shrink([false; 2])
+            .id_salt(("md_scroll", &self.viewer.tabs[active_idx].file_path))
             .show(ui, |ui| {
                 ui.add_space(SPACE_SM);
                 self.render_markdown_content(ui);
