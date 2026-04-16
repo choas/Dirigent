@@ -255,6 +255,12 @@ impl Database {
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_kind ON agent_runs(agent_kind);",
         )?;
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_executions_cue ON executions(cue_id);",
+        )?;
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_cue ON agent_runs(cue_id);",
+        )?;
         // Settings migrations tracker
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS settings_migrations (
