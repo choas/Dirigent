@@ -22,6 +22,9 @@ impl DirigentApp {
         if status == CueStatus::Done {
             self.render_done_bulk_actions(ui, section_cues, actions);
         }
+        if status == CueStatus::Archived && !section_cues.is_empty() {
+            self.render_archived_bulk_actions(ui, section_cues, actions);
+        }
     }
 
     fn render_inbox_bulk_actions(
@@ -71,7 +74,7 @@ impl DirigentApp {
         let current_inbox_ids: Vec<i64> = section_cues.iter().map(|c| c.id).collect();
         let inbox_changed = current_inbox_ids != self.workflow_inbox_snapshot;
 
-        if inbox_changed && !self.is_workflow_active() {
+        if inbox_changed && !self.is_workflow_active() && section_cues.len() >= 2 {
             // Inbox changed and workflow isn't running — offer to re-analyze
             let btn = egui::Button::new(
                 icon("\u{26A1} Re-plan Workflow", self.settings.font_size)
@@ -222,6 +225,32 @@ impl DirigentApp {
                     .color(self.semantic.accent),
             );
         }
+    }
+
+    fn render_archived_bulk_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        section_cues: &[&Cue],
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        ui.horizontal(|ui| {
+            let btn = egui::Button::new(
+                icon("\u{1F5D1} Delete All", self.settings.font_size)
+                    .color(self.semantic.badge_text),
+            )
+            .fill(self.semantic.danger);
+            if ui
+                .add(btn)
+                .on_hover_text(format!(
+                    "Permanently delete all {} archived cues",
+                    section_cues.len()
+                ))
+                .clicked()
+            {
+                actions.push((0, CueAction::DeleteAllArchived));
+            }
+        });
+        ui.add_space(SPACE_XS);
     }
 
     fn render_refresh_pr_button(&self, ui: &mut egui::Ui, actions: &mut Vec<(i64, CueAction)>) {
