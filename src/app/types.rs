@@ -101,6 +101,8 @@ pub(super) enum CueAction {
     RemoveFromWorkflow(i64),
     /// Move all Done cues to Archived.
     ArchiveAllDone,
+    /// Permanently delete all Archived cues.
+    DeleteAllArchived,
 }
 
 /// State for a single open file tab.
