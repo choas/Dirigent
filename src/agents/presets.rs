@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::types::{AgentConfig, AgentKind, AgentTrigger};
 
 struct Step<'a> {
@@ -115,7 +117,14 @@ impl AgentLanguage {
     }
 }
 
-pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
+fn find_xcodeproj(repo_root: &Path) -> Option<String> {
+    std::fs::read_dir(repo_root).ok()?.find_map(|entry| {
+        let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".xcodeproj").map(|s| s.to_owned())
+    })
+}
+
+pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<AgentConfig> {
     match lang {
         AgentLanguage::Rust => {
             let mut v = pipeline(
@@ -283,24 +292,36 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
             v.push(audit_agent("bundle audit check 2>&1"));
             v
         }
-        AgentLanguage::Swift => pipeline(
-            Step {
-                cmd: "swift-format format -i -r . 2>&1",
-                timeout: 30,
-            },
-            Step {
-                cmd: "swiftlint 2>&1",
-                timeout: 120,
-            },
-            Step {
-                cmd: "swift build 2>&1",
-                timeout: 180,
-            },
-            Step {
-                cmd: "swift test 2>&1",
-                timeout: 300,
-            },
-        ),
+        AgentLanguage::Swift => {
+            let project_name = find_xcodeproj(repo_root).unwrap_or_else(|| "MyApp".into());
+            let xcodeproj = format!("{project_name}.xcodeproj");
+            let build_cmd = format!(
+                "xcodebuild -project {xcodeproj} -scheme {project_name} \
+                 -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build 2>&1"
+            );
+            let test_cmd = format!(
+                "xcodebuild -project {xcodeproj} -scheme {project_name} \
+                 -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test 2>&1"
+            );
+            pipeline(
+                Step {
+                    cmd: "xcrun swift-format format -i -r . 2>&1",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "swiftlint 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: &build_cmd,
+                    timeout: 180,
+                },
+                Step {
+                    cmd: &test_cmd,
+                    timeout: 300,
+                },
+            )
+        }
         AgentLanguage::Kotlin => pipeline(
             Step {
                 cmd: "ktlint --format 2>&1",

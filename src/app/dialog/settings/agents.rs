@@ -390,7 +390,8 @@ impl DirigentApp {
                     }
                 });
             if ui.button("Initialize").clicked() {
-                self.settings.agents = agents_for_language(self.agents_init_language);
+                self.settings.agents =
+                    agents_for_language(self.agents_init_language, &self.project_root);
             }
         });
     }
