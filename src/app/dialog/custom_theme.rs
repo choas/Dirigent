@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use eframe::egui;
 
 use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
-use crate::settings::CustomTheme;
+use crate::settings::{CliProvider, CustomTheme};
 
 impl DirigentApp {
     /// Render the custom theme editor dialog.
@@ -263,11 +263,20 @@ impl DirigentApp {
         edit.ai_rx = Some(rx);
 
         let is_dark = edit.theme.is_dark;
-        let cli_path = self.settings.claude_cli_path.clone();
+        let provider = self.settings.cli_provider.clone();
+        let cli_path = match provider {
+            CliProvider::Claude => self.settings.claude_cli_path.clone(),
+            CliProvider::OpenCode => self.settings.opencode_cli_path.clone(),
+        };
+        let model = match provider {
+            CliProvider::Claude => self.settings.claude_model.clone(),
+            CliProvider::OpenCode => self.settings.opencode_model.clone(),
+        };
         let ctx = self.egui_ctx.clone();
 
         std::thread::spawn(move || {
-            let result = generate_theme_via_claude(&cli_path, &prompt_text, is_dark);
+            let result =
+                generate_theme_via_cli(&provider, &cli_path, &model, &prompt_text, is_dark);
             let _ = tx.send(result);
             if let Some(c) = ctx.get() {
                 c.request_repaint();
@@ -291,20 +300,30 @@ fn color_row(
     ui.end_row();
 }
 
-/// Call Claude Code CLI to generate theme palette colors from a description.
-fn generate_theme_via_claude(
+/// Call the selected code generator CLI to generate theme palette colors from a description.
+fn generate_theme_via_cli(
+    provider: &CliProvider,
     cli_path: &str,
+    model: &str,
     description: &str,
     is_dark: bool,
 ) -> Result<CustomTheme, String> {
-    let claude_bin = if cli_path.is_empty() {
-        "claude"
+    let default_bin = match provider {
+        CliProvider::Claude => "claude",
+        CliProvider::OpenCode => "opencode",
+    };
+    let bin = if cli_path.is_empty() {
+        default_bin
     } else {
         cli_path
     };
 
-    which::which(claude_bin)
-        .map_err(|_| "Claude CLI not found. Set the CLI path in settings.".to_string())?;
+    which::which(bin).map_err(|_| {
+        format!(
+            "{} CLI not found. Set the CLI path in settings.",
+            provider.display_name()
+        )
+    })?;
 
     let dark_light = if is_dark { "dark" } else { "light" };
     let prompt = format!(
@@ -346,19 +365,32 @@ Return ONLY the JSON object."#,
         },
     );
 
-    let output = std::process::Command::new(claude_bin)
-        .arg("-p")
-        .arg(&prompt)
-        .arg("--output-format")
-        .arg("text")
-        .arg("--model")
-        .arg("claude-haiku-4-5-20251001")
+    let mut cmd = std::process::Command::new(bin);
+    cmd.arg("-p").arg(&prompt);
+    match provider {
+        CliProvider::Claude => {
+            cmd.arg("--output-format").arg("text");
+            if !model.is_empty() {
+                cmd.arg("--model").arg(model);
+            }
+        }
+        CliProvider::OpenCode => {
+            if !model.is_empty() {
+                cmd.arg("--model").arg(model);
+            }
+        }
+    }
+    let output = cmd
         .output()
-        .map_err(|e| format!("Failed to run Claude CLI: {e}"))?;
+        .map_err(|e| format!("Failed to run {} CLI: {e}", provider.display_name()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Claude CLI failed: {}", stderr.trim()));
+        return Err(format!(
+            "{} CLI failed: {}",
+            provider.display_name(),
+            stderr.trim()
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
