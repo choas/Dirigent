@@ -33,7 +33,9 @@ xcode-select --install
 sudo apt install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
 ```
 
-## 2. Build Dirigent
+## 2. Install Dirigent
+
+### Option A: Build from source (CLI)
 
 ```bash
 git clone https://github.com/choas/Dirigent.git
@@ -47,16 +49,32 @@ The binary is at `target/release/dirigent`. To install it as a CLI command (requ
 cargo install --path .
 ```
 
+### Option B: macOS application (DMG)
+
+Download the latest `.dmg` from [GitHub Releases](https://github.com/choas/Dirigent/releases), open it, and drag **Dirigent.app** into your `/Applications` folder. No Rust toolchain required.
+
 ## 3. Open a project
 
-Launch Dirigent with a path to a Git repository:
+### CLI
+
+If you installed via `cargo install --path .`:
 
 ```bash
 dirigent /path/to/your/project
 dirigent .
 ```
 
-If you omit the path, Dirigent opens the **repository picker** so you can browse to a project. On macOS you can also double-click the `.app` bundle.
+### macOS application
+
+- **Double-click Dirigent.app** — opens the **repository picker** where you can browse to a project
+- **From Terminal** — open a specific project directory:
+  ```bash
+  open -a Dirigent --args /path/to/your/project
+  open -a Dirigent --args .
+  ```
+- **Drag & drop** — drag a project folder onto the Dirigent icon in the Dock
+
+If you omit the path, Dirigent opens the **repository picker** so you can choose a project.
 
 When Dirigent opens you will see three main areas:
 

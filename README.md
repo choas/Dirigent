@@ -113,15 +113,37 @@ Releases are also automated via GitHub Actions — pushing a `v*` tag triggers a
 
 ## Usage
 
+### CLI (built from source)
+
+If you installed via `cargo install --path .`:
+
 ```bash
 # Open the current directory
-cargo run --release
+dirigent .
 
 # Open a specific project
+dirigent /path/to/your/project
+```
+
+Or run directly without installing:
+
+```bash
 cargo run --release -- /path/to/your/project
 ```
 
-On macOS, the bundled .app can also be launched from Finder or the Dock. When launched without a path, Dirigent opens the repository picker so you can choose a project.
+### macOS application (DMG)
+
+If you downloaded the `.app` from [GitHub Releases](https://github.com/choas/Dirigent/releases) and installed it to `/Applications`:
+
+- **Double-click Dirigent.app** — opens the **repository picker** where you can browse to a project
+- **From Terminal** — open a specific project directory:
+  ```bash
+  open -a Dirigent --args /path/to/your/project
+  open -a Dirigent --args .
+  ```
+- **Drag & drop** — drag a project folder onto the Dirigent icon in the Dock
+
+When launched without a path, Dirigent always opens the repository picker so you can choose a project.
 
 ### Workflow
 
