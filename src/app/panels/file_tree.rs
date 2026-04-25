@@ -1098,8 +1098,17 @@ fn render_file_context_menu(
     });
 }
 
-/// Render "Copy Path" and "Copy Relative Path" context menu items.
+/// Render "Copy Path", "Copy Relative Path", "Copy Name", and (for files) "Copy Contents".
 fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
+    if ui.button("Copy Name").clicked() {
+        let name = abs_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        ui.ctx().copy_text(name);
+        ui.close();
+    }
     if ui.button("Copy Path").clicked() {
         ui.ctx().copy_text(abs_path.to_string_lossy().to_string());
         ui.close();
@@ -1107,6 +1116,15 @@ fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
     if ui.button("Copy Relative Path").clicked() {
         ui.ctx().copy_text(rel_path.to_string());
         ui.close();
+    }
+    if abs_path.is_file() {
+        if ui.button("Copy Contents").clicked() {
+            match std::fs::read_to_string(abs_path) {
+                Ok(contents) => ui.ctx().copy_text(contents),
+                Err(_) => ui.ctx().copy_text(String::new()),
+            }
+            ui.close();
+        }
     }
 }
 
