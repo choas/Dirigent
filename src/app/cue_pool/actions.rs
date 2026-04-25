@@ -145,6 +145,9 @@ impl DirigentApp {
             CueAction::DeleteAllArchived => {
                 self.process_delete_all_archived();
             }
+            CueAction::SplitCue(cue_id) => {
+                self.start_split_cue(cue_id);
+            }
         }
         self.reload_cues();
     }

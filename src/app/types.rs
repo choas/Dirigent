@@ -103,6 +103,8 @@ pub(super) enum CueAction {
     ArchiveAllDone,
     /// Permanently delete all Archived cues.
     DeleteAllArchived,
+    /// Split a cue into multiple sub-cues using LLM analysis.
+    SplitCue(i64),
 }
 
 /// State for a single open file tab.

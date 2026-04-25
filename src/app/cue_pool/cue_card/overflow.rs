@@ -20,6 +20,16 @@ impl DirigentApp {
                 self.render_overflow_tag_items(ui, cue, actions);
                 self.render_overflow_create_pr(ui, cue, actions);
                 ui.separator();
+                let split_enabled = !self.split_cue_generating
+                    && matches!(
+                        cue.status,
+                        crate::db::CueStatus::Inbox | crate::db::CueStatus::Backlog
+                    );
+                let split_btn =
+                    ui.add_enabled(split_enabled, egui::Button::new(icon("\u{2702} Split", fs)));
+                if split_btn.clicked() {
+                    actions.push((cue.id, CueAction::SplitCue(cue.id)));
+                }
                 if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                     actions.push((cue.id, CueAction::Delete));
                 }

@@ -15,6 +15,7 @@ mod rendering;
 mod repo_management;
 mod search;
 mod sources_poll;
+mod split_cue;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
@@ -55,6 +56,13 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use eframe::egui;
 
 type WorkflowResult = Result<(crate::workflow::WorkflowPlan, Option<String>), String>;
+type SplitCueResult = Result<Vec<SplitCueItem>, String>;
+
+/// A single sub-cue produced by LLM analysis during cue splitting.
+pub(super) struct SplitCueItem {
+    pub text: String,
+    pub reference: Option<String>,
+}
 
 /// Truncate a string to at most `max_bytes` without panicking on UTF-8 boundaries.
 /// Returns a slice that ends at or before `max_bytes` on a valid char boundary.
@@ -302,6 +310,11 @@ pub struct DirigentApp {
     show_workflow_graph: bool,
     /// Snapshot of Inbox cue IDs when the workflow plan was created, for change detection.
     workflow_inbox_snapshot: Vec<i64>,
+
+    // Split cue async state
+    split_cue_generating: bool,
+    split_cue_source_id: Option<i64>,
+    split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
@@ -664,6 +677,10 @@ impl DirigentApp {
             show_workflow_graph: false,
             workflow_inbox_snapshot: Vec::new(),
 
+            split_cue_generating: false,
+            split_cue_source_id: None,
+            split_cue_rx: None,
+
             custom_theme_edit: None,
         }
     }
@@ -870,6 +887,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for workflow analysis results
         self.process_workflow_result();
+
+        // Poll for split cue results
+        self.process_split_cue_result();
 
         // Poll for git push/pull/PR results
         self.process_push_result();
