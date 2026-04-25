@@ -17,8 +17,11 @@ impl DirigentApp {
                 .collect()
         });
         if !dropped.is_empty() {
-            if self.claude.show_log.is_some() {
-                self.conversation_reply_images.extend(dropped);
+            if let Some(cue_id) = self.claude.show_log {
+                self.conversation_reply_images
+                    .entry(cue_id)
+                    .or_default()
+                    .extend(dropped);
             } else {
                 self.global_prompt_images.extend(dropped);
             }

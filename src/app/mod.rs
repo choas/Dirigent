@@ -151,9 +151,9 @@ pub struct DirigentApp {
     // Reply inputs for Review cues (cue_id -> text)
     pub(super) reply_inputs: HashMap<i64, String>,
 
-    // Reply input for the conversation log view
-    pub(super) conversation_reply: String,
-    pub(super) conversation_reply_images: Vec<PathBuf>,
+    // Reply input for the conversation log view (per cue_id, preserved across log switches)
+    pub(super) conversation_replies: HashMap<i64, String>,
+    pub(super) conversation_reply_images: HashMap<i64, Vec<PathBuf>>,
 
     // About dialog
     show_about: bool,
@@ -575,8 +575,8 @@ impl DirigentApp {
             cached_existing_repos: Vec::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
-            conversation_reply: String::new(),
-            conversation_reply_images: Vec::new(),
+            conversation_replies: HashMap::new(),
+            conversation_reply_images: HashMap::new(),
             show_about: false,
             logo_texture: None,
             _fs_watcher,
