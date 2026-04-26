@@ -141,6 +141,9 @@ impl DirigentApp {
             } else {
                 item.text.clone()
             };
+            if text.trim().is_empty() {
+                continue;
+            }
             if let Ok(cue_id) = self.db.insert_cue_from_source(
                 &text,
                 &item.source_label,
