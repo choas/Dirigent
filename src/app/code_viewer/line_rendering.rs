@@ -154,7 +154,7 @@ pub(crate) fn render_code_line(
             line_text,
             &code_resp,
             ctx.sel_start,
-            ctx.symbol_lines,
+            ctx.symbol_line_set,
             actions,
         );
     }
@@ -313,7 +313,7 @@ pub(crate) fn handle_line_click(
     line_text: &str,
     code_resp: &egui::Response,
     sel_start: Option<usize>,
-    symbol_lines: &HashMap<usize, (String, String)>,
+    symbol_line_set: &std::collections::HashSet<usize>,
     actions: &mut CodeLineActions,
 ) {
     let shift_held = ui.input(|i| i.modifiers.shift);
@@ -326,7 +326,7 @@ pub(crate) fn handle_line_click(
     } else {
         actions.new_sel_start = Some(line_num);
         actions.new_sel_end = Some(line_num);
-        if symbol_lines.contains_key(&line_num) {
+        if symbol_line_set.contains(&line_num) {
             actions.implement_click_line = Some(line_num);
         }
     }
