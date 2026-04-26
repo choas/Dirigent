@@ -573,12 +573,16 @@ impl DirigentApp {
 
     fn process_archive_all_done(&mut self) {
         match self.db.archive_all_done() {
-            Ok(0) => {
+            Ok(ids) if ids.is_empty() => {
                 self.set_status_message("No cues in Done".into());
             }
-            Ok(count) => {
-                let plural = if count == 1 { "" } else { "s" };
-                self.set_status_message(format!("Archived {} Done cue{}", count, plural));
+            Ok(ids) => {
+                for cue_id in &ids {
+                    self.conversation_replies.remove(cue_id);
+                    self.conversation_reply_images.remove(cue_id);
+                }
+                let plural = if ids.len() == 1 { "" } else { "s" };
+                self.set_status_message(format!("Archived {} Done cue{}", ids.len(), plural));
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to archive Done cues: {e}"));
@@ -608,6 +612,15 @@ impl DirigentApp {
             self.notion_done_cache.remove(cue_id);
             self.conversation_replies.remove(cue_id);
             self.conversation_reply_images.remove(cue_id);
+            let path = self
+                .project_root
+                .join(".Dirigent")
+                .join(format!("split-ref-{}.md", cue_id));
+            if let Err(e) = std::fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("Failed to remove {}: {e}", path.display());
+                }
+            }
         }
         let plural = if total == 1 { "" } else { "s" };
         self.set_status_message(format!("Deleted {} archived cue{}", total, plural));
