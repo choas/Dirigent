@@ -57,11 +57,13 @@ impl DirigentApp {
                     if !self.settings.custom_themes.is_empty() {
                         ui.separator();
                         for ct in &self.settings.custom_themes {
-                            ui.selectable_value(
-                                &mut self.settings.theme,
-                                ThemeChoice::Custom(ct.clone()),
-                                &ct.name,
+                            let is_selected = matches!(
+                                &self.settings.theme,
+                                ThemeChoice::Custom(active) if active.name == ct.name
                             );
+                            if ui.selectable_label(is_selected, &ct.name).clicked() {
+                                self.settings.theme = ThemeChoice::Custom(ct.clone());
+                            }
                         }
                     }
                 });
@@ -86,11 +88,7 @@ impl DirigentApp {
                     .on_hover_text("Edit custom theme")
                     .clicked()
                 {
-                    let idx = self
-                        .settings
-                        .custom_themes
-                        .iter()
-                        .position(|t| t.name.trim().eq_ignore_ascii_case(ct.name.trim()));
+                    let idx = self.settings.custom_themes.iter().position(|t| t == ct);
                     self.custom_theme_edit = Some(CustomThemeEdit {
                         theme: ct.clone(),
                         editing_index: idx,
