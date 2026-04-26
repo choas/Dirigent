@@ -117,9 +117,14 @@ impl AgentLanguage {
     }
 }
 
+/// Inspects only the immediate children of `repo_root` (not recursive).
 fn find_xcodeproj(repo_root: &Path) -> Option<String> {
     std::fs::read_dir(repo_root).ok()?.find_map(|entry| {
-        let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+        let entry = entry.ok()?;
+        if !entry.file_type().ok()?.is_dir() {
+            return None;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
         name.strip_suffix(".xcodeproj").map(|s| s.to_owned())
     })
 }
