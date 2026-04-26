@@ -16,6 +16,7 @@ mod settings;
 mod sources;
 mod syntax;
 mod telemetry;
+mod util;
 mod workflow;
 
 use eframe::egui;

@@ -161,7 +161,7 @@ pub(crate) fn parse_workflow_response(
     expected_cue_ids: &[i64],
 ) -> (WorkflowPlan, Option<String>) {
     // Try to extract JSON from the response (handle markdown fences, leading text, etc.)
-    let json_str = extract_json(response);
+    let json_str = crate::util::json_extract::extract_json(response);
 
     let parsed: Result<LlmWorkflowResponse, _> = serde_json::from_str(&json_str);
     match parsed {
@@ -239,33 +239,4 @@ pub(crate) fn parse_workflow_response(
             )),
         ),
     }
-}
-
-/// Extract a JSON object from a string that may contain markdown fences or surrounding text.
-fn extract_json(s: &str) -> String {
-    // Try to find JSON between code fences
-    if let Some(start) = s.find("```json") {
-        let after = &s[start + 7..];
-        if let Some(end) = after.find("```") {
-            return after[..end].trim().to_string();
-        }
-    }
-    if let Some(start) = s.find("```") {
-        let after = &s[start + 3..];
-        if let Some(end) = after.find("```") {
-            let inner = after[..end].trim();
-            if inner.starts_with('{') {
-                return inner.to_string();
-            }
-        }
-    }
-    // Try to find a raw JSON object
-    if let Some(start) = s.find('{') {
-        if let Some(end) = s.rfind('}') {
-            if end > start {
-                return s[start..=end].to_string();
-            }
-        }
-    }
-    s.trim().to_string()
 }

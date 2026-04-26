@@ -441,11 +441,13 @@ Return ONLY the JSON object."#,
 
 /// Parse the JSON response from Claude into a CustomTheme.
 fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
-    let json_str = extract_json_object(text)
-        .ok_or_else(|| "No JSON object found in AI response".to_string())?;
+    let json_str = crate::util::json_extract::extract_json(text);
+    if !json_str.starts_with('{') {
+        return Err("No JSON object found in AI response".to_string());
+    }
 
     let parsed: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| format!("Failed to parse JSON: {e}"))?;
+        serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     let get_rgb = |key: &str| -> Result<[u8; 3], String> {
         let arr = parsed
@@ -482,15 +484,4 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         hyperlink: get_rgb("hyperlink")?,
         accent: get_rgb("accent")?,
     })
-}
-
-/// Extract the first JSON object `{...}` from a string.
-fn extract_json_object(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end >= start {
-        Some(&text[start..=end])
-    } else {
-        None
-    }
 }
