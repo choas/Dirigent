@@ -28,10 +28,14 @@ impl DirigentApp {
 
         let (tx, rx) = mpsc::channel();
         self.split_cue_rx = Some(rx);
+        let ctx = self.egui_ctx.clone();
 
         std::thread::spawn(move || {
             let result = run_split_analysis(&prompt, &provider, &project_root, &settings);
             let _ = tx.send(result);
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
         });
 
         self.set_status_message("Splitting cue...".into());
