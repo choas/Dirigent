@@ -28,7 +28,7 @@ impl DirigentApp {
                 let split_btn =
                     ui.add_enabled(split_enabled, egui::Button::new(icon("\u{2702} Split", fs)));
                 if split_btn.clicked() {
-                    actions.push((cue.id, CueAction::SplitCue(cue.id)));
+                    actions.push((cue.id, CueAction::SplitCue));
                 }
                 if ui.button(icon("\u{2715} Delete", fs)).clicked() {
                     actions.push((cue.id, CueAction::Delete));
