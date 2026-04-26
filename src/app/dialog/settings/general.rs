@@ -79,6 +79,7 @@ impl DirigentApp {
                     ai_generating: false,
                     ai_rx: None,
                     ai_error: None,
+                    ai_cancel: Default::default(),
                 });
             }
             // Edit button for current custom theme
@@ -96,6 +97,7 @@ impl DirigentApp {
                         ai_generating: false,
                         ai_rx: None,
                         ai_error: None,
+                        ai_cancel: Default::default(),
                     });
                 }
             }

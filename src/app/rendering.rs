@@ -180,7 +180,9 @@ impl DirigentApp {
 
     /// Dismiss the topmost app-level (non-git) modal dialog.
     fn dismiss_app_modal(&mut self) {
-        if self.custom_theme_edit.is_some() {
+        if let Some(edit) = &self.custom_theme_edit {
+            edit.ai_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             self.custom_theme_edit = None;
             return;
         }
