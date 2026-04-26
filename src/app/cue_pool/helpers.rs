@@ -226,14 +226,14 @@ pub(super) fn parse_schedule_duration(input: &str) -> Option<std::time::Duration
     if input.is_empty() {
         return None;
     }
-    let (num_str, suffix) = if let Some(s) = input.strip_suffix('m') {
-        (s, 'm')
-    } else if let Some(s) = input.strip_suffix('h') {
-        (s, 'h')
-    } else if let Some(s) = input.strip_suffix('s') {
-        (s, 's')
+    let input_lc = input.to_ascii_lowercase();
+    let (num_str, suffix) = if input_lc.strip_suffix('m').is_some() {
+        (&input[..input.len() - 1], 'm')
+    } else if input_lc.strip_suffix('h').is_some() {
+        (&input[..input.len() - 1], 'h')
+    } else if input_lc.strip_suffix('s').is_some() {
+        (&input[..input.len() - 1], 's')
     } else {
-        // Default to minutes if no suffix
         (input, 'm')
     };
     let num: u64 = num_str.parse().ok()?;
