@@ -187,11 +187,15 @@ impl DirigentApp {
             let Some(cue_id) = self.claude.show_log else {
                 return;
             };
-            let reply_text = self.conversation_replies.entry(cue_id).or_default();
+            let mut reply_text = self
+                .conversation_replies
+                .get(&cue_id)
+                .cloned()
+                .unwrap_or_default();
             let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
             let desired_rows = line_count.clamp(1, 8);
             let input_response = ui.add(
-                egui::TextEdit::multiline(reply_text)
+                egui::TextEdit::multiline(&mut reply_text)
                     .desired_width(ui.available_width() - SEND_BUTTON_RESERVED_WIDTH)
                     .desired_rows(desired_rows)
                     .hint_text("Reply with feedback...")
@@ -200,6 +204,11 @@ impl DirigentApp {
             let submitted = Self::render_reply_send_button(ui, fs, &input_response, &self.semantic);
             if submitted && !reply_text.trim().is_empty() {
                 reply_send = Some(reply_text.trim().to_string());
+            }
+            if reply_text.is_empty() {
+                self.conversation_replies.remove(&cue_id);
+            } else {
+                self.conversation_replies.insert(cue_id, reply_text);
             }
         });
         reply_send
