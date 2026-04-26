@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::mpsc;
 
 use crate::db::{Cue, CueStatus};
@@ -97,6 +98,7 @@ impl DirigentApp {
                         let _ = self.db.log_activity(id, "Archived (split)");
                         self.conversation_replies.remove(&id);
                         self.conversation_reply_images.remove(&id);
+                        remove_split_reference_file(&self.project_root, id);
                     } else {
                         let summary = format!(
                             "Split partially failed: {}/{} inserted, errors: {}",
@@ -139,6 +141,37 @@ fn write_reference_file(project_root: &std::path::Path, cue: &Cue) -> Option<Str
         Some(format!(".Dirigent/{}", filename))
     } else {
         None
+    }
+}
+
+fn remove_split_reference_file(project_root: &Path, cue_id: i64) {
+    let path = project_root
+        .join(".Dirigent")
+        .join(format!("split-ref-{}.md", cue_id));
+    let _ = std::fs::remove_file(path);
+}
+
+pub(super) fn cleanup_stale_split_references(project_root: &Path, db: &crate::db::Database) {
+    let dir = project_root.join(".Dirigent");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let active_ids: std::collections::HashSet<i64> =
+        db.all_cue_ids().unwrap_or_default().into_iter().collect();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(id_str) = name
+            .strip_prefix("split-ref-")
+            .and_then(|s| s.strip_suffix(".md"))
+        {
+            if let Ok(id) = id_str.parse::<i64>() {
+                if !active_ids.contains(&id) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
 }
 

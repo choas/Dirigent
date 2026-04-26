@@ -337,6 +337,8 @@ pub(super) struct CustomThemeEdit {
     pub ai_rx: Option<mpsc::Receiver<Result<CustomTheme, String>>>,
     /// Last error from AI generation.
     pub ai_error: Option<String>,
+    /// Cancellation token for in-flight AI generation.
+    pub ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -459,6 +461,7 @@ impl DirigentApp {
         // so the watcher can actually signal changes to the app.
         if !skip_scan {
             _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
+            split_cue::cleanup_stale_split_references(&project_root, &db);
         }
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
