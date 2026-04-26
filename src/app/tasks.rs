@@ -38,6 +38,8 @@ impl DirigentApp {
                             self.claude.running_logs.remove(&cue_id);
                             self.claude.start_times.remove(&cue_id);
                             self.claude.exec_ids.remove(&cue_id);
+                            self.conversation_replies.remove(&cue_id);
+                            self.conversation_reply_images.remove(&cue_id);
                             let preview = self.cue_preview(cue_id);
                             self.set_status_message(format!(
                                 "Worker thread panicked for \"{}\"",

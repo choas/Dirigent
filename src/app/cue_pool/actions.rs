@@ -195,6 +195,8 @@ impl DirigentApp {
         self.claude.exec_ids.remove(&id);
         self.claude.start_times.remove(&id);
         self.notion_done_cache.remove(&id);
+        self.conversation_replies.remove(&id);
+        self.conversation_reply_images.remove(&id);
         let _ = self.db.delete_cue(id);
     }
 
@@ -557,10 +559,15 @@ impl DirigentApp {
             self.latest_exec_cache.remove(cue_id);
             self.cue_warnings.remove(cue_id);
             self.notion_done_cache.remove(cue_id);
+            self.conversation_replies.remove(cue_id);
+            self.conversation_reply_images.remove(cue_id);
         }
         // Delete all archived cues from the DB (including those not loaded).
         let total = self.archived_cue_count;
-        let _ = self.db.delete_all_archived();
+        if let Err(e) = self.db.delete_all_archived() {
+            self.set_status_message(format!("Failed to delete archived cues: {e}"));
+            return;
+        }
         let plural = if total == 1 { "" } else { "s" };
         self.set_status_message(format!("Deleted {} archived cue{}", total, plural));
     }
