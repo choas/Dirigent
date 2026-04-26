@@ -559,9 +559,14 @@ impl DirigentApp {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 // Reload all open tabs after revert
                 let mut reload_failures: Vec<String> = Vec::new();
+                let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
                 for tab in &mut self.viewer.tabs {
                     match std::fs::read_to_string(&tab.file_path) {
                         Ok(content) => {
+                            if tab.markdown_blocks.is_some() {
+                                tab.markdown_blocks =
+                                    Some(super::super::markdown_parser::parse_markdown(&content));
+                            }
                             tab.content = content.lines().map(String::from).collect();
                             let ext = tab
                                 .file_path
@@ -569,6 +574,7 @@ impl DirigentApp {
                                 .and_then(|e| e.to_str())
                                 .unwrap_or("");
                             tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
+                            changed_paths.push(tab.file_path.clone());
                         }
                         Err(_) => {
                             if let Some(name) = tab.file_path.file_name() {
@@ -582,6 +588,14 @@ impl DirigentApp {
                         "Reverted, but failed to reload: {}",
                         reload_failures.join(", ")
                     ));
+                }
+                if self.settings.lsp_enabled {
+                    for path in &changed_paths {
+                        self.lsp.notify_file_changed(path);
+                    }
+                }
+                if self.search.in_file_active && !self.search.in_file_query.is_empty() {
+                    self.update_search_in_file_matches();
                 }
                 self.reload_cues();
                 self.reload_git_info();

@@ -127,6 +127,7 @@ impl DirigentApp {
     /// After a format agent passes, reload open tabs to show reformatted code.
     fn reload_tabs_after_format(&mut self) {
         let mut reload_failures: Vec<String> = Vec::new();
+        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
             match std::fs::read_to_string(&tab.file_path) {
                 Ok(content) => {
@@ -141,6 +142,7 @@ impl DirigentApp {
                         .and_then(|e| e.to_str())
                         .unwrap_or("");
                     tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                    changed_paths.push(tab.file_path.clone());
                 }
                 Err(_) => {
                     if let Some(name) = tab.file_path.file_name() {
@@ -154,6 +156,14 @@ impl DirigentApp {
                 "Format done, but failed to reload: {}",
                 reload_failures.join(", ")
             ));
+        }
+        if self.settings.lsp_enabled {
+            for path in &changed_paths {
+                self.lsp.notify_file_changed(path);
+            }
+        }
+        if self.search.in_file_active && !self.search.in_file_query.is_empty() {
+            self.update_search_in_file_matches();
         }
         self.reload_git_info();
     }

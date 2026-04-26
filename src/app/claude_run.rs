@@ -855,6 +855,7 @@ impl DirigentApp {
 
     /// Reload all open tabs so the user sees file changes made by the CLI.
     fn refresh_open_tabs(&mut self) {
+        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
             let content = match std::fs::read_to_string(&tab.file_path) {
                 Ok(c) => c,
@@ -870,6 +871,15 @@ impl DirigentApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+            changed_paths.push(tab.file_path.clone());
+        }
+        if self.settings.lsp_enabled {
+            for path in &changed_paths {
+                self.lsp.notify_file_changed(path);
+            }
+        }
+        if self.search.in_file_active && !self.search.in_file_query.is_empty() {
+            self.update_search_in_file_matches();
         }
     }
 
