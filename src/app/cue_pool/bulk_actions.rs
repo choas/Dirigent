@@ -230,24 +230,46 @@ impl DirigentApp {
     fn render_archived_bulk_actions(
         &mut self,
         ui: &mut egui::Ui,
-        section_cues: &[&Cue],
+        _section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
     ) {
+        let total = self.archived_cue_count;
         ui.horizontal(|ui| {
-            let btn = egui::Button::new(
-                icon("\u{1F5D1} Delete All", self.settings.font_size)
+            if self.confirm_delete_archived {
+                let btn = egui::Button::new(
+                    icon(
+                        &format!("\u{1F5D1} Confirm Delete {total}"),
+                        self.settings.font_size,
+                    )
                     .color(self.semantic.badge_text),
-            )
-            .fill(self.semantic.danger);
-            if ui
-                .add(btn)
-                .on_hover_text(format!(
-                    "Permanently delete all {} archived cues",
-                    section_cues.len()
-                ))
-                .clicked()
-            {
-                actions.push((0, CueAction::DeleteAllArchived));
+                )
+                .fill(self.semantic.danger);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!(
+                        "Permanently delete all {total} archived cues — this cannot be undone"
+                    ))
+                    .clicked()
+                {
+                    self.confirm_delete_archived = false;
+                    actions.push((0, CueAction::DeleteAllArchived));
+                }
+                if ui.small_button("\u{2715} Cancel").clicked() {
+                    self.confirm_delete_archived = false;
+                }
+            } else {
+                let btn = egui::Button::new(
+                    icon("\u{1F5D1} Delete All", self.settings.font_size)
+                        .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.danger);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!("Permanently delete all {total} archived cues"))
+                    .clicked()
+                {
+                    self.confirm_delete_archived = true;
+                }
             }
         });
         ui.add_space(SPACE_XS);
