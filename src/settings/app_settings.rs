@@ -8,9 +8,10 @@ use super::playbook::{default_playbook, Play};
 use super::providers::{CliProvider, SourceConfig};
 use super::theme::{CustomTheme, ThemeChoice};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum FontWeight {
     Light,
+    #[default]
     Regular,
     Medium,
     SemiBold,
@@ -53,12 +54,6 @@ impl FontWeight {
     /// Whether this weight maps to a bold face in .ttc collections.
     pub(crate) fn is_bold(&self) -> bool {
         matches!(self, FontWeight::SemiBold | FontWeight::Bold)
-    }
-}
-
-impl Default for FontWeight {
-    fn default() -> Self {
-        FontWeight::Regular
     }
 }
 
