@@ -54,40 +54,44 @@ impl DirigentApp {
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
     }
 
-    /// Reload content of all open tabs from disk.
-    pub(super) fn reload_open_tabs(&mut self) {
-        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
-        let mut stale_names: Vec<String> = Vec::new();
-        let mut stale_indices: Vec<usize> = Vec::new();
-        for (i, tab) in self.viewer.tabs.iter_mut().enumerate() {
-            match tab.reload_from_disk() {
-                Ok(()) => changed_paths.push(tab.file_path.clone()),
-                Err(_) => {
-                    if !tab.file_path.exists() {
-                        if let Some(name) = tab.file_path.file_name() {
-                            stale_names.push(name.to_string_lossy().into_owned());
-                        }
-                        stale_indices.push(i);
-                    }
-                }
+    /// Reload all open tabs from disk, notify LSP for changed files, and refresh
+    /// in-file search. Returns the paths that were successfully reloaded with new content.
+    pub(super) fn reload_open_tabs_and_notify_lsp(&mut self) -> Vec<std::path::PathBuf> {
+        let mut changed_paths = Vec::new();
+        for tab in &mut self.viewer.tabs {
+            if tab.reload_from_disk().unwrap_or(false) {
+                changed_paths.push(tab.file_path.clone());
             }
         }
-        // Remove deleted-file tabs in reverse order to keep indices valid.
-        for &idx in stale_indices.iter().rev() {
-            self.viewer.close_tab(idx);
-        }
-        if !stale_names.is_empty() {
-            self.set_status_message(format!("Closed (file deleted): {}", stale_names.join(", ")));
-        }
-        // Notify LSP of file changes
         if self.settings.lsp_enabled {
             for path in &changed_paths {
                 self.lsp.notify_file_changed(path);
             }
         }
-        // Re-run in-file search so matches stay in sync with updated content
         if self.search.in_file_active && !self.search.in_file_query.is_empty() {
             self.update_search_in_file_matches();
+        }
+        changed_paths
+    }
+
+    /// Reload content of all open tabs from disk, closing tabs for deleted files.
+    pub(super) fn reload_open_tabs(&mut self) {
+        self.reload_open_tabs_and_notify_lsp();
+        let mut stale_names: Vec<String> = Vec::new();
+        let mut stale_indices: Vec<usize> = Vec::new();
+        for (i, tab) in self.viewer.tabs.iter().enumerate() {
+            if !tab.file_path.exists() {
+                if let Some(name) = tab.file_path.file_name() {
+                    stale_names.push(name.to_string_lossy().into_owned());
+                }
+                stale_indices.push(i);
+            }
+        }
+        for &idx in stale_indices.iter().rev() {
+            self.viewer.close_tab(idx);
+        }
+        if !stale_names.is_empty() {
+            self.set_status_message(format!("Closed (file deleted): {}", stale_names.join(", ")));
         }
     }
 

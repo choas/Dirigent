@@ -660,7 +660,7 @@ impl DirigentApp {
             .db
             .update_cue_plan_path(result.cue_id, plan_path.as_deref());
 
-        self.refresh_open_tabs();
+        self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
         self.reload_commit_history();
         self.try_dispatch_follow_up(result.cue_id);
@@ -852,24 +852,6 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(result.cue_id, "Run completed — no changes");
-    }
-
-    /// Reload all open tabs so the user sees file changes made by the CLI.
-    fn refresh_open_tabs(&mut self) {
-        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
-        for tab in &mut self.viewer.tabs {
-            if tab.reload_from_disk().is_ok() {
-                changed_paths.push(tab.file_path.clone());
-            }
-        }
-        if self.settings.lsp_enabled {
-            for path in &changed_paths {
-                self.lsp.notify_file_changed(path);
-            }
-        }
-        if self.search.in_file_active && !self.search.in_file_query.is_empty() {
-            self.update_search_in_file_matches();
-        }
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.

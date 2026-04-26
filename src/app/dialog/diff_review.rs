@@ -560,32 +560,23 @@ impl DirigentApp {
         match git::revert_files(&self.project_root, &file_paths) {
             Ok(()) => {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                // Reload all open tabs after revert
-                let mut reload_failures: Vec<String> = Vec::new();
-                let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
-                for tab in &mut self.viewer.tabs {
-                    match tab.reload_from_disk() {
-                        Ok(()) => changed_paths.push(tab.file_path.clone()),
-                        Err(_) => {
-                            if let Some(name) = tab.file_path.file_name() {
-                                reload_failures.push(name.to_string_lossy().into_owned());
-                            }
-                        }
-                    }
-                }
+                self.reload_open_tabs_and_notify_lsp();
+                let reload_failures: Vec<String> = self
+                    .viewer
+                    .tabs
+                    .iter()
+                    .filter(|tab| !tab.file_path.is_file())
+                    .filter_map(|tab| {
+                        tab.file_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                    })
+                    .collect();
                 if !reload_failures.is_empty() {
                     self.set_status_message(format!(
                         "Reverted, but failed to reload: {}",
                         reload_failures.join(", ")
                     ));
-                }
-                if self.settings.lsp_enabled {
-                    for path in &changed_paths {
-                        self.lsp.notify_file_changed(path);
-                    }
-                }
-                if self.search.in_file_active && !self.search.in_file_query.is_empty() {
-                    self.update_search_in_file_matches();
                 }
                 self.reload_cues();
                 self.reload_git_info();
