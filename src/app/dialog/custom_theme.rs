@@ -221,8 +221,9 @@ impl DirigentApp {
             Some(e) => e,
             None => return,
         };
-        let theme = edit.theme;
-        let trimmed = theme.name.trim();
+        let mut theme = edit.theme;
+        theme.name = theme.name.trim().to_string();
+        let trimmed = &theme.name;
 
         let dup_idx = self
             .settings
