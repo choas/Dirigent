@@ -201,9 +201,17 @@ impl DirigentApp {
             self.spawn_ai_theme_generation();
         }
         if save {
+            if let Some(edit) = &self.custom_theme_edit {
+                edit.ai_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             self.save_custom_theme();
         }
         if delete {
+            if let Some(edit) = &self.custom_theme_edit {
+                edit.ai_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             self.delete_custom_theme();
         }
         if close {
