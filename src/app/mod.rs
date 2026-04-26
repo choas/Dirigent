@@ -119,6 +119,7 @@ pub struct DirigentApp {
     archived_cue_limit: usize,
     /// Cached archived count for current source filter (avoids DB query per frame).
     cached_filtered_archived_count: usize,
+    confirm_delete_archived: bool,
 
     // Claude execution & running logs
     pub(super) claude: ClaudeRunState,
@@ -315,6 +316,7 @@ pub struct DirigentApp {
     split_cue_generating: bool,
     split_cue_source_id: Option<i64>,
     split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
+    split_cue_cancel: Arc<AtomicBool>,
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
@@ -509,6 +511,7 @@ impl DirigentApp {
             archived_cue_count,
             cached_filtered_archived_count: archived_cue_count,
             archived_cue_limit: 10,
+            confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
             git: GitState {
@@ -681,6 +684,7 @@ impl DirigentApp {
             split_cue_generating: false,
             split_cue_source_id: None,
             split_cue_rx: None,
+            split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
             custom_theme_edit: None,
         }
@@ -938,6 +942,7 @@ impl eframe::App for DirigentApp {
 
 impl Drop for DirigentApp {
     fn drop(&mut self) {
+        self.split_cue_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
     }
 }

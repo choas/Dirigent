@@ -21,17 +21,19 @@ impl DirigentApp {
 
         self.split_cue_generating = true;
         self.split_cue_source_id = Some(cue_id);
+        self.split_cue_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let provider = self.settings.cli_provider.clone();
         let project_root = self.project_root.clone();
         let settings = self.settings.clone();
+        let cancel = std::sync::Arc::clone(&self.split_cue_cancel);
 
         let (tx, rx) = mpsc::channel();
         self.split_cue_rx = Some(rx);
         let ctx = self.egui_ctx.clone();
 
         std::thread::spawn(move || {
-            let result = run_split_analysis(&prompt, &provider, &project_root, &settings);
+            let result = run_split_analysis(&prompt, &provider, &project_root, &settings, cancel);
             let _ = tx.send(result);
             if let Some(c) = ctx.get() {
                 c.request_repaint();
@@ -244,11 +246,11 @@ fn run_split_analysis(
     provider: &crate::settings::CliProvider,
     project_root: &std::path::Path,
     settings: &crate::settings::Settings,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<SplitCueItem>, String> {
     use crate::settings::CliProvider;
 
     let pf = settings.provider_fields(provider);
-    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let response_text = match provider {
         CliProvider::Claude => {
