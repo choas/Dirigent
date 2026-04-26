@@ -123,6 +123,14 @@ impl DirigentApp {
     fn handle_lsp_definition_result(&mut self) {
         if let Some((def_path, def_line)) = self.lsp.definition_result.take() {
             self.lsp_goto_def_fallback_word = None;
+            if !self.is_within_project_root(&def_path) {
+                eprintln!(
+                    "[lsp] rejecting definition outside project root: {:?}",
+                    def_path
+                );
+                self.set_status_message("Definition is outside the project".to_string());
+                return;
+            }
             self.push_nav_history();
             self.load_file(def_path);
             self.viewer.scroll_to_line = Some(def_line);
@@ -172,6 +180,14 @@ impl DirigentApp {
             return;
         }
         if target_line > 0 {
+            if !self.is_within_project_root(&file_path) {
+                eprintln!(
+                    "[goto-def] rejecting path outside project root: {:?}",
+                    file_path
+                );
+                self.set_status_message("Definition is outside the project".to_string());
+                return;
+            }
             self.push_nav_history();
             self.load_file(file_path);
             self.viewer.scroll_to_line = Some(target_line);

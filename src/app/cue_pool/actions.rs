@@ -479,6 +479,10 @@ impl DirigentApp {
             .and_then(|c| c.plan_path.clone());
         if let Some(path) = plan_path {
             let full_path = std::path::PathBuf::from(&path);
+            if !self.is_within_project_root(&full_path) {
+                self.set_status_message("Plan file is outside the project".to_string());
+                return;
+            }
             if full_path.exists() {
                 self.push_nav_history();
                 self.load_file(full_path);
@@ -495,6 +499,11 @@ impl DirigentApp {
             .find(|c| c.id == cue_id)
             .and_then(|c| c.plan_path.clone());
         if let Some(path) = plan_path {
+            let full_path = std::path::PathBuf::from(&path);
+            if !self.is_within_project_root(&full_path) {
+                self.set_status_message("Plan file is outside the project".to_string());
+                return;
+            }
             let plan_content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {

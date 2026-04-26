@@ -5,6 +5,19 @@ use super::DirigentApp;
 use crate::db::Cue;
 
 impl DirigentApp {
+    /// Check whether `path` is inside `self.project_root` after canonicalization.
+    pub(super) fn is_within_project_root(&self, path: &Path) -> bool {
+        let canon_root = match std::fs::canonicalize(&self.project_root) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let canon_path = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        canon_path.starts_with(&canon_root)
+    }
+
     pub(super) fn load_file(&mut self, path: PathBuf) {
         self.dismiss_central_overlays();
         let file_path = path.clone();
