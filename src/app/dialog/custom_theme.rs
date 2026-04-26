@@ -439,11 +439,15 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         if arr.len() != 3 {
             return Err(format!("Field {key} must have exactly 3 values"));
         }
-        Ok([
-            arr[0].as_u64().unwrap_or(0) as u8,
-            arr[1].as_u64().unwrap_or(0) as u8,
-            arr[2].as_u64().unwrap_or(0) as u8,
-        ])
+        let mut rgb = [0u8; 3];
+        for (i, channel) in ["r", "g", "b"].iter().enumerate() {
+            let val = arr[i]
+                .as_u64()
+                .ok_or_else(|| format!("{key}[{channel}]: expected integer"))?;
+            rgb[i] = u8::try_from(val)
+                .map_err(|_| format!("{key}[{channel}]: value {val} out of range 0..=255"))?;
+        }
+        Ok(rgb)
     };
 
     Ok(CustomTheme {
