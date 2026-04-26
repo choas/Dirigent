@@ -467,18 +467,10 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
 /// Extract the first JSON object `{...}` from a string.
 fn extract_json_object(text: &str) -> Option<&str> {
     let start = text.find('{')?;
-    let mut depth = 0;
-    for (i, ch) in text[start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[start..start + i + 1]);
-                }
-            }
-            _ => {}
-        }
+    let end = text.rfind('}')?;
+    if end >= start {
+        Some(&text[start..=end])
+    } else {
+        None
     }
-    None
 }
