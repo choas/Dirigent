@@ -95,6 +95,8 @@ impl DirigentApp {
                             .log_activity(id, &format!("Split into {} cues", success_count));
                         let _ = self.db.update_cue_status(id, CueStatus::Archived);
                         let _ = self.db.log_activity(id, "Archived (split)");
+                        self.conversation_replies.remove(&id);
+                        self.conversation_reply_images.remove(&id);
                     } else {
                         let summary = format!(
                             "Split partially failed: {}/{} inserted, errors: {}",

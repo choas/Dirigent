@@ -171,6 +171,10 @@ impl DirigentApp {
             .db
             .log_activity(id, &format!("Moved to {}", new_status.label()));
         self.cue_move_flash.insert(id, Instant::now());
+        if new_status == CueStatus::Archived {
+            self.conversation_replies.remove(&id);
+            self.conversation_reply_images.remove(&id);
+        }
         if new_status == CueStatus::Ready {
             // Clear any previous plan when starting a new run.
             let _ = self.db.update_cue_plan_path(id, None);
