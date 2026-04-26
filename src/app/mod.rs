@@ -777,12 +777,19 @@ impl DirigentApp {
             .db
             .get_cue_ids_with_activity_prefix("Marked done in Notion")
             .unwrap_or_default();
-        // Prune conversation maps for cues that are no longer loaded.
+        // Prune per-cue maps for cues that are no longer loaded.
         let live_ids: std::collections::HashSet<i64> = self.cues.iter().map(|c| c.id).collect();
         self.conversation_replies
             .retain(|id, _| live_ids.contains(id));
         self.conversation_reply_images
             .retain(|id, _| live_ids.contains(id));
+        self.reply_inputs.retain(|id, _| live_ids.contains(id));
+        self.tag_inputs.retain(|id, _| live_ids.contains(id));
+        self.cue_warnings.retain(|id, _| live_ids.contains(id));
+        self.cue_text_expanded.retain(|id| live_ids.contains(id));
+        self.logbook_expanded.retain(|id| live_ids.contains(id));
+        self.agent_output_expanded
+            .retain(|(cue_id, _)| live_ids.contains(cue_id));
         // Invalidate activity cache so expanded logbooks pick up new data.
         self.activity_cache.clear();
         // Recompute cue-derived caches (avoids scanning all cues every frame).
