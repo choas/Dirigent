@@ -343,4 +343,66 @@ mod tests {
         assert_eq!(parse_schedule_duration("5 h"), None);
         assert_eq!(parse_schedule_duration("5 s"), None);
     }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_suffixes() {
+        assert_eq!(
+            parse_schedule_duration("5M"),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("2H"),
+            Some(Duration::from_secs(7200))
+        );
+        assert_eq!(
+            parse_schedule_duration("30S"),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_whitespace_trimmed() {
+        assert_eq!(
+            parse_schedule_duration("  5M  "),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("  2H  "),
+            Some(Duration::from_secs(7200))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_zero() {
+        assert_eq!(parse_schedule_duration("0M"), None);
+        assert_eq!(parse_schedule_duration("0H"), None);
+        assert_eq!(parse_schedule_duration("0S"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_invalid() {
+        assert_eq!(parse_schedule_duration("ABC"), None);
+        assert_eq!(parse_schedule_duration("M"), None);
+        assert_eq!(parse_schedule_duration("H"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_malformed_suffix() {
+        assert_eq!(parse_schedule_duration("5MM"), None);
+        assert_eq!(parse_schedule_duration("5HM"), None);
+        assert_eq!(parse_schedule_duration("5SH"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_decimal_rejected() {
+        assert_eq!(parse_schedule_duration("5.5M"), None);
+        assert_eq!(parse_schedule_duration("1.0H"), None);
+        assert_eq!(parse_schedule_duration("2.5S"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_overflow_safe() {
+        assert_eq!(parse_schedule_duration("99999999999999999H"), None);
+        assert_eq!(parse_schedule_duration("999999999999999999M"), None);
+    }
 }
