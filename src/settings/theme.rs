@@ -446,6 +446,7 @@ impl ThemeChoice {
                     ct.hyperlink[1],
                     ct.hyperlink[2],
                 ),
+                accent: egui::Color32::from_rgb(ct.accent[0], ct.accent[1], ct.accent[2]),
             },
             //                            panel_fill         window_fill        extreme_bg         faint_bg           text               selection          noninteractive     inactive           hovered            active             hyperlink
             Dark => palette!(
@@ -492,6 +493,7 @@ macro_rules! palette {
             hovered: egui::Color32::from_rgb($hr, $hg, $hb),
             active: egui::Color32::from_rgb($ar, $ag, $ab),
             hyperlink: egui::Color32::from_rgb($lr, $lg, $lb),
+            accent: egui::Color32::from_rgb($lr, $lg, $lb),
         }
     };
 }
@@ -509,6 +511,7 @@ struct ThemePalette {
     hovered: egui::Color32,
     active: egui::Color32,
     hyperlink: egui::Color32,
+    accent: egui::Color32,
 }
 
 /// Apply generous, Apple-style corner rounding and subtle depth to all visual elements.
@@ -571,7 +574,7 @@ impl ThemePalette {
         v.widgets.active.bg_fill = self.active;
         v.hyperlink_color = self.hyperlink;
         apply_rounding_and_depth(&mut v, dark);
-        apply_interactive_visuals(&mut v, self.hyperlink);
+        apply_interactive_visuals(&mut v, self.accent);
         v
     }
 }
