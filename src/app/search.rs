@@ -425,7 +425,13 @@ impl DirigentApp {
     }
 
     /// Handle global keyboard shortcuts for search (called from update loop).
+    ///
+    /// Suppressed when a modal dialog is open so search doesn't activate behind it.
     pub(super) fn handle_search_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.has_modal_open() {
+            return;
+        }
+
         // Cmd+F = search in file (or diff review)
         if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::F)) {
             if self.diff_review.is_some() {

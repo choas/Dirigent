@@ -49,14 +49,48 @@ impl DirigentApp {
         );
     }
 
+    /// Whether a modal dialog is currently open.
+    pub(super) fn has_modal_open(&self) -> bool {
+        self.show_repo_picker
+            || self.git.show_worktree_panel
+            || self.show_about
+            || self.pending_play.is_some()
+            || self.git.show_create_pr
+            || self.git.pending_force_remove.is_some()
+            || self.git.pending_delete_archive.is_some()
+            || self.pending_file_delete.is_some()
+            || self.rename_target.is_some()
+            || self.git_init_confirm.is_some()
+            || self.git.show_pull_diverged
+            || self.git.show_pull_unmerged
+            || self.git.show_merge_conflicts
+            || self.git.show_import_pr
+            || self.git.show_pr_filter
+            || self.git.show_move_to_branch
+            || self.git.show_switch_branch
+            || self.custom_theme_edit.is_some()
+    }
+
     /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
+    ///
+    /// Suppressed when a text edit has focus or a modal dialog is open, so
+    /// they don't fire while the user is typing in the quick-open overlay,
+    /// search bar, prompt field, etc.
     pub(super) fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         self.handle_search_shortcuts(ctx);
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N)) {
+
+        let suppress = ctx.text_edit_focused() || self.has_modal_open();
+
+        if !suppress
+            && ctx
+                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N))
+        {
             crate::spawn_new_instance();
         }
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W)) {
-            // Notify LSP before closing
+        if !suppress
+            && ctx
+                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W))
+        {
             if self.settings.lsp_enabled {
                 if let Some(tab) = self.viewer.active() {
                     let path = tab.file_path.clone();
@@ -65,20 +99,27 @@ impl DirigentApp {
             }
             self.viewer.close_active_tab();
         }
-        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P)) {
+        if !suppress
+            && ctx
+                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P))
+        {
             self.viewer.quick_open_active = !self.viewer.quick_open_active;
             self.viewer.quick_open_query.clear();
             self.viewer.quick_open_selected = 0;
         }
-        if ctx.input(|i| {
-            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
-        }) {
+        if !suppress
+            && ctx.input(|i| {
+                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
+            })
+        {
             self.push_nav_history();
             self.nav_back();
         }
-        if ctx.input(|i| {
-            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
-        }) {
+        if !suppress
+            && ctx.input(|i| {
+                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
+            })
+        {
             self.nav_forward();
         }
     }
@@ -103,25 +144,7 @@ impl DirigentApp {
 
     /// Render modal overlay dimming behind floating windows.
     pub(super) fn render_modal_overlay(&mut self, ctx: &egui::Context) {
-        let has_modal = self.show_repo_picker
-            || self.git.show_worktree_panel
-            || self.show_about
-            || self.pending_play.is_some()
-            || self.git.show_create_pr
-            || self.git.pending_force_remove.is_some()
-            || self.git.pending_delete_archive.is_some()
-            || self.pending_file_delete.is_some()
-            || self.rename_target.is_some()
-            || self.git_init_confirm.is_some()
-            || self.git.show_pull_diverged
-            || self.git.show_pull_unmerged
-            || self.git.show_merge_conflicts
-            || self.git.show_import_pr
-            || self.git.show_pr_filter
-            || self.git.show_move_to_branch
-            || self.git.show_switch_branch
-            || self.custom_theme_edit.is_some();
-        if !has_modal {
+        if !self.has_modal_open() {
             return;
         }
         let screen = ctx.content_rect();
