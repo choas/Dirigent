@@ -197,13 +197,14 @@ impl DirigentApp {
                                     .color(accent),
                             );
                             let kind_label = sym.kind.label();
-                            let mut label = sym.name.clone();
-                            if !kind_label.is_empty() {
-                                label = format!("{} {}", kind_label, sym.name);
-                            }
+                            let label: std::borrow::Cow<str> = if kind_label.is_empty() {
+                                std::borrow::Cow::Borrowed(&sym.name)
+                            } else {
+                                std::borrow::Cow::Owned(format!("{} {}", kind_label, sym.name))
+                            };
                             if ui
                                 .add(
-                                    egui::Label::new(egui::RichText::new(&label).small())
+                                    egui::Label::new(egui::RichText::new(label.as_ref()).small())
                                         .truncate()
                                         .sense(egui::Sense::click()),
                                 )
@@ -470,7 +471,6 @@ impl DirigentApp {
             &response,
             entry,
             &rel,
-            ctx.project_root,
             ctx.semantic,
             ctx.action,
             ctx.status_msg,
@@ -1065,7 +1065,6 @@ fn render_file_context_menu(
     response: &egui::Response,
     entry: &FileEntry,
     rel: &str,
-    _project_root: &Path,
     semantic: &SemanticColors,
     action: &mut Option<FileTreeAction>,
     status_msg: &mut Option<String>,

@@ -23,7 +23,7 @@ impl DirigentApp {
             self.render_done_bulk_actions(ui, section_cues, actions);
         }
         if status == CueStatus::Archived && !section_cues.is_empty() {
-            self.render_archived_bulk_actions(ui, section_cues, actions);
+            self.render_archived_bulk_actions(ui, actions);
         }
     }
 
@@ -230,7 +230,6 @@ impl DirigentApp {
     fn render_archived_bulk_actions(
         &mut self,
         ui: &mut egui::Ui,
-        _section_cues: &[&Cue],
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let total = self.archived_cue_count;

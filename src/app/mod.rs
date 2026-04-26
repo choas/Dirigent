@@ -411,7 +411,6 @@ impl DirigentApp {
             worktrees,
             mut _fs_watcher,
         ) = if skip_scan {
-            let _fs_changed_dummy = Arc::new(AtomicBool::new(false));
             (
                 None,
                 Vec::new(),
