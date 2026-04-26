@@ -207,20 +207,42 @@ impl DirigentApp {
         }
     }
 
-    /// Save the currently edited custom theme.
+    /// Save the currently edited custom theme, deduplicating by name.
     fn save_custom_theme(&mut self) {
         let edit = match self.custom_theme_edit.take() {
             Some(e) => e,
             None => return,
         };
         let theme = edit.theme;
+        let trimmed = theme.name.trim();
+
+        let dup_idx = self
+            .settings
+            .custom_themes
+            .iter()
+            .position(|t| t.name.trim().eq_ignore_ascii_case(trimmed));
+
         if let Some(idx) = edit.editing_index {
-            if idx < self.settings.custom_themes.len() {
+            if let Some(dup) = dup_idx {
+                if dup == idx {
+                    self.settings.custom_themes[idx] = theme.clone();
+                } else {
+                    // Renamed to match a different entry: replace that entry,
+                    // remove the old slot.
+                    self.settings.custom_themes[dup] = theme.clone();
+                    if idx < self.settings.custom_themes.len() {
+                        self.settings.custom_themes.remove(idx);
+                    }
+                }
+            } else if idx < self.settings.custom_themes.len() {
                 self.settings.custom_themes[idx] = theme.clone();
             }
+        } else if let Some(dup) = dup_idx {
+            self.settings.custom_themes[dup] = theme.clone();
         } else {
             self.settings.custom_themes.push(theme.clone());
         }
+
         self.settings.theme = crate::settings::ThemeChoice::Custom(theme);
         crate::settings::save_settings(&self.project_root, &self.settings);
         self.needs_theme_apply = true;
@@ -232,14 +254,18 @@ impl DirigentApp {
             Some(e) => e,
             None => return,
         };
+        let mut original_name = None;
         if let Some(idx) = edit.editing_index {
             if idx < self.settings.custom_themes.len() {
+                original_name = Some(self.settings.custom_themes[idx].name.clone());
                 self.settings.custom_themes.remove(idx);
             }
         }
-        if matches!(&self.settings.theme, crate::settings::ThemeChoice::Custom(ct) if ct.name == edit.theme.name)
-        {
-            self.settings.theme = crate::settings::ThemeChoice::Dark;
+        if let Some(name) = original_name {
+            if matches!(&self.settings.theme, crate::settings::ThemeChoice::Custom(ct) if ct.name == name)
+            {
+                self.settings.theme = crate::settings::ThemeChoice::Dark;
+            }
         }
         crate::settings::save_settings(&self.project_root, &self.settings);
         self.needs_theme_apply = true;

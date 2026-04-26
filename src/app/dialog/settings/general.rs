@@ -90,7 +90,7 @@ impl DirigentApp {
                         .settings
                         .custom_themes
                         .iter()
-                        .position(|t| t.name == ct.name);
+                        .position(|t| t.name.trim().eq_ignore_ascii_case(ct.name.trim()));
                     self.custom_theme_edit = Some(CustomThemeEdit {
                         theme: ct.clone(),
                         editing_index: idx,
