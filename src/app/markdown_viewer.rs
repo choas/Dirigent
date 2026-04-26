@@ -70,7 +70,7 @@ fn render_blocks(
 ) {
     let indent = ctx.indent();
 
-    for (block_idx, block) in blocks.iter().enumerate() {
+    for block in blocks {
         if indent > 0.0 {
             ui.add_space(0.0); // ensure layout is started
         }
@@ -97,7 +97,7 @@ fn render_blocks(
                 render_block_quote(ui, blocks, ctx, heading_counter);
             }
             MarkdownBlock::Table { headers, rows } => {
-                render_table(ui, headers, rows, block_idx, ctx);
+                render_table(ui, headers, rows, ctx);
             }
             MarkdownBlock::ThematicBreak => {
                 render_thematic_break(ui, ctx);
@@ -401,7 +401,6 @@ fn render_table(
     ui: &mut egui::Ui,
     headers: &[Vec<TextSegment>],
     rows: &[Vec<Vec<TextSegment>>],
-    _block_idx: usize,
     ctx: &RenderCtx,
 ) {
     let indent = ctx.indent();

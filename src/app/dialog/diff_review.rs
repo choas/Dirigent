@@ -397,7 +397,9 @@ impl DirigentApp {
     ) {
         let query_lower_owned = search_query.to_lowercase();
         let search_highlight = if search.active && !search_query.is_empty() {
-            let current = search.current.map(|idx| search.matches[idx]);
+            let current = search
+                .current
+                .and_then(|idx| search.matches.get(idx).copied());
             Some(DiffSearchHighlight {
                 query_lower: &query_lower_owned,
                 current,
@@ -459,8 +461,9 @@ impl DirigentApp {
             if let Some(ref mut review) = self.diff_review {
                 crate::app::search::update_diff_search_matches(review);
                 if let Some(idx) = review.search_current {
-                    let (file_idx, _, _) = review.search_matches[idx];
-                    review.collapsed_files.remove(&file_idx);
+                    if let Some(&(file_idx, _, _)) = review.search_matches.get(idx) {
+                        review.collapsed_files.remove(&file_idx);
+                    }
                 }
             }
         }
@@ -557,17 +560,13 @@ impl DirigentApp {
         match git::revert_files(&self.project_root, &file_paths) {
             Ok(()) => {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                // Reload all open tabs after revert
-                for tab in &mut self.viewer.tabs {
-                    if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                        tab.content = content.lines().map(String::from).collect();
-                        let ext = tab
-                            .file_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("");
-                        tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
-                    }
+                let result = self.reload_open_tabs_and_notify_lsp();
+                let problems = Self::collect_reload_problems(&self.viewer.tabs, &result);
+                if !problems.is_empty() {
+                    self.set_status_message(format!(
+                        "Reverted, but failed to reload: {}",
+                        problems.join(", ")
+                    ));
                 }
                 self.reload_cues();
                 self.reload_git_info();

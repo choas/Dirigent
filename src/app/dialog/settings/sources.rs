@@ -116,6 +116,11 @@ impl DirigentApp {
                         .font(egui::TextStyle::Body),
                 );
                 ui.checkbox(&mut self.settings.sources[i].enabled, "Enabled");
+                ui.checkbox(&mut self.settings.sources[i].allow_runnable, "Auto-run")
+                    .on_hover_text(
+                        "Allow {runnable} cues from this source to execute automatically. \
+                         Only enable for trusted sources.",
+                    );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(icon("\u{2715}", fs))

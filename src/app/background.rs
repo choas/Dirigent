@@ -1,10 +1,10 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use eframe::egui;
 
-use super::markdown_parser;
 use super::symbols;
 use super::{
     DirigentApp, ELAPSED_REPAINT, FS_RESCAN_DEBOUNCE, LOG_SYNC_INTERVAL, REPAINT_FAST, REPAINT_SLOW,
@@ -14,9 +14,26 @@ use crate::settings;
 
 impl DirigentApp {
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).
+    /// Only applies the new settings (and triggers a theme re-apply) if they actually differ
+    /// from the current in-memory state, to avoid unnecessary theme resets on unrelated FS changes.
     pub(super) fn reload_settings_from_disk(&mut self) {
+        let new_settings = settings::load_settings(&self.project_root);
+
+        // Compare ignoring in-memory-only fields (recent_repos may differ from disk)
+        let mut current_cmp = self.settings.clone();
+        let mut new_cmp = new_settings.clone();
+        current_cmp.recent_repos = Vec::new();
+        new_cmp.recent_repos = Vec::new();
+
+        let current_json = serde_json::to_string(&current_cmp).unwrap_or_default();
+        let new_json = serde_json::to_string(&new_cmp).unwrap_or_default();
+
+        if current_json == new_json {
+            return;
+        }
+
         let recent_repos = self.settings.recent_repos.clone();
-        self.settings = settings::load_settings(&self.project_root);
+        self.settings = new_settings;
         self.settings.recent_repos = recent_repos;
         self.needs_theme_apply = true;
     }
@@ -33,39 +50,100 @@ impl DirigentApp {
         self.reload_file_tree();
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        self.reload_settings_from_disk();
         self.reload_open_tabs();
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
     }
 
-    /// Reload content of all open tabs from disk.
-    pub(super) fn reload_open_tabs(&mut self) {
-        let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
+    /// Reload all open tabs from disk, notify LSP for changed files, and refresh
+    /// in-file search. Returns changed and failed paths.
+    pub(super) fn reload_open_tabs_and_notify_lsp(&mut self) -> super::types::TabReloadResult {
+        let mut changed = Vec::new();
+        let mut failed = Vec::new();
         for tab in &mut self.viewer.tabs {
-            let content = match std::fs::read_to_string(&tab.file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if tab.markdown_blocks.is_some() {
-                tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
+            match tab.reload_from_disk() {
+                Ok(true) => changed.push(tab.file_path.clone()),
+                Ok(false) => {}
+                Err(e) => failed.push((tab.file_path.clone(), e.to_string())),
             }
-            tab.content = content.lines().map(String::from).collect();
-            let ext = tab
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            tab.symbols = symbols::parse_symbols(&tab.content, ext);
-            changed_paths.push(tab.file_path.clone());
         }
-        // Notify LSP of file changes
         if self.settings.lsp_enabled {
-            for path in &changed_paths {
+            for path in &changed {
                 self.lsp.notify_file_changed(path);
             }
         }
-        // Re-run in-file search so matches stay in sync with updated content
         if self.search.in_file_active && !self.search.in_file_query.is_empty() {
             self.update_search_in_file_matches();
+        }
+        super::types::TabReloadResult { changed, failed }
+    }
+
+    /// Collect formatted problem messages from tabs that no longer exist on disk
+    /// and from reload failures, de-duplicating by path.
+    pub(super) fn collect_reload_problems(
+        tabs: &[super::types::TabState],
+        result: &super::types::TabReloadResult,
+    ) -> Vec<String> {
+        let mut seen: HashSet<&PathBuf> = HashSet::new();
+        let mut problems: Vec<String> = Vec::new();
+        for tab in tabs {
+            if !tab.file_path.is_file() {
+                if let Some(name) = tab.file_path.file_name() {
+                    seen.insert(&tab.file_path);
+                    problems.push(format!("{} (deleted)", name.to_string_lossy()));
+                }
+            }
+        }
+        for (path, err) in &result.failed {
+            if seen.contains(path) {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            problems.push(format!("{} ({})", name, err));
+        }
+        problems
+    }
+
+    /// Reload content of all open tabs from disk, closing tabs for deleted files.
+    pub(super) fn reload_open_tabs(&mut self) {
+        let result = self.reload_open_tabs_and_notify_lsp();
+        let mut stale_names: Vec<String> = Vec::new();
+        let mut stale_indices: Vec<usize> = Vec::new();
+        for (i, tab) in self.viewer.tabs.iter().enumerate() {
+            if !tab.file_path.exists() {
+                if let Some(name) = tab.file_path.file_name() {
+                    stale_names.push(name.to_string_lossy().into_owned());
+                }
+                stale_indices.push(i);
+            }
+        }
+        for &idx in stale_indices.iter().rev() {
+            self.viewer.close_tab(idx);
+        }
+        let mut messages = Vec::new();
+        if !stale_names.is_empty() {
+            messages.push(format!("Closed (file deleted): {}", stale_names.join(", ")));
+        }
+        let still_existing_failures: Vec<_> =
+            result.failed.iter().filter(|(p, _)| p.exists()).collect();
+        if !still_existing_failures.is_empty() {
+            let names: Vec<String> = still_existing_failures
+                .iter()
+                .map(|(p, e)| {
+                    let name = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| p.display().to_string());
+                    format!("{} ({})", name, e)
+                })
+                .collect();
+            messages.push(format!("Failed to reload: {}", names.join(", ")));
+        }
+        if !messages.is_empty() {
+            self.set_status_message(messages.join("; "));
         }
     }
 
@@ -74,6 +152,10 @@ impl DirigentApp {
         if let Ok(tree) = self.file_tree_rx.try_recv() {
             self.file_tree = Some(tree);
             self.file_tree_scanning = false;
+        }
+        if let Ok(err_msg) = self.file_tree_error_rx.try_recv() {
+            self.file_tree_scanning = false;
+            self.set_status_message(err_msg);
         }
         if let Ok(results) = self.search.search_result_rx.try_recv() {
             self.search.in_files_results = results;
@@ -94,6 +176,14 @@ impl DirigentApp {
     fn handle_lsp_definition_result(&mut self) {
         if let Some((def_path, def_line)) = self.lsp.definition_result.take() {
             self.lsp_goto_def_fallback_word = None;
+            if !self.is_within_project_root(&def_path) {
+                eprintln!(
+                    "[lsp] rejecting definition outside project root: {:?}",
+                    def_path
+                );
+                self.set_status_message("Definition is outside the project".to_string());
+                return;
+            }
             self.push_nav_history();
             self.load_file(def_path);
             self.viewer.scroll_to_line = Some(def_line);
@@ -143,6 +233,14 @@ impl DirigentApp {
             return;
         }
         if target_line > 0 {
+            if !self.is_within_project_root(&file_path) {
+                eprintln!(
+                    "[goto-def] rejecting path outside project root: {:?}",
+                    file_path
+                );
+                self.set_status_message("Definition is outside the project".to_string());
+                return;
+            }
             self.push_nav_history();
             self.load_file(file_path);
             self.viewer.scroll_to_line = Some(target_line);

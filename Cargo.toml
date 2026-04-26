@@ -31,7 +31,7 @@ strip-ansi-escapes = "=0.2.1"
 lsp-types = "=0.97.0"
 url = "=2.5.8"
 tempfile = "=3.27.0"
-libc = "=0.2.183"
+libc = "=0.2.185"
 reqwest = { version = "=0.13.2", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 sentry = "=0.47.0"
 commitlint-rs = "=0.2.4"

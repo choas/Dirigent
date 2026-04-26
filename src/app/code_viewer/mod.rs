@@ -146,21 +146,14 @@ impl DirigentApp {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
-        // Prefer LSP document symbols over regex-based ones when available
-        let symbol_lines: HashMap<usize, (String, String)> =
+        let symbol_line_set: std::collections::HashSet<usize> =
             if let Some(lsp_syms) = self.lsp.document_symbols.get(file_path) {
-                lsp_syms
-                    .iter()
-                    .map(|s| {
-                        let kind_label = lsp_symbol_kind_label(s.kind);
-                        (s.line, (kind_label.to_string(), s.name.clone()))
-                    })
-                    .collect()
+                lsp_syms.iter().map(|s| s.line).collect()
             } else {
                 self.viewer.tabs[active_idx]
                     .symbols
                     .iter()
-                    .map(|s| (s.line, (s.kind.label().to_string(), s.name.clone())))
+                    .map(|s| s.line)
                     .collect()
             };
         let sel_start = self.viewer.tabs[active_idx].selection_start;
@@ -185,7 +178,8 @@ impl DirigentApp {
         };
 
         let scroll_area =
-            build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset);
+            build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset)
+                .id_salt(("code_scroll", &file_path));
         let ctx = CodeLineContext {
             active_idx,
             sel_start,
@@ -194,7 +188,7 @@ impl DirigentApp {
             diag_lines: &diag_lines,
             diag_messages: &diag_messages,
             ext: &ext,
-            symbol_lines: &symbol_lines,
+            symbol_line_set: &symbol_line_set,
             cmd_held,
         };
         let output = scroll_area.show_rows(ui, line_height, num_lines, |ui, row_range| {
@@ -210,7 +204,6 @@ impl DirigentApp {
             file_path,
             rel_path,
             &diag_messages,
-            &symbol_lines,
         );
     }
 
@@ -356,6 +349,7 @@ impl DirigentApp {
         }
         egui::ScrollArea::both()
             .auto_shrink([false; 2])
+            .id_salt(("md_scroll", &self.viewer.tabs[active_idx].file_path))
             .show(ui, |ui| {
                 ui.add_space(SPACE_SM);
                 self.render_markdown_content(ui);
@@ -371,7 +365,6 @@ impl DirigentApp {
         file_path: &Path,
         rel_path: &str,
         diag_messages: &HashMap<usize, Vec<String>>,
-        symbol_lines: &HashMap<usize, (String, String)>,
     ) {
         if actions.clear_selection {
             actions.new_sel_start = None;
@@ -396,7 +389,7 @@ impl DirigentApp {
         }
 
         if let Some(line) = actions.implement_click_line {
-            self.apply_implement_click(active_idx, line, symbol_lines);
+            self.apply_implement_click(active_idx, line, file_path);
         }
 
         if let Some(ref word) = actions.goto_def_word {
@@ -464,13 +457,20 @@ impl DirigentApp {
     }
 
     /// Pre-fill cue input with "Implement <name>" when clicking a symbol line.
-    fn apply_implement_click(
-        &mut self,
-        active_idx: usize,
-        line: usize,
-        symbol_lines: &HashMap<usize, (String, String)>,
-    ) {
-        if let Some((kind_label, sym_name)) = symbol_lines.get(&line) {
+    fn apply_implement_click(&mut self, active_idx: usize, line: usize, file_path: &Path) {
+        let symbol = if let Some(lsp_syms) = self.lsp.document_symbols.get(file_path) {
+            lsp_syms
+                .iter()
+                .find(|s| s.line == line)
+                .map(|s| (lsp_symbol_kind_label(s.kind), s.name.as_str()))
+        } else {
+            self.viewer.tabs[active_idx]
+                .symbols
+                .iter()
+                .find(|s| s.line == line)
+                .map(|s| (s.kind.label(), s.name.as_str()))
+        };
+        if let Some((kind_label, sym_name)) = symbol {
             let text = if kind_label.is_empty() {
                 format!("Implement `{}`", sym_name)
             } else {

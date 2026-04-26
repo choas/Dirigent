@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use crate::app::{DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, ThemeChoice};
+use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
+use crate::settings::{CliProvider, FontWeight, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -26,33 +26,71 @@ impl DirigentApp {
             .spacing([SPACE_MD, SPACE_SM])
             .show(ui, |ui| {
                 self.render_settings_theme_row(ui);
+                self.render_settings_font_row(ui);
                 self.render_settings_provider_row(ui);
                 self.render_settings_model_row(ui, refresh_models);
                 self.render_settings_cli_paths_row(ui);
-                self.render_settings_font_row(ui);
                 self.render_settings_misc_rows(ui);
             });
     }
 
     fn render_settings_theme_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Theme:");
-        let theme_label = self.settings.theme.display_name();
-        egui::ComboBox::from_id_salt("theme_combo")
-            .selected_text(theme_label)
-            .show_ui(ui, |ui| {
-                let mut prev_was_dark = true;
-                for variant in ThemeChoice::all_variants() {
-                    if prev_was_dark && !variant.is_dark() {
-                        ui.separator();
-                        prev_was_dark = false;
+        ui.horizontal(|ui| {
+            let theme_label = self.settings.theme.display_name().to_string();
+            egui::ComboBox::from_id_salt("theme_combo")
+                .selected_text(&theme_label)
+                .show_ui(ui, |ui| {
+                    let variants = ThemeChoice::all_variants();
+                    let mut prev_was_dark = variants.first().map_or(true, |v| v.is_dark());
+                    for variant in variants {
+                        let is_dark = variant.is_dark();
+                        if prev_was_dark && !is_dark {
+                            ui.separator();
+                        }
+                        prev_was_dark = is_dark;
+                        ui.selectable_value(
+                            &mut self.settings.theme,
+                            variant.clone(),
+                            variant.display_name(),
+                        );
                     }
-                    ui.selectable_value(
-                        &mut self.settings.theme,
-                        variant.clone(),
-                        variant.display_name(),
-                    );
+                    // Custom themes section
+                    if !self.settings.custom_themes.is_empty() {
+                        ui.separator();
+                        for ct in &self.settings.custom_themes {
+                            let is_selected = matches!(
+                                &self.settings.theme,
+                                ThemeChoice::Custom(active) if active.name == ct.name
+                            );
+                            if ui.selectable_label(is_selected, &ct.name).clicked() {
+                                self.settings.theme = ThemeChoice::Custom(ct.clone());
+                            }
+                        }
+                    }
+                });
+            if ui
+                .small_button("+")
+                .on_hover_text("New custom theme")
+                .clicked()
+            {
+                self.custom_theme_edit = Some(CustomThemeEdit::new(
+                    self.settings.theme.to_custom_theme(),
+                    None,
+                ));
+            }
+            // Edit button for current custom theme
+            if let ThemeChoice::Custom(ref ct) = self.settings.theme {
+                if ui
+                    .small_button("\u{270E}")
+                    .on_hover_text("Edit custom theme")
+                    .clicked()
+                {
+                    let idx = self.settings.custom_themes.iter().position(|t| t == ct);
+                    self.custom_theme_edit = Some(CustomThemeEdit::new(ct.clone(), idx));
                 }
-            });
+            }
+        });
         ui.end_row();
     }
 
@@ -276,6 +314,20 @@ impl DirigentApp {
 
         ui.label("Font Size:");
         ui.add(egui::Slider::new(&mut self.settings.font_size, 8.0..=32.0).step_by(0.5));
+        ui.end_row();
+
+        ui.label("Font Weight:");
+        egui::ComboBox::from_id_salt("font_weight_combo")
+            .selected_text(self.settings.font_weight.display_name())
+            .show_ui(ui, |ui| {
+                for weight in FontWeight::all() {
+                    ui.selectable_value(
+                        &mut self.settings.font_weight,
+                        weight.clone(),
+                        weight.display_name(),
+                    );
+                }
+            });
         ui.end_row();
     }
 

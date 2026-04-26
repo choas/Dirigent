@@ -6,12 +6,64 @@ use crate::lsp::{default_lsp_servers, LspServerConfig};
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
 use super::providers::{CliProvider, SourceConfig};
-use super::theme::ThemeChoice;
+use super::theme::{CustomTheme, ThemeChoice};
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum FontWeight {
+    Light,
+    #[default]
+    Regular,
+    Medium,
+    SemiBold,
+    Bold,
+}
+
+impl FontWeight {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            FontWeight::Light => "Light",
+            FontWeight::Regular => "Regular",
+            FontWeight::Medium => "Medium",
+            FontWeight::SemiBold => "SemiBold",
+            FontWeight::Bold => "Bold",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [FontWeight] {
+        &[
+            FontWeight::Light,
+            FontWeight::Regular,
+            FontWeight::Medium,
+            FontWeight::SemiBold,
+            FontWeight::Bold,
+        ]
+    }
+
+    /// File-name suffix used when searching for weight-specific font files
+    /// (e.g. "JetBrains Mono-Bold.ttf").
+    pub(crate) fn file_suffix(&self) -> &str {
+        match self {
+            FontWeight::Light => "Light",
+            FontWeight::Regular => "Regular",
+            FontWeight::Medium => "Medium",
+            FontWeight::SemiBold => "SemiBold",
+            FontWeight::Bold => "Bold",
+        }
+    }
+
+    /// Whether this weight maps to a bold face in .ttc collections.
+    pub(crate) fn is_bold(&self) -> bool {
+        matches!(self, FontWeight::SemiBold | FontWeight::Bold)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
     pub theme: ThemeChoice,
+    /// User-defined custom themes.
+    #[serde(default)]
+    pub custom_themes: Vec<CustomTheme>,
     pub cli_provider: CliProvider,
     pub claude_model: String,
     /// Extra model identifiers to show in the Claude model dropdown.
@@ -54,6 +106,8 @@ pub(crate) struct Settings {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    #[serde(default)]
+    pub font_weight: FontWeight,
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
     #[serde(default = "default_playbook")]
@@ -145,6 +199,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             theme: ThemeChoice::Dark,
+            custom_themes: Vec::new(),
             cli_provider: CliProvider::default(),
             claude_model: "claude-opus-4-6".to_string(),
             claude_custom_models: Vec::new(),
@@ -165,6 +220,7 @@ impl Default for Settings {
             lava_lamp_enabled: true,
             font_family: default_font_family(),
             font_size: default_font_size(),
+            font_weight: FontWeight::default(),
             sources: Vec::new(),
             playbook: default_playbook(),
             allow_home_folder_access: false,

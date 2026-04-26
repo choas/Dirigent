@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
+use crate::db::CueStatus;
 use crate::settings::{self, SourceKind};
 use crate::sources::{self, SourceItem};
 
 use super::tasks::TaskHandle;
-use super::DirigentApp;
+use super::{CueAction, DirigentApp};
 
 /// State for external cue source polling.
 pub(crate) struct SourceState {
@@ -113,6 +114,7 @@ impl DirigentApp {
         }
 
         let mut new_count = 0;
+        let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
             match self.db.cue_exists_by_source_ref(&item.external_id) {
                 Ok(true) => {
@@ -133,26 +135,79 @@ impl DirigentApp {
                 Ok(false) => {}
                 Err(_) => continue,
             }
-            if self
-                .db
-                .insert_cue_from_source(
-                    &item.text,
-                    &item.source_label,
-                    &item.source_id,
-                    &item.external_id,
-                    &item.file_path,
-                    item.line_number,
-                )
-                .is_ok()
-            {
+            let source_allows_runnable = self
+                .settings
+                .sources
+                .iter()
+                .find(|s| s.id.as_deref() == Some(&item.source_id))
+                .is_some_and(|s| s.allow_runnable);
+            let runnable = source_allows_runnable && has_runnable_marker(&item.text);
+            let text = if runnable {
+                strip_runnable_marker(&item.text)
+            } else {
+                item.text.clone()
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            if let Ok(cue_id) = self.db.insert_cue_from_source(
+                &text,
+                &item.source_label,
+                &item.source_id,
+                &item.external_id,
+                &item.file_path,
+                item.line_number,
+            ) {
                 new_count += 1;
+                if runnable {
+                    auto_run_ids.push(cue_id);
+                }
             }
         }
         if new_count > 0 {
             self.reload_cues();
-            self.set_status_message(format!("{} new cue(s) from sources", new_count));
+            let auto_count = auto_run_ids.len();
+            if auto_count > 0 {
+                for cue_id in auto_run_ids {
+                    self.process_cue_action(cue_id, CueAction::MoveTo(CueStatus::Ready));
+                }
+                self.set_status_message(format!(
+                    "{} new cue(s) from sources ({} auto-running)",
+                    new_count, auto_count
+                ));
+            } else {
+                self.set_status_message(format!("{} new cue(s) from sources", new_count));
+            }
         }
     }
+}
+
+const RUNNABLE_TOKEN: &str = "{runnable}";
+
+/// Check whether any line in `text` starts with `{runnable}` (after optional
+/// leading whitespace).  Quoted or mid-line mentions do not match.
+fn has_runnable_marker(text: &str) -> bool {
+    text.lines()
+        .any(|line| line.trim_start().starts_with(RUNNABLE_TOKEN))
+}
+
+/// Remove the first line-start `{runnable}` marker and clean up whitespace.
+fn strip_runnable_marker(text: &str) -> String {
+    let mut found = false;
+    let lines: Vec<&str> = text
+        .lines()
+        .filter_map(|line| {
+            if !found {
+                if let Some(rest) = line.trim_start().strip_prefix(RUNNABLE_TOKEN) {
+                    found = true;
+                    let rest = rest.trim();
+                    return if rest.is_empty() { None } else { Some(rest) };
+                }
+            }
+            Some(line)
+        })
+        .collect();
+    lines.join("\n").trim().to_string()
 }
 
 fn fetch_source_items(

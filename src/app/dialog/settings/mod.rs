@@ -168,12 +168,25 @@ impl DirigentApp {
             self.show_settings = false;
         }
         if save {
-            settings::save_settings(&self.project_root, &self.settings);
+            let mut errors = Vec::new();
+            if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
+                errors.push(format!("save settings: {e:#}"));
+            }
             if let Err(e) = settings::sync_home_guard_hook(
                 &self.project_root,
                 self.settings.allow_home_folder_access,
             ) {
-                eprintln!("Failed to sync home guard hook: {e:#}");
+                errors.push(format!(
+                    "sync guard hook (home_access={}): {e:#}",
+                    self.settings.allow_home_folder_access
+                ));
+            }
+            if !errors.is_empty() {
+                self.set_status_message(format!(
+                    "Settings errors for {}: {}",
+                    self.project_root.display(),
+                    errors.join("; ")
+                ));
             }
             self.needs_theme_apply = true;
         }

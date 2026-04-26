@@ -12,6 +12,13 @@ use super::markdown_parser;
 use super::search;
 use super::symbols;
 
+/// Result of reloading open tabs from disk.
+pub(super) struct TabReloadResult {
+    #[allow(dead_code)]
+    pub(super) changed: Vec<PathBuf>,
+    pub(super) failed: Vec<(PathBuf, String)>,
+}
+
 /// State for a play that has template variables requiring user input.
 pub(super) struct PendingPlay {
     /// Original prompt template.
@@ -99,6 +106,12 @@ pub(super) enum CueAction {
     TogglePause(usize),
     /// Remove a cue from the workflow plan.
     RemoveFromWorkflow(i64),
+    /// Move all Done cues to Archived.
+    ArchiveAllDone,
+    /// Permanently delete all Archived cues.
+    DeleteAllArchived,
+    /// Split a cue into multiple sub-cues using LLM analysis.
+    SplitCue,
 }
 
 /// State for a single open file tab.
@@ -125,6 +138,43 @@ pub(super) struct TabState {
     pub(super) image_texture: Option<eframe::egui::TextureHandle>,
     /// Current zoom level for image viewer (1.0 = fit to area).
     pub(super) image_zoom: f32,
+}
+
+impl TabState {
+    pub(super) fn reload_from_disk(&mut self) -> Result<bool, std::io::Error> {
+        let ext = self
+            .file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        if is_image_extension(ext) {
+            return Ok(false);
+        }
+
+        let bytes = std::fs::read(&self.file_path)?;
+
+        if bytes.contains(&0) {
+            return Ok(false);
+        }
+
+        let new_content: Vec<String> = String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(String::from)
+            .collect();
+
+        if new_content == self.content {
+            return Ok(false);
+        }
+
+        let full = new_content.join("\n");
+        if self.markdown_blocks.is_some() {
+            self.markdown_blocks = Some(markdown_parser::parse_markdown(&full));
+        }
+        self.content = new_content;
+        self.symbols = symbols::parse_symbols(&self.content, ext);
+        Ok(true)
+    }
 }
 
 /// Check if a file extension corresponds to a supported image format.
@@ -264,6 +314,7 @@ pub(crate) struct CodeViewerState {
     pub(super) quick_open_active: bool,
     pub(super) quick_open_query: String,
     pub(super) quick_open_selected: usize,
+    pub(super) quick_open_show_ignored: bool,
     /// Whether to show the symbol outline in the left panel.
     pub(super) show_outline: bool,
     /// Scroll to the Nth heading in rendered markdown view (0-based).
@@ -301,12 +352,7 @@ impl CodeViewerState {
         let tab = create_tab_state(&path)?;
         // Soft cap at 20 tabs — close the oldest (first) non-active tab
         if self.tabs.len() >= 20 {
-            let close_idx = self
-                .tabs
-                .iter()
-                .enumerate()
-                .position(|(i, _)| Some(i) != self.active_tab)
-                .unwrap_or(0);
+            let close_idx = if self.active_tab == Some(0) { 1 } else { 0 };
             self.close_tab(close_idx);
         }
         self.tabs.push(tab);

@@ -38,11 +38,18 @@ impl DirigentApp {
             }
         };
         self.project_root = new_root.clone();
-        self.file_tree = FileTree::scan(&self.project_root).ok();
+        match FileTree::scan(&self.project_root) {
+            Ok(tree) => self.file_tree = Some(tree),
+            Err(e) => {
+                self.file_tree = None;
+                self.set_status_message(format!("Failed to scan file tree: {}", e));
+            }
+        }
         self.fs_changed
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.archived_cue_limit = 10;
+        self.confirm_delete_archived = false;
         self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
@@ -80,7 +87,9 @@ impl DirigentApp {
         self.settings.recent_repos = recent_repos;
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
-        settings::save_settings(&self.project_root, &self.settings);
+        if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
+            self.set_status_message(format!("Failed to save settings: {e}"));
+        }
         // Persist to global list so every app launch remembers this project.
         settings::add_global_recent_project(&path_str);
         self.needs_theme_apply = true;

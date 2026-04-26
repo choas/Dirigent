@@ -566,10 +566,6 @@ impl DirigentApp {
             .get(&result.cue_id)
             .is_some_and(|&current| current != result.exec_id);
 
-        if !is_stale {
-            self.flush_and_clear_tracking(&result);
-        }
-
         let _ = self.db.update_execution_metrics(
             result.exec_id,
             result.metrics.cost_usd,
@@ -579,6 +575,8 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
+        // Detect usage limits and emit telemetry BEFORE flushing tracking
+        // state, because both need data from running_logs.
         let usage_limit_msg = self.detect_result_usage_limit(&result, is_stale);
 
         self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
@@ -594,9 +592,12 @@ impl DirigentApp {
             self.handle_successful_run(&result);
         }
 
+        // Flush log to DB and clear tracking state after all consumers have
+        // read running_logs (usage-limit check, telemetry, plan path, etc.).
+        self.flush_and_clear_tracking(&result);
+
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
-        // We already returned early for stale results above.
         self.on_workflow_cue_completed(result.cue_id);
     }
 
@@ -659,7 +660,7 @@ impl DirigentApp {
             .db
             .update_cue_plan_path(result.cue_id, plan_path.as_deref());
 
-        self.refresh_open_tabs();
+        let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
         self.reload_commit_history();
         self.try_dispatch_follow_up(result.cue_id);
@@ -819,6 +820,7 @@ impl DirigentApp {
             .find(|c| c.id == result.cue_id)
             .map(|c| c.text.clone())
             .unwrap_or_default();
+        self.reload_settings_from_disk();
         self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
     }
 
@@ -850,26 +852,6 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(result.cue_id, "Run completed — no changes");
-    }
-
-    /// Reload all open tabs so the user sees file changes made by the CLI.
-    fn refresh_open_tabs(&mut self) {
-        for tab in &mut self.viewer.tabs {
-            let content = match std::fs::read_to_string(&tab.file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if tab.markdown_blocks.is_some() {
-                tab.markdown_blocks = Some(super::markdown_parser::parse_markdown(&content));
-            }
-            tab.content = content.lines().map(String::from).collect();
-            let ext = tab
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
-        }
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.

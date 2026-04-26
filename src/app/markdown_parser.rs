@@ -476,3 +476,172 @@ fn collect_inline(events: &[Event], end_tag: &TagEnd) -> (Vec<TextSegment>, usiz
 
     (segments, i)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_markdown_empty_input() {
+        assert!(parse_markdown("").is_empty());
+    }
+
+    #[test]
+    fn parse_markdown_heading() {
+        let blocks = parse_markdown("# Hello");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::Heading { level, segments } => {
+                assert_eq!(*level, 1);
+                assert!(!segments.is_empty());
+            }
+            _ => panic!("expected Heading"),
+        }
+    }
+
+    #[test]
+    fn parse_markdown_paragraph() {
+        let blocks = parse_markdown("Hello world");
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(&blocks[0], MarkdownBlock::Paragraph { .. }));
+    }
+
+    #[test]
+    fn parse_markdown_code_block() {
+        let blocks = parse_markdown("```rust\nfn main() {}\n```");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::CodeBlock { language, code } => {
+                assert_eq!(language.as_deref(), Some("rust"));
+                assert!(code.contains("fn main()"));
+            }
+            _ => panic!("expected CodeBlock"),
+        }
+    }
+
+    #[test]
+    fn parse_markdown_unordered_list() {
+        let blocks = parse_markdown("- one\n- two\n- three");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::List { ordered, items, .. } => {
+                assert!(!ordered);
+                assert_eq!(items.len(), 3);
+            }
+            _ => panic!("expected List"),
+        }
+    }
+
+    #[test]
+    fn parse_markdown_ordered_list() {
+        let blocks = parse_markdown("1. first\n2. second");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MarkdownBlock::List { ordered, items, .. } => {
+                assert!(ordered);
+                assert_eq!(items.len(), 2);
+            }
+            _ => panic!("expected List"),
+        }
+    }
+
+    #[test]
+    fn parse_markdown_thematic_break() {
+        let blocks = parse_markdown("---");
+        assert!(blocks
+            .iter()
+            .any(|b| matches!(b, MarkdownBlock::ThematicBreak)));
+    }
+
+    #[test]
+    fn parse_markdown_bold_and_italic() {
+        let blocks = parse_markdown("**bold** and *italic*");
+        assert_eq!(blocks.len(), 1);
+        if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
+            assert!(segments.iter().any(|s| matches!(s, TextSegment::Bold(_))));
+            assert!(segments.iter().any(|s| matches!(s, TextSegment::Italic(_))));
+        } else {
+            panic!("expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn parse_markdown_inline_code() {
+        let blocks = parse_markdown("Use `foo()` here");
+        assert_eq!(blocks.len(), 1);
+        if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
+            assert!(segments.iter().any(|s| matches!(s, TextSegment::Code(_))));
+        } else {
+            panic!("expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn parse_markdown_table() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let blocks = parse_markdown(md);
+        assert!(blocks
+            .iter()
+            .any(|b| matches!(b, MarkdownBlock::Table { .. })));
+    }
+
+    #[test]
+    fn parse_markdown_non_ascii() {
+        let blocks = parse_markdown("# Ünïcödé\n\nCafé résumé with 日本語 and 🚀 emoji.");
+        assert!(blocks.len() >= 2);
+        match &blocks[0] {
+            MarkdownBlock::Heading { segments, .. } => {
+                let text: String = segments
+                    .iter()
+                    .filter_map(|s| match s {
+                        TextSegment::Plain(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(text.contains("Ünïcödé"));
+            }
+            _ => panic!("expected Heading"),
+        }
+    }
+
+    #[test]
+    fn parse_markdown_blockquote() {
+        let blocks = parse_markdown("> quoted text");
+        assert!(blocks
+            .iter()
+            .any(|b| matches!(b, MarkdownBlock::BlockQuote { .. })));
+    }
+
+    #[test]
+    fn parse_markdown_link() {
+        let blocks = parse_markdown("[click](https://example.com)");
+        assert_eq!(blocks.len(), 1);
+        if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
+            assert!(segments
+                .iter()
+                .any(|s| matches!(s, TextSegment::Link { .. })));
+        } else {
+            panic!("expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn parse_markdown_strikethrough() {
+        let blocks = parse_markdown("~~deleted~~");
+        assert_eq!(blocks.len(), 1);
+        if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
+            assert!(segments
+                .iter()
+                .any(|s| matches!(s, TextSegment::Strikethrough(_))));
+        } else {
+            panic!("expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn parse_markdown_multiple_blocks() {
+        let md = "# Heading\n\nParagraph text.\n\n```\ncode\n```\n\n- item";
+        let blocks = parse_markdown(md);
+        assert!(blocks.len() >= 4);
+    }
+}

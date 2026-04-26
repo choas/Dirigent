@@ -85,9 +85,11 @@ impl DirigentApp {
         }
 
         if let Some(reply) = reply_send {
-            self.conversation_reply.clear();
+            self.conversation_replies.remove(&cue_id);
             let images: Vec<String> = self
                 .conversation_reply_images
+                .remove(&cue_id)
+                .unwrap_or_default()
                 .drain(..)
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
@@ -182,11 +184,18 @@ impl DirigentApp {
             {
                 self.open_file_picker();
             }
-            let reply_text = &mut self.conversation_reply;
+            let Some(cue_id) = self.claude.show_log else {
+                return;
+            };
+            let mut reply_text = self
+                .conversation_replies
+                .get(&cue_id)
+                .cloned()
+                .unwrap_or_default();
             let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
             let desired_rows = line_count.clamp(1, 8);
             let input_response = ui.add(
-                egui::TextEdit::multiline(reply_text)
+                egui::TextEdit::multiline(&mut reply_text)
                     .desired_width(ui.available_width() - SEND_BUTTON_RESERVED_WIDTH)
                     .desired_rows(desired_rows)
                     .hint_text("Reply with feedback...")
@@ -195,6 +204,11 @@ impl DirigentApp {
             let submitted = Self::render_reply_send_button(ui, fs, &input_response, &self.semantic);
             if submitted && !reply_text.trim().is_empty() {
                 reply_send = Some(reply_text.trim().to_string());
+            }
+            if reply_text.is_empty() {
+                self.conversation_replies.remove(&cue_id);
+            } else {
+                self.conversation_replies.insert(cue_id, reply_text);
             }
         });
         reply_send
@@ -221,22 +235,33 @@ impl DirigentApp {
 
     /// Render the list of attached files above the reply input, with remove buttons.
     fn render_attached_files(&mut self, ui: &mut egui::Ui) {
-        if self.conversation_reply_images.is_empty() {
+        let Some(cue_id) = self.claude.show_log else {
+            return;
+        };
+        let has_images = self
+            .conversation_reply_images
+            .get(&cue_id)
+            .is_some_and(|imgs| !imgs.is_empty());
+        if !has_images {
             return;
         }
+        let names: Vec<String> = self.conversation_reply_images[&cue_id]
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string())
+            })
+            .collect();
+        let mut remove_idx = None;
         ui.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new("Attached:")
                     .small()
                     .color(self.semantic.accent),
             );
-            let mut remove_idx = None;
-            for (i, path) in self.conversation_reply_images.iter().enumerate() {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string_lossy().to_string());
-                ui.label(egui::RichText::new(&name).monospace().small());
+            for (i, name) in names.iter().enumerate() {
+                ui.label(egui::RichText::new(name).monospace().small());
                 if ui
                     .small_button("\u{2715}")
                     .on_hover_text("Remove")
@@ -245,10 +270,15 @@ impl DirigentApp {
                     remove_idx = Some(i);
                 }
             }
-            if let Some(i) = remove_idx {
-                self.conversation_reply_images.remove(i);
-            }
         });
+        if let Some(i) = remove_idx {
+            if let Some(imgs) = self.conversation_reply_images.get_mut(&cue_id) {
+                imgs.remove(i);
+                if imgs.is_empty() {
+                    self.conversation_reply_images.remove(&cue_id);
+                }
+            }
+        }
         ui.add_space(SPACE_XS);
     }
 
@@ -408,7 +438,13 @@ impl DirigentApp {
             .add_filter("All files", &["*"])
             .pick_files()
         {
-            self.conversation_reply_images.extend(paths);
+            let Some(cue_id) = self.claude.show_log else {
+                return;
+            };
+            self.conversation_reply_images
+                .entry(cue_id)
+                .or_default()
+                .extend(paths);
         }
     }
 

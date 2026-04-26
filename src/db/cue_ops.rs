@@ -107,6 +107,18 @@ impl Database {
         Ok(())
     }
 
+    /// Delete all archived cues and their related records.
+    pub fn delete_all_archived(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "DELETE FROM cue_activity_log WHERE cue_id IN (SELECT id FROM cues WHERE status = 'archived');
+             DELETE FROM executions WHERE cue_id IN (SELECT id FROM cues WHERE status = 'archived');
+             DELETE FROM cues WHERE status = 'archived';",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
         let mut cues = Vec::new();
@@ -128,6 +140,38 @@ impl Database {
         Ok(cues)
     }
 
+    pub fn archive_all_done(&self) -> Result<Vec<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let ids: Vec<i64> = {
+            let mut stmt = tx.prepare("SELECT id FROM cues WHERE status = 'done'")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if !ids.is_empty() {
+            let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+            let sql = format!(
+                "UPDATE cues SET status = 'archived' WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let id_params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+                .iter()
+                .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                id_params.iter().map(|p| p.as_ref()).collect();
+            tx.execute(&sql, param_refs.as_slice())?;
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            for id in &ids {
+                tx.execute(
+                    "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+                    params![id, timestamp, "Moved to Archived"],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
     /// Count total archived cues (for UI display when limit is applied).
     pub fn archived_cue_count(&self) -> Result<usize> {
         let count: i64 = self.conn.query_row(
@@ -146,5 +190,48 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+    pub fn insert_sub_cues_and_archive(
+        &self,
+        source_id: i64,
+        items: &[(String, &str, usize)],
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        for (text, file_path, line_number) in items {
+            let text = Self::clamp_cue_text(text);
+            tx.execute(
+                "INSERT INTO cues (text, file_path, line_number, line_number_end, status, attached_images) VALUES (?1, ?2, ?3, NULL, ?4, NULL)",
+                params![text, file_path, *line_number as i64, CueStatus::Inbox.as_str()],
+            )?;
+            let id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+                params![id, timestamp, "Created"],
+            )?;
+        }
+        let count = items.len();
+        tx.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![source_id, timestamp, format!("Split into {} cues", count)],
+        )?;
+        tx.execute(
+            "UPDATE cues SET status = ?1 WHERE id = ?2",
+            params![CueStatus::Archived.as_str(), source_id],
+        )?;
+        tx.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![source_id, timestamp, "Archived (split)"],
+        )?;
+        tx.commit()?;
+        Ok(count)
+    }
+
+    pub fn all_cue_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM cues")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 }

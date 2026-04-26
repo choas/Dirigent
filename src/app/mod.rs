@@ -15,6 +15,7 @@ mod rendering;
 mod repo_management;
 mod search;
 mod sources_poll;
+mod split_cue;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
@@ -55,6 +56,13 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use eframe::egui;
 
 type WorkflowResult = Result<(crate::workflow::WorkflowPlan, Option<String>), String>;
+type SplitCueResult = Result<Vec<SplitCueItem>, String>;
+
+/// A single sub-cue produced by LLM analysis during cue splitting.
+pub(super) struct SplitCueItem {
+    pub text: String,
+    pub reference: Option<String>,
+}
 
 /// Truncate a string to at most `max_bytes` without panicking on UTF-8 boundaries.
 /// Returns a slice that ends at or before `max_bytes` on a valid char boundary.
@@ -79,7 +87,7 @@ use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
 use crate::git;
 use crate::lsp::LspManager;
-use crate::settings::{self, SemanticColors, Settings};
+use crate::settings::{self, CustomTheme, SemanticColors, Settings};
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
@@ -100,6 +108,8 @@ pub struct DirigentApp {
     expanded_dirs: HashSet<PathBuf>,
     file_tree_tx: mpsc::Sender<FileTree>,
     file_tree_rx: mpsc::Receiver<FileTree>,
+    file_tree_error_tx: mpsc::Sender<String>,
+    file_tree_error_rx: mpsc::Receiver<String>,
     file_tree_scanning: bool,
 
     // Code viewer
@@ -111,6 +121,7 @@ pub struct DirigentApp {
     archived_cue_limit: usize,
     /// Cached archived count for current source filter (avoids DB query per frame).
     cached_filtered_archived_count: usize,
+    confirm_delete_archived: bool,
 
     // Claude execution & running logs
     pub(super) claude: ClaudeRunState,
@@ -151,9 +162,9 @@ pub struct DirigentApp {
     // Reply inputs for Review cues (cue_id -> text)
     pub(super) reply_inputs: HashMap<i64, String>,
 
-    // Reply input for the conversation log view
-    pub(super) conversation_reply: String,
-    pub(super) conversation_reply_images: Vec<PathBuf>,
+    // Reply input for the conversation log view (per cue_id, preserved across log switches)
+    pub(super) conversation_replies: HashMap<i64, String>,
+    pub(super) conversation_reply_images: HashMap<i64, Vec<PathBuf>>,
 
     // About dialog
     show_about: bool,
@@ -302,6 +313,46 @@ pub struct DirigentApp {
     show_workflow_graph: bool,
     /// Snapshot of Inbox cue IDs when the workflow plan was created, for change detection.
     workflow_inbox_snapshot: Vec<i64>,
+
+    // Split cue async state
+    split_cue_generating: bool,
+    split_cue_source_id: Option<i64>,
+    split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
+    split_cue_cancel: Arc<AtomicBool>,
+
+    // Custom theme editor dialog
+    custom_theme_edit: Option<CustomThemeEdit>,
+}
+
+/// State for the custom theme editor dialog.
+pub(super) struct CustomThemeEdit {
+    pub theme: CustomTheme,
+    /// Index into `settings.custom_themes` when editing; `None` for a new theme.
+    pub editing_index: Option<usize>,
+    /// AI prompt text for generating theme colors.
+    pub ai_prompt: String,
+    /// Whether AI generation is in progress.
+    pub ai_generating: bool,
+    /// Channel to receive AI-generated theme data.
+    pub ai_rx: Option<mpsc::Receiver<Result<CustomTheme, String>>>,
+    /// Last error from AI generation.
+    pub ai_error: Option<String>,
+    /// Cancellation token for in-flight AI generation.
+    pub ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CustomThemeEdit {
+    pub(crate) fn new(theme: CustomTheme, editing_index: Option<usize>) -> Self {
+        Self {
+            theme,
+            editing_index,
+            ai_prompt: String::new(),
+            ai_generating: false,
+            ai_rx: None,
+            ai_error: None,
+            ai_cancel: Default::default(),
+        }
+    }
 }
 
 /// Try to detect a PR number for the current branch using `gh pr view`.
@@ -355,7 +406,9 @@ impl DirigentApp {
             eprintln!("settings migration error: {e:#}");
             false
         }) {
-            settings::save_settings(&project_root, &settings);
+            if let Err(e) = settings::save_settings(&project_root, &settings) {
+                eprintln!("Failed to save migrated settings: {e}");
+            }
         }
         // Seed the in-session recent_repos from the global list so the repo
         // picker always shows previously opened projects, even on first launch.
@@ -378,7 +431,6 @@ impl DirigentApp {
             worktrees,
             mut _fs_watcher,
         ) = if skip_scan {
-            let _fs_changed_dummy = Arc::new(AtomicBool::new(false));
             (
                 None,
                 Vec::new(),
@@ -423,9 +475,11 @@ impl DirigentApp {
         // so the watcher can actually signal changes to the app.
         if !skip_scan {
             _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
+            split_cue::cleanup_stale_split_references(&project_root, &db);
         }
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
+        let (file_tree_error_tx, file_tree_error_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
         let (goto_def_tx, goto_def_rx) = mpsc::channel();
 
@@ -460,6 +514,8 @@ impl DirigentApp {
             expanded_dirs: HashSet::new(),
             file_tree_tx,
             file_tree_rx,
+            file_tree_error_tx,
+            file_tree_error_rx,
             file_tree_scanning: false,
             viewer: CodeViewerState {
                 tabs: Vec::new(),
@@ -470,6 +526,7 @@ impl DirigentApp {
                 quick_open_active: false,
                 quick_open_query: String::new(),
                 quick_open_selected: 0,
+                quick_open_show_ignored: false,
                 show_outline: true,
                 scroll_to_heading: None,
             },
@@ -477,6 +534,7 @@ impl DirigentApp {
             archived_cue_count,
             cached_filtered_archived_count: archived_cue_count,
             archived_cue_limit: 10,
+            confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
             git: GitState {
@@ -557,8 +615,8 @@ impl DirigentApp {
             cached_existing_repos: Vec::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
-            conversation_reply: String::new(),
-            conversation_reply_images: Vec::new(),
+            conversation_replies: HashMap::new(),
+            conversation_reply_images: HashMap::new(),
             show_about: false,
             logo_texture: None,
             _fs_watcher,
@@ -645,6 +703,13 @@ impl DirigentApp {
             workflow_warning: None,
             show_workflow_graph: false,
             workflow_inbox_snapshot: Vec::new(),
+
+            split_cue_generating: false,
+            split_cue_source_id: None,
+            split_cue_rx: None,
+            split_cue_cancel: Arc::new(AtomicBool::new(false)),
+
+            custom_theme_edit: None,
         }
     }
 
@@ -711,9 +776,13 @@ impl DirigentApp {
         self.file_tree_scanning = true;
         let root = self.project_root.clone();
         let tx = self.file_tree_tx.clone();
-        std::thread::spawn(move || {
-            if let Ok(tree) = FileTree::scan(&root) {
+        let status_tx = self.file_tree_error_tx.clone();
+        std::thread::spawn(move || match FileTree::scan(&root) {
+            Ok(tree) => {
                 let _ = tx.send(tree);
+            }
+            Err(e) => {
+                let _ = status_tx.send(format!("File tree scan failed: {}", e));
             }
         });
     }
@@ -736,6 +805,19 @@ impl DirigentApp {
             .db
             .get_cue_ids_with_activity_prefix("Marked done in Notion")
             .unwrap_or_default();
+        // Prune per-cue maps for cues that are no longer loaded.
+        let live_ids: std::collections::HashSet<i64> = self.cues.iter().map(|c| c.id).collect();
+        self.conversation_replies
+            .retain(|id, _| live_ids.contains(id));
+        self.conversation_reply_images
+            .retain(|id, _| live_ids.contains(id));
+        self.reply_inputs.retain(|id, _| live_ids.contains(id));
+        self.tag_inputs.retain(|id, _| live_ids.contains(id));
+        self.cue_warnings.retain(|id, _| live_ids.contains(id));
+        self.cue_text_expanded.retain(|id| live_ids.contains(id));
+        self.logbook_expanded.retain(|id| live_ids.contains(id));
+        self.agent_output_expanded
+            .retain(|(cue_id, _)| live_ids.contains(cue_id));
         // Invalidate activity cache so expanded logbooks pick up new data.
         self.activity_cache.clear();
         // Recompute cue-derived caches (avoids scanning all cues every frame).
@@ -851,6 +933,9 @@ impl eframe::App for DirigentApp {
         // Poll for workflow analysis results
         self.process_workflow_result();
 
+        // Poll for split cue results
+        self.process_split_cue_result();
+
         // Poll for git push/pull/PR results
         self.process_push_result();
         self.process_pull_result();
@@ -897,6 +982,63 @@ impl eframe::App for DirigentApp {
 
 impl Drop for DirigentApp {
     fn drop(&mut self) {
+        self.split_cue_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_str_short_string() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_str_exact_boundary() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_ascii_truncation() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_empty_string() {
+        assert_eq!(truncate_str("", 0), "");
+        assert_eq!(truncate_str("", 10), "");
+    }
+
+    #[test]
+    fn truncate_str_zero_max() {
+        assert_eq!(truncate_str("hello", 0), "");
+    }
+
+    #[test]
+    fn truncate_str_utf8_boundary() {
+        // 'é' is 2 bytes (0xC3 0xA9), so "café" is 5 bytes
+        let s = "café";
+        assert_eq!(s.len(), 5);
+        assert_eq!(truncate_str(s, 4), "caf");
+        assert_eq!(truncate_str(s, 5), "café");
+    }
+
+    #[test]
+    fn truncate_str_cjk_boundary() {
+        let s = "日本語";
+        assert_eq!(s.len(), 9);
+        assert_eq!(truncate_str(s, 4), "日");
+        assert_eq!(truncate_str(s, 6), "日本");
+    }
+
+    #[test]
+    fn truncate_str_emoji_boundary() {
+        let s = "a🚀b";
+        assert_eq!(s.len(), 6);
+        assert_eq!(truncate_str(s, 3), "a");
+        assert_eq!(truncate_str(s, 5), "a🚀");
     }
 }

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::types::{AgentConfig, AgentKind, AgentTrigger};
 
 struct Step<'a> {
@@ -115,7 +117,45 @@ impl AgentLanguage {
     }
 }
 
-pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
+/// Inspects only the immediate children of `repo_root` (not recursive).
+///
+/// Deterministic selection: if exactly one `.xcodeproj` exists it is returned.
+/// Otherwise prefers the one whose base name matches the repo directory name,
+/// then falls back to the lexicographically first entry.
+fn find_xcodeproj(repo_root: &Path) -> Option<String> {
+    let mut matches: Vec<String> = std::fs::read_dir(repo_root)
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if !entry.file_type().ok()?.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".xcodeproj").map(|s| s.to_owned())
+        })
+        .collect();
+
+    if matches.is_empty() {
+        return None;
+    }
+    if matches.len() == 1 {
+        return Some(matches.remove(0));
+    }
+
+    let repo_name = repo_root.file_name()?.to_string_lossy();
+    if let Some(pos) = matches.iter().position(|m| *m == *repo_name) {
+        return Some(matches.swap_remove(pos));
+    }
+
+    matches.sort();
+    Some(matches.swap_remove(0))
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<AgentConfig> {
     match lang {
         AgentLanguage::Rust => {
             let mut v = pipeline(
@@ -283,24 +323,53 @@ pub(crate) fn agents_for_language(lang: AgentLanguage) -> Vec<AgentConfig> {
             v.push(audit_agent("bundle audit check 2>&1"));
             v
         }
-        AgentLanguage::Swift => pipeline(
-            Step {
-                cmd: "swift-format format -i -r . 2>&1",
+        AgentLanguage::Swift => {
+            let fmt = Step {
+                cmd: "xcrun swift-format format -i -r . 2>&1",
                 timeout: 30,
-            },
-            Step {
+            };
+            let lint = Step {
                 cmd: "swiftlint 2>&1",
                 timeout: 120,
-            },
-            Step {
-                cmd: "swift build 2>&1",
-                timeout: 180,
-            },
-            Step {
-                cmd: "swift test 2>&1",
-                timeout: 300,
-            },
-        ),
+            };
+            if let Some(project_name) = find_xcodeproj(repo_root) {
+                let xcodeproj = shell_quote(&format!("{project_name}.xcodeproj"));
+                let scheme = shell_quote(&project_name);
+                let build_cmd = format!(
+                    "xcodebuild -project {xcodeproj} -scheme {scheme} \
+                     -destination 'generic/platform=iOS Simulator' build 2>&1"
+                );
+                let test_cmd = format!(
+                    "xcodebuild -project {xcodeproj} -scheme {scheme} \
+                     -destination 'platform=iOS Simulator' test 2>&1"
+                );
+                pipeline(
+                    fmt,
+                    lint,
+                    Step {
+                        cmd: &build_cmd,
+                        timeout: 180,
+                    },
+                    Step {
+                        cmd: &test_cmd,
+                        timeout: 300,
+                    },
+                )
+            } else {
+                pipeline(
+                    fmt,
+                    lint,
+                    Step {
+                        cmd: "swift build 2>&1",
+                        timeout: 180,
+                    },
+                    Step {
+                        cmd: "swift test 2>&1",
+                        timeout: 300,
+                    },
+                )
+            }
+        }
         AgentLanguage::Kotlin => pipeline(
             Step {
                 cmd: "ktlint --format 2>&1",

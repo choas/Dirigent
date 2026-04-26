@@ -226,24 +226,183 @@ pub(super) fn parse_schedule_duration(input: &str) -> Option<std::time::Duration
     if input.is_empty() {
         return None;
     }
-    let (num_str, suffix) = if let Some(s) = input.strip_suffix('m') {
-        (s, 'm')
-    } else if let Some(s) = input.strip_suffix('h') {
-        (s, 'h')
-    } else if let Some(s) = input.strip_suffix('s') {
-        (s, 's')
+    let input_lc = input.to_ascii_lowercase();
+    // Slicing one byte off `input` is safe: the suffix is ASCII, so the byte
+    // position is identical and the boundary is always a valid char boundary.
+    let (num_str, suffix) = if input_lc.ends_with('m') {
+        (&input[..input.len() - 1], 'm')
+    } else if input_lc.ends_with('h') {
+        (&input[..input.len() - 1], 'h')
+    } else if input_lc.ends_with('s') {
+        (&input[..input.len() - 1], 's')
     } else {
-        // Default to minutes if no suffix
         (input, 'm')
     };
-    let num: u64 = num_str.trim().parse().ok()?;
+    let num: u64 = num_str.parse().ok()?;
     if num == 0 {
         return None;
     }
     match suffix {
         's' => Some(std::time::Duration::from_secs(num)),
-        'm' => Some(std::time::Duration::from_secs(num * 60)),
-        'h' => Some(std::time::Duration::from_secs(num * 3600)),
+        'm' => num.checked_mul(60).map(std::time::Duration::from_secs),
+        'h' => num.checked_mul(3600).map(std::time::Duration::from_secs),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn parse_schedule_duration_minutes() {
+        assert_eq!(
+            parse_schedule_duration("5m"),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("30m"),
+            Some(Duration::from_secs(1800))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_hours() {
+        assert_eq!(
+            parse_schedule_duration("2h"),
+            Some(Duration::from_secs(7200))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_seconds() {
+        assert_eq!(
+            parse_schedule_duration("30s"),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_no_suffix_defaults_to_minutes() {
+        assert_eq!(
+            parse_schedule_duration("10"),
+            Some(Duration::from_secs(600))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_empty() {
+        assert_eq!(parse_schedule_duration(""), None);
+        assert_eq!(parse_schedule_duration("  "), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_zero() {
+        assert_eq!(parse_schedule_duration("0m"), None);
+        assert_eq!(parse_schedule_duration("0"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_invalid() {
+        assert_eq!(parse_schedule_duration("abc"), None);
+        assert_eq!(parse_schedule_duration("m"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_whitespace_trimmed() {
+        assert_eq!(
+            parse_schedule_duration("  5m  "),
+            Some(Duration::from_secs(300))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_decimal_rejected() {
+        assert_eq!(parse_schedule_duration("5.5m"), None);
+        assert_eq!(parse_schedule_duration("1.0h"), None);
+        assert_eq!(parse_schedule_duration("2.5s"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_overflow_safe() {
+        assert_eq!(parse_schedule_duration("99999999999999999h"), None);
+        assert_eq!(parse_schedule_duration("999999999999999999m"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_malformed_suffix() {
+        assert_eq!(parse_schedule_duration("5mm"), None);
+        assert_eq!(parse_schedule_duration("5hm"), None);
+        assert_eq!(parse_schedule_duration("5sh"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_space_before_suffix() {
+        assert_eq!(parse_schedule_duration("5 m"), None);
+        assert_eq!(parse_schedule_duration("5 h"), None);
+        assert_eq!(parse_schedule_duration("5 s"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_suffixes() {
+        assert_eq!(
+            parse_schedule_duration("5M"),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("2H"),
+            Some(Duration::from_secs(7200))
+        );
+        assert_eq!(
+            parse_schedule_duration("30S"),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_whitespace_trimmed() {
+        assert_eq!(
+            parse_schedule_duration("  5M  "),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("  2H  "),
+            Some(Duration::from_secs(7200))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_zero() {
+        assert_eq!(parse_schedule_duration("0M"), None);
+        assert_eq!(parse_schedule_duration("0H"), None);
+        assert_eq!(parse_schedule_duration("0S"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_invalid() {
+        assert_eq!(parse_schedule_duration("ABC"), None);
+        assert_eq!(parse_schedule_duration("M"), None);
+        assert_eq!(parse_schedule_duration("H"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_malformed_suffix() {
+        assert_eq!(parse_schedule_duration("5MM"), None);
+        assert_eq!(parse_schedule_duration("5HM"), None);
+        assert_eq!(parse_schedule_duration("5SH"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_decimal_rejected() {
+        assert_eq!(parse_schedule_duration("5.5M"), None);
+        assert_eq!(parse_schedule_duration("1.0H"), None);
+        assert_eq!(parse_schedule_duration("2.5S"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_uppercase_overflow_safe() {
+        assert_eq!(parse_schedule_duration("99999999999999999H"), None);
+        assert_eq!(parse_schedule_duration("999999999999999999M"), None);
     }
 }

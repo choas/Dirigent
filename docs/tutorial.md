@@ -6,7 +6,9 @@ This tutorial walks you through installing Dirigent, opening your first project,
 
 ## 1. Install prerequisites
 
-You need Rust and Claude Code CLI on your machine.
+Choose the prerequisites that match your install method.
+
+### Prerequisites — CLI (build from source)
 
 **Rust** (1.75+):
 
@@ -33,7 +35,20 @@ xcode-select --install
 sudo apt install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
 ```
 
-## 2. Build Dirigent
+### Prerequisites — macOS App (DMG)
+
+No Rust toolchain is required. You only need:
+
+**Claude Code CLI** — install and authenticate:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude  # follow the auth flow once
+```
+
+## 2. Install Dirigent
+
+### Option A: Build from source (CLI)
 
 ```bash
 git clone https://github.com/choas/Dirigent.git
@@ -47,16 +62,32 @@ The binary is at `target/release/dirigent`. To install it as a CLI command (requ
 cargo install --path .
 ```
 
+### Option B: macOS application (DMG)
+
+Download the latest `.dmg` from [GitHub Releases](https://github.com/choas/Dirigent/releases), open it, and drag **Dirigent.app** into your `/Applications` folder. See [Prerequisites — macOS App (DMG)](#prerequisites--macos-app-dmg) above for what you need.
+
 ## 3. Open a project
 
-Launch Dirigent with a path to a Git repository:
+### CLI
+
+If you installed via `cargo install --path .`:
 
 ```bash
 dirigent /path/to/your/project
 dirigent .
 ```
 
-If you omit the path, Dirigent opens the **repository picker** so you can browse to a project. On macOS you can also double-click the `.app` bundle.
+### macOS application
+
+- **Double-click Dirigent.app** — opens the **repository picker** where you can browse to a project
+- **From Terminal** — open a specific project directory:
+  ```bash
+  open -a Dirigent --args /path/to/your/project
+  open -a Dirigent --args .
+  ```
+- **Drag & drop** — drag a project folder onto the Dirigent icon in the Dock
+
+When launched from the macOS app bundle without a path (e.g. double-clicking the Dock icon), Dirigent opens the **repository picker** so you can choose a project. From the CLI, Dirigent uses the current working directory instead.
 
 When Dirigent opens you will see three main areas:
 

@@ -22,6 +22,9 @@ impl DirigentApp {
         if status == CueStatus::Done {
             self.render_done_bulk_actions(ui, section_cues, actions);
         }
+        if status == CueStatus::Archived && !section_cues.is_empty() {
+            self.render_archived_bulk_actions(ui, actions);
+        }
     }
 
     fn render_inbox_bulk_actions(
@@ -71,7 +74,7 @@ impl DirigentApp {
         let current_inbox_ids: Vec<i64> = section_cues.iter().map(|c| c.id).collect();
         let inbox_changed = current_inbox_ids != self.workflow_inbox_snapshot;
 
-        if inbox_changed && !self.is_workflow_active() {
+        if inbox_changed && !self.is_workflow_active() && section_cues.len() >= 2 {
             // Inbox changed and workflow isn't running — offer to re-analyze
             let btn = egui::Button::new(
                 icon("\u{26A1} Re-plan Workflow", self.settings.font_size)
@@ -175,12 +178,24 @@ impl DirigentApp {
                 .map(|s| s.starts_with("pr"))
                 .unwrap_or(false)
         });
-        if !has_pr_cues {
+        let show_archive_all = section_cues.len() >= 2;
+        if !show_archive_all && !has_pr_cues {
             return;
         }
         ui.horizontal(|ui| {
-            self.render_push_and_notify_button(ui, actions);
-            self.render_refresh_pr_button(ui, actions);
+            if show_archive_all {
+                if ui
+                    .small_button(icon("\u{1F4E6} Archive All", self.settings.font_size))
+                    .on_hover_text("Move all Done cues to Archived")
+                    .clicked()
+                {
+                    actions.push((0, CueAction::ArchiveAllDone));
+                }
+            }
+            if has_pr_cues {
+                self.render_push_and_notify_button(ui, actions);
+                self.render_refresh_pr_button(ui, actions);
+            }
         });
         ui.add_space(SPACE_XS);
     }
@@ -210,6 +225,53 @@ impl DirigentApp {
                     .color(self.semantic.accent),
             );
         }
+    }
+
+    fn render_archived_bulk_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        let total = self.archived_cue_count;
+        ui.horizontal(|ui| {
+            if self.confirm_delete_archived {
+                let btn = egui::Button::new(
+                    icon(
+                        &format!("\u{1F5D1} Confirm Delete {total}"),
+                        self.settings.font_size,
+                    )
+                    .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.danger);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!(
+                        "Permanently delete all {total} archived cues — this cannot be undone"
+                    ))
+                    .clicked()
+                {
+                    self.confirm_delete_archived = false;
+                    actions.push((0, CueAction::DeleteAllArchived));
+                }
+                if ui.small_button("\u{2715} Cancel").clicked() {
+                    self.confirm_delete_archived = false;
+                }
+            } else {
+                let btn = egui::Button::new(
+                    icon("\u{1F5D1} Delete All", self.settings.font_size)
+                        .color(self.semantic.badge_text),
+                )
+                .fill(self.semantic.danger);
+                if ui
+                    .add(btn)
+                    .on_hover_text(format!("Permanently delete all {total} archived cues"))
+                    .clicked()
+                {
+                    self.confirm_delete_archived = true;
+                }
+            }
+        });
+        ui.add_space(SPACE_XS);
     }
 
     fn render_refresh_pr_button(&self, ui: &mut egui::Ui, actions: &mut Vec<(i64, CueAction)>) {

@@ -137,7 +137,7 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         for (step_idx, step) in steps.iter().enumerate() {
-            self.render_step_header(ui, step_idx, step, actions);
+            self.render_step_header(ui, step_idx, step);
 
             ui.horizontal_wrapped(|ui| {
                 for &cue_id in &step.cue_ids {
@@ -156,7 +156,6 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         step_idx: usize,
         step: &crate::workflow::WorkflowStep,
-        _actions: &mut Vec<(i64, CueAction)>,
     ) {
         let status_icon = match step.status {
             WorkflowStepStatus::Pending => "\u{25CB}", // ○

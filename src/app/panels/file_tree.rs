@@ -197,13 +197,14 @@ impl DirigentApp {
                                     .color(accent),
                             );
                             let kind_label = sym.kind.label();
-                            let mut label = sym.name.clone();
-                            if !kind_label.is_empty() {
-                                label = format!("{} {}", kind_label, sym.name);
-                            }
+                            let label: std::borrow::Cow<str> = if kind_label.is_empty() {
+                                std::borrow::Cow::Borrowed(&sym.name)
+                            } else {
+                                std::borrow::Cow::Owned(format!("{} {}", kind_label, sym.name))
+                            };
                             if ui
                                 .add(
-                                    egui::Label::new(egui::RichText::new(&label).small())
+                                    egui::Label::new(egui::RichText::new(label.as_ref()).small())
                                         .truncate()
                                         .sense(egui::Sense::click()),
                                 )
@@ -470,7 +471,6 @@ impl DirigentApp {
             &response,
             entry,
             &rel,
-            ctx.project_root,
             ctx.semantic,
             ctx.action,
             ctx.status_msg,
@@ -1038,7 +1038,7 @@ fn render_dir_context_menu(
     let is_ignored = entry.is_ignored;
 
     response.context_menu(|ui| {
-        render_copy_path_items(ui, &entry_path, &rel_path);
+        render_copy_path_items(ui, &entry_path, &rel_path, status_msg);
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &entry_path, status_msg);
         ui.separator();
@@ -1065,7 +1065,6 @@ fn render_file_context_menu(
     response: &egui::Response,
     entry: &FileEntry,
     rel: &str,
-    _project_root: &Path,
     semantic: &SemanticColors,
     action: &mut Option<FileTreeAction>,
     status_msg: &mut Option<String>,
@@ -1076,7 +1075,7 @@ fn render_file_context_menu(
     let is_ignored = entry.is_ignored;
 
     response.context_menu(|ui| {
-        render_copy_path_items(ui, &entry_path, &rel_clone);
+        render_copy_path_items(ui, &entry_path, &rel_clone, status_msg);
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &parent_dir, status_msg);
         ui.separator();
@@ -1098,16 +1097,85 @@ fn render_file_context_menu(
     });
 }
 
-/// Render "Copy Path" and "Copy Relative Path" context menu items.
-fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
+/// Render "Copy Path", "Copy Relative Path", "Copy Name", and (for files) "Copy Contents".
+fn render_copy_path_items(
+    ui: &mut egui::Ui,
+    abs_path: &Path,
+    rel_path: &str,
+    status_msg: &mut Option<String>,
+) {
+    if ui.button("Copy Name").clicked() {
+        let name = abs_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        ui.ctx().copy_text(name.clone());
+        *status_msg = Some("Name copied".into());
+        ui.close();
+    }
     if ui.button("Copy Path").clicked() {
-        ui.ctx().copy_text(abs_path.to_string_lossy().to_string());
+        let path = abs_path.to_string_lossy().to_string();
+        ui.ctx().copy_text(path);
+        *status_msg = Some("Path copied".into());
         ui.close();
     }
     if ui.button("Copy Relative Path").clicked() {
         ui.ctx().copy_text(rel_path.to_string());
+        *status_msg = Some("Relative path copied".into());
         ui.close();
     }
+    if abs_path.is_file() {
+        const MAX_COPY_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+
+        let cache_id = egui::Id::new(("copy_contents_cache", abs_path));
+        let cached: Option<(bool, bool)> = ui.data(|d| d.get_temp(cache_id));
+        let (too_large, likely_binary) = match cached {
+            Some(v) => v,
+            None => {
+                let meta = std::fs::metadata(abs_path).ok();
+                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let result = (file_size > MAX_COPY_SIZE, is_likely_binary(abs_path));
+                ui.data_mut(|d| d.insert_temp(cache_id, result));
+                result
+            }
+        };
+
+        let enabled = !too_large && !likely_binary;
+        let label = if too_large {
+            "Copy Contents (file too large)"
+        } else if likely_binary {
+            "Copy Contents (binary file)"
+        } else {
+            "Copy Contents"
+        };
+
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            match std::fs::read_to_string(abs_path) {
+                Ok(contents) => {
+                    ui.ctx().copy_text(contents);
+                    *status_msg = Some("File contents copied".into());
+                }
+                Err(err) => {
+                    *status_msg = Some(format!("Failed to read file: {err}"));
+                }
+            }
+            ui.close();
+        }
+    }
+}
+
+fn is_likely_binary(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut buf = [0u8; 8192];
+    let n = match file.take(8192).read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    buf[..n].contains(&0)
 }
 
 /// Render "Reveal in File Manager" and "Open in Terminal" context menu items.

@@ -126,19 +126,13 @@ impl DirigentApp {
 
     /// After a format agent passes, reload open tabs to show reformatted code.
     fn reload_tabs_after_format(&mut self) {
-        for tab in &mut self.viewer.tabs {
-            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                if tab.markdown_blocks.is_some() {
-                    tab.markdown_blocks = Some(super::markdown_parser::parse_markdown(&content));
-                }
-                tab.content = content.lines().map(String::from).collect();
-                let ext = tab
-                    .file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
-                tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
-            }
+        let result = self.reload_open_tabs_and_notify_lsp();
+        let problems = Self::collect_reload_problems(&self.viewer.tabs, &result);
+        if !problems.is_empty() {
+            self.set_status_message(format!(
+                "Format done, but failed to reload: {}",
+                problems.join(", ")
+            ));
         }
         self.reload_git_info();
     }

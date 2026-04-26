@@ -3,6 +3,46 @@ use serde::{Deserialize, Serialize};
 
 use super::semantic_colors::SemanticColors;
 
+/// A user-defined custom theme with explicit RGB palette colors.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CustomTheme {
+    pub name: String,
+    pub is_dark: bool,
+    pub panel_fill: [u8; 3],
+    pub window_fill: [u8; 3],
+    pub extreme_bg: [u8; 3],
+    pub faint_bg: [u8; 3],
+    pub text: [u8; 3],
+    pub selection: [u8; 3],
+    pub noninteractive: [u8; 3],
+    pub inactive: [u8; 3],
+    pub hovered: [u8; 3],
+    pub active: [u8; 3],
+    pub hyperlink: [u8; 3],
+    pub accent: [u8; 3],
+}
+
+impl Default for CustomTheme {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            is_dark: true,
+            panel_fill: [32, 33, 38],
+            window_fill: [42, 44, 52],
+            extreme_bg: [22, 23, 26],
+            faint_bg: [38, 40, 46],
+            text: [210, 214, 222],
+            selection: [42, 62, 110],
+            noninteractive: [42, 44, 52],
+            inactive: [48, 50, 60],
+            hovered: [58, 62, 74],
+            active: [100, 180, 255],
+            hyperlink: [100, 180, 255],
+            accent: [100, 180, 255],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ThemeChoice {
     // Dark themes
@@ -27,26 +67,31 @@ pub(crate) enum ThemeChoice {
     OneLight,
     NordLight,
     TokyoNightLight,
+    // User-defined
+    Custom(CustomTheme),
 }
 
 impl ThemeChoice {
     pub fn is_dark(&self) -> bool {
-        matches!(
-            self,
-            ThemeChoice::Dark
-                | ThemeChoice::Nord
-                | ThemeChoice::Dracula
-                | ThemeChoice::SolarizedDark
-                | ThemeChoice::Monokai
-                | ThemeChoice::GruvboxDark
-                | ThemeChoice::TokyoNight
-                | ThemeChoice::OneDark
-                | ThemeChoice::CatppuccinMocha
-                | ThemeChoice::EverforestDark
-        )
+        match self {
+            ThemeChoice::Custom(ct) => ct.is_dark,
+            _ => matches!(
+                self,
+                ThemeChoice::Dark
+                    | ThemeChoice::Nord
+                    | ThemeChoice::Dracula
+                    | ThemeChoice::SolarizedDark
+                    | ThemeChoice::Monokai
+                    | ThemeChoice::GruvboxDark
+                    | ThemeChoice::TokyoNight
+                    | ThemeChoice::OneDark
+                    | ThemeChoice::CatppuccinMocha
+                    | ThemeChoice::EverforestDark
+            ),
+        }
     }
 
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &str {
         match self {
             ThemeChoice::Dark => "Dark",
             ThemeChoice::Nord => "Nord",
@@ -68,6 +113,7 @@ impl ThemeChoice {
             ThemeChoice::OneLight => "One Light",
             ThemeChoice::NordLight => "Nord Light",
             ThemeChoice::TokyoNightLight => "Tokyo Night Light",
+            ThemeChoice::Custom(ct) => &ct.name,
         }
     }
 
@@ -101,6 +147,29 @@ impl ThemeChoice {
     /// Returns custom egui Visuals for this theme.
     pub fn visuals(&self) -> egui::Visuals {
         self.palette().apply(self.is_dark())
+    }
+
+    /// Convert this theme's palette into a `CustomTheme`, suitable as a starting point.
+    pub fn to_custom_theme(&self) -> CustomTheme {
+        let p = self.palette();
+        let accent = self.semantic_colors().accent;
+        let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
+        CustomTheme {
+            name: String::new(),
+            is_dark: self.is_dark(),
+            panel_fill: rgb(p.panel_fill),
+            window_fill: rgb(p.window_fill),
+            extreme_bg: rgb(p.extreme_bg),
+            faint_bg: rgb(p.faint_bg),
+            text: rgb(p.text),
+            selection: rgb(p.selection),
+            noninteractive: rgb(p.noninteractive),
+            inactive: rgb(p.inactive),
+            hovered: rgb(p.hovered),
+            active: rgb(p.active),
+            hyperlink: rgb(p.hyperlink),
+            accent: rgb(accent),
+        }
     }
 
     fn palette(&self) -> ThemePalette {
@@ -341,6 +410,44 @@ impl ThemeChoice {
                 [52, 84, 223],
                 [118, 105, 199]
             ),
+            Custom(ct) => ThemePalette {
+                panel_fill: egui::Color32::from_rgb(
+                    ct.panel_fill[0],
+                    ct.panel_fill[1],
+                    ct.panel_fill[2],
+                ),
+                window_fill: egui::Color32::from_rgb(
+                    ct.window_fill[0],
+                    ct.window_fill[1],
+                    ct.window_fill[2],
+                ),
+                extreme_bg: egui::Color32::from_rgb(
+                    ct.extreme_bg[0],
+                    ct.extreme_bg[1],
+                    ct.extreme_bg[2],
+                ),
+                faint_bg: egui::Color32::from_rgb(ct.faint_bg[0], ct.faint_bg[1], ct.faint_bg[2]),
+                text: egui::Color32::from_rgb(ct.text[0], ct.text[1], ct.text[2]),
+                selection: egui::Color32::from_rgb(
+                    ct.selection[0],
+                    ct.selection[1],
+                    ct.selection[2],
+                ),
+                noninteractive: egui::Color32::from_rgb(
+                    ct.noninteractive[0],
+                    ct.noninteractive[1],
+                    ct.noninteractive[2],
+                ),
+                inactive: egui::Color32::from_rgb(ct.inactive[0], ct.inactive[1], ct.inactive[2]),
+                hovered: egui::Color32::from_rgb(ct.hovered[0], ct.hovered[1], ct.hovered[2]),
+                active: egui::Color32::from_rgb(ct.active[0], ct.active[1], ct.active[2]),
+                hyperlink: egui::Color32::from_rgb(
+                    ct.hyperlink[0],
+                    ct.hyperlink[1],
+                    ct.hyperlink[2],
+                ),
+                accent: egui::Color32::from_rgb(ct.accent[0], ct.accent[1], ct.accent[2]),
+            },
             //                            panel_fill         window_fill        extreme_bg         faint_bg           text               selection          noninteractive     inactive           hovered            active             hyperlink
             Dark => palette!(
                 [32, 33, 38],
@@ -386,6 +493,7 @@ macro_rules! palette {
             hovered: egui::Color32::from_rgb($hr, $hg, $hb),
             active: egui::Color32::from_rgb($ar, $ag, $ab),
             hyperlink: egui::Color32::from_rgb($lr, $lg, $lb),
+            accent: egui::Color32::from_rgb($lr, $lg, $lb),
         }
     };
 }
@@ -403,6 +511,7 @@ struct ThemePalette {
     hovered: egui::Color32,
     active: egui::Color32,
     hyperlink: egui::Color32,
+    accent: egui::Color32,
 }
 
 /// Apply generous, Apple-style corner rounding and subtle depth to all visual elements.
@@ -465,7 +574,7 @@ impl ThemePalette {
         v.widgets.active.bg_fill = self.active;
         v.hyperlink_color = self.hyperlink;
         apply_rounding_and_depth(&mut v, dark);
-        apply_interactive_visuals(&mut v, self.hyperlink);
+        apply_interactive_visuals(&mut v, self.accent);
         v
     }
 }
@@ -497,6 +606,7 @@ impl ThemeChoice {
             OneLight => egui::Color32::from_rgb(166, 38, 164), // one light purple
             NordLight => egui::Color32::from_rgb(94, 129, 172), // nord blue (nord10)
             TokyoNightLight => egui::Color32::from_rgb(118, 105, 199), // tokyo purple
+            Custom(ct) => egui::Color32::from_rgb(ct.accent[0], ct.accent[1], ct.accent[2]),
         };
 
         if dark {

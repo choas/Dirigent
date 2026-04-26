@@ -143,6 +143,12 @@ pub(crate) struct SourceConfig {
     /// value (`KanbanBoard`) for marking items done (see [`NotionPageType`]).
     #[serde(default = "default_notion_done_value")]
     pub notion_done_value: String,
+    /// When true, cues whose text starts with `{runnable}` are automatically
+    /// moved to Ready and executed.  Disabled by default — enable only for
+    /// trusted sources, as it grants the source the ability to trigger
+    /// arbitrary AI runs.
+    #[serde(default)]
+    pub allow_runnable: bool,
 }
 
 impl Default for SourceConfig {
@@ -164,6 +170,7 @@ impl Default for SourceConfig {
             notion_page_type: NotionPageType::default(),
             notion_status_property: default_notion_status_property(),
             notion_done_value: default_notion_done_value(),
+            allow_runnable: false,
         }
     }
 }

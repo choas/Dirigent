@@ -78,6 +78,13 @@ impl DirigentApp {
                 return BreadcrumbAction::ToggleMarkdown;
             }
         }
+        if ui
+            .small_button(icon("\u{1F50D}", self.settings.font_size))
+            .on_hover_text("Search in file (\u{2318}F)")
+            .clicked()
+        {
+            return BreadcrumbAction::SearchInFile;
+        }
         if is_dirty
             && ui
                 .small_button("Show Diff")
@@ -226,6 +233,10 @@ impl DirigentApp {
             BreadcrumbAction::ShowFileDiff => {
                 self.open_file_diff(rel_path);
                 true
+            }
+            BreadcrumbAction::SearchInFile => {
+                self.search.in_file_active = true;
+                false
             }
             BreadcrumbAction::None => false,
         }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::agents::Severity;
 
@@ -33,7 +33,7 @@ pub(crate) struct CodeLineContext<'a> {
     pub diag_lines: &'a HashMap<usize, Severity>,
     pub diag_messages: &'a HashMap<usize, Vec<String>>,
     pub ext: &'a str,
-    pub symbol_lines: &'a HashMap<usize, (String, String)>,
+    pub symbol_line_set: &'a HashSet<usize>,
     pub cmd_held: bool,
 }
 
@@ -54,4 +54,5 @@ pub(crate) enum BreadcrumbAction {
     CloseFile,
     ShowFileDiff,
     ToggleMarkdown,
+    SearchInFile,
 }

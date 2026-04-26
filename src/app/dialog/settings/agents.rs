@@ -29,7 +29,7 @@ impl DirigentApp {
         );
 
         if self.agents_expanded {
-            self.render_settings_agents_list(ui, fs, close);
+            self.render_settings_agents_list(ui, close);
         }
     }
 
@@ -54,7 +54,7 @@ impl DirigentApp {
         });
     }
 
-    fn render_settings_agents_list(&mut self, ui: &mut egui::Ui, fs: f32, close: &mut bool) {
+    fn render_settings_agents_list(&mut self, ui: &mut egui::Ui, close: &mut bool) {
         ui.add_space(SPACE_SM);
 
         self.render_settings_agent_shell_init(ui);
@@ -64,14 +64,7 @@ impl DirigentApp {
         let mut view_log_kind: Option<crate::agents::AgentKind> = None;
         let num_agents = self.settings.agents.len();
         for i in 0..num_agents {
-            self.render_settings_agent_card(
-                ui,
-                i,
-                fs,
-                card_width,
-                &mut delete_idx,
-                &mut view_log_kind,
-            );
+            self.render_settings_agent_card(ui, i, card_width, &mut delete_idx, &mut view_log_kind);
             ui.add_space(SPACE_SM);
         }
         if let Some(idx) = delete_idx {
@@ -108,7 +101,6 @@ impl DirigentApp {
         &mut self,
         ui: &mut egui::Ui,
         i: usize,
-        _fs: f32,
         card_width: f32,
         delete_idx: &mut Option<usize>,
         view_log_kind: &mut Option<crate::agents::AgentKind>,
@@ -390,7 +382,8 @@ impl DirigentApp {
                     }
                 });
             if ui.button("Initialize").clicked() {
-                self.settings.agents = agents_for_language(self.agents_init_language);
+                self.settings.agents =
+                    agents_for_language(self.agents_init_language, &self.project_root);
             }
         });
     }
