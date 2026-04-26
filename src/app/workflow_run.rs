@@ -312,11 +312,12 @@ impl DirigentApp {
             for (i, step) in plan.steps.iter_mut().enumerate() {
                 step.id = i;
             }
-            // If plan becomes empty, clear it
             if plan.steps.is_empty() {
                 self.workflow_plan = None;
                 self.workflow_warning = None;
                 self.set_status_message("Workflow cleared (no cues remaining)".into());
+            } else if plan.current_step >= plan.steps.len() {
+                plan.current_step = plan.steps.len() - 1;
             }
         }
     }

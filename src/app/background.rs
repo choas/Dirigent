@@ -57,21 +57,27 @@ impl DirigentApp {
     /// Reload content of all open tabs from disk.
     pub(super) fn reload_open_tabs(&mut self) {
         let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
-        let mut stale_tabs: Vec<String> = Vec::new();
-        for tab in &mut self.viewer.tabs {
+        let mut stale_names: Vec<String> = Vec::new();
+        let mut stale_indices: Vec<usize> = Vec::new();
+        for (i, tab) in self.viewer.tabs.iter_mut().enumerate() {
             match tab.reload_from_disk() {
                 Ok(()) => changed_paths.push(tab.file_path.clone()),
                 Err(_) => {
                     if !tab.file_path.exists() {
                         if let Some(name) = tab.file_path.file_name() {
-                            stale_tabs.push(name.to_string_lossy().into_owned());
+                            stale_names.push(name.to_string_lossy().into_owned());
                         }
+                        stale_indices.push(i);
                     }
                 }
             }
         }
-        if !stale_tabs.is_empty() {
-            self.set_status_message(format!("File no longer on disk: {}", stale_tabs.join(", ")));
+        // Remove deleted-file tabs in reverse order to keep indices valid.
+        for &idx in stale_indices.iter().rev() {
+            self.viewer.close_tab(idx);
+        }
+        if !stale_names.is_empty() {
+            self.set_status_message(format!("Closed (file deleted): {}", stale_names.join(", ")));
         }
         // Notify LSP of file changes
         if self.settings.lsp_enabled {

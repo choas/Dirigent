@@ -566,10 +566,6 @@ impl DirigentApp {
             .get(&result.cue_id)
             .is_some_and(|&current| current != result.exec_id);
 
-        if !is_stale {
-            self.flush_and_clear_tracking(&result);
-        }
-
         let _ = self.db.update_execution_metrics(
             result.exec_id,
             result.metrics.cost_usd,
@@ -579,6 +575,8 @@ impl DirigentApp {
             result.metrics.output_tokens,
         );
 
+        // Detect usage limits and emit telemetry BEFORE flushing tracking
+        // state, because both need data from running_logs.
         let usage_limit_msg = self.detect_result_usage_limit(&result, is_stale);
 
         self.emit_completion_telemetry(&result, is_stale, &usage_limit_msg);
@@ -594,9 +592,12 @@ impl DirigentApp {
             self.handle_successful_run(&result);
         }
 
+        // Flush log to DB and clear tracking state after all consumers have
+        // read running_logs (usage-limit check, telemetry, plan path, etc.).
+        self.flush_and_clear_tracking(&result);
+
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
-        // We already returned early for stale results above.
         self.on_workflow_cue_completed(result.cue_id);
     }
 
