@@ -18,6 +18,21 @@ impl DirigentApp {
         canon_path.starts_with(&canon_root)
     }
 
+    /// Check whether `path` is a valid Claude plan file (under `~/.claude/plans/`).
+    pub(super) fn is_valid_plan_path(path: &Path) -> bool {
+        let canon_path = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        if let Some(home) = dirs::home_dir() {
+            let plans_dir = home.join(".claude").join("plans");
+            if let Ok(canon_plans) = std::fs::canonicalize(&plans_dir) {
+                return canon_path.starts_with(&canon_plans);
+            }
+        }
+        false
+    }
+
     pub(super) fn load_file(&mut self, path: PathBuf) {
         self.dismiss_central_overlays();
         let file_path = path.clone();
