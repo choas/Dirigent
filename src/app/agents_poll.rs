@@ -129,21 +129,8 @@ impl DirigentApp {
         let mut reload_failures: Vec<String> = Vec::new();
         let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
-            match std::fs::read_to_string(&tab.file_path) {
-                Ok(content) => {
-                    if tab.markdown_blocks.is_some() {
-                        tab.markdown_blocks =
-                            Some(super::markdown_parser::parse_markdown(&content));
-                    }
-                    tab.content = content.lines().map(String::from).collect();
-                    let ext = tab
-                        .file_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
-                    tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
-                    changed_paths.push(tab.file_path.clone());
-                }
+            match tab.reload_from_disk() {
+                Ok(()) => changed_paths.push(tab.file_path.clone()),
                 Err(_) => {
                     if let Some(name) = tab.file_path.file_name() {
                         reload_failures.push(name.to_string_lossy().into_owned());

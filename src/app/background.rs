@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use eframe::egui;
 
-use super::markdown_parser;
 use super::symbols;
 use super::{
     DirigentApp, ELAPSED_REPAINT, FS_RESCAN_DEBOUNCE, LOG_SYNC_INTERVAL, REPAINT_FAST, REPAINT_SLOW,
@@ -60,28 +59,16 @@ impl DirigentApp {
         let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         let mut stale_tabs: Vec<String> = Vec::new();
         for tab in &mut self.viewer.tabs {
-            let content = match std::fs::read_to_string(&tab.file_path) {
-                Ok(c) => c,
+            match tab.reload_from_disk() {
+                Ok(()) => changed_paths.push(tab.file_path.clone()),
                 Err(_) => {
                     if !tab.file_path.exists() {
                         if let Some(name) = tab.file_path.file_name() {
                             stale_tabs.push(name.to_string_lossy().into_owned());
                         }
                     }
-                    continue;
                 }
-            };
-            if tab.markdown_blocks.is_some() {
-                tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
             }
-            tab.content = content.lines().map(String::from).collect();
-            let ext = tab
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            tab.symbols = symbols::parse_symbols(&tab.content, ext);
-            changed_paths.push(tab.file_path.clone());
         }
         if !stale_tabs.is_empty() {
             self.set_status_message(format!("File no longer on disk: {}", stale_tabs.join(", ")));

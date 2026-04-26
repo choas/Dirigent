@@ -133,6 +133,23 @@ pub(super) struct TabState {
     pub(super) image_zoom: f32,
 }
 
+impl TabState {
+    pub(super) fn reload_from_disk(&mut self) -> Result<(), std::io::Error> {
+        let content = std::fs::read_to_string(&self.file_path)?;
+        if self.markdown_blocks.is_some() {
+            self.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
+        }
+        self.content = content.lines().map(String::from).collect();
+        let ext = self
+            .file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        self.symbols = symbols::parse_symbols(&self.content, ext);
+        Ok(())
+    }
+}
+
 /// Check if a file extension corresponds to a supported image format.
 fn is_image_extension(ext: &str) -> bool {
     matches!(

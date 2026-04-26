@@ -857,21 +857,9 @@ impl DirigentApp {
     fn refresh_open_tabs(&mut self) {
         let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
         for tab in &mut self.viewer.tabs {
-            let content = match std::fs::read_to_string(&tab.file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if tab.markdown_blocks.is_some() {
-                tab.markdown_blocks = Some(super::markdown_parser::parse_markdown(&content));
+            if tab.reload_from_disk().is_ok() {
+                changed_paths.push(tab.file_path.clone());
             }
-            tab.content = content.lines().map(String::from).collect();
-            let ext = tab
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
-            changed_paths.push(tab.file_path.clone());
         }
         if self.settings.lsp_enabled {
             for path in &changed_paths {
