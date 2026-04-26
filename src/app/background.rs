@@ -14,9 +14,26 @@ use crate::settings;
 
 impl DirigentApp {
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).
+    /// Only applies the new settings (and triggers a theme re-apply) if they actually differ
+    /// from the current in-memory state, to avoid unnecessary theme resets on unrelated FS changes.
     pub(super) fn reload_settings_from_disk(&mut self) {
+        let new_settings = settings::load_settings(&self.project_root);
+
+        // Compare ignoring in-memory-only fields (recent_repos may differ from disk)
+        let mut current_cmp = self.settings.clone();
+        let mut new_cmp = new_settings.clone();
+        current_cmp.recent_repos = Vec::new();
+        new_cmp.recent_repos = Vec::new();
+
+        let current_json = serde_json::to_string(&current_cmp).unwrap_or_default();
+        let new_json = serde_json::to_string(&new_cmp).unwrap_or_default();
+
+        if current_json == new_json {
+            return;
+        }
+
         let recent_repos = self.settings.recent_repos.clone();
-        self.settings = settings::load_settings(&self.project_root);
+        self.settings = new_settings;
         self.settings.recent_repos = recent_repos;
         self.needs_theme_apply = true;
     }
