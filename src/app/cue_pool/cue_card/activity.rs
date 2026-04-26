@@ -21,7 +21,9 @@ impl DirigentApp {
             self.activity_cache.insert(cue.id, (entries, agent_runs));
         }
         // Clone out of cache to avoid holding a borrow on self during rendering.
-        let cached = self.activity_cache.get(&cue.id).unwrap();
+        let Some(cached) = self.activity_cache.get(&cue.id) else {
+            return;
+        };
         let entries = cached.0.clone();
         let agent_runs = cached.1.clone();
         if entries.is_empty() {

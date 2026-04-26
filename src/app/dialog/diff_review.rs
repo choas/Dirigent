@@ -397,7 +397,9 @@ impl DirigentApp {
     ) {
         let query_lower_owned = search_query.to_lowercase();
         let search_highlight = if search.active && !search_query.is_empty() {
-            let current = search.current.map(|idx| search.matches[idx]);
+            let current = search
+                .current
+                .and_then(|idx| search.matches.get(idx).copied());
             Some(DiffSearchHighlight {
                 query_lower: &query_lower_owned,
                 current,
@@ -459,8 +461,9 @@ impl DirigentApp {
             if let Some(ref mut review) = self.diff_review {
                 crate::app::search::update_diff_search_matches(review);
                 if let Some(idx) = review.search_current {
-                    let (file_idx, _, _) = review.search_matches[idx];
-                    review.collapsed_files.remove(&file_idx);
+                    if let Some(&(file_idx, _, _)) = review.search_matches.get(idx) {
+                        review.collapsed_files.remove(&file_idx);
+                    }
                 }
             }
         }
@@ -561,21 +564,8 @@ impl DirigentApp {
                 let mut reload_failures: Vec<String> = Vec::new();
                 let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
                 for tab in &mut self.viewer.tabs {
-                    match std::fs::read_to_string(&tab.file_path) {
-                        Ok(content) => {
-                            if tab.markdown_blocks.is_some() {
-                                tab.markdown_blocks =
-                                    Some(super::super::markdown_parser::parse_markdown(&content));
-                            }
-                            tab.content = content.lines().map(String::from).collect();
-                            let ext = tab
-                                .file_path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("");
-                            tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
-                            changed_paths.push(tab.file_path.clone());
-                        }
+                    match tab.reload_from_disk() {
+                        Ok(()) => changed_paths.push(tab.file_path.clone()),
                         Err(_) => {
                             if let Some(name) = tab.file_path.file_name() {
                                 reload_failures.push(name.to_string_lossy().into_owned());

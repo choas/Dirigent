@@ -22,7 +22,9 @@ impl DirigentApp {
             }
         }
         if let Some(result) = ai_result {
-            let edit = self.custom_theme_edit.as_mut().unwrap();
+            let Some(edit) = self.custom_theme_edit.as_mut() else {
+                return;
+            };
             edit.ai_generating = false;
             edit.ai_rx = None;
             match result {
@@ -53,7 +55,9 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let edit = self.custom_theme_edit.as_mut().unwrap();
+                let Some(edit) = self.custom_theme_edit.as_mut() else {
+                    return;
+                };
 
                 // Name & type
                 egui::Grid::new("custom_theme_name_grid")
