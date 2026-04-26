@@ -135,9 +135,15 @@ impl DirigentApp {
                 Ok(false) => {}
                 Err(_) => continue,
             }
-            let runnable = item.text.contains("{runnable}");
+            let source_allows_runnable = self
+                .settings
+                .sources
+                .iter()
+                .find(|s| s.id.as_deref() == Some(&item.source_id))
+                .is_some_and(|s| s.allow_runnable);
+            let runnable = source_allows_runnable && has_runnable_marker(&item.text);
             let text = if runnable {
-                item.text.replace("{runnable}", "").trim().to_string()
+                strip_runnable_marker(&item.text)
             } else {
                 item.text.clone()
             };
@@ -174,6 +180,38 @@ impl DirigentApp {
             }
         }
     }
+}
+
+const RUNNABLE_TOKEN: &str = "{runnable}";
+
+/// Check whether any line in `text` starts with `{runnable}` (after optional
+/// leading whitespace).  Quoted or mid-line mentions do not match.
+fn has_runnable_marker(text: &str) -> bool {
+    text.lines()
+        .any(|line| line.trim_start().starts_with(RUNNABLE_TOKEN))
+}
+
+/// Remove the first line-start `{runnable}` marker and clean up whitespace.
+fn strip_runnable_marker(text: &str) -> String {
+    let mut found = false;
+    let lines: Vec<&str> = text
+        .lines()
+        .filter_map(|line| {
+            if !found && line.trim_start().starts_with(RUNNABLE_TOKEN) {
+                found = true;
+                let rest = line.trim_start().strip_prefix(RUNNABLE_TOKEN).unwrap();
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest)
+                }
+            } else {
+                Some(line)
+            }
+        })
+        .collect();
+    lines.join("\n").trim().to_string()
 }
 
 fn fetch_source_items(
