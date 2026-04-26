@@ -502,7 +502,7 @@ fn render_sbs_file_hunks(
             };
 
             for (left, right) in &pairs {
-                render_sbs_row(ui, left, right, &ctx, sep_color);
+                render_sbs_row(ui, *left, *right, &ctx, sep_color);
                 ui.end_row();
             }
         });
@@ -513,13 +513,12 @@ fn render_sbs_file_hunks(
 
 /// Check if one side of a pair is the current search match.
 fn is_side_current(
-    side: &Option<(usize, &DiffLine)>,
+    side: Option<(usize, &DiffLine)>,
     current_match: Option<(usize, usize, usize)>,
     file_idx: usize,
     hunk_idx: usize,
 ) -> bool {
-    side.as_ref()
-        .map(|(idx, _)| current_match == Some((file_idx, hunk_idx, *idx)))
+    side.map(|(idx, _)| current_match == Some((file_idx, hunk_idx, idx)))
         .unwrap_or(false)
 }
 
@@ -542,13 +541,13 @@ struct SbsCellStyle {
 /// Render a content cell on one side of the side-by-side view.
 fn render_sbs_content_cell(
     ui: &mut egui::Ui,
-    side: &Option<(usize, &DiffLine)>,
+    side: Option<(usize, &DiffLine)>,
     side_is_current: bool,
     query_lower: &str,
     style: &SbsCellStyle,
     colors: &SemanticColors,
 ) {
-    let Some((_, ref line)) = side else {
+    let Some((_, line)) = side else {
         ui.label(egui::RichText::new(" ").monospace());
         return;
     };
@@ -569,8 +568,8 @@ fn render_sbs_content_cell(
 /// Render one complete row (left number, left content, separator, right number, right content).
 fn render_sbs_row(
     ui: &mut egui::Ui,
-    left: &Option<(usize, &DiffLine)>,
-    right: &Option<(usize, &DiffLine)>,
+    left: Option<(usize, &DiffLine)>,
+    right: Option<(usize, &DiffLine)>,
     ctx: &DiffRowContext<'_>,
     sep_color: egui::Color32,
 ) {
@@ -579,7 +578,7 @@ fn render_sbs_row(
     let row_is_current = left_is_current || right_is_current;
 
     // Old line number
-    let old_lineno = left.as_ref().and_then(|(_, l)| l.old_lineno);
+    let old_lineno = left.and_then(|(_, l)| l.old_lineno);
     render_sbs_line_number(ui, old_lineno, ctx.dc.gutter_color);
 
     // Old content
@@ -605,7 +604,7 @@ fn render_sbs_row(
     }
 
     // New line number
-    let new_lineno = right.as_ref().and_then(|(_, l)| l.new_lineno);
+    let new_lineno = right.and_then(|(_, l)| l.new_lineno);
     render_sbs_line_number(ui, new_lineno, ctx.dc.gutter_color);
 
     // New content
