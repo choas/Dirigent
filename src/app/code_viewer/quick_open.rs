@@ -28,11 +28,15 @@ impl DirigentApp {
         });
     }
 
-    /// Render the quick-open header row with title and close button.
+    /// Render the quick-open header row with title, gitignore toggle, and close button.
     fn render_quick_open_header(&mut self, ui: &mut egui::Ui, fs: f32) {
         ui.horizontal(|ui| {
             ui.add_space(SPACE_MD);
             ui.label(egui::RichText::new("Open File").strong());
+            ui.checkbox(
+                &mut self.viewer.quick_open_show_ignored,
+                "Show .gitignore'd",
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(SPACE_MD);
                 if ui.small_button(icon("\u{2715}", fs)).clicked()
@@ -64,6 +68,7 @@ impl DirigentApp {
     /// Collect matching files for the quick-open query.
     fn collect_quick_open_matches(&self) -> Vec<(String, PathBuf)> {
         let query = self.viewer.quick_open_query.to_lowercase();
+        let show_ignored = self.viewer.quick_open_show_ignored;
         let mut matches: Vec<(String, PathBuf)> = Vec::new();
         let tree = match self.file_tree {
             Some(ref t) => t,
@@ -71,7 +76,10 @@ impl DirigentApp {
         };
         let mut all_files = Vec::new();
         collect_file_paths(&tree.entries, &self.project_root, &mut all_files);
-        for (rel, abs) in all_files {
+        for (rel, abs, is_ignored) in all_files {
+            if !show_ignored && is_ignored {
+                continue;
+            }
             if crate::app::search::is_binary_ext(&abs) {
                 continue;
             }

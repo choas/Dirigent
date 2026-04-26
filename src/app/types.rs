@@ -270,6 +270,7 @@ pub(crate) struct CodeViewerState {
     pub(super) quick_open_active: bool,
     pub(super) quick_open_query: String,
     pub(super) quick_open_selected: usize,
+    pub(super) quick_open_show_ignored: bool,
     /// Whether to show the symbol outline in the left panel.
     pub(super) show_outline: bool,
     /// Scroll to the Nth heading in rendered markdown view (0-based).

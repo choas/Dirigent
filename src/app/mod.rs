@@ -501,6 +501,7 @@ impl DirigentApp {
                 quick_open_active: false,
                 quick_open_query: String::new(),
                 quick_open_selected: 0,
+                quick_open_show_ignored: false,
                 show_outline: true,
                 scroll_to_heading: None,
             },

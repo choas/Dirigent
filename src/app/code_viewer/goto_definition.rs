@@ -175,11 +175,11 @@ fn is_comment_line(trimmed: &str, in_block_comment: &mut bool) -> bool {
     symbols::is_comment_line(trimmed, in_block_comment)
 }
 
-/// Recursively collect all file paths with their relative paths.
+/// Recursively collect all file paths with their relative paths and ignored flag.
 pub(crate) fn collect_file_paths(
     entries: &[FileEntry],
     project_root: &std::path::Path,
-    out: &mut Vec<(String, PathBuf)>,
+    out: &mut Vec<(String, PathBuf, bool)>,
 ) {
     for entry in entries {
         if entry.is_dir {
@@ -191,7 +191,7 @@ pub(crate) fn collect_file_paths(
                 .unwrap_or(&entry.path)
                 .to_string_lossy()
                 .to_string();
-            out.push((rel, entry.path.clone()));
+            out.push((rel, entry.path.clone(), entry.is_ignored));
         }
     }
 }
