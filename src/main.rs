@@ -32,11 +32,11 @@ pub fn spawn_new_instance() -> Result<(), String> {
             .arg("-n")
             .arg(bundle_path)
             .spawn()
-            .map_err(|e| format!("Failed to open new window: {}", e))?;
+            .map_err(|e| format!("Failed to open new window ({}): {}", bundle_path, e))?;
     } else {
         std::process::Command::new(&exe)
             .spawn()
-            .map_err(|e| format!("Failed to launch new instance: {}", e))?;
+            .map_err(|e| format!("Failed to launch new instance ({}): {}", exe_str, e))?;
     }
     Ok(())
 }
