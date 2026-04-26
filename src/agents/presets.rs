@@ -129,6 +129,10 @@ fn find_xcodeproj(repo_root: &Path) -> Option<String> {
     })
 }
 
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<AgentConfig> {
     match lang {
         AgentLanguage::Rust => {
@@ -298,34 +302,55 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
             v
         }
         AgentLanguage::Swift => {
-            let project_name = find_xcodeproj(repo_root).unwrap_or_else(|| "MyApp".into());
-            let xcodeproj = format!("{project_name}.xcodeproj");
-            let build_cmd = format!(
-                "xcodebuild -project {xcodeproj} -scheme {project_name} \
-                 -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build 2>&1"
-            );
-            let test_cmd = format!(
-                "xcodebuild -project {xcodeproj} -scheme {project_name} \
-                 -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test 2>&1"
-            );
-            pipeline(
-                Step {
-                    cmd: "xcrun swift-format format -i -r . 2>&1",
-                    timeout: 30,
-                },
-                Step {
-                    cmd: "swiftlint 2>&1",
-                    timeout: 120,
-                },
-                Step {
-                    cmd: &build_cmd,
-                    timeout: 180,
-                },
-                Step {
-                    cmd: &test_cmd,
-                    timeout: 300,
-                },
-            )
+            if let Some(project_name) = find_xcodeproj(repo_root) {
+                let xcodeproj = shell_quote(&format!("{project_name}.xcodeproj"));
+                let scheme = shell_quote(&project_name);
+                let build_cmd = format!(
+                    "xcodebuild -project {xcodeproj} -scheme {scheme} \
+                     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build 2>&1"
+                );
+                let test_cmd = format!(
+                    "xcodebuild -project {xcodeproj} -scheme {scheme} \
+                     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test 2>&1"
+                );
+                pipeline(
+                    Step {
+                        cmd: "xcrun swift-format format -i -r . 2>&1",
+                        timeout: 30,
+                    },
+                    Step {
+                        cmd: "swiftlint 2>&1",
+                        timeout: 120,
+                    },
+                    Step {
+                        cmd: &build_cmd,
+                        timeout: 180,
+                    },
+                    Step {
+                        cmd: &test_cmd,
+                        timeout: 300,
+                    },
+                )
+            } else {
+                pipeline(
+                    Step {
+                        cmd: "xcrun swift-format format -i -r . 2>&1",
+                        timeout: 30,
+                    },
+                    Step {
+                        cmd: "swiftlint 2>&1",
+                        timeout: 120,
+                    },
+                    Step {
+                        cmd: "swift build 2>&1",
+                        timeout: 180,
+                    },
+                    Step {
+                        cmd: "swift test 2>&1",
+                        timeout: 300,
+                    },
+                )
+            }
         }
         AgentLanguage::Kotlin => pipeline(
             Step {
