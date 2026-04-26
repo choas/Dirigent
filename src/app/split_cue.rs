@@ -101,13 +101,29 @@ impl DirigentApp {
                     }
                 } else {
                     let mut success_count = 0usize;
+                    let mut failure_count = 0usize;
+                    let mut errors: Vec<String> = Vec::new();
                     for (text, fp, ln) in &prepared {
-                        if self.db.insert_cue(text, fp, *ln, None, &[]).is_ok() {
-                            success_count += 1;
+                        match self.db.insert_cue(text, fp, *ln, None, &[]) {
+                            Ok(_) => success_count += 1,
+                            Err(e) => {
+                                failure_count += 1;
+                                errors.push(format!("{}:{}: {}", fp, ln, e));
+                            }
                         }
                     }
                     self.reload_cues();
-                    self.set_status_message(format!("Split into {} cues", success_count));
+                    if failure_count > 0 {
+                        for err in &errors {
+                            eprintln!("insert_cue failed: {}", err);
+                        }
+                        self.set_status_message(format!(
+                            "Split into {} cues, {} failed",
+                            success_count, failure_count
+                        ));
+                    } else {
+                        self.set_status_message(format!("Split into {} cues", success_count));
+                    }
                 }
             }
             Err(e) => {
@@ -146,8 +162,10 @@ pub(super) fn cleanup_stale_split_references(project_root: &Path, db: &crate::db
         Ok(e) => e,
         Err(_) => return,
     };
-    let active_ids: std::collections::HashSet<i64> =
-        db.all_cue_ids().unwrap_or_default().into_iter().collect();
+    let active_ids: std::collections::HashSet<i64> = match db.all_cue_ids() {
+        Ok(ids) => ids.into_iter().collect(),
+        Err(_) => return,
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
