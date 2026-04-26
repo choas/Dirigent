@@ -197,18 +197,14 @@ fn strip_runnable_marker(text: &str) -> String {
     let lines: Vec<&str> = text
         .lines()
         .filter_map(|line| {
-            if !found && line.trim_start().starts_with(RUNNABLE_TOKEN) {
-                found = true;
-                let rest = line.trim_start().strip_prefix(RUNNABLE_TOKEN).unwrap();
-                let rest = rest.trim();
-                if rest.is_empty() {
-                    None
-                } else {
-                    Some(rest)
+            if !found {
+                if let Some(rest) = line.trim_start().strip_prefix(RUNNABLE_TOKEN) {
+                    found = true;
+                    let rest = rest.trim();
+                    return if rest.is_empty() { None } else { Some(rest) };
                 }
-            } else {
-                Some(line)
             }
+            Some(line)
         })
         .collect();
     lines.join("\n").trim().to_string()
