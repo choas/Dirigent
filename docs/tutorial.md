@@ -6,7 +6,9 @@ This tutorial walks you through installing Dirigent, opening your first project,
 
 ## 1. Install prerequisites
 
-You need Rust and Claude Code CLI on your machine.
+Choose the prerequisites that match your install method.
+
+### Prerequisites — CLI (build from source)
 
 **Rust** (1.75+):
 
@@ -33,6 +35,17 @@ xcode-select --install
 sudo apt install libgtk-3-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
 ```
 
+### Prerequisites — macOS App (DMG)
+
+No Rust toolchain is required. You only need:
+
+**Claude Code CLI** — install and authenticate:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude  # follow the auth flow once
+```
+
 ## 2. Install Dirigent
 
 ### Option A: Build from source (CLI)
@@ -51,7 +64,7 @@ cargo install --path .
 
 ### Option B: macOS application (DMG)
 
-Download the latest `.dmg` from [GitHub Releases](https://github.com/choas/Dirigent/releases), open it, and drag **Dirigent.app** into your `/Applications` folder. No Rust toolchain required.
+Download the latest `.dmg` from [GitHub Releases](https://github.com/choas/Dirigent/releases), open it, and drag **Dirigent.app** into your `/Applications` folder. See [Prerequisites — macOS App (DMG)](#prerequisites--macos-app-dmg) above for what you need.
 
 ## 3. Open a project
 
