@@ -118,15 +118,37 @@ impl AgentLanguage {
 }
 
 /// Inspects only the immediate children of `repo_root` (not recursive).
+///
+/// Deterministic selection: if exactly one `.xcodeproj` exists it is returned.
+/// Otherwise prefers the one whose base name matches the repo directory name,
+/// then falls back to the lexicographically first entry.
 fn find_xcodeproj(repo_root: &Path) -> Option<String> {
-    std::fs::read_dir(repo_root).ok()?.find_map(|entry| {
-        let entry = entry.ok()?;
-        if !entry.file_type().ok()?.is_dir() {
-            return None;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        name.strip_suffix(".xcodeproj").map(|s| s.to_owned())
-    })
+    let mut matches: Vec<String> = std::fs::read_dir(repo_root)
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if !entry.file_type().ok()?.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".xcodeproj").map(|s| s.to_owned())
+        })
+        .collect();
+
+    if matches.is_empty() {
+        return None;
+    }
+    if matches.len() == 1 {
+        return Some(matches.remove(0));
+    }
+
+    let repo_name = repo_root.file_name()?.to_string_lossy();
+    if let Some(pos) = matches.iter().position(|m| *m == *repo_name) {
+        return Some(matches.swap_remove(pos));
+    }
+
+    matches.sort();
+    Some(matches.swap_remove(0))
 }
 
 fn shell_quote(s: &str) -> String {
@@ -302,6 +324,14 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
             v
         }
         AgentLanguage::Swift => {
+            let fmt = Step {
+                cmd: "xcrun swift-format format -i -r . 2>&1",
+                timeout: 30,
+            };
+            let lint = Step {
+                cmd: "swiftlint 2>&1",
+                timeout: 120,
+            };
             if let Some(project_name) = find_xcodeproj(repo_root) {
                 let xcodeproj = shell_quote(&format!("{project_name}.xcodeproj"));
                 let scheme = shell_quote(&project_name);
@@ -309,20 +339,13 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
                      -destination 'generic/platform=iOS Simulator' build 2>&1"
                 );
-                // Test needs a concrete simulator; override the device name if "iPhone 16 Pro" is unavailable.
                 let test_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
-                     -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test 2>&1"
+                     -destination 'platform=iOS Simulator' test 2>&1"
                 );
                 pipeline(
-                    Step {
-                        cmd: "xcrun swift-format format -i -r . 2>&1",
-                        timeout: 30,
-                    },
-                    Step {
-                        cmd: "swiftlint 2>&1",
-                        timeout: 120,
-                    },
+                    fmt,
+                    lint,
                     Step {
                         cmd: &build_cmd,
                         timeout: 180,
@@ -334,14 +357,8 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                 )
             } else {
                 pipeline(
-                    Step {
-                        cmd: "xcrun swift-format format -i -r . 2>&1",
-                        timeout: 30,
-                    },
-                    Step {
-                        cmd: "swiftlint 2>&1",
-                        timeout: 120,
-                    },
+                    fmt,
+                    lint,
                     Step {
                         cmd: "swift build 2>&1",
                         timeout: 180,
