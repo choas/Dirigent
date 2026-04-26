@@ -179,15 +179,14 @@ pub(crate) struct DiffSearchHighlight<'a> {
 
 /// Count additions and deletions in a file.
 fn count_file_changes(file: &FileDiff) -> (usize, usize) {
-    let all_lines = file.hunks.iter().flat_map(|h| &h.lines);
-    let additions = all_lines
-        .clone()
-        .filter(|l| l.kind == DiffLineKind::Addition)
-        .count();
-    let deletions = all_lines
-        .filter(|l| l.kind == DiffLineKind::Deletion)
-        .count();
-    (additions, deletions)
+    file.hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .fold((0, 0), |(add, del), l| match l.kind {
+            DiffLineKind::Addition => (add + 1, del),
+            DiffLineKind::Deletion => (add, del + 1),
+            _ => (add, del),
+        })
 }
 
 /// Render the collapsible file header. Returns true if clicked.
@@ -514,7 +513,7 @@ fn render_sbs_file_hunks(
 
 /// Check if one side of a pair is the current search match.
 fn is_side_current(
-    side: &Option<(usize, DiffLine)>,
+    side: &Option<(usize, &DiffLine)>,
     current_match: Option<(usize, usize, usize)>,
     file_idx: usize,
     hunk_idx: usize,
@@ -543,7 +542,7 @@ struct SbsCellStyle {
 /// Render a content cell on one side of the side-by-side view.
 fn render_sbs_content_cell(
     ui: &mut egui::Ui,
-    side: &Option<(usize, DiffLine)>,
+    side: &Option<(usize, &DiffLine)>,
     side_is_current: bool,
     query_lower: &str,
     style: &SbsCellStyle,
@@ -570,8 +569,8 @@ fn render_sbs_content_cell(
 /// Render one complete row (left number, left content, separator, right number, right content).
 fn render_sbs_row(
     ui: &mut egui::Ui,
-    left: &Option<(usize, DiffLine)>,
-    right: &Option<(usize, DiffLine)>,
+    left: &Option<(usize, &DiffLine)>,
+    right: &Option<(usize, &DiffLine)>,
     ctx: &DiffRowContext<'_>,
     sep_color: egui::Color32,
 ) {
@@ -630,39 +629,39 @@ fn render_sbs_row(
 // Side-by-side pair building
 // ---------------------------------------------------------------------------
 
-/// A side-by-side pair with optional original line indices.
-type SbsPair = (Option<(usize, DiffLine)>, Option<(usize, DiffLine)>);
+/// A side-by-side pair with optional original line indices (borrows from the hunk).
+type SbsPair<'a> = (Option<(usize, &'a DiffLine)>, Option<(usize, &'a DiffLine)>);
 
 /// Build paired (old, new) lines for side-by-side rendering.
 /// Each entry carries the original index into the hunk's lines vec.
-fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair> {
-    let mut pairs: Vec<SbsPair> = Vec::new();
+fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair<'_>> {
+    let mut pairs: Vec<SbsPair<'_>> = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
         match lines[i].kind {
             DiffLineKind::Context => {
-                pairs.push((Some((i, lines[i].clone())), Some((i, lines[i].clone()))));
+                pairs.push((Some((i, &lines[i])), Some((i, &lines[i]))));
                 i += 1;
             }
             DiffLineKind::Deletion => {
                 let mut dels = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Deletion {
-                    dels.push((i, lines[i].clone()));
+                    dels.push((i, &lines[i]));
                     i += 1;
                 }
                 let mut adds = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Addition {
-                    adds.push((i, lines[i].clone()));
+                    adds.push((i, &lines[i]));
                     i += 1;
                 }
                 let max_len = dels.len().max(adds.len());
                 for j in 0..max_len {
-                    pairs.push((dels.get(j).cloned(), adds.get(j).cloned()));
+                    pairs.push((dels.get(j).copied(), adds.get(j).copied()));
                 }
             }
             DiffLineKind::Addition => {
-                pairs.push((None, Some((i, lines[i].clone()))));
+                pairs.push((None, Some((i, &lines[i]))));
                 i += 1;
             }
         }
@@ -928,8 +927,8 @@ mod tests {
         ];
         let pairs = build_side_by_side_pairs(&lines);
         assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0.as_ref().unwrap().1.content, "old");
-        assert_eq!(pairs[0].1.as_ref().unwrap().1.content, "new");
+        assert_eq!(pairs[0].0.unwrap().1.content, "old");
+        assert_eq!(pairs[0].1.unwrap().1.content, "new");
     }
 
     #[test]
