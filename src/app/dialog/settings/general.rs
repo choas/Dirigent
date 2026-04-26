@@ -41,12 +41,14 @@ impl DirigentApp {
             egui::ComboBox::from_id_salt("theme_combo")
                 .selected_text(&theme_label)
                 .show_ui(ui, |ui| {
-                    let mut prev_was_dark = true;
-                    for variant in ThemeChoice::all_variants() {
-                        if prev_was_dark && !variant.is_dark() {
+                    let variants = ThemeChoice::all_variants();
+                    let mut prev_was_dark = variants.first().map_or(true, |v| v.is_dark());
+                    for variant in variants {
+                        let is_dark = variant.is_dark();
+                        if prev_was_dark && !is_dark {
                             ui.separator();
-                            prev_was_dark = false;
                         }
+                        prev_was_dark = is_dark;
                         ui.selectable_value(
                             &mut self.settings.theme,
                             variant.clone(),
