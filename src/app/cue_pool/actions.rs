@@ -204,6 +204,11 @@ impl DirigentApp {
         self.notion_done_cache.remove(&id);
         self.conversation_replies.remove(&id);
         self.conversation_reply_images.remove(&id);
+        let _ = std::fs::remove_file(
+            self.project_root
+                .join(".Dirigent")
+                .join(format!("split-ref-{}.md", id)),
+        );
         if let Err(e) = self.db.delete_cue(id) {
             self.set_status_message(format!("Failed to delete cue: {}", e));
         }
@@ -505,8 +510,8 @@ impl DirigentApp {
             return;
         };
         let full_path = std::path::PathBuf::from(&path);
-        if !self.is_within_project_root(&full_path) {
-            self.set_status_message("Plan file is outside the project".to_string());
+        if !self.is_within_project_root(&full_path) && !Self::is_valid_plan_path(&full_path) {
+            self.set_status_message("Plan file is outside allowed directories".to_string());
             return;
         }
         if full_path.exists() {
@@ -525,11 +530,11 @@ impl DirigentApp {
             .and_then(|c| c.plan_path.clone());
         if let Some(path) = plan_path {
             let full_path = std::path::PathBuf::from(&path);
-            if !self.is_within_project_root(&full_path) {
-                self.set_status_message("Plan file is outside the project".to_string());
+            if !self.is_within_project_root(&full_path) && !Self::is_valid_plan_path(&full_path) {
+                self.set_status_message("Plan file is outside allowed directories".to_string());
                 return;
             }
-            let plan_content = match std::fs::read_to_string(&path) {
+            let plan_content = match std::fs::read_to_string(&full_path) {
                 Ok(c) => c,
                 Err(e) => {
                     self.set_status_message(format!("Failed to read plan: {}", e));
