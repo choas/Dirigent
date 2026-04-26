@@ -591,7 +591,11 @@ impl DirigentApp {
             self.set_status_message("No cues in Archived".into());
             return;
         }
-        // Clean up in-memory state for the archived cues we have loaded.
+        let total = self.archived_cue_count;
+        if let Err(e) = self.db.delete_all_archived() {
+            self.set_status_message(format!("Failed to delete archived cues: {e}"));
+            return;
+        }
         let archived_ids: Vec<i64> = self
             .cues
             .iter()
@@ -604,12 +608,6 @@ impl DirigentApp {
             self.notion_done_cache.remove(cue_id);
             self.conversation_replies.remove(cue_id);
             self.conversation_reply_images.remove(cue_id);
-        }
-        // Delete all archived cues from the DB (including those not loaded).
-        let total = self.archived_cue_count;
-        if let Err(e) = self.db.delete_all_archived() {
-            self.set_status_message(format!("Failed to delete archived cues: {e}"));
-            return;
         }
         let plural = if total == 1 { "" } else { "s" };
         self.set_status_message(format!("Deleted {} archived cue{}", total, plural));
