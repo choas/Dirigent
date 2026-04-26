@@ -140,9 +140,7 @@ impl Database {
         Ok(cues)
     }
 
-    /// Archive all Done cues in a single transaction and log activity for each.
-    /// Returns the number of cues archived.
-    pub fn archive_all_done(&self) -> Result<usize> {
+    pub fn archive_all_done(&self) -> Result<Vec<i64>> {
         let tx = self.conn.unchecked_transaction()?;
         let ids: Vec<i64> = {
             let mut stmt = tx.prepare("SELECT id FROM cues WHERE status = 'done'")?;
@@ -171,7 +169,7 @@ impl Database {
             }
         }
         tx.commit()?;
-        Ok(ids.len())
+        Ok(ids)
     }
 
     /// Count total archived cues (for UI display when limit is applied).
