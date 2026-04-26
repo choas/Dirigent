@@ -127,12 +127,12 @@ fn write_reference_file(project_root: &std::path::Path, cue: &Cue) -> Option<Str
     if text.len() < 200 {
         return None;
     }
-    let dir = project_root.join(".dirigent");
+    let dir = project_root.join(".Dirigent");
     let _ = std::fs::create_dir_all(&dir);
     let filename = format!("split-ref-{}.md", cue.id);
     let path = dir.join(&filename);
     if std::fs::write(&path, text).is_ok() {
-        Some(format!(".dirigent/{}", filename))
+        Some(format!(".Dirigent/{}", filename))
     } else {
         None
     }
