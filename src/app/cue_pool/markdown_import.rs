@@ -172,5 +172,8 @@ mod tests {
         let sections = parse_markdown_sections(content);
         assert_eq!(sections.len(), 1);
         assert!(!sections[0].body.contains("---"));
+        assert!(!sections[0].body.contains("```"));
+        assert!(sections[0].body.contains("fn main() {}"));
+        assert!(sections[0].body.contains("After fence."));
     }
 }
