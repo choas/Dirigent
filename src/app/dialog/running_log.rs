@@ -184,7 +184,9 @@ impl DirigentApp {
             {
                 self.open_file_picker();
             }
-            let cue_id = self.claude.show_log.unwrap_or(0);
+            let Some(cue_id) = self.claude.show_log else {
+                return;
+            };
             let reply_text = self.conversation_replies.entry(cue_id).or_default();
             let line_count = reply_text.chars().filter(|c| *c == '\n').count() + 1;
             let desired_rows = line_count.clamp(1, 8);
@@ -224,7 +226,9 @@ impl DirigentApp {
 
     /// Render the list of attached files above the reply input, with remove buttons.
     fn render_attached_files(&mut self, ui: &mut egui::Ui) {
-        let cue_id = self.claude.show_log.unwrap_or(0);
+        let Some(cue_id) = self.claude.show_log else {
+            return;
+        };
         let has_images = self
             .conversation_reply_images
             .get(&cue_id)
@@ -422,7 +426,9 @@ impl DirigentApp {
             .add_filter("All files", &["*"])
             .pick_files()
         {
-            let cue_id = self.claude.show_log.unwrap_or(0);
+            let Some(cue_id) = self.claude.show_log else {
+                return;
+            };
             self.conversation_reply_images
                 .entry(cue_id)
                 .or_default()
