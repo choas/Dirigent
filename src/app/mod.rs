@@ -341,6 +341,20 @@ pub(super) struct CustomThemeEdit {
     pub ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+impl CustomThemeEdit {
+    pub(crate) fn new(theme: CustomTheme, editing_index: Option<usize>) -> Self {
+        Self {
+            theme,
+            editing_index,
+            ai_prompt: String::new(),
+            ai_generating: false,
+            ai_rx: None,
+            ai_error: None,
+            ai_cancel: Default::default(),
+        }
+    }
+}
+
 /// Try to detect a PR number for the current branch using `gh pr view`.
 fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -> Option<u32> {
     let output = std::process::Command::new("gh")

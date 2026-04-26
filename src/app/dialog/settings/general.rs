@@ -74,15 +74,10 @@ impl DirigentApp {
                 .on_hover_text("New custom theme")
                 .clicked()
             {
-                self.custom_theme_edit = Some(CustomThemeEdit {
-                    theme: self.settings.theme.to_custom_theme(),
-                    editing_index: None,
-                    ai_prompt: String::new(),
-                    ai_generating: false,
-                    ai_rx: None,
-                    ai_error: None,
-                    ai_cancel: Default::default(),
-                });
+                self.custom_theme_edit = Some(CustomThemeEdit::new(
+                    self.settings.theme.to_custom_theme(),
+                    None,
+                ));
             }
             // Edit button for current custom theme
             if let ThemeChoice::Custom(ref ct) = self.settings.theme {
@@ -92,15 +87,7 @@ impl DirigentApp {
                     .clicked()
                 {
                     let idx = self.settings.custom_themes.iter().position(|t| t == ct);
-                    self.custom_theme_edit = Some(CustomThemeEdit {
-                        theme: ct.clone(),
-                        editing_index: idx,
-                        ai_prompt: String::new(),
-                        ai_generating: false,
-                        ai_rx: None,
-                        ai_error: None,
-                        ai_cancel: Default::default(),
-                    });
+                    self.custom_theme_edit = Some(CustomThemeEdit::new(ct.clone(), idx));
                 }
             }
         });
