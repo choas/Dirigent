@@ -1038,7 +1038,7 @@ fn render_dir_context_menu(
     let is_ignored = entry.is_ignored;
 
     response.context_menu(|ui| {
-        render_copy_path_items(ui, &entry_path, &rel_path);
+        render_copy_path_items(ui, &entry_path, &rel_path, status_msg);
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &entry_path, status_msg);
         ui.separator();
@@ -1076,7 +1076,7 @@ fn render_file_context_menu(
     let is_ignored = entry.is_ignored;
 
     response.context_menu(|ui| {
-        render_copy_path_items(ui, &entry_path, &rel_clone);
+        render_copy_path_items(ui, &entry_path, &rel_clone, status_msg);
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &parent_dir, status_msg);
         ui.separator();
@@ -1099,7 +1099,12 @@ fn render_file_context_menu(
 }
 
 /// Render "Copy Path", "Copy Relative Path", "Copy Name", and (for files) "Copy Contents".
-fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
+fn render_copy_path_items(
+    ui: &mut egui::Ui,
+    abs_path: &Path,
+    rel_path: &str,
+    status_msg: &mut Option<String>,
+) {
     if ui.button("Copy Name").clicked() {
         let name = abs_path
             .file_name()
@@ -1118,14 +1123,44 @@ fn render_copy_path_items(ui: &mut egui::Ui, abs_path: &Path, rel_path: &str) {
         ui.close();
     }
     if abs_path.is_file() {
-        if ui.button("Copy Contents").clicked() {
+        const MAX_COPY_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+        let meta = std::fs::metadata(abs_path).ok();
+        let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let too_large = file_size > MAX_COPY_SIZE;
+        let likely_binary = is_likely_binary(abs_path);
+
+        let enabled = !too_large && !likely_binary;
+        let label = if too_large {
+            "Copy Contents (file too large)"
+        } else if likely_binary {
+            "Copy Contents (binary file)"
+        } else {
+            "Copy Contents"
+        };
+
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
             match std::fs::read_to_string(abs_path) {
                 Ok(contents) => ui.ctx().copy_text(contents),
-                Err(_) => ui.ctx().copy_text(String::new()),
+                Err(err) => {
+                    *status_msg = Some(format!("Failed to read file: {err}"));
+                }
             }
             ui.close();
         }
     }
+}
+
+fn is_likely_binary(path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut buf = [0u8; 8192];
+    let n = match file.take(8192).read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    buf[..n].contains(&0)
 }
 
 /// Render "Reveal in File Manager" and "Open in Terminal" context menu items.
