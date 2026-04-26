@@ -194,6 +194,42 @@ impl Database {
         Ok(count as usize)
     }
 
+    pub fn insert_sub_cues_and_archive(
+        &self,
+        source_id: i64,
+        items: &[(String, &str, usize)],
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        for (text, file_path, line_number) in items {
+            let text = Self::clamp_cue_text(text);
+            tx.execute(
+                "INSERT INTO cues (text, file_path, line_number, line_number_end, status, attached_images) VALUES (?1, ?2, ?3, NULL, ?4, NULL)",
+                params![text, file_path, *line_number as i64, CueStatus::Inbox.as_str()],
+            )?;
+            let id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+                params![id, timestamp, "Created"],
+            )?;
+        }
+        let count = items.len();
+        tx.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![source_id, timestamp, format!("Split into {} cues", count)],
+        )?;
+        tx.execute(
+            "UPDATE cues SET status = ?1 WHERE id = ?2",
+            params![CueStatus::Archived.as_str(), source_id],
+        )?;
+        tx.execute(
+            "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+            params![source_id, timestamp, "Archived (split)"],
+        )?;
+        tx.commit()?;
+        Ok(count)
+    }
+
     pub fn all_cue_ids(&self) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare("SELECT id FROM cues")?;
         let rows = stmt.query_map([], |row| row.get(0))?;

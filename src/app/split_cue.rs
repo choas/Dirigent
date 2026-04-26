@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::db::{Cue, CueStatus};
+use crate::db::Cue;
 
 use super::{DirigentApp, SplitCueItem};
 
@@ -71,54 +71,43 @@ impl DirigentApp {
             Ok(items) => {
                 let source_cue =
                     source_id.and_then(|id| self.cues.iter().find(|c| c.id == id).cloned());
-                let total = items.len();
-                let mut success_count = 0usize;
-                let mut errors: Vec<String> = Vec::new();
-                for item in &items {
-                    let text = if let Some(ref r) = item.reference {
-                        format!("{}\n\nReference: {}", item.text, r)
-                    } else {
-                        item.text.clone()
-                    };
-                    let (file_path, line) = source_cue
-                        .as_ref()
-                        .map(|c| (c.file_path.as_str(), c.line_number))
-                        .unwrap_or(("", 0));
-                    match self.db.insert_cue(&text, file_path, line, None, &[]) {
-                        Ok(_) => success_count += 1,
-                        Err(e) => errors.push(e.to_string()),
-                    }
-                }
+                let (file_path, line) = source_cue
+                    .as_ref()
+                    .map(|c| (c.file_path.as_str(), c.line_number))
+                    .unwrap_or(("", 0));
+                let prepared: Vec<(String, &str, usize)> = items
+                    .iter()
+                    .map(|item| {
+                        let text = if let Some(ref r) = item.reference {
+                            format!("{}\n\nReference: {}", item.text, r)
+                        } else {
+                            item.text.clone()
+                        };
+                        (text, file_path, line)
+                    })
+                    .collect();
                 if let Some(id) = source_id {
-                    if errors.is_empty() {
-                        let _ = self
-                            .db
-                            .log_activity(id, &format!("Split into {} cues", success_count));
-                        let _ = self.db.update_cue_status(id, CueStatus::Archived);
-                        let _ = self.db.log_activity(id, "Archived (split)");
-                        self.conversation_replies.remove(&id);
-                        self.conversation_reply_images.remove(&id);
-                        remove_split_reference_file(&self.project_root, id);
-                    } else {
-                        let summary = format!(
-                            "Split partially failed: {}/{} inserted, errors: {}",
-                            success_count,
-                            total,
-                            errors.join("; ")
-                        );
-                        let _ = self.db.log_activity(id, &summary);
+                    match self.db.insert_sub_cues_and_archive(id, &prepared) {
+                        Ok(count) => {
+                            self.conversation_replies.remove(&id);
+                            self.conversation_reply_images.remove(&id);
+                            remove_split_reference_file(&self.project_root, id);
+                            self.reload_cues();
+                            self.set_status_message(format!("Split into {} cues", count));
+                        }
+                        Err(e) => {
+                            self.set_status_message(format!("Split cue failed: {}", e));
+                        }
                     }
-                }
-                self.reload_cues();
-                if errors.is_empty() {
-                    self.set_status_message(format!("Split into {} cues", success_count));
                 } else {
-                    self.set_status_message(format!(
-                        "Split: {}/{} cues created, {} failed",
-                        success_count,
-                        total,
-                        errors.len()
-                    ));
+                    let mut success_count = 0usize;
+                    for (text, fp, ln) in &prepared {
+                        if self.db.insert_cue(text, fp, *ln, None, &[]).is_ok() {
+                            success_count += 1;
+                        }
+                    }
+                    self.reload_cues();
+                    self.set_status_message(format!("Split into {} cues", success_count));
                 }
             }
             Err(e) => {
