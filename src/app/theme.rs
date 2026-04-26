@@ -17,6 +17,26 @@ fn font_dirs() -> Vec<String> {
 
 /// Try to load a font from the system by name and weight. Returns (bytes, ttc_index).
 fn load_system_font(name: &str, weight: &FontWeight) -> Option<(Vec<u8>, u32)> {
+    let dirs = font_dirs();
+    let exts = ["ttf", "ttc", "otf"];
+
+    // For non-Regular weights, first try weight-suffixed filenames (e.g. "Menlo-Light.otf",
+    // "JetBrains Mono-Bold.ttf") so that weight-specific files are found even for fonts
+    // that appear in the hard-coded known list below.
+    if *weight != FontWeight::Regular {
+        let suffix = weight.file_suffix();
+        for dir in &dirs {
+            for ext in &exts {
+                for sep in &["-", " "] {
+                    let path = format!("{}/{}{}{}.{}", dir, name, sep, suffix, ext);
+                    if let Ok(data) = std::fs::read(&path) {
+                        return Some((data, 0));
+                    }
+                }
+            }
+        }
+    }
+
     // Known font paths on macOS — Menlo.ttc face indices: 0=Regular, 1=Bold
     let known: Vec<(&str, u32)> = match name {
         "Menlo" => vec![(
@@ -44,24 +64,6 @@ fn load_system_font(name: &str, weight: &FontWeight) -> Option<(Vec<u8>, u32)> {
     for (path, index) in &known {
         if let Ok(data) = std::fs::read(path) {
             return Some((data, *index));
-        }
-    }
-
-    let dirs = font_dirs();
-    let exts = ["ttf", "ttc", "otf"];
-
-    // Try weight-suffixed filenames (e.g. "JetBrains Mono-Bold.ttf")
-    if *weight != FontWeight::Regular {
-        let suffix = weight.file_suffix();
-        for dir in &dirs {
-            for ext in &exts {
-                for sep in &["-", " "] {
-                    let path = format!("{}/{}{}{}.{}", dir, name, sep, suffix, ext);
-                    if let Ok(data) = std::fs::read(&path) {
-                        return Some((data, 0));
-                    }
-                }
-            }
         }
     }
 
