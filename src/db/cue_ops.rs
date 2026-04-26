@@ -150,15 +150,23 @@ impl Database {
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
         if !ids.is_empty() {
-            tx.execute(
-                "UPDATE cues SET status = 'archived' WHERE status = 'done'",
-                [],
-            )?;
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+            let sql = format!(
+                "UPDATE cues SET status = 'archived' WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let id_params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+                .iter()
+                .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                id_params.iter().map(|p| p.as_ref()).collect();
+            tx.execute(&sql, param_refs.as_slice())?;
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
             for id in &ids {
                 tx.execute(
                     "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id, timestamp, "Moved to Archived"],
+                    params![id, timestamp, "Moved to Archived"],
                 )?;
             }
         }
@@ -184,5 +192,12 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+    pub fn all_cue_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM cues")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 }
