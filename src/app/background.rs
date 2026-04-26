@@ -58,10 +58,18 @@ impl DirigentApp {
     /// Reload content of all open tabs from disk.
     pub(super) fn reload_open_tabs(&mut self) {
         let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
+        let mut stale_tabs: Vec<String> = Vec::new();
         for tab in &mut self.viewer.tabs {
             let content = match std::fs::read_to_string(&tab.file_path) {
                 Ok(c) => c,
-                Err(_) => continue,
+                Err(_) => {
+                    if !tab.file_path.exists() {
+                        if let Some(name) = tab.file_path.file_name() {
+                            stale_tabs.push(name.to_string_lossy().into_owned());
+                        }
+                    }
+                    continue;
+                }
             };
             if tab.markdown_blocks.is_some() {
                 tab.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
@@ -74,6 +82,9 @@ impl DirigentApp {
                 .unwrap_or("");
             tab.symbols = symbols::parse_symbols(&tab.content, ext);
             changed_paths.push(tab.file_path.clone());
+        }
+        if !stale_tabs.is_empty() {
+            self.set_status_message(format!("File no longer on disk: {}", stale_tabs.join(", ")));
         }
         // Notify LSP of file changes
         if self.settings.lsp_enabled {

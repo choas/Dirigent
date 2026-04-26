@@ -38,7 +38,13 @@ impl DirigentApp {
             }
         };
         self.project_root = new_root.clone();
-        self.file_tree = FileTree::scan(&self.project_root).ok();
+        match FileTree::scan(&self.project_root) {
+            Ok(tree) => self.file_tree = Some(tree),
+            Err(e) => {
+                self.file_tree = None;
+                self.set_status_message(format!("Failed to scan file tree: {}", e));
+            }
+        }
         self.fs_changed
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);

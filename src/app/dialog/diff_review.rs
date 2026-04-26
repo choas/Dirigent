@@ -558,16 +558,30 @@ impl DirigentApp {
             Ok(()) => {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 // Reload all open tabs after revert
+                let mut reload_failures: Vec<String> = Vec::new();
                 for tab in &mut self.viewer.tabs {
-                    if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                        tab.content = content.lines().map(String::from).collect();
-                        let ext = tab
-                            .file_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("");
-                        tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
+                    match std::fs::read_to_string(&tab.file_path) {
+                        Ok(content) => {
+                            tab.content = content.lines().map(String::from).collect();
+                            let ext = tab
+                                .file_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("");
+                            tab.symbols = super::super::symbols::parse_symbols(&tab.content, ext);
+                        }
+                        Err(_) => {
+                            if let Some(name) = tab.file_path.file_name() {
+                                reload_failures.push(name.to_string_lossy().into_owned());
+                            }
+                        }
                     }
+                }
+                if !reload_failures.is_empty() {
+                    self.set_status_message(format!(
+                        "Reverted, but failed to reload: {}",
+                        reload_failures.join(", ")
+                    ));
                 }
                 self.reload_cues();
                 self.reload_git_info();

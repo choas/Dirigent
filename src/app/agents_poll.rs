@@ -126,19 +126,34 @@ impl DirigentApp {
 
     /// After a format agent passes, reload open tabs to show reformatted code.
     fn reload_tabs_after_format(&mut self) {
+        let mut reload_failures: Vec<String> = Vec::new();
         for tab in &mut self.viewer.tabs {
-            if let Ok(content) = std::fs::read_to_string(&tab.file_path) {
-                if tab.markdown_blocks.is_some() {
-                    tab.markdown_blocks = Some(super::markdown_parser::parse_markdown(&content));
+            match std::fs::read_to_string(&tab.file_path) {
+                Ok(content) => {
+                    if tab.markdown_blocks.is_some() {
+                        tab.markdown_blocks =
+                            Some(super::markdown_parser::parse_markdown(&content));
+                    }
+                    tab.content = content.lines().map(String::from).collect();
+                    let ext = tab
+                        .file_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
                 }
-                tab.content = content.lines().map(String::from).collect();
-                let ext = tab
-                    .file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
-                tab.symbols = super::symbols::parse_symbols(&tab.content, ext);
+                Err(_) => {
+                    if let Some(name) = tab.file_path.file_name() {
+                        reload_failures.push(name.to_string_lossy().into_owned());
+                    }
+                }
             }
+        }
+        if !reload_failures.is_empty() {
+            self.set_status_message(format!(
+                "Format done, but failed to reload: {}",
+                reload_failures.join(", ")
+            ));
         }
         self.reload_git_info();
     }
