@@ -248,7 +248,9 @@ impl DirigentApp {
         }
 
         self.settings.theme = crate::settings::ThemeChoice::Custom(theme);
-        crate::settings::save_settings(&self.project_root, &self.settings);
+        if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
+            self.set_status_message(format!("Failed to save theme: {e}"));
+        }
         self.needs_theme_apply = true;
     }
 
@@ -271,7 +273,9 @@ impl DirigentApp {
                 self.settings.theme = crate::settings::ThemeChoice::Dark;
             }
         }
-        crate::settings::save_settings(&self.project_root, &self.settings);
+        if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
+            self.set_status_message(format!("Failed to save settings: {e}"));
+        }
         self.needs_theme_apply = true;
     }
 

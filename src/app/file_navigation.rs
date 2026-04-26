@@ -21,12 +21,14 @@ impl DirigentApp {
     pub(super) fn load_file(&mut self, path: PathBuf) {
         self.dismiss_central_overlays();
         let file_path = path.clone();
-        self.viewer.open_file_without_history(path);
-        // Notify LSP that a file was opened
+        if self.viewer.open_file_without_history(path).is_none() {
+            let name = file_path.file_name().unwrap_or_default().to_string_lossy();
+            self.set_status_message(format!("Could not open file: {}", name));
+            return;
+        }
         if self.settings.lsp_enabled {
             self.lsp.notify_file_opened(&file_path);
         }
-        // Reset in-file search state when switching or opening a file
         self.search.in_file_active = false;
         self.search.in_file_query.clear();
         self.search.in_file_matches.clear();

@@ -24,8 +24,11 @@ impl DirigentApp {
                 self.editing_cue = None;
             }
             CueAction::SaveEdit(new_text) => {
-                let _ = self.db.update_cue_text(id, &new_text);
-                let _ = self.db.log_activity(id, "Edited");
+                if let Err(e) = self.db.update_cue_text(id, &new_text) {
+                    self.set_status_message(format!("Failed to save edit: {}", e));
+                } else {
+                    let _ = self.db.log_activity(id, "Edited");
+                }
                 self.editing_cue = None;
             }
             CueAction::MoveTo(new_status) => {
@@ -201,14 +204,14 @@ impl DirigentApp {
         self.notion_done_cache.remove(&id);
         self.conversation_replies.remove(&id);
         self.conversation_reply_images.remove(&id);
-        let _ = self.db.delete_cue(id);
+        if let Err(e) = self.db.delete_cue(id) {
+            self.set_status_message(format!("Failed to delete cue: {}", e));
+        }
     }
 
     fn process_navigate(&mut self, file_path: &str, line: usize, _line_end: Option<usize>) {
         self.push_nav_history();
         let full_path = self.project_root.join(file_path);
-        // Reject paths with lexical traversal components before canonicalization,
-        // so that non-existent paths cannot bypass the canonicalize guard.
         let rel = std::path::Path::new(file_path);
         if rel.is_absolute()
             || rel.components().any(|c| {
@@ -218,22 +221,15 @@ impl DirigentApp {
                 )
             })
         {
-            eprintln!(
-                "[navigate] rejecting path with traversal or absolute components: {:?}",
-                file_path
-            );
+            self.set_status_message(format!("Cannot navigate: invalid path \"{}\"", file_path));
             return;
         }
-        // Prevent path traversal: reject paths that escape the project root.
         if let (Ok(canon_root), Ok(canon_path)) = (
             std::fs::canonicalize(&self.project_root),
             std::fs::canonicalize(&full_path),
         ) {
             if !canon_path.starts_with(&canon_root) {
-                eprintln!(
-                    "[navigate] rejecting path outside project root: {:?}",
-                    file_path
-                );
+                self.set_status_message("Cannot navigate: path is outside the project".into());
                 return;
             }
         }
@@ -250,10 +246,21 @@ impl DirigentApp {
     }
 
     fn process_show_diff(&mut self, cue_id: i64) {
-        let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) else {
+        let exec = match self.db.get_latest_execution(cue_id) {
+            Ok(Some(e)) => e,
+            Ok(None) => {
+                self.set_status_message("No execution found for this cue".into());
+                return;
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to load execution: {}", e));
+                return;
+            }
+        };
+        let Some(diff) = exec.diff else {
+            self.set_status_message("No diff available for this execution".into());
             return;
         };
-        let Some(diff) = exec.diff else { return };
         let cue = self.cues.iter().find(|c| c.id == cue_id);
         let text = cue.map(|c| c.text.clone()).unwrap_or_default();
         let read_only = cue.map(|c| c.status != CueStatus::Review).unwrap_or(true);
@@ -278,19 +285,29 @@ impl DirigentApp {
     }
 
     fn process_commit_review(&mut self, cue_id: i64) {
-        if let Ok(Some(exec)) = self.db.get_latest_execution(cue_id) {
-            if let Some(ref diff) = exec.diff {
-                let cue_text = self
-                    .cues
-                    .iter()
-                    .find(|c| c.id == cue_id)
-                    .map(|c| c.text.clone())
-                    .unwrap_or_default();
-                let commit_msg = git::generate_commit_message(&cue_text);
-                self.apply_commit_result(
-                    cue_id,
-                    git::commit_diff(&self.project_root, diff, &commit_msg),
-                );
+        match self.db.get_latest_execution(cue_id) {
+            Ok(Some(exec)) => {
+                if let Some(ref diff) = exec.diff {
+                    let cue_text = self
+                        .cues
+                        .iter()
+                        .find(|c| c.id == cue_id)
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default();
+                    let commit_msg = git::generate_commit_message(&cue_text);
+                    self.apply_commit_result(
+                        cue_id,
+                        git::commit_diff(&self.project_root, diff, &commit_msg),
+                    );
+                } else {
+                    self.set_status_message("Nothing to commit — no diff in execution".into());
+                }
+            }
+            Ok(None) => {
+                self.set_status_message("Nothing to commit — no execution found".into());
+            }
+            Err(e) => {
+                self.set_status_message(format!("Commit failed: {}", e));
             }
         }
         self.reload_git_info();
@@ -363,17 +380,23 @@ impl DirigentApp {
     }
 
     fn process_show_running_log(&mut self, cue_id: i64) {
-        if let Ok(execs) = self.db.get_all_executions(cue_id) {
-            if let std::collections::hash_map::Entry::Vacant(e) =
-                self.claude.running_logs.entry(cue_id)
-            {
-                if let Some(last) = execs.last() {
-                    if let Some(ref log_text) = last.log {
-                        e.insert((log_text.clone(), CliProvider::Claude));
+        match self.db.get_all_executions(cue_id) {
+            Ok(execs) => {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    self.claude.running_logs.entry(cue_id)
+                {
+                    if let Some(last) = execs.last() {
+                        if let Some(ref log_text) = last.log {
+                            e.insert((log_text.clone(), CliProvider::Claude));
+                        }
                     }
                 }
+                self.claude.conversation_history = execs;
             }
-            self.claude.conversation_history = execs;
+            Err(e) => {
+                self.set_status_message(format!("Failed to load execution log: {}", e));
+                return;
+            }
         }
         self.dismiss_central_overlays();
         self.claude.show_log = Some(cue_id);
@@ -477,18 +500,20 @@ impl DirigentApp {
             .iter()
             .find(|c| c.id == cue_id)
             .and_then(|c| c.plan_path.clone());
-        if let Some(path) = plan_path {
-            let full_path = std::path::PathBuf::from(&path);
-            if !self.is_within_project_root(&full_path) {
-                self.set_status_message("Plan file is outside the project".to_string());
-                return;
-            }
-            if full_path.exists() {
-                self.push_nav_history();
-                self.load_file(full_path);
-            } else {
-                self.set_status_message(format!("Plan file not found: {}", path));
-            }
+        let Some(path) = plan_path else {
+            self.set_status_message("No plan available for this cue".into());
+            return;
+        };
+        let full_path = std::path::PathBuf::from(&path);
+        if !self.is_within_project_root(&full_path) {
+            self.set_status_message("Plan file is outside the project".to_string());
+            return;
+        }
+        if full_path.exists() {
+            self.push_nav_history();
+            self.load_file(full_path);
+        } else {
+            self.set_status_message(format!("Plan file not found: {}", path));
         }
     }
 

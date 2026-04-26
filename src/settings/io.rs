@@ -157,16 +157,19 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
         }
     }
     if env_changed {
-        save_settings(project_root, &settings);
+        if let Err(e) = save_settings(project_root, &settings) {
+            eprintln!("Failed to save settings after env migration: {e}");
+        }
     }
     settings
 }
 
-pub(crate) fn save_settings(project_root: &Path, settings: &Settings) {
+pub(crate) fn save_settings(project_root: &Path, settings: &Settings) -> Result<(), String> {
     let dir = project_root.join(".Dirigent");
-    let _ = std::fs::create_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create settings dir: {}", e))?;
     let path = dir.join("settings.json");
-    if let Ok(json) = serde_json::to_string_pretty(settings) {
-        let _ = std::fs::write(path, json);
-    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Cannot serialize settings: {}", e))?;
+    std::fs::write(path, json).map_err(|e| format!("Cannot write settings: {}", e))?;
+    Ok(())
 }

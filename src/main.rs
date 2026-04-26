@@ -23,20 +23,22 @@ use std::path::PathBuf;
 
 /// Launch a new instance of the Dirigent app bundle (via `open -n`).
 /// Falls back to spawning the raw binary when not running from a bundle.
-pub fn spawn_new_instance() {
-    if let Ok(exe) = std::env::current_exe() {
-        let exe_str = exe.to_string_lossy().to_string();
-        if let Some(app_pos) = exe_str.find(".app/") {
-            let bundle_path = &exe_str[..app_pos + 4];
-            let _ = std::process::Command::new("open")
-                .arg("-n")
-                .arg(bundle_path)
-                .spawn();
-        } else {
-            // Running from terminal — just launch the binary again
-            let _ = std::process::Command::new(&exe).spawn();
-        }
+pub fn spawn_new_instance() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("Cannot find executable: {}", e))?;
+    let exe_str = exe.to_string_lossy().to_string();
+    if let Some(app_pos) = exe_str.find(".app/") {
+        let bundle_path = &exe_str[..app_pos + 4];
+        std::process::Command::new("open")
+            .arg("-n")
+            .arg(bundle_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open new window: {}", e))?;
+    } else {
+        std::process::Command::new(&exe)
+            .spawn()
+            .map_err(|e| format!("Failed to launch new instance: {}", e))?;
     }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

@@ -168,12 +168,14 @@ impl DirigentApp {
             self.show_settings = false;
         }
         if save {
-            settings::save_settings(&self.project_root, &self.settings);
+            if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
+                self.set_status_message(format!("Failed to save settings: {e}"));
+            }
             if let Err(e) = settings::sync_home_guard_hook(
                 &self.project_root,
                 self.settings.allow_home_folder_access,
             ) {
-                eprintln!("Failed to sync home guard hook: {e:#}");
+                self.set_status_message(format!("Failed to sync guard hook: {e:#}"));
             }
             self.needs_theme_apply = true;
         }

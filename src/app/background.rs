@@ -97,6 +97,10 @@ impl DirigentApp {
             self.file_tree = Some(tree);
             self.file_tree_scanning = false;
         }
+        if let Ok(err_msg) = self.file_tree_error_rx.try_recv() {
+            self.file_tree_scanning = false;
+            self.set_status_message(err_msg);
+        }
         if let Ok(results) = self.search.search_result_rx.try_recv() {
             self.search.in_files_results = results;
             self.search.in_files_searching = false;

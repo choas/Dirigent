@@ -85,7 +85,9 @@ impl DirigentApp {
             && ctx
                 .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N))
         {
-            crate::spawn_new_instance();
+            if let Err(e) = crate::spawn_new_instance() {
+                self.set_status_message(e);
+            }
         }
         if !suppress
             && ctx

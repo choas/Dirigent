@@ -41,7 +41,9 @@ impl DirigentApp {
             }
             ui.separator();
             if ui.button("New Window  \u{2318}N").clicked() {
-                crate::spawn_new_instance();
+                if let Err(e) = crate::spawn_new_instance() {
+                    self.set_status_message(e);
+                }
                 ui.close();
             }
             ui.separator();

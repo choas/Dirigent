@@ -1110,15 +1110,19 @@ fn render_copy_path_items(
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        ui.ctx().copy_text(name);
+        ui.ctx().copy_text(name.clone());
+        *status_msg = Some(format!("Copied: {}", name));
         ui.close();
     }
     if ui.button("Copy Path").clicked() {
-        ui.ctx().copy_text(abs_path.to_string_lossy().to_string());
+        let path = abs_path.to_string_lossy().to_string();
+        ui.ctx().copy_text(path);
+        *status_msg = Some("Path copied".into());
         ui.close();
     }
     if ui.button("Copy Relative Path").clicked() {
         ui.ctx().copy_text(rel_path.to_string());
+        *status_msg = Some("Relative path copied".into());
         ui.close();
     }
     if abs_path.is_file() {
@@ -1139,7 +1143,10 @@ fn render_copy_path_items(
 
         if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
             match std::fs::read_to_string(abs_path) {
-                Ok(contents) => ui.ctx().copy_text(contents),
+                Ok(contents) => {
+                    ui.ctx().copy_text(contents);
+                    *status_msg = Some("File contents copied".into());
+                }
                 Err(err) => {
                     *status_msg = Some(format!("Failed to read file: {err}"));
                 }

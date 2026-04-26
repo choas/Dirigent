@@ -87,7 +87,9 @@ impl DirigentApp {
         self.settings.recent_repos = recent_repos;
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
-        settings::save_settings(&self.project_root, &self.settings);
+        if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
+            self.set_status_message(format!("Failed to save settings: {e}"));
+        }
         // Persist to global list so every app launch remembers this project.
         settings::add_global_recent_project(&path_str);
         self.needs_theme_apply = true;
