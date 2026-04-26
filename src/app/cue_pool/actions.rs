@@ -527,22 +527,18 @@ impl DirigentApp {
     }
 
     fn process_archive_all_done(&mut self) {
-        let done_ids: Vec<i64> = self
-            .cues
-            .iter()
-            .filter(|c| c.status == CueStatus::Done)
-            .map(|c| c.id)
-            .collect();
-        if done_ids.is_empty() {
-            self.set_status_message("No cues in Done".into());
-            return;
+        match self.db.archive_all_done() {
+            Ok(0) => {
+                self.set_status_message("No cues in Done".into());
+            }
+            Ok(count) => {
+                let plural = if count == 1 { "" } else { "s" };
+                self.set_status_message(format!("Archived {} Done cue{}", count, plural));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to archive Done cues: {e}"));
+            }
         }
-        for cue_id in &done_ids {
-            let _ = self.db.update_cue_status(*cue_id, CueStatus::Archived);
-            let _ = self.db.log_activity(*cue_id, "Moved to Archived");
-        }
-        let plural = if done_ids.len() == 1 { "" } else { "s" };
-        self.set_status_message(format!("Archived {} Done cue{}", done_ids.len(), plural));
     }
 
     fn process_delete_all_archived(&mut self) {

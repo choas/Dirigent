@@ -140,6 +140,32 @@ impl Database {
         Ok(cues)
     }
 
+    /// Archive all Done cues in a single transaction and log activity for each.
+    /// Returns the number of cues archived.
+    pub fn archive_all_done(&self) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let ids: Vec<i64> = {
+            let mut stmt = tx.prepare("SELECT id FROM cues WHERE status = 'done'")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if !ids.is_empty() {
+            tx.execute(
+                "UPDATE cues SET status = 'archived' WHERE status = 'done'",
+                [],
+            )?;
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            for id in &ids {
+                tx.execute(
+                    "INSERT INTO cue_activity_log (cue_id, timestamp, event) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, timestamp, "Moved to Archived"],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(ids.len())
+    }
+
     /// Count total archived cues (for UI display when limit is applied).
     pub fn archived_cue_count(&self) -> Result<usize> {
         let count: i64 = self.conn.query_row(
