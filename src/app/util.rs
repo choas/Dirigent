@@ -120,6 +120,13 @@ mod tests {
     }
 
     #[test]
+    fn expand_tilde_windows_separator() {
+        let result = expand_tilde("~\\Documents");
+        assert!(result.ends_with("Documents"));
+        assert_ne!(result, PathBuf::from("~\\Documents"));
+    }
+
+    #[test]
     fn expand_tilde_no_expansion_for_middle_tilde() {
         assert_eq!(expand_tilde("/home/~user"), PathBuf::from("/home/~user"));
     }
