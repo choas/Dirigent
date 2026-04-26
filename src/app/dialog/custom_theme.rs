@@ -207,6 +207,10 @@ impl DirigentApp {
             self.delete_custom_theme();
         }
         if close {
+            if let Some(edit) = &self.custom_theme_edit {
+                edit.ai_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             self.custom_theme_edit = None;
         }
     }
@@ -260,17 +264,22 @@ impl DirigentApp {
             Some(e) => e,
             None => return,
         };
-        let mut original_name = None;
+        let mut removed_theme_info = None;
         if let Some(idx) = edit.editing_index {
             if idx < self.settings.custom_themes.len() {
-                original_name = Some(self.settings.custom_themes[idx].name.clone());
+                let ct = &self.settings.custom_themes[idx];
+                removed_theme_info = Some((ct.name.clone(), ct.is_dark));
                 self.settings.custom_themes.remove(idx);
             }
         }
-        if let Some(name) = original_name {
+        if let Some((name, was_dark)) = removed_theme_info {
             if matches!(&self.settings.theme, crate::settings::ThemeChoice::Custom(ct) if ct.name == name)
             {
-                self.settings.theme = crate::settings::ThemeChoice::Dark;
+                self.settings.theme = if was_dark {
+                    crate::settings::ThemeChoice::Dark
+                } else {
+                    crate::settings::ThemeChoice::Light
+                };
             }
         }
         if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
@@ -292,25 +301,27 @@ impl DirigentApp {
 
         edit.ai_generating = true;
         edit.ai_error = None;
+        edit.ai_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let (tx, rx) = mpsc::channel();
         edit.ai_rx = Some(rx);
 
         let is_dark = edit.theme.is_dark;
         let provider = self.settings.cli_provider.clone();
-        let cli_path = match provider {
-            CliProvider::Claude => self.settings.claude_cli_path.clone(),
-            CliProvider::OpenCode => self.settings.opencode_cli_path.clone(),
-        };
-        let model = match provider {
-            CliProvider::Claude => self.settings.claude_model.clone(),
-            CliProvider::OpenCode => self.settings.opencode_model.clone(),
-        };
+        let settings = self.settings.clone();
+        let project_root = self.project_root.clone();
+        let cancel = std::sync::Arc::clone(&edit.ai_cancel);
         let ctx = self.egui_ctx.clone();
 
         std::thread::spawn(move || {
-            let result =
-                generate_theme_via_cli(&provider, &cli_path, &model, &prompt_text, is_dark);
+            let result = generate_theme_via_cli(
+                &provider,
+                &settings,
+                &project_root,
+                &prompt_text,
+                is_dark,
+                cancel,
+            );
             let _ = tx.send(result);
             if let Some(c) = ctx.get() {
                 c.request_repaint();
@@ -337,28 +348,12 @@ fn color_row(
 /// Call the selected code generator CLI to generate theme palette colors from a description.
 fn generate_theme_via_cli(
     provider: &CliProvider,
-    cli_path: &str,
-    model: &str,
+    settings: &crate::settings::Settings,
+    project_root: &std::path::Path,
     description: &str,
     is_dark: bool,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<CustomTheme, String> {
-    let default_bin = match provider {
-        CliProvider::Claude => "claude",
-        CliProvider::OpenCode => "opencode",
-    };
-    let bin = if cli_path.is_empty() {
-        default_bin
-    } else {
-        cli_path
-    };
-
-    which::which(bin).map_err(|_| {
-        format!(
-            "{} CLI not found. Set the CLI path in settings.",
-            provider.display_name()
-        )
-    })?;
-
     let dark_light = if is_dark { "dark" } else { "light" };
     let prompt = format!(
         r#"Generate a {dark_light} color theme for a code editor based on this description: "{description}"
@@ -399,36 +394,48 @@ Return ONLY the JSON object."#,
         },
     );
 
-    let mut cmd = std::process::Command::new(bin);
-    cmd.arg("-p").arg(&prompt);
-    match provider {
+    let pf = settings.provider_fields(provider);
+
+    let response_text = match provider {
         CliProvider::Claude => {
-            cmd.arg("--output-format").arg("text");
-            if !model.is_empty() {
-                cmd.arg("--model").arg(model);
-            }
+            let result = crate::claude::invoke_claude_streaming(
+                &prompt,
+                project_root,
+                pf.model,
+                pf.cli_path,
+                pf.extra_args,
+                pf.env_vars,
+                pf.pre_run_script,
+                pf.post_run_script,
+                settings.allow_dangerous_skip_permissions,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("Claude invocation failed: {e}"))?;
+            result.stdout
         }
         CliProvider::OpenCode => {
-            if !model.is_empty() {
-                cmd.arg("--model").arg(model);
-            }
+            let config = crate::opencode::OpenCodeRunConfig {
+                model: pf.model,
+                cli_path: pf.cli_path,
+                extra_args: pf.extra_args,
+                env_vars: pf.env_vars,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
+            };
+            let result = crate::opencode::invoke_opencode_streaming(
+                &prompt,
+                project_root,
+                &config,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("OpenCode invocation failed: {e}"))?;
+            result.stdout
         }
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run {} CLI: {e}", provider.display_name()))?;
+    };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "{} CLI failed: {}",
-            provider.display_name(),
-            stderr.trim()
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_theme_json(&stdout, is_dark)
+    parse_theme_json(&response_text, is_dark)
 }
 
 /// Parse the JSON response from Claude into a CustomTheme.
