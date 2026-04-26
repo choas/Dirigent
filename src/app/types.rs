@@ -308,12 +308,7 @@ impl CodeViewerState {
         let tab = create_tab_state(&path)?;
         // Soft cap at 20 tabs — close the oldest (first) non-active tab
         if self.tabs.len() >= 20 {
-            let close_idx = self
-                .tabs
-                .iter()
-                .enumerate()
-                .position(|(i, _)| Some(i) != self.active_tab)
-                .unwrap_or(0);
+            let close_idx = if self.active_tab == Some(0) { 1 } else { 0 };
             self.close_tab(close_idx);
         }
         self.tabs.push(tab);
