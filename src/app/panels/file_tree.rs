@@ -1111,7 +1111,7 @@ fn render_copy_path_items(
             .to_string_lossy()
             .to_string();
         ui.ctx().copy_text(name.clone());
-        *status_msg = Some(format!("Copied: {}", name));
+        *status_msg = Some("Name copied".into());
         ui.close();
     }
     if ui.button("Copy Path").clicked() {
@@ -1127,10 +1127,19 @@ fn render_copy_path_items(
     }
     if abs_path.is_file() {
         const MAX_COPY_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-        let meta = std::fs::metadata(abs_path).ok();
-        let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let too_large = file_size > MAX_COPY_SIZE;
-        let likely_binary = is_likely_binary(abs_path);
+
+        let cache_id = egui::Id::new(("copy_contents_cache", abs_path));
+        let cached: Option<(bool, bool)> = ui.data(|d| d.get_temp(cache_id));
+        let (too_large, likely_binary) = match cached {
+            Some(v) => v,
+            None => {
+                let meta = std::fs::metadata(abs_path).ok();
+                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let result = (file_size > MAX_COPY_SIZE, is_likely_binary(abs_path));
+                ui.data_mut(|d| d.insert_temp(cache_id, result));
+                result
+            }
+        };
 
         let enabled = !too_large && !likely_binary;
         let label = if too_large {
