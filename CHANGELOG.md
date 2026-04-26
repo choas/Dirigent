@@ -2,6 +2,45 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.4.0] - 2026-04-27
+
+### Added
+- File context menu with right-click actions (use in prompt, copy path)
+- "Delete All Archived" cue action for bulk cleanup
+- Delete button on individual archived cues
+- Split cues feature for breaking multi-task cues into separate items
+- Font weight adjustment in Settings
+- Custom theme color picker in Settings
+- Search button in code viewer
+- Toggle to show .gitignore-ignored files in Open File dialog
+- Runnable source items ({runnable} tag support for Notion and other sources)
+- Database index audit and optimization
+- Installable CLI command (`dirigent`) for launching from any folder
+- Theme generator via CLI using the selected code generator
+- Temporary prompt log entries before sending
+- Document position persistence when switching between files
+
+### Fixed
+- Plan actions blocked when processing view in certain states
+- Swift agent preset limited to Xcode-only configuration
+- Iterator chain logic correctness issues
+- Panic surfaces across codebase (audit and hardening)
+- Dead code and unreachable branches removed
+- Quality loop iteration counter drift and orphan detection
+- Archive-all-done only archiving currently loaded Done cues
+- File close behavior when multiple files are open
+- Verified and fixed 60+ PR code review findings against actual code
+
+### Changed
+- Comprehensive code review: UTF-8/byte boundary safety, per-frame allocation audit, error silencing audit, keyboard shortcut conflict detection, state machine completeness, security/path traversal review, accessibility improvements
+- Resource leak and unbounded growth prevention
+- Duplicated construction logic consolidated (DRY refactor)
+- Regex correctness review and fixes
+- Test coverage gap analysis with new tests (355 total)
+- Settings auto-reload from disk on file changes and after Claude runs
+- Quality loop resilience improvements
+- Workflow Plan UI improvements (conditional re-plan button)
+
 ## [0.3.6] - 2026-04-07
 
 ### Added
