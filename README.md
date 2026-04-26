@@ -133,7 +133,7 @@ cargo run --release -- /path/to/your/project
 
 ### macOS application (DMG)
 
-If you downloaded the `.app` from [GitHub Releases](https://github.com/choas/Dirigent/releases) and installed it to `/Applications`:
+If you downloaded the `.dmg` from [GitHub Releases](https://github.com/choas/Dirigent/releases) and installed **Dirigent.app** to `/Applications`:
 
 - **Double-click Dirigent.app** — opens the **repository picker** where you can browse to a project
 - **From Terminal** — open a specific project directory:
@@ -143,7 +143,7 @@ If you downloaded the `.app` from [GitHub Releases](https://github.com/choas/Dir
   ```
 - **Drag & drop** — drag a project folder onto the Dirigent icon in the Dock
 
-When launched without a path, Dirigent always opens the repository picker so you can choose a project.
+When launched from the macOS app bundle without a path (e.g. double-clicking the Dock icon), Dirigent opens the repository picker so you can choose a project. From the CLI, Dirigent uses the current working directory instead.
 
 ### Workflow
 
