@@ -127,24 +127,7 @@ impl DirigentApp {
     /// After a format agent passes, reload open tabs to show reformatted code.
     fn reload_tabs_after_format(&mut self) {
         let result = self.reload_open_tabs_and_notify_lsp();
-        let mut problems: Vec<String> = self
-            .viewer
-            .tabs
-            .iter()
-            .filter(|tab| !tab.file_path.is_file())
-            .filter_map(|tab| {
-                tab.file_path
-                    .file_name()
-                    .map(|n| format!("{} (deleted)", n.to_string_lossy()))
-            })
-            .collect();
-        for (path, err) in &result.failed {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            problems.push(format!("{} ({})", name, err));
-        }
+        let problems = Self::collect_reload_problems(&self.viewer.tabs, &result);
         if !problems.is_empty() {
             self.set_status_message(format!(
                 "Format done, but failed to reload: {}",

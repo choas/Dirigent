@@ -78,6 +78,35 @@ impl DirigentApp {
         super::types::TabReloadResult { changed, failed }
     }
 
+    /// Collect formatted problem messages from tabs that no longer exist on disk
+    /// and from reload failures, de-duplicating by path.
+    pub(super) fn collect_reload_problems(
+        tabs: &[super::types::TabState],
+        result: &super::types::TabReloadResult,
+    ) -> Vec<String> {
+        let mut seen: HashSet<&PathBuf> = HashSet::new();
+        let mut problems: Vec<String> = Vec::new();
+        for tab in tabs {
+            if !tab.file_path.is_file() {
+                if let Some(name) = tab.file_path.file_name() {
+                    seen.insert(&tab.file_path);
+                    problems.push(format!("{} (deleted)", name.to_string_lossy()));
+                }
+            }
+        }
+        for (path, err) in &result.failed {
+            if seen.contains(path) {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            problems.push(format!("{} ({})", name, err));
+        }
+        problems
+    }
+
     /// Reload content of all open tabs from disk, closing tabs for deleted files.
     pub(super) fn reload_open_tabs(&mut self) {
         let result = self.reload_open_tabs_and_notify_lsp();
