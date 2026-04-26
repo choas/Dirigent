@@ -227,11 +227,13 @@ pub(super) fn parse_schedule_duration(input: &str) -> Option<std::time::Duration
         return None;
     }
     let input_lc = input.to_ascii_lowercase();
-    let (num_str, suffix) = if input_lc.strip_suffix('m').is_some() {
+    // Slicing one byte off `input` is safe: the suffix is ASCII, so the byte
+    // position is identical and the boundary is always a valid char boundary.
+    let (num_str, suffix) = if input_lc.ends_with('m') {
         (&input[..input.len() - 1], 'm')
-    } else if input_lc.strip_suffix('h').is_some() {
+    } else if input_lc.ends_with('h') {
         (&input[..input.len() - 1], 'h')
-    } else if input_lc.strip_suffix('s').is_some() {
+    } else if input_lc.ends_with('s') {
         (&input[..input.len() - 1], 's')
     } else {
         (input, 'm')
