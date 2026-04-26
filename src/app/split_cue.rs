@@ -220,34 +220,8 @@ struct LlmSplitCue {
     reference: Option<String>,
 }
 
-fn extract_json(s: &str) -> String {
-    if let Some(start) = s.find("```json") {
-        let after = &s[start + 7..];
-        if let Some(end) = after.find("```") {
-            return after[..end].trim().to_string();
-        }
-    }
-    if let Some(start) = s.find("```") {
-        let after = &s[start + 3..];
-        if let Some(end) = after.find("```") {
-            let inner = after[..end].trim();
-            if inner.starts_with('{') {
-                return inner.to_string();
-            }
-        }
-    }
-    if let Some(start) = s.find('{') {
-        if let Some(end) = s.rfind('}') {
-            if end > start {
-                return s[start..=end].to_string();
-            }
-        }
-    }
-    s.trim().to_string()
-}
-
 fn parse_split_response(response: &str) -> Result<Vec<SplitCueItem>, String> {
-    let json_str = extract_json(response);
+    let json_str = crate::util::json_extract::extract_json(response);
     let parsed: LlmSplitResponse = serde_json::from_str(&json_str)
         .map_err(|e| format!("Failed to parse split JSON: {}", e))?;
 
