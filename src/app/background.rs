@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -97,9 +98,10 @@ impl DirigentApp {
         if !stale_names.is_empty() {
             messages.push(format!("Closed (file deleted): {}", stale_names.join(", ")));
         }
-        if !result.failed.is_empty() {
-            let names: Vec<String> = result
-                .failed
+        let still_existing_failures: Vec<_> =
+            result.failed.iter().filter(|(p, _)| p.exists()).collect();
+        if !still_existing_failures.is_empty() {
+            let names: Vec<String> = still_existing_failures
                 .iter()
                 .map(|(p, e)| {
                     let name = p
