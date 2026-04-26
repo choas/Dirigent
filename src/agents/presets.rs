@@ -307,11 +307,12 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                 let scheme = shell_quote(&project_name);
                 let build_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
-                     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build 2>&1"
+                     -destination 'generic/platform=iOS Simulator' build 2>&1"
                 );
+                // Test needs a concrete simulator; override the device name if "iPhone 16 Pro" is unavailable.
                 let test_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
-                     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test 2>&1"
+                     -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test 2>&1"
                 );
                 pipeline(
                     Step {
