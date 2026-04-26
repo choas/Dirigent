@@ -265,6 +265,9 @@ impl DirigentApp {
         if let Some(i) = remove_idx {
             if let Some(imgs) = self.conversation_reply_images.get_mut(&cue_id) {
                 imgs.remove(i);
+                if imgs.is_empty() {
+                    self.conversation_reply_images.remove(&cue_id);
+                }
             }
         }
         ui.add_space(SPACE_XS);
