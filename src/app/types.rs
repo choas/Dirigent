@@ -134,19 +134,39 @@ pub(super) struct TabState {
 }
 
 impl TabState {
-    pub(super) fn reload_from_disk(&mut self) -> Result<(), std::io::Error> {
-        let content = std::fs::read_to_string(&self.file_path)?;
-        if self.markdown_blocks.is_some() {
-            self.markdown_blocks = Some(markdown_parser::parse_markdown(&content));
-        }
-        self.content = content.lines().map(String::from).collect();
+    pub(super) fn reload_from_disk(&mut self) -> Result<bool, std::io::Error> {
         let ext = self
             .file_path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
+
+        if is_image_extension(ext) {
+            return Ok(false);
+        }
+
+        let bytes = std::fs::read(&self.file_path)?;
+
+        if bytes.contains(&0) {
+            return Ok(false);
+        }
+
+        let new_content: Vec<String> = String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(String::from)
+            .collect();
+
+        if new_content == self.content {
+            return Ok(false);
+        }
+
+        let full = new_content.join("\n");
+        if self.markdown_blocks.is_some() {
+            self.markdown_blocks = Some(markdown_parser::parse_markdown(&full));
+        }
+        self.content = new_content;
         self.symbols = symbols::parse_symbols(&self.content, ext);
-        Ok(())
+        Ok(true)
     }
 }
 
