@@ -108,3 +108,69 @@ pub(super) fn pick_markdown_file(start_dir: &std::path::Path) -> Option<PathBuf>
         .add_filter("Text files", &["md", "txt", "markdown"])
         .pick_file()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_markdown_sections_basic() {
+        let content =
+            "### 1. First Section\nBody of first.\n### 2. Second Section\nBody of second.";
+        let sections = parse_markdown_sections(content);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].number, 1);
+        assert_eq!(sections[0].title, "First Section");
+        assert!(sections[0].body.contains("Body of first"));
+        assert_eq!(sections[1].number, 2);
+        assert_eq!(sections[1].title, "Second Section");
+    }
+
+    #[test]
+    fn parse_markdown_sections_no_numbered_headings() {
+        let content = "### Introduction\nSome text.\n### Details\nMore text.";
+        let sections = parse_markdown_sections(content);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].title, "Introduction");
+        assert_eq!(sections[0].number, 1);
+        assert_eq!(sections[1].title, "Details");
+        assert_eq!(sections[1].number, 2);
+    }
+
+    #[test]
+    fn parse_markdown_sections_empty_input() {
+        assert!(parse_markdown_sections("").is_empty());
+    }
+
+    #[test]
+    fn parse_markdown_sections_no_headings() {
+        let content = "Just some text\nwithout any headings.";
+        assert!(parse_markdown_sections(content).is_empty());
+    }
+
+    #[test]
+    fn parse_markdown_sections_ignores_non_h3() {
+        let content = "# Top level\n## Second level\n### 1. Actual Section\nBody.";
+        let sections = parse_markdown_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "Actual Section");
+    }
+
+    #[test]
+    fn parse_markdown_sections_non_ascii_content() {
+        let content = "### 1. Ünïcödé Séction\nCafé résumé.\n日本語テキスト。";
+        let sections = parse_markdown_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "Ünïcödé Séction");
+        assert!(sections[0].body.contains("Café"));
+        assert!(sections[0].body.contains("日本語"));
+    }
+
+    #[test]
+    fn parse_markdown_sections_strips_separators_and_fences() {
+        let content = "### 1. Section\n---\n```rust\nfn main() {}\n```\nAfter fence.";
+        let sections = parse_markdown_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert!(!sections[0].body.contains("---"));
+    }
+}

@@ -179,3 +179,66 @@ pub(crate) fn fuzzy_match(haystack: &str, needle: &str) -> bool {
     }
     current.is_none()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuzzy_match_exact() {
+        assert!(fuzzy_match("hello", "hello"));
+    }
+
+    #[test]
+    fn fuzzy_match_subsequence() {
+        assert!(fuzzy_match("src/app/mod.rs", "sam"));
+        assert!(fuzzy_match("hello_world", "hwd"));
+    }
+
+    #[test]
+    fn fuzzy_match_no_match() {
+        assert!(!fuzzy_match("abc", "z"));
+        assert!(!fuzzy_match("hello", "hx"));
+    }
+
+    #[test]
+    fn fuzzy_match_empty_needle() {
+        assert!(fuzzy_match("anything", ""));
+        assert!(fuzzy_match("", ""));
+    }
+
+    #[test]
+    fn fuzzy_match_empty_haystack() {
+        assert!(!fuzzy_match("", "a"));
+    }
+
+    #[test]
+    fn fuzzy_match_needle_longer_than_haystack() {
+        assert!(!fuzzy_match("ab", "abc"));
+    }
+
+    #[test]
+    fn fuzzy_match_case_sensitive() {
+        assert!(!fuzzy_match("Hello", "hello"));
+        assert!(fuzzy_match("Hello", "Hlo"));
+    }
+
+    #[test]
+    fn fuzzy_match_non_ascii() {
+        assert!(fuzzy_match("café_latté", "clt"));
+        assert!(fuzzy_match("日本語テスト", "本テ"));
+        assert!(!fuzzy_match("日本語", "英"));
+    }
+
+    #[test]
+    fn fuzzy_match_unicode_emoji() {
+        assert!(fuzzy_match("src/🚀/main.rs", "🚀"));
+        assert!(fuzzy_match("file_✅_done", "f✅d"));
+    }
+
+    #[test]
+    fn fuzzy_match_repeated_chars() {
+        assert!(fuzzy_match("aabbc", "abc"));
+        assert!(!fuzzy_match("aab", "bba"));
+    }
+}

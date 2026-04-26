@@ -247,3 +247,71 @@ pub(super) fn parse_schedule_duration(input: &str) -> Option<std::time::Duration
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn parse_schedule_duration_minutes() {
+        assert_eq!(
+            parse_schedule_duration("5m"),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            parse_schedule_duration("30m"),
+            Some(Duration::from_secs(1800))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_hours() {
+        assert_eq!(
+            parse_schedule_duration("2h"),
+            Some(Duration::from_secs(7200))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_seconds() {
+        assert_eq!(
+            parse_schedule_duration("30s"),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_no_suffix_defaults_to_minutes() {
+        assert_eq!(
+            parse_schedule_duration("10"),
+            Some(Duration::from_secs(600))
+        );
+    }
+
+    #[test]
+    fn parse_schedule_duration_empty() {
+        assert_eq!(parse_schedule_duration(""), None);
+        assert_eq!(parse_schedule_duration("  "), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_zero() {
+        assert_eq!(parse_schedule_duration("0m"), None);
+        assert_eq!(parse_schedule_duration("0"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_invalid() {
+        assert_eq!(parse_schedule_duration("abc"), None);
+        assert_eq!(parse_schedule_duration("m"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_whitespace_trimmed() {
+        assert_eq!(
+            parse_schedule_duration("  5m  "),
+            Some(Duration::from_secs(300))
+        );
+    }
+}

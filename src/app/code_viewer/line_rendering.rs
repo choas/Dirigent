@@ -387,3 +387,101 @@ fn handle_shift_click(line_num: usize, sel_start: Option<usize>, actions: &mut C
         actions.new_sel_end = Some(line_num);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- path_matches_diagnostic tests --
+
+    #[test]
+    fn path_matches_diagnostic_exact() {
+        assert!(path_matches_diagnostic("src/main.rs", "src/main.rs"));
+    }
+
+    #[test]
+    fn path_matches_diagnostic_suffix() {
+        assert!(path_matches_diagnostic(
+            "project/src/main.rs",
+            "src/main.rs"
+        ));
+    }
+
+    #[test]
+    fn path_matches_diagnostic_prefix() {
+        assert!(path_matches_diagnostic(
+            "src/main.rs",
+            "project/src/main.rs"
+        ));
+    }
+
+    #[test]
+    fn path_matches_diagnostic_no_match() {
+        assert!(!path_matches_diagnostic("src/main.rs", "src/lib.rs"));
+    }
+
+    #[test]
+    fn path_matches_diagnostic_empty_diag_matches_any() {
+        // Path::ends_with("") is true for any path, so empty diag matches
+        assert!(path_matches_diagnostic("src/main.rs", ""));
+    }
+
+    #[test]
+    fn path_matches_diagnostic_both_empty() {
+        assert!(path_matches_diagnostic("", ""));
+    }
+
+    // -- compute_byte_offset tests --
+
+    #[test]
+    fn compute_byte_offset_ascii() {
+        let line = "hello world";
+        let w = 8.0;
+        assert_eq!(compute_byte_offset(line, 0.0, w), 0);
+        assert_eq!(compute_byte_offset(line, 4.0, w), 0);
+        assert_eq!(compute_byte_offset(line, 9.0, w), 1);
+    }
+
+    #[test]
+    fn compute_byte_offset_past_end() {
+        let line = "hi";
+        assert_eq!(compute_byte_offset(line, 1000.0, 8.0), line.len());
+    }
+
+    #[test]
+    fn compute_byte_offset_empty_line() {
+        assert_eq!(compute_byte_offset("", 10.0, 8.0), 0);
+    }
+
+    #[test]
+    fn compute_byte_offset_tab_character() {
+        let line = "\thello";
+        let w = 8.0;
+        // Tab = 4 * char_width = 32.0
+        // At x=16.0, still within the tab
+        assert_eq!(compute_byte_offset(line, 16.0, w), 0);
+        // At x=33.0, past the tab into 'h'
+        assert_eq!(compute_byte_offset(line, 33.0, w), 1);
+    }
+
+    #[test]
+    fn compute_byte_offset_multibyte_utf8() {
+        let line = "café";
+        let w = 8.0;
+        // c(1B) a(1B) f(1B) é(2B) — 'é' starts at byte 3
+        // char widths: c=8, a=8, f=8, é=16 (2-byte -> min(2,2)=2 * 8)
+        // At x=25.0: past c(8)+a(8)+f(8)=24, hitting 'é' at byte 3
+        assert_eq!(compute_byte_offset(line, 25.0, w), 3);
+    }
+
+    #[test]
+    fn compute_byte_offset_cjk() {
+        let line = "日本語";
+        let w = 8.0;
+        // Each CJK char is 3 bytes, width = min(3,2)*8 = 16
+        // At x=0: byte 0
+        assert_eq!(compute_byte_offset(line, 0.0, w), 0);
+        // At x=17: past first char (16px), into second char at byte 3
+        assert_eq!(compute_byte_offset(line, 17.0, w), 3);
+    }
+}

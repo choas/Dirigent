@@ -108,6 +108,8 @@ pub struct DirigentApp {
     expanded_dirs: HashSet<PathBuf>,
     file_tree_tx: mpsc::Sender<FileTree>,
     file_tree_rx: mpsc::Receiver<FileTree>,
+    file_tree_error_tx: mpsc::Sender<String>,
+    file_tree_error_rx: mpsc::Receiver<String>,
     file_tree_scanning: bool,
 
     // Code viewer
@@ -388,7 +390,9 @@ impl DirigentApp {
             eprintln!("settings migration error: {e:#}");
             false
         }) {
-            settings::save_settings(&project_root, &settings);
+            if let Err(e) = settings::save_settings(&project_root, &settings) {
+                eprintln!("Failed to save migrated settings: {e}");
+            }
         }
         // Seed the in-session recent_repos from the global list so the repo
         // picker always shows previously opened projects, even on first launch.
@@ -458,6 +462,7 @@ impl DirigentApp {
         }
 
         let (file_tree_tx, file_tree_rx) = mpsc::channel();
+        let (file_tree_error_tx, file_tree_error_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
         let (goto_def_tx, goto_def_rx) = mpsc::channel();
 
@@ -492,6 +497,8 @@ impl DirigentApp {
             expanded_dirs: HashSet::new(),
             file_tree_tx,
             file_tree_rx,
+            file_tree_error_tx,
+            file_tree_error_rx,
             file_tree_scanning: false,
             viewer: CodeViewerState {
                 tabs: Vec::new(),
@@ -752,9 +759,13 @@ impl DirigentApp {
         self.file_tree_scanning = true;
         let root = self.project_root.clone();
         let tx = self.file_tree_tx.clone();
-        std::thread::spawn(move || {
-            if let Ok(tree) = FileTree::scan(&root) {
+        let status_tx = self.file_tree_error_tx.clone();
+        std::thread::spawn(move || match FileTree::scan(&root) {
+            Ok(tree) => {
                 let _ = tx.send(tree);
+            }
+            Err(e) => {
+                let _ = status_tx.send(format!("File tree scan failed: {}", e));
             }
         });
     }
@@ -956,5 +967,61 @@ impl Drop for DirigentApp {
     fn drop(&mut self) {
         self.split_cue_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_str_short_string() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_str_exact_boundary() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_ascii_truncation() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_empty_string() {
+        assert_eq!(truncate_str("", 0), "");
+        assert_eq!(truncate_str("", 10), "");
+    }
+
+    #[test]
+    fn truncate_str_zero_max() {
+        assert_eq!(truncate_str("hello", 0), "");
+    }
+
+    #[test]
+    fn truncate_str_utf8_boundary() {
+        // 'é' is 2 bytes (0xC3 0xA9), so "café" is 5 bytes
+        let s = "café";
+        assert_eq!(s.len(), 5);
+        assert_eq!(truncate_str(s, 4), "caf");
+        assert_eq!(truncate_str(s, 5), "café");
+    }
+
+    #[test]
+    fn truncate_str_cjk_boundary() {
+        let s = "日本語";
+        assert_eq!(s.len(), 9);
+        assert_eq!(truncate_str(s, 4), "日");
+        assert_eq!(truncate_str(s, 6), "日本");
+    }
+
+    #[test]
+    fn truncate_str_emoji_boundary() {
+        let s = "a🚀b";
+        assert_eq!(s.len(), 6);
+        assert_eq!(truncate_str(s, 3), "a");
+        assert_eq!(truncate_str(s, 5), "a🚀");
     }
 }

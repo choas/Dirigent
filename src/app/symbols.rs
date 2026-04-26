@@ -714,4 +714,252 @@ mod tests {
         assert_eq!(word_at_offset(line, 4), Some("__init__"));
         assert_eq!(word_at_offset(line, 7), Some("__init__"));
     }
+
+    // -- definition_patterns tests --
+
+    #[test]
+    fn definition_patterns_rust_fn() {
+        let pats = definition_patterns("my_func");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(matches_any("fn my_func()"));
+        assert!(matches_any("pub fn my_func(x: i32)"));
+        assert!(matches_any("  async fn my_func() {"));
+    }
+
+    #[test]
+    fn definition_patterns_struct_enum_trait() {
+        let pats = definition_patterns("Foo");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(matches_any("struct Foo {"));
+        assert!(matches_any("enum Foo {"));
+        assert!(matches_any("trait Foo {"));
+        assert!(matches_any("impl Foo {"));
+    }
+
+    #[test]
+    fn definition_patterns_no_false_positive() {
+        let pats = definition_patterns("Foo");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(!matches_any("let foo = 1;"));
+        assert!(!matches_any("FooBar::new()"));
+    }
+
+    #[test]
+    fn definition_patterns_multi_language() {
+        let pats = definition_patterns("greet");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(matches_any("def greet(name):"));
+        assert!(matches_any("function greet() {"));
+        assert!(matches_any("func greet() {"));
+        assert!(matches_any("class greet {"));
+        assert!(matches_any("interface greet {"));
+    }
+
+    #[test]
+    fn definition_patterns_special_regex_chars() {
+        let pats = definition_patterns("foo+bar");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(matches_any("fn foo+bar()"));
+        assert!(!matches_any("fn fooXbar()"));
+    }
+
+    #[test]
+    fn definition_patterns_type_pattern() {
+        let pats = definition_patterns("MyType");
+        let matches_any = |text: &str| pats.iter().any(|re| re.is_match(text));
+        assert!(matches_any("type MyType = i32;"));
+        assert!(matches_any("type MyType<T> = Vec<T>;"));
+    }
+
+    // -- parse_symbols tests --
+
+    #[test]
+    fn parse_symbols_rust_basic() {
+        let content: Vec<String> = vec![
+            "pub fn hello() {".into(),
+            "    let x = 1;".into(),
+            "}".into(),
+            "struct Point {".into(),
+            "    x: f64,".into(),
+            "}".into(),
+        ];
+        let syms = parse_symbols(&content, "rs");
+        assert_eq!(syms.len(), 2);
+        assert_eq!(syms[0].name, "hello");
+        assert_eq!(syms[0].kind, SymbolKind::Function);
+        assert_eq!(syms[0].line, 1);
+        assert_eq!(syms[1].name, "Point");
+        assert_eq!(syms[1].kind, SymbolKind::Struct);
+    }
+
+    #[test]
+    fn parse_symbols_python() {
+        let content: Vec<String> = vec![
+            "class Greeter:".into(),
+            "    def greet(self):".into(),
+            "        pass".into(),
+        ];
+        let syms = parse_symbols(&content, "py");
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
+        assert!(syms
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == SymbolKind::Function));
+    }
+
+    #[test]
+    fn parse_symbols_unknown_ext_returns_empty() {
+        let content: Vec<String> = vec!["some content".into()];
+        assert!(parse_symbols(&content, "xyz").is_empty());
+    }
+
+    #[test]
+    fn parse_symbols_empty_content() {
+        assert!(parse_symbols(&[], "rs").is_empty());
+    }
+
+    #[test]
+    fn parse_symbols_skips_comments() {
+        let content: Vec<String> = vec![
+            "// fn commented_out() {}".into(),
+            "fn real_function() {}".into(),
+        ];
+        let syms = parse_symbols(&content, "rs");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "real_function");
+    }
+
+    #[test]
+    fn parse_symbols_javascript() {
+        let content: Vec<String> = vec![
+            "function render() {".into(),
+            "  return null;".into(),
+            "}".into(),
+            "class App {".into(),
+            "}".into(),
+        ];
+        let syms = parse_symbols(&content, "js");
+        assert!(syms.iter().any(|s| s.name == "render"));
+        assert!(syms.iter().any(|s| s.name == "App"));
+    }
+
+    #[test]
+    fn parse_symbols_markdown_headings() {
+        let content: Vec<String> = vec![
+            "# Title".into(),
+            "Some text".into(),
+            "## Section".into(),
+            "### Subsection".into(),
+        ];
+        let syms = parse_symbols(&content, "md");
+        assert_eq!(syms.len(), 3);
+        assert_eq!(syms[0].name, "Title");
+        assert_eq!(syms[0].kind, SymbolKind::Heading);
+        assert_eq!(syms[1].name, "Section");
+        assert_eq!(syms[2].name, "Subsection");
+    }
+
+    #[test]
+    fn parse_symbols_non_ascii_identifiers() {
+        let content: Vec<String> = vec!["def café():".into(), "    pass".into()];
+        let syms = parse_symbols(&content, "py");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "café");
+    }
+
+    // -- enclosing_symbol tests --
+
+    #[test]
+    fn enclosing_symbol_finds_nearest() {
+        let symbols = vec![
+            FileSymbol {
+                name: "foo".into(),
+                kind: SymbolKind::Function,
+                line: 1,
+                depth: 0,
+            },
+            FileSymbol {
+                name: "bar".into(),
+                kind: SymbolKind::Function,
+                line: 10,
+                depth: 0,
+            },
+            FileSymbol {
+                name: "baz".into(),
+                kind: SymbolKind::Function,
+                line: 20,
+                depth: 0,
+            },
+        ];
+        assert_eq!(enclosing_symbol(&symbols, 15).unwrap().name, "bar");
+        assert_eq!(enclosing_symbol(&symbols, 10).unwrap().name, "bar");
+        assert_eq!(enclosing_symbol(&symbols, 1).unwrap().name, "foo");
+        assert_eq!(enclosing_symbol(&symbols, 25).unwrap().name, "baz");
+    }
+
+    #[test]
+    fn enclosing_symbol_before_first_returns_none() {
+        let symbols = vec![FileSymbol {
+            name: "foo".into(),
+            kind: SymbolKind::Function,
+            line: 5,
+            depth: 0,
+        }];
+        assert!(enclosing_symbol(&symbols, 3).is_none());
+    }
+
+    #[test]
+    fn enclosing_symbol_empty_symbols() {
+        assert!(enclosing_symbol(&[], 10).is_none());
+    }
+
+    // -- is_comment_line tests --
+
+    #[test]
+    fn is_comment_line_single_line_styles() {
+        let mut in_block = false;
+        assert!(is_comment_line("// rust comment", &mut in_block));
+        assert!(is_comment_line("# python comment", &mut in_block));
+        assert!(is_comment_line("-- sql comment", &mut in_block));
+        assert!(!is_comment_line("let x = 1;", &mut in_block));
+    }
+
+    #[test]
+    fn is_comment_line_block_comment() {
+        let mut in_block = false;
+        assert!(is_comment_line("/* start", &mut in_block));
+        assert!(in_block);
+        assert!(is_comment_line("still in block", &mut in_block));
+        assert!(is_comment_line("end */", &mut in_block));
+        assert!(!in_block);
+        assert!(!is_comment_line("code after block", &mut in_block));
+    }
+
+    #[test]
+    fn is_comment_line_single_line_block() {
+        let mut in_block = false;
+        assert!(is_comment_line("/* single line block */", &mut in_block));
+        assert!(!in_block);
+    }
+
+    #[test]
+    fn is_comment_line_block_with_trailing_code() {
+        let mut in_block = true;
+        assert!(!is_comment_line("*/ int x = 1;", &mut in_block));
+        assert!(!in_block);
+    }
+
+    #[test]
+    fn is_comment_line_python_docstrings() {
+        let mut in_block = false;
+        assert!(is_comment_line(r#""""docstring""""#, &mut in_block));
+        assert!(is_comment_line("'''docstring'''", &mut in_block));
+    }
+
+    #[test]
+    fn is_comment_line_empty_string() {
+        let mut in_block = false;
+        assert!(!is_comment_line("", &mut in_block));
+    }
 }
