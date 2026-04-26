@@ -62,11 +62,10 @@ impl DirigentApp {
 
         let tab_resp = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui
+                let label_resp = ui
                     .add(egui::Label::new(text).sense(egui::Sense::click()))
-                    .on_hover_text(&rel)
-                    .clicked()
-                {
+                    .on_hover_text(&rel);
+                if label_resp.clicked() {
                     *action = TabBarAction::Activate(i);
                 }
                 if ui
@@ -83,18 +82,12 @@ impl DirigentApp {
                 {
                     *action = TabBarAction::CloseOne(i);
                 }
-            });
+                label_resp
+            })
         });
 
-        let ctx_resp = ui.interact(
-            tab_resp.response.rect,
-            ui.id().with(("tab_ctx", i)),
-            egui::Sense::click(),
-        );
-        if ctx_resp.clicked() && *action != TabBarAction::CloseOne(i) {
-            *action = TabBarAction::Activate(i);
-        }
-        self.render_tab_context_menu(&ctx_resp, i, action);
+        let label_resp = &tab_resp.inner.inner;
+        self.render_tab_context_menu(label_resp, i, action);
     }
 
     /// Show the right-click context menu on a tab.
