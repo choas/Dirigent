@@ -74,7 +74,7 @@ dirigent .
   ```
 - **Drag & drop** — drag a project folder onto the Dirigent icon in the Dock
 
-If you omit the path, Dirigent opens the **repository picker** so you can choose a project.
+When launched from the macOS app bundle without a path (e.g. double-clicking the Dock icon), Dirigent opens the **repository picker** so you can choose a project. From the CLI, Dirigent uses the current working directory instead.
 
 When Dirigent opens you will see three main areas:
 
