@@ -236,14 +236,14 @@ pub(super) fn parse_schedule_duration(input: &str) -> Option<std::time::Duration
         // Default to minutes if no suffix
         (input, 'm')
     };
-    let num: u64 = num_str.trim().parse().ok()?;
+    let num: u64 = num_str.parse().ok()?;
     if num == 0 {
         return None;
     }
     match suffix {
         's' => Some(std::time::Duration::from_secs(num)),
-        'm' => Some(std::time::Duration::from_secs(num * 60)),
-        'h' => Some(std::time::Duration::from_secs(num * 3600)),
+        'm' => num.checked_mul(60).map(std::time::Duration::from_secs),
+        'h' => num.checked_mul(3600).map(std::time::Duration::from_secs),
         _ => None,
     }
 }
@@ -313,5 +313,32 @@ mod tests {
             parse_schedule_duration("  5m  "),
             Some(Duration::from_secs(300))
         );
+    }
+
+    #[test]
+    fn parse_schedule_duration_decimal_rejected() {
+        assert_eq!(parse_schedule_duration("5.5m"), None);
+        assert_eq!(parse_schedule_duration("1.0h"), None);
+        assert_eq!(parse_schedule_duration("2.5s"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_overflow_safe() {
+        assert_eq!(parse_schedule_duration("99999999999999999h"), None);
+        assert_eq!(parse_schedule_duration("999999999999999999m"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_malformed_suffix() {
+        assert_eq!(parse_schedule_duration("5mm"), None);
+        assert_eq!(parse_schedule_duration("5hm"), None);
+        assert_eq!(parse_schedule_duration("5sh"), None);
+    }
+
+    #[test]
+    fn parse_schedule_duration_space_before_suffix() {
+        assert_eq!(parse_schedule_duration("5 m"), None);
+        assert_eq!(parse_schedule_duration("5 h"), None);
+        assert_eq!(parse_schedule_duration("5 s"), None);
     }
 }
