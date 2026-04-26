@@ -660,7 +660,7 @@ impl DirigentApp {
             .db
             .update_cue_plan_path(result.cue_id, plan_path.as_deref());
 
-        self.reload_open_tabs_and_notify_lsp();
+        let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
         self.reload_commit_history();
         self.try_dispatch_follow_up(result.cue_id);

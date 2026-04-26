@@ -12,6 +12,13 @@ use super::markdown_parser;
 use super::search;
 use super::symbols;
 
+/// Result of reloading open tabs from disk.
+pub(super) struct TabReloadResult {
+    #[allow(dead_code)]
+    pub(super) changed: Vec<PathBuf>,
+    pub(super) failed: Vec<(PathBuf, String)>,
+}
+
 /// State for a play that has template variables requiring user input.
 pub(super) struct PendingPlay {
     /// Original prompt template.
