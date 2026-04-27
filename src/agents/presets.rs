@@ -77,6 +77,7 @@ pub(crate) enum AgentLanguage {
     Elixir,
     Zig,
     Lua,
+    Bun,
 }
 
 impl AgentLanguage {
@@ -95,6 +96,7 @@ impl AgentLanguage {
             AgentLanguage::Elixir => "Elixir",
             AgentLanguage::Zig => "Zig",
             AgentLanguage::Lua => "Lua",
+            AgentLanguage::Bun => "Bun",
         }
     }
 
@@ -113,6 +115,7 @@ impl AgentLanguage {
             AgentLanguage::Elixir,
             AgentLanguage::Zig,
             AgentLanguage::Lua,
+            AgentLanguage::Bun,
         ]
     }
 }
@@ -465,5 +468,28 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                 timeout: 300,
             },
         ),
+        AgentLanguage::Bun => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "bunx prettier --write .",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "bunx eslint . 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "bunx tsc --noEmit 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "bun test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("bun outdated 2>&1", 60));
+            v.push(audit_agent("bunx npm-audit 2>&1"));
+            v
+        }
     }
 }
