@@ -14,6 +14,7 @@ pub(crate) struct CodeLineActions {
     pub new_sel_start: Option<usize>,
     pub new_sel_end: Option<usize>,
     pub submit_cue: bool,
+    pub submit_cue_whole_file: bool,
     pub clear_selection: bool,
     pub fix_diagnostic_line: Option<usize>,
     pub goto_def_word: Option<String>,

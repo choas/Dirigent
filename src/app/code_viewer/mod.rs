@@ -169,6 +169,7 @@ impl DirigentApp {
             new_sel_start: sel_start,
             new_sel_end: sel_end,
             submit_cue: false,
+            submit_cue_whole_file: false,
             clear_selection: false,
             fix_diagnostic_line: None,
             goto_def_word: None,
@@ -388,6 +389,10 @@ impl DirigentApp {
             self.submit_inline_cue(active_idx, rel_path);
         }
 
+        if actions.submit_cue_whole_file && !self.viewer.tabs[active_idx].cue_input.is_empty() {
+            self.submit_whole_file_cue(active_idx, rel_path);
+        }
+
         if let Some(line) = actions.implement_click_line {
             self.apply_implement_click(active_idx, line, file_path);
         }
@@ -452,6 +457,27 @@ impl DirigentApp {
                 Err(e) => {
                     eprintln!("Failed to insert cue: {e}");
                 }
+            }
+        }
+    }
+
+    fn submit_whole_file_cue(&mut self, active_idx: usize, rel_path: &str) {
+        let text = self.viewer.tabs[active_idx].cue_input.clone();
+        let images: Vec<String> = self.viewer.tabs[active_idx]
+            .cue_images
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        match self.db.insert_cue(&text, rel_path, 0, None, &images) {
+            Ok(_) => {
+                self.viewer.tabs[active_idx].cue_input.clear();
+                self.viewer.tabs[active_idx].cue_images.clear();
+                self.viewer.tabs[active_idx].selection_start = None;
+                self.viewer.tabs[active_idx].selection_end = None;
+                self.reload_cues();
+            }
+            Err(e) => {
+                eprintln!("Failed to insert cue: {e}");
             }
         }
     }

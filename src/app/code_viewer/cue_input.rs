@@ -76,13 +76,20 @@ fn render_cue_text_input(
         }
         let input_response = ui.add(
             egui::TextEdit::singleline(&mut app.viewer.tabs[active_idx].cue_input)
-                .desired_width(ui.available_width() - 80.0)
+                .desired_width(ui.available_width() - 160.0)
                 .hint_text("Add a cue...")
                 .font(egui::TextStyle::Monospace),
         );
         let enter = input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.button("Add").clicked() || enter {
             actions.submit_cue = true;
+        }
+        if ui
+            .button("Whole file")
+            .on_hover_text("Create cue for the entire file")
+            .clicked()
+        {
+            actions.submit_cue_whole_file = true;
         }
         let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
         if ui
