@@ -67,7 +67,9 @@ impl DirigentApp {
         let error_tx = self.sources.error_tx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
+        let ctx = Arc::clone(&self.egui_ctx);
 
+        let source_name = source.name.clone();
         let join_handle = std::thread::spawn(move || {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
@@ -76,8 +78,15 @@ impl DirigentApp {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            for item in items {
-                let _ = source_tx.send(item);
+            if items.is_empty() {
+                let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
+            } else {
+                for item in items {
+                    let _ = source_tx.send(item);
+                }
+            }
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
             }
         });
 
@@ -102,9 +111,9 @@ impl DirigentApp {
     }
 
     pub(super) fn process_source_results(&mut self) {
-        // Surface any source fetch errors to the UI
-        if let Ok(err_msg) = self.sources.error_rx.try_recv() {
-            self.set_status_message(err_msg);
+        // Surface any source fetch errors/status to the UI
+        if let Some(msg) = self.sources.error_rx.try_iter().last() {
+            self.set_status_message(msg);
         }
 
         let items: Vec<SourceItem> = self.sources.rx.try_iter().collect();
@@ -113,6 +122,7 @@ impl DirigentApp {
             return;
         }
 
+        let total_received = items.len();
         let mut new_count = 0;
         let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
@@ -178,6 +188,11 @@ impl DirigentApp {
             } else {
                 self.set_status_message(format!("{} new cue(s) from sources", new_count));
             }
+        } else {
+            self.set_status_message(format!(
+                "Source fetch complete: {} item(s) already imported",
+                total_received
+            ));
         }
     }
 }
