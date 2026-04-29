@@ -385,6 +385,7 @@ impl DirigentApp {
     }
 
     fn process_show_running_log(&mut self, cue_id: i64) {
+        self.dismiss_central_overlays();
         match self.db.get_all_executions(cue_id) {
             Ok(execs) => {
                 if let std::collections::hash_map::Entry::Vacant(e) =
@@ -403,7 +404,6 @@ impl DirigentApp {
                 return;
             }
         }
-        self.dismiss_central_overlays();
         self.claude.show_log = Some(cue_id);
     }
 
