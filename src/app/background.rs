@@ -50,7 +50,9 @@ impl DirigentApp {
         self.reload_file_tree();
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
-        self.reload_settings_from_disk();
+        if !self.show_settings {
+            self.reload_settings_from_disk();
+        }
         self.reload_open_tabs();
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
     }
