@@ -531,7 +531,13 @@ impl DirigentApp {
     }
 
     fn handle_diff_accept(&mut self, cue_id: i64, diff_text: &str, cue_text: &str) {
-        let commit_msg = git::generate_commit_message(cue_text);
+        let log_message = self
+            .db
+            .get_latest_execution(cue_id)
+            .ok()
+            .flatten()
+            .and_then(|e| e.response);
+        let commit_msg = git::generate_commit_message(cue_text, log_message.as_deref());
         match git::commit_diff(&self.project_root, diff_text, &commit_msg) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
