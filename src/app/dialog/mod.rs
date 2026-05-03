@@ -12,6 +12,7 @@ mod move_to_branch;
 mod play_variables;
 mod pull_diverged;
 mod pull_unmerged;
+mod push_error;
 mod repo;
 mod running_log;
 mod settings;

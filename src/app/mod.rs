@@ -96,7 +96,7 @@ use tasks::TaskHandle;
 use theme::{icon, icon_small};
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
-    NavigationHistory, PendingPlay, SearchState,
+    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
 };
 
 pub struct DirigentApp {
@@ -540,6 +540,8 @@ impl DirigentApp {
             git: GitState {
                 info: git_info,
                 dirty_files,
+                show_git_view: false,
+                git_view_diff_mode: GitViewDiffMode::DiffOnly,
                 ahead_of_remote,
                 commit_history,
                 commit_history_total,
@@ -554,6 +556,8 @@ impl DirigentApp {
                 available_branches: Vec::new(),
                 pushing: false,
                 push_rx: None,
+                show_push_error: false,
+                push_error_message: String::new(),
                 pulling: false,
                 pull_rx: None,
                 show_pull_diverged: false,

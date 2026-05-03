@@ -61,6 +61,7 @@ impl DirigentApp {
             || self.pending_file_delete.is_some()
             || self.rename_target.is_some()
             || self.git_init_confirm.is_some()
+            || self.git.show_push_error
             || self.git.show_pull_diverged
             || self.git.show_pull_unmerged
             || self.git.show_merge_conflicts
@@ -134,6 +135,8 @@ impl DirigentApp {
         self.render_prompt_field(ui);
         if self.search.in_files_active {
             self.render_search_in_files_panel_wrapper(ui);
+        } else if self.git.show_git_view {
+            self.render_git_view_panel(ui);
         } else {
             self.render_file_tree_panel(ui);
         }
@@ -222,6 +225,7 @@ impl DirigentApp {
         self.render_play_variables_dialog(ctx);
         self.render_git_init_dialog(ctx);
         self.render_create_pr_dialog(ctx);
+        self.render_push_error_dialog(ctx);
         self.render_pull_diverged_dialog(ctx);
         self.render_pull_unmerged_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);
