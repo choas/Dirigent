@@ -824,6 +824,10 @@ impl DirigentApp {
             self.reload_settings_from_disk();
         }
         self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
+
+        if self.settings.auto_commit {
+            self.process_commit_review(result.cue_id);
+        }
     }
 
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {

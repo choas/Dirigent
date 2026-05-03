@@ -141,6 +141,9 @@ pub(crate) struct Settings {
     /// Automatically include the git diff in the prompt.
     #[serde(default)]
     pub auto_context_git_diff: bool,
+    /// Automatically commit each cue when it moves to Review.
+    #[serde(default)]
+    pub auto_commit: bool,
     /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
     /// Enabled by default — without this flag, non-interactive `-p` mode
     /// cannot get tool permissions and Claude will only describe changes
@@ -232,6 +235,7 @@ impl Default for Settings {
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,
+            auto_commit: false,
             allow_dangerous_skip_permissions: true,
         }
     }

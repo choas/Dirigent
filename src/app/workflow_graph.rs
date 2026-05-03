@@ -42,6 +42,8 @@ impl DirigentApp {
                     .size(self.settings.font_size * 1.3)
                     .strong(),
             );
+            ui.checkbox(&mut self.settings.auto_commit, "Auto-commit")
+                .on_hover_text("Automatically commit each cue when it completes");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.render_header_buttons(ui, actions);
             });
