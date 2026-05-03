@@ -5,7 +5,7 @@ use crate::lsp::{default_lsp_servers, LspServerConfig};
 
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
-use super::providers::{CliProvider, SourceConfig};
+use super::providers::{CliProvider, SourceConfig, SshServer};
 use super::theme::{CustomTheme, ThemeChoice};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -129,6 +129,9 @@ pub(crate) struct Settings {
     /// Language server configurations for LSP integration.
     #[serde(default = "default_lsp_servers")]
     pub lsp_servers: Vec<LspServerConfig>,
+    /// SSH remote server configurations.
+    #[serde(default)]
+    pub ssh_servers: Vec<SshServer>,
     /// Master toggle for LSP support.
     #[serde(default)]
     pub lsp_enabled: bool,
@@ -230,6 +233,7 @@ impl Default for Settings {
             agent_shell_init: String::new(),
             agents: default_agents(),
             commands: default_commands(),
+            ssh_servers: Vec::new(),
             lsp_servers: default_lsp_servers(),
             lsp_enabled: false,
             prompt_suggestions_enabled: false,

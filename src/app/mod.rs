@@ -16,6 +16,7 @@ mod repo_management;
 mod search;
 mod sources_poll;
 mod split_cue;
+mod ssh_operations;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
@@ -88,6 +89,7 @@ use crate::file_tree::FileTree;
 use crate::git;
 use crate::lsp::LspManager;
 use crate::settings::{self, CustomTheme, SemanticColors, Settings};
+use crate::ssh;
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
@@ -144,6 +146,7 @@ pub struct DirigentApp {
     lsp_expanded: bool,
     /// Per-server-id warning when shlex fails to parse the arguments field.
     lsp_args_parse_warnings: std::collections::HashMap<String, String>,
+    ssh_expanded: bool,
     agents_init_language: crate::agents::AgentLanguage,
     lsp_init_language: crate::lsp::LspLanguage,
 
@@ -322,6 +325,15 @@ pub struct DirigentApp {
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
+
+    // SSH remote connections
+    ssh_connection: Option<ssh::SshConnection>,
+    ssh_remote_entries: Vec<ssh::RemoteEntry>,
+    ssh_remote_path: String,
+    ssh_connecting: bool,
+    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshConnection, String>>>,
+    ssh_expanded_dirs: HashSet<String>,
+    show_ssh_panel: bool,
 }
 
 /// State for the custom theme editor dialog.
@@ -610,6 +622,7 @@ impl DirigentApp {
             commands_expanded: false,
             lsp_expanded: false,
             lsp_args_parse_warnings: std::collections::HashMap::new(),
+            ssh_expanded: false,
             agents_init_language: crate::agents::AgentLanguage::Rust,
             lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
@@ -714,6 +727,14 @@ impl DirigentApp {
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
             custom_theme_edit: None,
+
+            ssh_connection: None,
+            ssh_remote_entries: Vec::new(),
+            ssh_remote_path: String::new(),
+            ssh_connecting: false,
+            ssh_connect_rx: None,
+            ssh_expanded_dirs: HashSet::new(),
+            show_ssh_panel: false,
         }
     }
 
@@ -959,6 +980,9 @@ impl eframe::App for DirigentApp {
 
         // Poll LSP servers for responses and notifications
         self.lsp.poll();
+
+        // Poll SSH connection result
+        self.process_ssh_connect_result();
 
         // Process LSP results (definition, document symbols)
         self.process_lsp_results();

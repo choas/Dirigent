@@ -135,6 +135,8 @@ impl DirigentApp {
         self.render_prompt_field(ui);
         if self.search.in_files_active {
             self.render_search_in_files_panel_wrapper(ui);
+        } else if self.show_ssh_panel {
+            self.render_ssh_panel(ui);
         } else if self.git.show_git_view {
             self.render_git_view_panel(ui);
         } else {
