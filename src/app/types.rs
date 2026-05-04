@@ -473,6 +473,8 @@ pub(crate) struct GitState {
     pub(super) show_git_view: bool,
     /// Display mode for git view: full file or diff only.
     pub(super) git_view_diff_mode: GitViewDiffMode,
+    /// Expanded directories in the git changes tree view.
+    pub(super) git_view_expanded_dirs: HashSet<String>,
     /// Commits ahead of the remote tracking branch.
     pub(super) ahead_of_remote: usize,
     pub(super) commit_history: Vec<git::CommitInfo>,

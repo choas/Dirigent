@@ -1,0 +1,343 @@
+use std::collections::{BTreeMap, HashSet};
+
+use eframe::egui;
+
+use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
+use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
+use crate::diff_view::{self, DiffViewMode};
+use crate::git;
+use crate::settings::SemanticColors;
+
+use super::super::types::GitViewDiffMode;
+
+struct DirtyTreeNode {
+    children: BTreeMap<String, DirtyTreeNode>,
+    file_status: Option<(String, char)>,
+}
+
+impl DirtyTreeNode {
+    fn new() -> Self {
+        Self {
+            children: BTreeMap::new(),
+            file_status: None,
+        }
+    }
+
+    fn insert(&mut self, components: &[&str], rel_path: &str, status: char) {
+        if components.len() == 1 {
+            let entry = self
+                .children
+                .entry(components[0].to_string())
+                .or_insert_with(Self::new);
+            entry.file_status = Some((rel_path.to_string(), status));
+        } else {
+            let entry = self
+                .children
+                .entry(components[0].to_string())
+                .or_insert_with(Self::new);
+            entry.insert(&components[1..], rel_path, status);
+        }
+    }
+
+    fn is_dir(&self) -> bool {
+        self.file_status.is_none()
+    }
+}
+
+fn build_dirty_tree(files: &[(String, char)]) -> DirtyTreeNode {
+    let mut root = DirtyTreeNode::new();
+    for (path, status) in files {
+        let components: Vec<&str> = path.split('/').collect();
+        root.insert(&components, path, *status);
+    }
+    root
+}
+
+impl DirigentApp {
+    pub(in super::super) fn render_git_view_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("git_view")
+            .default_size(220.0)
+            .min_size(150.0)
+            .max_size(400.0)
+            .show_inside(ui, |ui| {
+                self.render_git_view_header(ui);
+                ui.separator();
+                self.render_git_view_mode_toggle(ui);
+                ui.separator();
+                self.render_git_view_file_list(ui);
+                self.render_git_view_footer(ui);
+            });
+    }
+
+    fn render_git_view_header(&mut self, ui: &mut egui::Ui) {
+        let fs = self.settings.font_size * FONT_SCALE_SUBHEADING;
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(false, egui::RichText::new("Files").size(fs))
+                .clicked()
+            {
+                self.git.show_git_view = false;
+            }
+            let label = format!("Changes ({})", self.git.dirty_files.len());
+            let _ = ui.selectable_label(true, egui::RichText::new(label).size(fs));
+        });
+    }
+
+    fn render_git_view_mode_toggle(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(
+                    self.git.git_view_diff_mode == GitViewDiffMode::DiffOnly,
+                    "Diff",
+                )
+                .clicked()
+            {
+                self.git.git_view_diff_mode = GitViewDiffMode::DiffOnly;
+            }
+            if ui
+                .selectable_label(
+                    self.git.git_view_diff_mode == GitViewDiffMode::FullFile,
+                    "Full File",
+                )
+                .clicked()
+            {
+                self.git.git_view_diff_mode = GitViewDiffMode::FullFile;
+            }
+        });
+    }
+
+    fn render_git_view_file_list(&mut self, ui: &mut egui::Ui) {
+        let mut sorted_files: Vec<(String, char)> = self
+            .git
+            .dirty_files
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        sorted_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut clicked_file: Option<String> = None;
+        let mut view_all = false;
+
+        let tree = build_dirty_tree(&sorted_files);
+
+        egui::ScrollArea::vertical()
+            .id_salt("git_view_scroll")
+            .show(ui, |ui| {
+                if sorted_files.is_empty() {
+                    ui.add_space(SPACE_SM);
+                    ui.label(egui::RichText::new("No uncommitted changes").weak());
+                    return;
+                }
+
+                ui.add_space(2.0);
+                if ui
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new("View All Changes")
+                                .small()
+                                .color(ui.visuals().hyperlink_color),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .clicked()
+                {
+                    view_all = true;
+                }
+                ui.add_space(2.0);
+
+                render_dirty_tree_children(
+                    ui,
+                    &tree,
+                    0,
+                    &mut self.git.git_view_expanded_dirs,
+                    &self.semantic,
+                    self.settings.font_size,
+                    "",
+                    &mut clicked_file,
+                );
+            });
+
+        if view_all {
+            self.open_all_changes_diff();
+        }
+        if let Some(rel_path) = clicked_file {
+            self.open_git_view_file(&rel_path);
+        }
+    }
+
+    fn render_git_view_footer(&mut self, ui: &mut egui::Ui) {
+        if self.git.dirty_files.is_empty() {
+            return;
+        }
+        ui.separator();
+        ui.add_space(SPACE_SM);
+        let btn = egui::Button::new(
+            egui::RichText::new("\u{2714} Commit Changes").color(self.semantic.accent_text()),
+        )
+        .fill(self.semantic.accent);
+        if ui
+            .add_sized([ui.available_width(), 0.0], btn)
+            .on_hover_text("Create a Cue to commit with an AI-generated message")
+            .clicked()
+        {
+            self.create_commit_cue();
+        }
+        ui.add_space(SPACE_SM);
+    }
+
+    fn open_git_view_file(&mut self, rel_path: &str) {
+        match self.git.git_view_diff_mode {
+            GitViewDiffMode::FullFile => {
+                let abs_path = self.project_root.join(rel_path);
+                self.push_nav_history();
+                self.load_file(abs_path);
+            }
+            GitViewDiffMode::DiffOnly => {
+                self.open_file_diff(rel_path);
+            }
+        }
+    }
+
+    fn open_all_changes_diff(&mut self) {
+        if let Some(diff_text) = git::get_working_diff(&self.project_root, &[]) {
+            let parsed = diff_view::parse_unified_diff(&diff_text);
+            self.dismiss_central_overlays();
+            self.diff_review = Some(super::super::DiffReview {
+                cue_id: 0,
+                diff: diff_text,
+                cue_text: "All uncommitted changes".to_string(),
+                commit_hash: None,
+                parsed,
+                view_mode: DiffViewMode::Inline,
+                read_only: true,
+                collapsed_files: HashSet::new(),
+                prompt_expanded: false,
+                reply_text: String::new(),
+                search_active: false,
+                search_query: String::new(),
+                search_matches: Vec::new(),
+                search_current: None,
+            });
+        }
+    }
+
+    pub(super) fn expand_git_view_dirs(&mut self) {
+        self.git.git_view_expanded_dirs.clear();
+        for path in self.git.dirty_files.keys() {
+            let mut accumulated = String::new();
+            let components: Vec<&str> = path.split('/').collect();
+            for component in &components[..components.len().saturating_sub(1)] {
+                if accumulated.is_empty() {
+                    accumulated = component.to_string();
+                } else {
+                    accumulated = format!("{}/{}", accumulated, component);
+                }
+                self.git.git_view_expanded_dirs.insert(accumulated.clone());
+            }
+        }
+    }
+
+    fn create_commit_cue(&mut self) {
+        let text =
+            "Commit all uncommitted changes with a useful commit message describing the changes";
+        match self.db.insert_global_cue(text) {
+            Ok(id) => {
+                self.reload_cues();
+                self.activate_inbox_cue(id, "Created from Git View");
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to create commit cue: {e}"));
+            }
+        }
+    }
+}
+
+fn render_dirty_tree_children(
+    ui: &mut egui::Ui,
+    node: &DirtyTreeNode,
+    depth: usize,
+    expanded: &mut HashSet<String>,
+    semantic: &SemanticColors,
+    font_size: f32,
+    parent_path: &str,
+    clicked_file: &mut Option<String>,
+) {
+    let indent = depth as f32 * 16.0;
+
+    for (name, child) in &node.children {
+        let node_path = if parent_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", parent_path, name)
+        };
+
+        if child.is_dir() {
+            let is_expanded = expanded.contains(&node_path);
+            let (row_rect, response) = allocate_tree_row(ui);
+            paint_hover_highlight(ui, &response, row_rect);
+
+            let triangle = if is_expanded { "\u{25BC}" } else { "\u{25B6}" };
+            let text_pos = row_rect.left_center() + egui::vec2(indent, 0.0);
+            ui.painter().text(
+                egui::pos2(text_pos.x + 6.0, text_pos.y),
+                egui::Align2::LEFT_CENTER,
+                triangle,
+                egui::FontId::proportional(10.0),
+                ui.visuals().weak_text_color(),
+            );
+
+            ui.painter().text(
+                egui::pos2(text_pos.x + 20.0, text_pos.y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(font_size),
+                semantic.warning,
+            );
+
+            if response.clicked() {
+                if is_expanded {
+                    expanded.remove(&node_path);
+                } else {
+                    expanded.insert(node_path.clone());
+                }
+            }
+
+            if is_expanded {
+                render_dirty_tree_children(
+                    ui,
+                    child,
+                    depth + 1,
+                    expanded,
+                    semantic,
+                    font_size,
+                    &node_path,
+                    clicked_file,
+                );
+            }
+        } else if let Some((rel_path, status)) = &child.file_status {
+            let (row_rect, response) = allocate_tree_row(ui);
+            paint_hover_highlight(ui, &response, row_rect);
+
+            let status_color = match status {
+                'D' => semantic.danger,
+                'A' | '?' => semantic.success,
+                _ => semantic.warning,
+            };
+            let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
+            ui.painter().text(
+                text_pos,
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(font_size),
+                status_color,
+            );
+
+            paint_git_status_badge(ui, row_rect, Some(*status), semantic);
+
+            if response.clicked() {
+                *clicked_file = Some(rel_path.clone());
+            }
+            response.on_hover_text(format!("{} [{}]", rel_path, status));
+        }
+    }
+}

@@ -554,6 +554,7 @@ impl DirigentApp {
                 dirty_files,
                 show_git_view: false,
                 git_view_diff_mode: GitViewDiffMode::DiffOnly,
+                git_view_expanded_dirs: HashSet::new(),
                 ahead_of_remote,
                 commit_history,
                 commit_history_total,
