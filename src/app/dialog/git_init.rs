@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use eframe::egui;
-use git2::Repository;
+use git2::{Repository, RepositoryInitOptions};
 
 use super::super::DirigentApp;
 
@@ -61,7 +61,9 @@ impl DirigentApp {
             });
 
         if do_init {
-            match Repository::init(&path) {
+            let mut opts = RepositoryInitOptions::new();
+            opts.initial_head("main");
+            match Repository::init_opts(&path, &opts) {
                 Ok(_) => {
                     let gitignore_err = Self::add_dirigent_to_gitignore(&path).err();
                     self.git_init_confirm = None;
