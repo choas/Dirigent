@@ -471,24 +471,24 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
         AgentLanguage::Bun => {
             let mut v = pipeline(
                 Step {
-                    cmd: "bunx prettier --write .",
+                    cmd: "bun run format 2>&1",
                     timeout: 30,
                 },
                 Step {
-                    cmd: "bunx eslint . 2>&1",
+                    cmd: "bun run lint 2>&1",
                     timeout: 120,
                 },
                 Step {
-                    cmd: "bunx tsc --noEmit 2>&1",
+                    cmd: "bun run build 2>&1",
                     timeout: 120,
                 },
                 Step {
-                    cmd: "bun test 2>&1",
+                    cmd: "bun run test 2>&1",
                     timeout: 300,
                 },
             );
             v.push(outdated_agent("bun outdated 2>&1", 60));
-            v.push(audit_agent("bunx npm-audit 2>&1"));
+            v.push(audit_agent("bun audit 2>&1"));
             v
         }
     }
