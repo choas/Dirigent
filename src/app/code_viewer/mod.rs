@@ -313,7 +313,7 @@ impl DirigentApp {
     }
 
     /// Open a diff review for a dirty file.
-    fn open_file_diff(&mut self, rel_path: &str) {
+    pub(super) fn open_file_diff(&mut self, rel_path: &str) {
         let files = vec![rel_path.to_string()];
         if let Some(diff_text) = git::get_working_diff(&self.project_root, &files) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
