@@ -58,7 +58,7 @@ impl DirigentApp {
     pub(in crate::app) fn render_diff_review_central(&mut self, ui: &mut egui::Ui) {
         let mut actions = DiffReviewActions::new();
         let fs = self.settings.font_size;
-        let sem = self.semantic;
+        let sem = self.semantic.clone();
 
         let Some(review) = self.diff_review.as_mut() else {
             return;

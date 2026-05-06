@@ -9,6 +9,32 @@ use super::providers::{CliProvider, SourceConfig, SshServer};
 use super::theme::{CustomTheme, ThemeChoice};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum DiffColorScheme {
+    #[default]
+    RedGreen,
+    RedBlue,
+    YellowBlue,
+}
+
+impl DiffColorScheme {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            DiffColorScheme::RedGreen => "Red \u{2013} Green",
+            DiffColorScheme::RedBlue => "Red \u{2013} Blue",
+            DiffColorScheme::YellowBlue => "Yellow \u{2013} Blue",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [DiffColorScheme] {
+        &[
+            DiffColorScheme::RedGreen,
+            DiffColorScheme::RedBlue,
+            DiffColorScheme::YellowBlue,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum FontWeight {
     Light,
     #[default]
@@ -102,6 +128,8 @@ pub(crate) struct Settings {
     pub notify_popup: bool,
     #[serde(default = "default_true")]
     pub lava_lamp_enabled: bool,
+    #[serde(default)]
+    pub diff_color_scheme: DiffColorScheme,
     #[serde(default = "default_font_family")]
     pub font_family: String,
     #[serde(default = "default_font_size")]
@@ -224,6 +252,7 @@ impl Default for Settings {
             notify_sound: true,
             notify_popup: true,
             lava_lamp_enabled: true,
+            diff_color_scheme: DiffColorScheme::default(),
             font_family: default_font_family(),
             font_size: default_font_size(),
             font_weight: FontWeight::default(),

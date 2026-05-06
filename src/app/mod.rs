@@ -501,7 +501,9 @@ impl DirigentApp {
             egui_extras::syntax_highlighting::CodeTheme::light(12.0)
         };
 
-        let semantic = settings.theme.semantic_colors();
+        let semantic = settings
+            .theme
+            .semantic_colors_with_diff_scheme(settings.diff_color_scheme.clone());
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 

@@ -1,10 +1,11 @@
 use eframe::egui;
 
+use super::app_settings::DiffColorScheme;
 use super::providers::CliProvider;
 
 /// Semantic colors that adapt to the current theme, replacing hardcoded RGB values.
 /// Every UI element should use these instead of raw Color32 literals.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct SemanticColors {
     pub accent: egui::Color32,
     pub success: egui::Color32,
@@ -15,6 +16,7 @@ pub(crate) struct SemanticColors {
     pub separator: egui::Color32,
     pub badge_text: egui::Color32,
     pub(super) is_dark: bool,
+    pub diff_color_scheme: DiffColorScheme,
 }
 
 impl SemanticColors {
@@ -31,18 +33,73 @@ impl SemanticColors {
     }
 
     pub fn addition_bg(&self) -> egui::Color32 {
-        if self.is_dark {
-            egui::Color32::from_rgba_unmultiplied(25, 80, 35, 70)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(30, 120, 30, 35)
+        match self.diff_color_scheme {
+            DiffColorScheme::RedGreen => {
+                if self.is_dark {
+                    egui::Color32::from_rgba_unmultiplied(25, 80, 35, 70)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(30, 120, 30, 35)
+                }
+            }
+            DiffColorScheme::RedBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgba_unmultiplied(25, 45, 90, 70)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(30, 60, 140, 35)
+                }
+            }
+            DiffColorScheme::YellowBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgba_unmultiplied(25, 45, 90, 70)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(30, 60, 140, 35)
+                }
+            }
         }
     }
 
     pub fn deletion_bg(&self) -> egui::Color32 {
-        if self.is_dark {
-            egui::Color32::from_rgba_unmultiplied(80, 25, 25, 70)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(120, 30, 30, 35)
+        match self.diff_color_scheme {
+            DiffColorScheme::RedGreen | DiffColorScheme::RedBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgba_unmultiplied(80, 25, 25, 70)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(120, 30, 30, 35)
+                }
+            }
+            DiffColorScheme::YellowBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgba_unmultiplied(80, 70, 20, 70)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(140, 120, 20, 35)
+                }
+            }
+        }
+    }
+
+    pub fn addition_text(&self) -> egui::Color32 {
+        match self.diff_color_scheme {
+            DiffColorScheme::RedGreen => self.success,
+            DiffColorScheme::RedBlue | DiffColorScheme::YellowBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgb(100, 150, 255)
+                } else {
+                    egui::Color32::from_rgb(20, 60, 180)
+                }
+            }
+        }
+    }
+
+    pub fn deletion_text(&self) -> egui::Color32 {
+        match self.diff_color_scheme {
+            DiffColorScheme::RedGreen | DiffColorScheme::RedBlue => self.danger,
+            DiffColorScheme::YellowBlue => {
+                if self.is_dark {
+                    egui::Color32::from_rgb(220, 190, 60)
+                } else {
+                    egui::Color32::from_rgb(160, 120, 0)
+                }
+            }
         }
     }
 
