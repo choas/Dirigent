@@ -483,7 +483,7 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                     timeout: 120,
                 },
                 Step {
-                    cmd: "bun run test 2>&1",
+                    cmd: "bun test 2>&1",
                     timeout: 300,
                 },
             );
