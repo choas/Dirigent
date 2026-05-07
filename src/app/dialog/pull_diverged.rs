@@ -12,6 +12,7 @@ impl DirigentApp {
 
         let mut dismiss = false;
         let mut chosen_strategy: Option<PullStrategy> = None;
+        let mut create_cue = false;
 
         egui::Window::new("Branches Have Diverged")
             .collapsible(false)
@@ -43,13 +44,34 @@ impl DirigentApp {
                     {
                         chosen_strategy = Some(PullStrategy::Rebase);
                     }
+                    if ui
+                        .button("Create Cue")
+                        .on_hover_text("Create a cue for Claude to resolve the diverged branches")
+                        .clicked()
+                    {
+                        create_cue = true;
+                    }
                     if ui.button("Cancel").clicked() {
                         dismiss = true;
                     }
                 });
             });
 
-        if let Some(strategy) = chosen_strategy {
+        if create_cue {
+            let cue_text = "Git pull failed because branches have diverged. \
+                 Resolve the divergence and pull again."
+                .to_string();
+            match self.db.insert_global_cue(&cue_text) {
+                Ok(_id) => {
+                    self.reload_cues();
+                    self.set_status_message("Created pull cue in Inbox".to_string());
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Failed to create cue: {}", e));
+                }
+            }
+            self.git.show_pull_diverged = false;
+        } else if let Some(strategy) = chosen_strategy {
             self.git.show_pull_diverged = false;
             self.start_git_pull_with_strategy(strategy);
         } else if dismiss {
