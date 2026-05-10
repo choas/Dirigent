@@ -154,6 +154,34 @@ fn find_xcodeproj(repo_root: &Path) -> Option<String> {
     Some(matches.swap_remove(0))
 }
 
+fn find_simulator_device() -> Option<String> {
+    let output = std::process::Command::new("xcrun")
+        .args(["simctl", "list", "devices", "available"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut candidates: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(paren_pos) = trimmed.find('(') {
+            let name = trimmed[..paren_pos].trim();
+            if name.starts_with("iPhone") {
+                candidates.push(name);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    if let Some(pro) = candidates.iter().rev().find(|n| n.contains("Pro")) {
+        return Some(pro.to_string());
+    }
+    candidates.last().map(|s| s.to_string())
+}
+
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -338,13 +366,19 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
             if let Some(project_name) = find_xcodeproj(repo_root) {
                 let xcodeproj = shell_quote(&format!("{project_name}.xcodeproj"));
                 let scheme = shell_quote(&project_name);
+                let device = find_simulator_device();
                 let build_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
                      -destination 'generic/platform=iOS Simulator' build 2>&1"
                 );
+                let test_dest = match &device {
+                    Some(name) => format!("platform=iOS Simulator,name={name}"),
+                    None => "platform=iOS Simulator".to_string(),
+                };
                 let test_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
-                     -destination 'platform=iOS Simulator' test 2>&1"
+                     -destination '{}' test 2>&1",
+                    test_dest
                 );
                 pipeline(
                     fmt,
