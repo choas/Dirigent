@@ -7,28 +7,58 @@ use git2::{Repository, RepositoryInitOptions};
 use super::super::DirigentApp;
 
 impl DirigentApp {
-    /// Append `.Dirigent` to the `.gitignore` file in the given directory,
-    /// creating the file if it doesn't exist.
-    fn add_dirigent_to_gitignore(repo_path: &Path) -> std::io::Result<()> {
-        let gitignore = repo_path.join(".gitignore");
-        let entry = ".Dirigent";
+    const MACOS_GITIGNORE_ENTRIES: &[&str] = &[
+        ".DS_Store",
+        ".AppleDouble",
+        ".LSOverride",
+        "Icon\r\r",
+        "._*",
+        ".DocumentRevisions-V100",
+        ".fseventsd",
+        ".Spotlight-V100",
+        ".TemporaryItems",
+        ".Trashes",
+        ".VolumeIcon.icns",
+        ".com.apple.timemachine.donotpresent",
+        ".AppleDB",
+        ".AppleDesktop",
+        "Network Trash Folder",
+        "Temporary Items",
+        ".apdisk",
+        "*.icloud",
+    ];
 
-        // Check if .gitignore already contains the entry
-        if let Ok(contents) = fs::read_to_string(&gitignore) {
-            if contents.lines().any(|line| line.trim() == entry) {
-                return Ok(());
-            }
-            // Append with a leading newline if file doesn't end with one
-            let prefix = if contents.ends_with('\n') || contents.is_empty() {
-                ""
-            } else {
-                "\n"
-            };
-            fs::write(&gitignore, format!("{contents}{prefix}{entry}\n"))?;
-        } else {
-            fs::write(&gitignore, format!("{entry}\n"))?;
+    fn setup_gitignore(repo_path: &Path) -> std::io::Result<()> {
+        let gitignore = repo_path.join(".gitignore");
+        let mut contents = fs::read_to_string(&gitignore).unwrap_or_default();
+        let existing: Vec<&str> = contents.lines().map(|l| l.trim()).collect();
+
+        let mut entries_to_add = Vec::new();
+        if !existing.contains(&".Dirigent") {
+            entries_to_add.push(".Dirigent");
         }
-        Ok(())
+
+        let mut macos_missing: Vec<&str> = Self::MACOS_GITIGNORE_ENTRIES
+            .iter()
+            .filter(|e| !existing.contains(&e.trim()))
+            .copied()
+            .collect();
+        if !macos_missing.is_empty() {
+            entries_to_add.append(&mut macos_missing);
+        }
+
+        if entries_to_add.is_empty() {
+            return Ok(());
+        }
+
+        if !contents.is_empty() && !contents.ends_with('\n') {
+            contents.push('\n');
+        }
+        for entry in &entries_to_add {
+            contents.push_str(entry);
+            contents.push('\n');
+        }
+        fs::write(&gitignore, contents)
     }
 
     pub(in crate::app) fn render_git_init_dialog(&mut self, ctx: &egui::Context) {
@@ -65,7 +95,7 @@ impl DirigentApp {
             opts.initial_head("main");
             match Repository::init_opts(&path, &opts) {
                 Ok(_) => {
-                    let gitignore_err = Self::add_dirigent_to_gitignore(&path).err();
+                    let gitignore_err = Self::setup_gitignore(&path).err();
                     self.git_init_confirm = None;
                     if let Some(e) = gitignore_err {
                         self.set_status_message(format!(
