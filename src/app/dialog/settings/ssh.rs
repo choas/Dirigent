@@ -214,9 +214,10 @@ impl DirigentApp {
             },
             remote_path: server.remote_path.clone(),
         };
+        let remote_path = server.remote_path.clone();
         let success_msg = format!(
-            "SSH connection to '{}' ({}@{}) succeeded",
-            server.name, server.username, server.host
+            "SSH + SFTP connection to '{}' ({}@{}:{}) succeeded",
+            server.name, server.username, server.host, server.remote_path
         );
         self.set_status_message("Testing SSH connection…".into());
         let (tx, rx) = std::sync::mpsc::channel();
@@ -224,8 +225,15 @@ impl DirigentApp {
         std::thread::spawn(move || {
             let result = match crate::ssh::SshConnection::connect(&config) {
                 Ok(conn) => {
+                    let sftp_result = conn.list_dir(&remote_path);
                     conn.disconnect();
-                    Ok(success_msg)
+                    match sftp_result {
+                        Ok(_) => Ok(success_msg),
+                        Err(e) => Err(format!(
+                            "SSH auth succeeded but SFTP failed for '{}': {}",
+                            remote_path, e
+                        )),
+                    }
                 }
                 Err(e) => Err(format!("SSH connection failed: {}", e)),
             };
