@@ -87,17 +87,15 @@ fn verify_host_key(session: &Session, host: &str, port: u16) -> Result<(), Strin
 
 impl SshConnection {
     pub fn connect(config: &SshServerConfig) -> Result<Self, String> {
+        let sock_addr: std::net::SocketAddr = {
+            use std::net::ToSocketAddrs;
+            (config.host.as_str(), config.port)
+                .to_socket_addrs()
+                .map_err(|e| format!("resolve {}:{}: {}", config.host, config.port, e))?
+                .next()
+                .ok_or_else(|| format!("no addresses for {}:{}", config.host, config.port))?
+        };
         let addr = format!("{}:{}", config.host, config.port);
-        let sock_addr: std::net::SocketAddr = addr
-            .parse()
-            .or_else(|_| {
-                use std::net::ToSocketAddrs;
-                addr.to_socket_addrs()
-                    .map_err(|e| e.to_string())?
-                    .next()
-                    .ok_or_else(|| format!("no addresses for {}", addr))
-            })
-            .map_err(|e| format!("resolve {}: {}", addr, e))?;
         let tcp = TcpStream::connect_timeout(&sock_addr, std::time::Duration::from_secs(10))
             .map_err(|e| format!("TCP connect to {}: {}", addr, e))?;
         tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))
@@ -234,9 +232,11 @@ impl SshConnection {
     }
 
     fn resolve_path(&self, path: &str) -> Result<String, String> {
-        if path.starts_with('~') {
+        if path == "~" {
+            self.home_dir()
+        } else if path.starts_with("~/") {
             let home = self.home_dir()?;
-            Ok(path.replacen('~', &home, 1))
+            Ok(format!("{}{}", home, &path[1..]))
         } else {
             Ok(path.to_string())
         }
