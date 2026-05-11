@@ -198,29 +198,39 @@ impl SshConnection {
             }
         }
 
-        let mut file = sftp
+        let file = sftp
             .open(Path::new(&resolved))
             .map_err(|e| format!("open '{}': {}", resolved, e))?;
         let mut contents = String::new();
-        file.read_to_string(&mut contents)
+        let bytes_read = file
+            .take(MAX_FILE_SIZE + 1)
+            .read_to_string(&mut contents)
             .map_err(|e| format!("read '{}': {}", resolved, e))?;
+        if bytes_read as u64 > MAX_FILE_SIZE {
+            return Err(format!(
+                "file too large: '{}' exceeded {} bytes limit",
+                resolved, MAX_FILE_SIZE
+            ));
+        }
         Ok(contents)
     }
 
-    pub fn home_dir(&self) -> Result<String, String> {
-        let mut channel = self
+    fn home_dir(&self) -> Result<String, String> {
+        let sftp = self
             .session
-            .channel_session()
-            .map_err(|e| format!("open channel: {}", e))?;
-        channel
-            .exec("echo $HOME")
-            .map_err(|e| format!("exec echo $HOME: {}", e))?;
-        let mut output = String::new();
-        channel
-            .read_to_string(&mut output)
-            .map_err(|e| format!("read home dir: {}", e))?;
-        channel.wait_close().ok();
-        Ok(output.trim().to_string())
+            .sftp()
+            .map_err(|e| format!("open SFTP channel: {}", e))?;
+        let home = sftp
+            .realpath(Path::new("."))
+            .map_err(|e| format!("SFTP realpath for home dir: {}", e))?;
+        let home_str = home.to_string_lossy().to_string();
+        if !home_str.starts_with('/') {
+            return Err(format!(
+                "home directory is not an absolute path: '{}'",
+                home_str
+            ));
+        }
+        Ok(home_str)
     }
 
     fn resolve_path(&self, path: &str) -> Result<String, String> {
