@@ -191,7 +191,7 @@ impl DirigentApp {
             }
         } else {
             self.set_status_message(format!(
-                "Source fetch complete: {} item(s) already imported",
+                "Source fetch complete: {} item(s) received, no new items",
                 total_received
             ));
         }
