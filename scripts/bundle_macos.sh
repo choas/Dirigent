@@ -34,7 +34,7 @@ cp "assets/Dirigent.icns" "${APP_DIR}/Contents/Resources/"
 echo -n "APPL????" > "${APP_DIR}/Contents/PkgInfo"
 
 # Write Info.plist (with version substitution)
-sed "s/0\.1\.0/${VERSION}/g" assets/Info.plist > "${APP_DIR}/Contents/Info.plist"
+sed "s/VERSION_PLACEHOLDER/${VERSION}/g" assets/Info.plist > "${APP_DIR}/Contents/Info.plist"
 
 # Code signing (if certificate is available)
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then

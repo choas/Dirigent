@@ -9,11 +9,11 @@
     <key>CFBundleIdentifier</key>
     <string>net.choas.macos.dirigent</string>
     <key>CFBundleVersion</key>
-    <string>0.1.2</string>
+    <string>VERSION_PLACEHOLDER</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.2</string>
+    <string>VERSION_PLACEHOLDER</string>
     <key>CFBundleExecutable</key>
-    <string>dirigent</string>
+    <string>Dirigent</string>
     <key>CFBundleIconFile</key>
     <string>Dirigent</string>
     <key>CFBundlePackageType</key>
