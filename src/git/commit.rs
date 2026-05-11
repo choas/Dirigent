@@ -278,7 +278,9 @@ pub(crate) fn generate_commit_message(cue_text: &str, log_message: Option<&str>)
 
     let subject = format!("{}{}", prefix, subject_desc);
 
-    let log_body = log_message.map(|m| m.trim()).filter(|t| !t.is_empty() && t.len() <= MAX_LOG_MESSAGE_LEN);
+    let log_body = log_message
+        .map(|m| m.trim())
+        .filter(|t| !t.is_empty() && t.len() <= MAX_LOG_MESSAGE_LEN);
 
     let msg = match (cue_text.len() > 68, log_body) {
         (true, Some(log)) => format!(

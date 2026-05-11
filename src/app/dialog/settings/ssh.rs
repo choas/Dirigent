@@ -91,10 +91,7 @@ impl DirigentApp {
                     } else {
                         "Test Connection"
                     };
-                    if ui
-                        .add_enabled(!testing, egui::Button::new(label))
-                        .clicked()
-                    {
+                    if ui.add_enabled(!testing, egui::Button::new(label)).clicked() {
                         self.test_ssh_connection(idx);
                     }
                 });

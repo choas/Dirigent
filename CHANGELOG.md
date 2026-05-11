@@ -2,6 +2,39 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.5.0] - 2026-05-11
+
+### Added
+- SSH remote server connection with dedicated background thread
+- Git Changes view showing only modified files with Delete and Discard actions
+- Git pull dialog with Merge, Rebase, and Fast-forward options
+- Branch listing and inspection across all branches
+- Diff color customization in Settings
+- Custom color theme import and export
+- Bun agent presets in Settings (with Swift agent support)
+- Inline prompt button for whole-document context
+- Follow-up log message appended to commit messages
+- Auto-commit toggle for workflow cue processing
+- macOS file detection for new projects (`.DS_Store`, etc.)
+- Git init defaults to "main" branch instead of "master"
+
+### Fixed
+- SSH host key verification (security hardening)
+- SSH connection test no longer blocks the UI
+- Auto-commit race condition with concurrent agents
+- Push error dialog rendering failure
+- Notion source "Fetch Now" not returning results
+- Settings page losing changes on refresh
+- Git Log view sometimes showing empty screen
+- Git push error handling and display
+- Playbook preset cleanup (removed stale plays)
+- 15+ code review findings verified and fixed against current code
+- Quality loop prompt logging, comment filtering, and commit flow hardened
+
+### Changed
+- SSH operations refactored to dedicated background thread
+- Bun agent commands standardized to `bun run` format
+
 ## [0.4.0] - 2026-04-27
 
 ### Added
