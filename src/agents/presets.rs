@@ -372,7 +372,10 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                      -destination 'generic/platform=iOS Simulator' build 2>&1"
                 );
                 let test_dest = match &device {
-                    Some(name) => format!("platform=iOS Simulator,name={name}"),
+                    Some(name) => {
+                        let escaped = name.replace('\'', "'\\''");
+                        format!("platform=iOS Simulator,name={escaped}")
+                    }
                     None => "platform=iOS Simulator".to_string(),
                 };
                 let test_cmd = format!(
