@@ -115,7 +115,7 @@ impl DirigentApp {
             .collect();
         sorted_files.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut clicked_file: Option<String> = None;
+        let mut action: Option<GitViewAction> = None;
         let mut view_all = false;
 
         let tree = build_dirty_tree(&sorted_files);
@@ -153,15 +153,27 @@ impl DirigentApp {
                     &self.semantic,
                     self.settings.font_size,
                     "",
-                    &mut clicked_file,
+                    &mut action,
                 );
             });
 
         if view_all {
             self.open_all_changes_diff();
         }
-        if let Some(rel_path) = clicked_file {
-            self.open_git_view_file(&rel_path);
+        match action {
+            Some(GitViewAction::ClickFile(rel_path)) => {
+                self.open_git_view_file(&rel_path);
+            }
+            Some(GitViewAction::Delete(rel_path)) => {
+                let abs_path = self.project_root.join(&rel_path);
+                self.pending_file_delete = Some((abs_path, false));
+            }
+            Some(GitViewAction::AddToGitignore(rel_path)) => {
+                let abs_path = self.project_root.join(&rel_path);
+                self.handle_add_to_gitignore(&abs_path);
+                self.reload_git_info();
+            }
+            None => {}
         }
     }
 
@@ -252,6 +264,12 @@ impl DirigentApp {
     }
 }
 
+enum GitViewAction {
+    ClickFile(String),
+    Delete(String),
+    AddToGitignore(String),
+}
+
 fn render_dirty_tree_children(
     ui: &mut egui::Ui,
     node: &DirtyTreeNode,
@@ -260,7 +278,7 @@ fn render_dirty_tree_children(
     semantic: &SemanticColors,
     font_size: f32,
     parent_path: &str,
-    clicked_file: &mut Option<String>,
+    action: &mut Option<GitViewAction>,
 ) {
     let indent = depth as f32 * 16.0;
 
@@ -311,7 +329,7 @@ fn render_dirty_tree_children(
                     semantic,
                     font_size,
                     &node_path,
-                    clicked_file,
+                    action,
                 );
             }
         } else if let Some((rel_path, status)) = &child.file_status {
@@ -335,8 +353,23 @@ fn render_dirty_tree_children(
             paint_git_status_badge(ui, row_rect, Some(*status), semantic);
 
             if response.clicked() {
-                *clicked_file = Some(rel_path.clone());
+                *action = Some(GitViewAction::ClickFile(rel_path.clone()));
             }
+
+            response.context_menu(|ui| {
+                if ui
+                    .button(egui::RichText::new("Delete File").color(semantic.danger))
+                    .clicked()
+                {
+                    *action = Some(GitViewAction::Delete(rel_path.clone()));
+                    ui.close();
+                }
+                if ui.button("Add to .gitignore").clicked() {
+                    *action = Some(GitViewAction::AddToGitignore(rel_path.clone()));
+                    ui.close();
+                }
+            });
+
             response.on_hover_text(format!("{} [{}]", rel_path, status));
         }
     }

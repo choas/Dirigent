@@ -140,7 +140,7 @@ impl DirigentApp {
     }
 
     /// Append a path to .gitignore.
-    fn handle_add_to_gitignore(&mut self, path: &Path) {
+    pub(in super::super) fn handle_add_to_gitignore(&mut self, path: &Path) {
         let rel = path
             .strip_prefix(&self.project_root)
             .unwrap_or(path)
