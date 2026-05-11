@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, FontWeight, ThemeChoice};
+use crate::settings::{CliProvider, DiffColorScheme, FontWeight, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -348,6 +348,20 @@ impl DirigentApp {
             &mut self.settings.lava_lamp_enabled,
             "Show lava lamp while running",
         );
+        ui.end_row();
+
+        ui.label("Diff Colors:");
+        egui::ComboBox::from_id_salt("diff_color_combo")
+            .selected_text(self.settings.diff_color_scheme.display_name())
+            .show_ui(ui, |ui| {
+                for scheme in DiffColorScheme::all() {
+                    ui.selectable_value(
+                        &mut self.settings.diff_color_scheme,
+                        scheme.clone(),
+                        scheme.display_name(),
+                    );
+                }
+            });
         ui.end_row();
 
         ui.label("Home Folder:");

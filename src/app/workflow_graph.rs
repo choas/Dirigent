@@ -62,6 +62,9 @@ impl DirigentApp {
         } else {
             self.render_inactive_workflow_buttons(ui, actions);
         }
+
+        ui.checkbox(&mut self.settings.auto_commit, "Auto-commit")
+            .on_hover_text("Automatically commit each cue when it completes");
     }
 
     fn render_active_workflow_buttons(

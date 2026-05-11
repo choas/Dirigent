@@ -16,6 +16,9 @@ struct MenuBarActions {
     run_all_agents: bool,
     agent_to_trigger: Option<AgentKind>,
     agent_to_cancel: Option<AgentKind>,
+    ssh_connect: Option<usize>,
+    ssh_disconnect: bool,
+    ssh_show_panel: bool,
 }
 
 impl DirigentApp {
@@ -27,6 +30,7 @@ impl DirigentApp {
                 self.render_dirigent_menu(ui);
                 self.render_git_menu(ui, &mut actions);
                 self.render_agents_menu(ui, &mut actions);
+                self.render_ssh_menu(ui, &mut actions);
             });
         });
 
@@ -286,6 +290,74 @@ impl DirigentApp {
         }
     }
 
+    fn render_ssh_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        ui.menu_button("SSH", |ui| {
+            let is_connected = self.ssh_worker.is_some();
+            let is_connecting = self.ssh_connecting;
+
+            if is_connected {
+                let name = self
+                    .ssh_worker
+                    .as_ref()
+                    .map(|w| w.config.name.clone())
+                    .unwrap_or_default();
+                ui.label(
+                    egui::RichText::new(format!("\u{25CF} Connected: {}", name))
+                        .color(self.semantic.success),
+                );
+                ui.separator();
+                if ui.button("Browse Files").clicked() {
+                    actions.ssh_show_panel = true;
+                    ui.close();
+                }
+                if ui.button("Disconnect").clicked() {
+                    actions.ssh_disconnect = true;
+                    ui.close();
+                }
+            } else if is_connecting {
+                ui.label(
+                    egui::RichText::new("Connecting...")
+                        .italics()
+                        .color(self.semantic.tertiary_text),
+                );
+            } else if self.settings.ssh_servers.is_empty() {
+                ui.label(
+                    egui::RichText::new("No servers configured")
+                        .italics()
+                        .color(self.semantic.tertiary_text),
+                );
+                ui.separator();
+                if ui.button("Open Settings...").clicked() {
+                    self.dismiss_central_overlays();
+                    self.reload_settings_from_disk();
+                    self.show_settings = true;
+                    self.ssh_expanded = true;
+                    ui.close();
+                }
+            } else {
+                for (i, server) in self.settings.ssh_servers.iter().enumerate() {
+                    let label = if server.name.is_empty() {
+                        format!("{}@{}", server.username, server.host)
+                    } else {
+                        server.name.clone()
+                    };
+                    if ui.button(&label).clicked() {
+                        actions.ssh_connect = Some(i);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("Settings...").clicked() {
+                    self.dismiss_central_overlays();
+                    self.reload_settings_from_disk();
+                    self.show_settings = true;
+                    self.ssh_expanded = true;
+                    ui.close();
+                }
+            }
+        });
+    }
+
     fn apply_menu_bar_actions(&mut self, actions: MenuBarActions) {
         if actions.pull_clicked {
             self.start_git_pull();
@@ -312,6 +384,15 @@ impl DirigentApp {
             self.run_all_agents();
         } else if let Some(kind) = actions.agent_to_trigger {
             self.trigger_agent_manual(kind);
+        }
+        if let Some(idx) = actions.ssh_connect {
+            self.ssh_connect(idx);
+        }
+        if actions.ssh_disconnect {
+            self.ssh_disconnect();
+        }
+        if actions.ssh_show_panel {
+            self.show_ssh_panel = true;
         }
     }
 

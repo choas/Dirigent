@@ -5,8 +5,34 @@ use crate::lsp::{default_lsp_servers, LspServerConfig};
 
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
-use super::providers::{CliProvider, SourceConfig};
+use super::providers::{CliProvider, SourceConfig, SshServer};
 use super::theme::{CustomTheme, ThemeChoice};
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum DiffColorScheme {
+    #[default]
+    RedGreen,
+    RedBlue,
+    YellowBlue,
+}
+
+impl DiffColorScheme {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            DiffColorScheme::RedGreen => "Red \u{2013} Green",
+            DiffColorScheme::RedBlue => "Red \u{2013} Blue",
+            DiffColorScheme::YellowBlue => "Yellow \u{2013} Blue",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [DiffColorScheme] {
+        &[
+            DiffColorScheme::RedGreen,
+            DiffColorScheme::RedBlue,
+            DiffColorScheme::YellowBlue,
+        ]
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum FontWeight {
@@ -102,6 +128,8 @@ pub(crate) struct Settings {
     pub notify_popup: bool,
     #[serde(default = "default_true")]
     pub lava_lamp_enabled: bool,
+    #[serde(default)]
+    pub diff_color_scheme: DiffColorScheme,
     #[serde(default = "default_font_family")]
     pub font_family: String,
     #[serde(default = "default_font_size")]
@@ -129,6 +157,9 @@ pub(crate) struct Settings {
     /// Language server configurations for LSP integration.
     #[serde(default = "default_lsp_servers")]
     pub lsp_servers: Vec<LspServerConfig>,
+    /// SSH remote server configurations.
+    #[serde(default)]
+    pub ssh_servers: Vec<SshServer>,
     /// Master toggle for LSP support.
     #[serde(default)]
     pub lsp_enabled: bool,
@@ -141,6 +172,9 @@ pub(crate) struct Settings {
     /// Automatically include the git diff in the prompt.
     #[serde(default)]
     pub auto_context_git_diff: bool,
+    /// Automatically commit each cue when it moves to Review.
+    #[serde(default)]
+    pub auto_commit: bool,
     /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
     /// Enabled by default — without this flag, non-interactive `-p` mode
     /// cannot get tool permissions and Claude will only describe changes
@@ -218,6 +252,7 @@ impl Default for Settings {
             notify_sound: true,
             notify_popup: true,
             lava_lamp_enabled: true,
+            diff_color_scheme: DiffColorScheme::default(),
             font_family: default_font_family(),
             font_size: default_font_size(),
             font_weight: FontWeight::default(),
@@ -227,11 +262,13 @@ impl Default for Settings {
             agent_shell_init: String::new(),
             agents: default_agents(),
             commands: default_commands(),
+            ssh_servers: Vec::new(),
             lsp_servers: default_lsp_servers(),
             lsp_enabled: false,
             prompt_suggestions_enabled: false,
             auto_context_file: false,
             auto_context_git_diff: false,
+            auto_commit: false,
             allow_dangerous_skip_permissions: true,
         }
     }

@@ -152,7 +152,9 @@ impl ThemeChoice {
     /// Convert this theme's palette into a `CustomTheme`, suitable as a starting point.
     pub fn to_custom_theme(&self) -> CustomTheme {
         let p = self.palette();
-        let accent = self.semantic_colors().accent;
+        let accent = self
+            .semantic_colors_with_diff_scheme(super::app_settings::DiffColorScheme::default())
+            .accent;
         let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
         CustomTheme {
             name: String::new(),
@@ -580,7 +582,10 @@ impl ThemePalette {
 }
 
 impl ThemeChoice {
-    pub fn semantic_colors(&self) -> SemanticColors {
+    pub fn semantic_colors_with_diff_scheme(
+        &self,
+        diff_color_scheme: super::app_settings::DiffColorScheme,
+    ) -> SemanticColors {
         use ThemeChoice::*;
         let dark = self.is_dark();
 
@@ -620,6 +625,7 @@ impl ThemeChoice {
                 separator: egui::Color32::from_gray(60),
                 badge_text: egui::Color32::from_gray(220),
                 is_dark: true,
+                diff_color_scheme,
             }
         } else {
             SemanticColors {
@@ -632,6 +638,7 @@ impl ThemeChoice {
                 separator: egui::Color32::from_gray(200),
                 badge_text: egui::Color32::from_gray(255),
                 is_dark: false,
+                diff_color_scheme,
             }
         }
     }

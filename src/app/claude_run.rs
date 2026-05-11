@@ -820,8 +820,19 @@ impl DirigentApp {
             .find(|c| c.id == result.cue_id)
             .map(|c| c.text.clone())
             .unwrap_or_default();
-        self.reload_settings_from_disk();
-        self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
+        if !self.show_settings {
+            self.reload_settings_from_disk();
+        }
+        let agents_started =
+            self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
+
+        if self.settings.auto_commit {
+            if agents_started > 0 {
+                self.pending_auto_commits.push(result.cue_id);
+            } else {
+                self.process_commit_review(result.cue_id);
+            }
+        }
     }
 
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {

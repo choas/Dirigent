@@ -16,6 +16,7 @@ mod repo_management;
 mod search;
 mod sources_poll;
 mod split_cue;
+mod ssh_operations;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
@@ -88,6 +89,7 @@ use crate::file_tree::FileTree;
 use crate::git;
 use crate::lsp::LspManager;
 use crate::settings::{self, CustomTheme, SemanticColors, Settings};
+use crate::ssh;
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
 use claude_run::ClaudeRunState;
@@ -96,7 +98,7 @@ use tasks::TaskHandle;
 use theme::{icon, icon_small};
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
-    NavigationHistory, PendingPlay, SearchState,
+    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
 };
 
 pub struct DirigentApp {
@@ -144,6 +146,7 @@ pub struct DirigentApp {
     lsp_expanded: bool,
     /// Per-server-id warning when shlex fails to parse the arguments field.
     lsp_args_parse_warnings: std::collections::HashMap<String, String>,
+    ssh_expanded: bool,
     agents_init_language: crate::agents::AgentLanguage,
     lsp_init_language: crate::lsp::LspLanguage,
 
@@ -322,6 +325,21 @@ pub struct DirigentApp {
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
+
+    // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
+    pending_auto_commits: Vec<i64>,
+
+    // SSH remote connections (dedicated worker thread)
+    ssh_worker: Option<ssh::SshWorkerHandle>,
+    ssh_remote_entries: Vec<ssh::RemoteEntry>,
+    ssh_remote_path: String,
+    ssh_connecting: bool,
+    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshWorkerHandle, String>>>,
+    ssh_expanded_dirs: HashSet<String>,
+    ssh_listing: bool,
+    ssh_reading_file: Option<String>,
+    show_ssh_panel: bool,
+    ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 /// State for the custom theme editor dialog.
@@ -489,7 +507,9 @@ impl DirigentApp {
             egui_extras::syntax_highlighting::CodeTheme::light(12.0)
         };
 
-        let semantic = settings.theme.semantic_colors();
+        let semantic = settings
+            .theme
+            .semantic_colors_with_diff_scheme(settings.diff_color_scheme.clone());
         let initial_total_cost = db.total_cost().unwrap_or(0.0);
         let initial_exec_cache = db.get_all_latest_execution_metrics().unwrap_or_default();
 
@@ -540,6 +560,9 @@ impl DirigentApp {
             git: GitState {
                 info: git_info,
                 dirty_files,
+                show_git_view: false,
+                git_view_diff_mode: GitViewDiffMode::DiffOnly,
+                git_view_expanded_dirs: HashSet::new(),
                 ahead_of_remote,
                 commit_history,
                 commit_history_total,
@@ -554,6 +577,8 @@ impl DirigentApp {
                 available_branches: Vec::new(),
                 pushing: false,
                 push_rx: None,
+                show_push_error: false,
+                push_error_message: String::new(),
                 pulling: false,
                 pull_rx: None,
                 show_pull_diverged: false,
@@ -606,6 +631,7 @@ impl DirigentApp {
             commands_expanded: false,
             lsp_expanded: false,
             lsp_args_parse_warnings: std::collections::HashMap::new(),
+            ssh_expanded: false,
             agents_init_language: crate::agents::AgentLanguage::Rust,
             lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
@@ -710,6 +736,19 @@ impl DirigentApp {
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
             custom_theme_edit: None,
+
+            pending_auto_commits: Vec::new(),
+
+            ssh_worker: None,
+            ssh_remote_entries: Vec::new(),
+            ssh_remote_path: String::new(),
+            ssh_connecting: false,
+            ssh_connect_rx: None,
+            ssh_expanded_dirs: HashSet::new(),
+            ssh_listing: false,
+            ssh_reading_file: None,
+            show_ssh_panel: false,
+            ssh_test_rx: None,
         }
     }
 
@@ -955,6 +994,15 @@ impl eframe::App for DirigentApp {
 
         // Poll LSP servers for responses and notifications
         self.lsp.poll();
+
+        // Poll SSH connection result
+        self.process_ssh_connect_result();
+
+        // Poll SSH worker responses (list_dir, read_file)
+        self.process_ssh_responses();
+
+        // Poll SSH test connection result
+        self.process_ssh_test_result();
 
         // Process LSP results (definition, document symbols)
         self.process_lsp_results();

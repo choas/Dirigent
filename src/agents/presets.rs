@@ -77,6 +77,7 @@ pub(crate) enum AgentLanguage {
     Elixir,
     Zig,
     Lua,
+    Bun,
 }
 
 impl AgentLanguage {
@@ -95,6 +96,7 @@ impl AgentLanguage {
             AgentLanguage::Elixir => "Elixir",
             AgentLanguage::Zig => "Zig",
             AgentLanguage::Lua => "Lua",
+            AgentLanguage::Bun => "Bun",
         }
     }
 
@@ -113,6 +115,7 @@ impl AgentLanguage {
             AgentLanguage::Elixir,
             AgentLanguage::Zig,
             AgentLanguage::Lua,
+            AgentLanguage::Bun,
         ]
     }
 }
@@ -149,6 +152,34 @@ fn find_xcodeproj(repo_root: &Path) -> Option<String> {
 
     matches.sort();
     Some(matches.swap_remove(0))
+}
+
+fn find_simulator_device() -> Option<String> {
+    let output = std::process::Command::new("xcrun")
+        .args(["simctl", "list", "devices", "available"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut candidates: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(paren_pos) = trimmed.find('(') {
+            let name = trimmed[..paren_pos].trim();
+            if name.starts_with("iPhone") {
+                candidates.push(name);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    if let Some(pro) = candidates.iter().rev().find(|n| n.contains("Pro")) {
+        return Some(pro.to_string());
+    }
+    candidates.last().map(|s| s.to_string())
 }
 
 fn shell_quote(s: &str) -> String {
@@ -335,13 +366,22 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
             if let Some(project_name) = find_xcodeproj(repo_root) {
                 let xcodeproj = shell_quote(&format!("{project_name}.xcodeproj"));
                 let scheme = shell_quote(&project_name);
+                let device = find_simulator_device();
                 let build_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
                      -destination 'generic/platform=iOS Simulator' build 2>&1"
                 );
+                let test_dest = match &device {
+                    Some(name) => {
+                        let escaped = name.replace('\'', "'\\''");
+                        format!("platform=iOS Simulator,name={escaped}")
+                    }
+                    None => "platform=iOS Simulator".to_string(),
+                };
                 let test_cmd = format!(
                     "xcodebuild -project {xcodeproj} -scheme {scheme} \
-                     -destination 'platform=iOS Simulator' test 2>&1"
+                     -destination '{}' test 2>&1",
+                    test_dest
                 );
                 pipeline(
                     fmt,
@@ -465,5 +505,28 @@ pub(crate) fn agents_for_language(lang: AgentLanguage, repo_root: &Path) -> Vec<
                 timeout: 300,
             },
         ),
+        AgentLanguage::Bun => {
+            let mut v = pipeline(
+                Step {
+                    cmd: "bun run format 2>&1",
+                    timeout: 30,
+                },
+                Step {
+                    cmd: "bun run lint 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "bun run build 2>&1",
+                    timeout: 120,
+                },
+                Step {
+                    cmd: "bun test 2>&1",
+                    timeout: 300,
+                },
+            );
+            v.push(outdated_agent("bun outdated 2>&1", 60));
+            v.push(audit_agent("bun audit 2>&1"));
+            v
+        }
     }
 }

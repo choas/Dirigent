@@ -8,6 +8,13 @@ use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::git;
 use crate::settings::PlayVariable;
 
+/// Display mode for the git view panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum GitViewDiffMode {
+    FullFile,
+    DiffOnly,
+}
+
 use super::markdown_parser;
 use super::search;
 use super::symbols;
@@ -462,6 +469,12 @@ pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
+    /// Whether the git changes view is shown instead of the file tree.
+    pub(super) show_git_view: bool,
+    /// Display mode for git view: full file or diff only.
+    pub(super) git_view_diff_mode: GitViewDiffMode,
+    /// Expanded directories in the git changes tree view.
+    pub(super) git_view_expanded_dirs: HashSet<String>,
     /// Commits ahead of the remote tracking branch.
     pub(super) ahead_of_remote: usize,
     pub(super) commit_history: Vec<git::CommitInfo>,
@@ -482,6 +495,10 @@ pub(crate) struct GitState {
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Show dialog when push fails with an error.
+    pub(super) show_push_error: bool,
+    /// The error message from a failed push.
+    pub(super) push_error_message: String,
     /// Whether a git pull is currently in progress.
     pub(super) pulling: bool,
     pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -571,6 +588,11 @@ impl GitState {
         }
         if self.show_merge_conflicts {
             self.show_merge_conflicts = false;
+            return true;
+        }
+        if self.show_push_error {
+            self.show_push_error = false;
+            self.push_error_message.clear();
             return true;
         }
         if self.show_pull_diverged {

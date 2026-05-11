@@ -12,6 +12,20 @@ impl DirigentApp {
         for result in results {
             self.process_single_agent_result(result);
         }
+
+        if !self.pending_auto_commits.is_empty() {
+            let any_running = self
+                .agent_state
+                .statuses
+                .values()
+                .any(|s| *s == AgentStatus::Running);
+            if !any_running {
+                let cue_ids = std::mem::take(&mut self.pending_auto_commits);
+                for cue_id in cue_ids {
+                    self.process_commit_review(cue_id);
+                }
+            }
+        }
     }
 
     /// Process a single agent result: persist to DB, update state, set status
@@ -171,13 +185,13 @@ impl DirigentApp {
             .unwrap_or_default()
     }
 
-    /// Trigger all agents matching the given trigger type.
+    /// Trigger all agents matching the given trigger type. Returns number started.
     pub(super) fn trigger_agents_for(
         &mut self,
         trigger: &AgentTrigger,
         cue_id: Option<i64>,
         prompt: &str,
-    ) {
+    ) -> usize {
         agents::trigger_agents(
             &self.settings.agents,
             trigger,
@@ -188,7 +202,7 @@ impl DirigentApp {
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
             &mut self.agent_state.cancel_flags,
-        );
+        )
     }
 
     /// Manually trigger a specific agent kind.

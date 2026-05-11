@@ -289,7 +289,7 @@ impl DirigentApp {
         });
     }
 
-    fn process_commit_review(&mut self, cue_id: i64) {
+    pub(in crate::app) fn process_commit_review(&mut self, cue_id: i64) {
         match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
                 if let Some(ref diff) = exec.diff {
@@ -299,7 +299,8 @@ impl DirigentApp {
                         .find(|c| c.id == cue_id)
                         .map(|c| c.text.clone())
                         .unwrap_or_default();
-                    let commit_msg = git::generate_commit_message(&cue_text);
+                    let commit_msg =
+                        git::generate_commit_message(&cue_text, exec.response.as_deref());
                     self.apply_commit_result(
                         cue_id,
                         git::commit_diff(&self.project_root, diff, &commit_msg),
@@ -385,6 +386,7 @@ impl DirigentApp {
     }
 
     fn process_show_running_log(&mut self, cue_id: i64) {
+        self.dismiss_central_overlays();
         match self.db.get_all_executions(cue_id) {
             Ok(execs) => {
                 if let std::collections::hash_map::Entry::Vacant(e) =
@@ -403,7 +405,6 @@ impl DirigentApp {
                 return;
             }
         }
-        self.dismiss_central_overlays();
         self.claude.show_log = Some(cue_id);
     }
 

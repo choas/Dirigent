@@ -96,6 +96,80 @@ impl SourceKind {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum SshAuthKind {
+    #[default]
+    Agent,
+    KeyFile,
+    Password,
+}
+
+impl SshAuthKind {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            SshAuthKind::Agent => "SSH Agent",
+            SshAuthKind::KeyFile => "Key File",
+            SshAuthKind::Password => "Password",
+        }
+    }
+
+    pub fn all() -> &'static [SshAuthKind] {
+        &[
+            SshAuthKind::Agent,
+            SshAuthKind::KeyFile,
+            SshAuthKind::Password,
+        ]
+    }
+}
+
+fn generate_ssh_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SshServer {
+    #[serde(default = "generate_ssh_id")]
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub auth_kind: SshAuthKind,
+    #[serde(default)]
+    pub key_path: String,
+    #[serde(skip)]
+    pub password: String,
+    #[serde(default = "default_remote_path")]
+    pub remote_path: String,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+fn default_remote_path() -> String {
+    "~".into()
+}
+
+impl Default for SshServer {
+    fn default() -> Self {
+        SshServer {
+            id: generate_ssh_id(),
+            name: "New Server".into(),
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_kind: SshAuthKind::default(),
+            key_path: String::new(),
+            password: String::new(),
+            remote_path: default_remote_path(),
+        }
+    }
+}
+
 fn generate_source_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

@@ -14,6 +14,7 @@ mod prompt_hints;
 mod prompt_suggestions;
 mod settings;
 mod sources;
+mod ssh;
 mod syntax;
 mod telemetry;
 mod util;

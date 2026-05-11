@@ -1,9 +1,60 @@
+use std::fmt;
 use std::sync::mpsc;
 
 use eframe::egui;
 
 use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{CliProvider, CustomTheme};
+
+enum ExportThemeError {
+    Cancelled,
+    Serialize(serde_json::Error),
+    Io(std::io::Error),
+}
+
+impl fmt::Display for ExportThemeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => write!(f, "Export cancelled"),
+            Self::Serialize(e) => write!(f, "Failed to serialize theme: {e}"),
+            Self::Io(e) => write!(f, "Failed to write file: {e}"),
+        }
+    }
+}
+
+impl From<serde_json::Error> for ExportThemeError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Serialize(e)
+    }
+}
+
+impl From<std::io::Error> for ExportThemeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+fn export_theme(theme: &CustomTheme) -> Result<String, ExportThemeError> {
+    let path = rfd::FileDialog::new()
+        .set_title("Export Theme")
+        .set_file_name(&format!("{}.json", theme.name.trim()))
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .ok_or(ExportThemeError::Cancelled)?;
+    let json = serde_json::to_string_pretty(theme)?;
+    std::fs::write(&path, &json)?;
+    Ok(format!("Theme exported to {}", path.display()))
+}
+
+fn import_theme() -> Result<CustomTheme, String> {
+    let path = rfd::FileDialog::new()
+        .set_title("Import Theme")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .ok_or_else(|| "No file selected".to_string())?;
+    let data = std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {e}"))?;
+    serde_json::from_str::<CustomTheme>(&data).map_err(|e| format!("Invalid theme file: {e}"))
+}
 
 impl DirigentApp {
     /// Render the custom theme editor dialog.
@@ -46,6 +97,8 @@ impl DirigentApp {
         let mut close = false;
         let mut delete = false;
         let mut generate = false;
+        let mut do_export = false;
+        let mut do_import = false;
 
         egui::Window::new("Custom Theme")
             .collapsible(false)
@@ -165,6 +218,21 @@ impl DirigentApp {
                     ui.colored_label(egui::Color32::from_rgb(210, 95, 95), err);
                 }
 
+                ui.add_space(SPACE_SM);
+                ui.separator();
+                ui.add_space(SPACE_XS);
+                ui.horizontal(|ui| {
+                    ui.strong("Import / Export");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Export").clicked() {
+                            do_export = true;
+                        }
+                        if ui.button("Import").clicked() {
+                            do_import = true;
+                        }
+                    });
+                });
+
                 ui.add_space(SPACE_MD);
 
                 // Action buttons
@@ -197,6 +265,29 @@ impl DirigentApp {
             });
 
         // Handle actions outside the closure to avoid borrow conflicts
+        if do_export {
+            if let Some(edit) = &self.custom_theme_edit {
+                match export_theme(&edit.theme) {
+                    Ok(msg) => self.set_status_message(msg),
+                    Err(ExportThemeError::Cancelled) => {}
+                    Err(e) => self.set_status_message(e.to_string()),
+                }
+            }
+        }
+        if do_import {
+            match import_theme() {
+                Ok(imported) => {
+                    if let Some(edit) = self.custom_theme_edit.as_mut() {
+                        edit.theme = imported;
+                    }
+                }
+                Err(e) => {
+                    if e != "No file selected" {
+                        self.set_status_message(format!("Import failed: {e}"));
+                    }
+                }
+            }
+        }
         if generate {
             self.spawn_ai_theme_generation();
         }

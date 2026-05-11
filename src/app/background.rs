@@ -33,8 +33,10 @@ impl DirigentApp {
         }
 
         let recent_repos = self.settings.recent_repos.clone();
+        let auto_commit = self.settings.auto_commit;
         self.settings = new_settings;
         self.settings.recent_repos = recent_repos;
+        self.settings.auto_commit = auto_commit;
         self.needs_theme_apply = true;
     }
 
@@ -50,7 +52,9 @@ impl DirigentApp {
         self.reload_file_tree();
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
-        self.reload_settings_from_disk();
+        if !self.show_settings {
+            self.reload_settings_from_disk();
+        }
         self.reload_open_tabs();
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
     }

@@ -35,6 +35,7 @@ libc = "=0.2.185"
 reqwest = { version = "=0.13.2", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 sentry = "=0.47.0"
 commitlint-rs = "=0.2.4"
+ssh2 = "=0.9.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "=0.2.7"

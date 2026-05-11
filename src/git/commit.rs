@@ -251,10 +251,15 @@ pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// Max length for including a log message in the commit body.
+const MAX_LOG_MESSAGE_LEN: usize = 500;
+
 /// Generate a conventional commit message from cue text.
 ///
 /// Format: `type: description\n\n[body]\n\nDirigent: https://github.com/choas/Dirigent`
-pub(crate) fn generate_commit_message(cue_text: &str) -> String {
+///
+/// When `log_message` is provided and not too large, it is appended to the body.
+pub(crate) fn generate_commit_message(cue_text: &str, log_message: Option<&str>) -> String {
     let commit_type = detect_commit_type(cue_text);
     let raw_desc = strip_type_prefix(cue_text);
     let description = format_description(raw_desc);
@@ -273,10 +278,16 @@ pub(crate) fn generate_commit_message(cue_text: &str) -> String {
 
     let subject = format!("{}{}", prefix, subject_desc);
 
-    let msg = if cue_text.len() > 68 {
-        format!("{}\n\n{}\n\n{}", subject, cue_text, DIRIGENT_FOOTER)
-    } else {
-        format!("{}\n\n{}", subject, DIRIGENT_FOOTER)
+    let log_body = log_message.map(|m| m.trim()).filter(|t| !t.is_empty() && t.len() <= MAX_LOG_MESSAGE_LEN);
+
+    let msg = match (cue_text.len() > 68, log_body) {
+        (true, Some(log)) => format!(
+            "{}\n\n{}\n\n{}\n\n{}",
+            subject, cue_text, log, DIRIGENT_FOOTER
+        ),
+        (true, None) => format!("{}\n\n{}\n\n{}", subject, cue_text, DIRIGENT_FOOTER),
+        (false, Some(log)) => format!("{}\n\n{}\n\n{}", subject, log, DIRIGENT_FOOTER),
+        (false, None) => format!("{}\n\n{}", subject, DIRIGENT_FOOTER),
     };
 
     // Validate with commitlint-rs — log any issues for diagnostics.
@@ -557,17 +568,16 @@ mod tests {
 
     #[test]
     fn generate_commit_message_short() {
-        let msg = generate_commit_message("Fix typo");
+        let msg = generate_commit_message("Fix typo", None);
         assert!(msg.starts_with("fix: fix typo"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
-        // Validate with commitlint-rs
         assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
     fn generate_commit_message_long_truncates() {
         let long_text = format!("Add {}", "feature ".repeat(20));
-        let msg = generate_commit_message(&long_text);
+        let msg = generate_commit_message(&long_text, None);
         let subject = msg.lines().next().unwrap();
         assert!(subject.len() <= 72, "subject too long: {}", subject.len());
         assert!(subject.contains("..."));
@@ -578,8 +588,7 @@ mod tests {
 
     #[test]
     fn generate_commit_message_short_no_body() {
-        let msg = generate_commit_message("add dark mode");
-        // Short message should NOT have the cue text repeated as body
+        let msg = generate_commit_message("add dark mode", None);
         let parts: Vec<&str> = msg.split("\n\n").collect();
         assert_eq!(parts.len(), 2); // subject + footer only
         assert!(lint_commit_message(&msg).is_empty());
@@ -587,9 +596,27 @@ mod tests {
 
     #[test]
     fn generate_commit_message_preserves_existing_prefix() {
-        let msg = generate_commit_message("docs: update readme");
+        let msg = generate_commit_message("docs: update readme", None);
         assert!(msg.starts_with("docs: update readme"));
         assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    #[test]
+    fn generate_commit_message_with_log() {
+        let msg = generate_commit_message("Fix typo", Some("Fixed a typo in the README file"));
+        assert!(msg.starts_with("fix: fix typo"));
+        assert!(msg.contains("Fixed a typo in the README file"));
+        assert!(msg.ends_with(DIRIGENT_FOOTER));
+        assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    #[test]
+    fn generate_commit_message_skips_large_log() {
+        let large_log = "x".repeat(501);
+        let msg = generate_commit_message("Fix typo", Some(&large_log));
+        assert!(!msg.contains(&large_log));
+        let parts: Vec<&str> = msg.split("\n\n").collect();
+        assert_eq!(parts.len(), 2); // subject + footer only, no log body
     }
 
     // --- lint_commit_message ---

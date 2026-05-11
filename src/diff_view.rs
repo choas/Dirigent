@@ -281,8 +281,8 @@ impl DiffColors {
         Self {
             green_bg: colors.addition_bg(),
             red_bg: colors.deletion_bg(),
-            green_text: colors.success,
-            red_text: colors.danger,
+            green_text: colors.addition_text(),
+            red_text: colors.deletion_text(),
             context_text: colors.secondary_text,
             gutter_color: colors.tertiary_text,
         }

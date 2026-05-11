@@ -37,11 +37,25 @@ impl DirigentApp {
             .min_size(150.0)
             .max_size(400.0)
             .show_inside(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Files")
-                        .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
-                        .strong(),
-                );
+                {
+                    let fs = self.settings.font_size * FONT_SCALE_SUBHEADING;
+                    ui.horizontal(|ui| {
+                        let _ = ui.selectable_label(true, egui::RichText::new("Files").size(fs));
+                        let n = self.git.dirty_files.len();
+                        if n > 0 {
+                            if ui
+                                .selectable_label(
+                                    false,
+                                    egui::RichText::new(format!("Changes ({n})")).size(fs),
+                                )
+                                .clicked()
+                            {
+                                self.git.show_git_view = true;
+                                self.expand_git_view_dirs();
+                            }
+                        }
+                    });
+                }
                 ui.separator();
 
                 let file_tree_height = Self::compute_file_tree_height(
@@ -126,7 +140,7 @@ impl DirigentApp {
     }
 
     /// Append a path to .gitignore.
-    fn handle_add_to_gitignore(&mut self, path: &Path) {
+    pub(in super::super) fn handle_add_to_gitignore(&mut self, path: &Path) {
         let rel = path
             .strip_prefix(&self.project_root)
             .unwrap_or(path)

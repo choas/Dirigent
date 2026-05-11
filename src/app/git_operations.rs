@@ -48,7 +48,9 @@ impl DirigentApp {
                 self.reload_commit_history();
             }
             Err(e) => {
-                self.set_status_message(format!("Push failed: {}", e));
+                self.git.push_error_message = e;
+                self.git.show_push_error = true;
+                self.set_status_message("Push failed — see dialog".to_string());
             }
         }
     }
