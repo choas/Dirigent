@@ -83,7 +83,7 @@ Based on Pi's documentation, the event types are likely similar to Claude Code's
 | Tool use (Edit/Write) | `edited_files` tracking | Track file-modifying tools |
 | Completion/result | `metrics` extraction | Cost, tokens, duration |
 | Rate limit | Log retry delay | Same as existing handling |
-| Error | `ClaudeError` propagation | Surface in UI |
+| Error | `CliError` propagation | Surface in UI |
 
 **Open question:** Pi's exact JSON event schema for `--mode json` is not fully documented yet. Before implementation, we need to:
 1. Run `pi -p "hello" --mode json` and capture the actual JSONL output
@@ -221,11 +221,11 @@ src/cli/
   pi.rs           // Pi command builder + stream quirks
   stream.rs       // shared stream parsing
   diff_parser.rs  // shared diff extraction
-  types.rs        // ClaudeResponse -> CliResponse, etc.
+  types.rs        // ClaudeResponse -> CliResponse, ClaudeError -> CliError, etc.
 ```
 
 **Pro:** Clean separation, provider name in module path.
-**Con:** Larger refactor, rename `ClaudeResponse` -> `CliResponse`, etc.
+**Con:** Larger refactor, rename `ClaudeResponse` -> `CliResponse`, `ClaudeError` -> `CliError`, etc.
 
 **Recommendation:** Option A for Phase 1 (ship fast), Option B as a follow-up refactor if a fourth provider is ever added.
 
