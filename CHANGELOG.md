@@ -2,6 +2,11 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.5.1] - 2026-05-12
+
+### Fixed
+- GitHub Actions release build: updated Info.plist and bundle script to fix code signing validation
+
 ## [0.5.0] - 2026-05-11
 
 ### Added
