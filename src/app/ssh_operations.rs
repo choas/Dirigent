@@ -48,26 +48,28 @@ impl DirigentApp {
     }
 
     pub(super) fn ssh_list_dir(&mut self, path: &str) {
-        if self.ssh_worker.is_none() || self.ssh_listing {
+        if self.ssh_listing {
+            return;
+        }
+        if let Some(worker) = self.ssh_worker.as_ref() {
+            worker.send(SshRequest::ListDir(path.to_string()));
+        } else {
             return;
         }
         self.ssh_listing = true;
         self.set_status_message("Listing remote directory\u{2026}".into());
-        self.ssh_worker
-            .as_ref()
-            .unwrap()
-            .send(SshRequest::ListDir(path.to_string()));
     }
 
     pub(super) fn ssh_read_file(&mut self, path: &str) {
-        if self.ssh_worker.is_none() || self.ssh_reading_file.is_some() {
+        if self.ssh_reading_file.is_some() {
+            return;
+        }
+        if let Some(worker) = self.ssh_worker.as_ref() {
+            worker.send(SshRequest::ReadFile(path.to_string()));
+        } else {
             return;
         }
         self.ssh_reading_file = Some(path.to_string());
-        self.ssh_worker
-            .as_ref()
-            .unwrap()
-            .send(SshRequest::ReadFile(path.to_string()));
     }
 
     pub(super) fn process_ssh_connect_result(&mut self) {
