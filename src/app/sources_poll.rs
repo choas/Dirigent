@@ -112,7 +112,8 @@ impl DirigentApp {
 
     pub(super) fn process_source_results(&mut self) {
         // Surface any source fetch errors/status to the UI
-        if let Some(msg) = self.sources.error_rx.try_iter().last() {
+        let errors: Vec<String> = self.sources.error_rx.try_iter().collect();
+        for msg in errors {
             self.set_status_message(msg);
         }
 
