@@ -326,6 +326,9 @@ pub struct DirigentApp {
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
 
+    // Deferred auto-commit: cue_id waiting for AfterRun agents to finish
+    pending_auto_commit: Option<i64>,
+
     // SSH remote connections
     ssh_connection: Option<ssh::SshConnection>,
     ssh_remote_entries: Vec<ssh::RemoteEntry>,
@@ -334,6 +337,7 @@ pub struct DirigentApp {
     ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshConnection, String>>>,
     ssh_expanded_dirs: HashSet<String>,
     show_ssh_panel: bool,
+    ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 /// State for the custom theme editor dialog.
@@ -731,6 +735,8 @@ impl DirigentApp {
 
             custom_theme_edit: None,
 
+            pending_auto_commit: None,
+
             ssh_connection: None,
             ssh_remote_entries: Vec::new(),
             ssh_remote_path: String::new(),
@@ -738,6 +744,7 @@ impl DirigentApp {
             ssh_connect_rx: None,
             ssh_expanded_dirs: HashSet::new(),
             show_ssh_panel: false,
+            ssh_test_rx: None,
         }
     }
 
@@ -986,6 +993,9 @@ impl eframe::App for DirigentApp {
 
         // Poll SSH connection result
         self.process_ssh_connect_result();
+
+        // Poll SSH test connection result
+        self.process_ssh_test_result();
 
         // Process LSP results (definition, document symbols)
         self.process_lsp_results();

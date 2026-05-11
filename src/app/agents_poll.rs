@@ -8,9 +8,24 @@ impl DirigentApp {
     /// Drain the agent result channel and update state.
     pub(super) fn process_agent_results(&mut self) {
         let results: Vec<agents::AgentResult> = self.agent_state.rx.try_iter().collect();
+        if results.is_empty() {
+            return;
+        }
 
         for result in results {
             self.process_single_agent_result(result);
+        }
+
+        if let Some(cue_id) = self.pending_auto_commit {
+            let any_running = self
+                .agent_state
+                .statuses
+                .values()
+                .any(|s| *s == AgentStatus::Running);
+            if !any_running {
+                self.pending_auto_commit = None;
+                self.process_commit_review(cue_id);
+            }
         }
     }
 
@@ -171,13 +186,13 @@ impl DirigentApp {
             .unwrap_or_default()
     }
 
-    /// Trigger all agents matching the given trigger type.
+    /// Trigger all agents matching the given trigger type. Returns number started.
     pub(super) fn trigger_agents_for(
         &mut self,
         trigger: &AgentTrigger,
         cue_id: Option<i64>,
         prompt: &str,
-    ) {
+    ) -> usize {
         agents::trigger_agents(
             &self.settings.agents,
             trigger,
@@ -188,7 +203,7 @@ impl DirigentApp {
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
             &mut self.agent_state.cancel_flags,
-        );
+        )
     }
 
     /// Manually trigger a specific agent kind.

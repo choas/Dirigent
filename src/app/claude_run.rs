@@ -823,10 +823,15 @@ impl DirigentApp {
         if !self.show_settings {
             self.reload_settings_from_disk();
         }
-        self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
+        let agents_started =
+            self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
 
         if self.settings.auto_commit {
-            self.process_commit_review(result.cue_id);
+            if agents_started > 0 {
+                self.pending_auto_commit = Some(result.cue_id);
+            } else {
+                self.process_commit_review(result.cue_id);
+            }
         }
     }
 
