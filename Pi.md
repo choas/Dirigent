@@ -65,7 +65,7 @@ This is more efficient than embedding file content in the prompt string, as Pi h
 
 Pi with `--mode json` emits newline-delimited JSON events on stdout. The event types need to be mapped to Dirigent's existing `StreamState`:
 
-```
+```rust
 StreamState {
     final_result: String,      // accumulated response text
     edited_files: Vec<String>, // files modified by tool_use
@@ -213,7 +213,7 @@ Add Pi-specific command building and stream parsing alongside Claude and OpenCod
 
 Rename `claude/` to `cli/` and create provider-specific submodules:
 
-```
+```text
 src/cli/
   mod.rs          // shared types, invoke function
   claude.rs       // Claude command builder + stream quirks
