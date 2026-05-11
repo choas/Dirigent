@@ -198,11 +198,11 @@ fn collect_remote_branches(
     }
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let full = line.trim();
-        if full.is_empty() || full.contains("HEAD") {
+        if full.is_empty() || full.contains("HEAD") || !full.contains('/') {
             continue;
         }
         // Strip "origin/" (or any remote name) prefix.
-        let short = full.find('/').map_or(full, |pos| &full[pos + 1..]);
+        let short = &full[full.find('/').unwrap() + 1..];
         if !short.is_empty() && !checked_out.contains(short) {
             branches.insert(short.to_string());
         }
