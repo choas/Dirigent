@@ -1,6 +1,8 @@
 use std::io::Read;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::sync::{Arc, OnceLock};
 
 use ssh2::{CheckResult, KnownHostFileKind, Session};
 
@@ -36,7 +38,6 @@ impl Default for SshServerConfig {
 
 pub(crate) struct SshConnection {
     session: Session,
-    pub config: SshServerConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -139,10 +140,7 @@ impl SshConnection {
             return Err("SSH authentication failed".into());
         }
 
-        Ok(SshConnection {
-            session,
-            config: config.clone(),
-        })
+        Ok(SshConnection { session })
     }
 
     pub fn list_dir(&self, remote_path: &str) -> Result<Vec<RemoteEntry>, String> {
@@ -234,5 +232,97 @@ impl SshConnection {
 
     pub fn disconnect(self) {
         let _ = self.session.disconnect(None, "bye", None);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated SSH worker thread
+// ---------------------------------------------------------------------------
+
+pub(crate) enum SshRequest {
+    ListDir(String),
+    ReadFile(String),
+    Disconnect,
+}
+
+pub(crate) enum SshResponse {
+    ListDir(Result<(String, Vec<RemoteEntry>), String>),
+    ReadFile(Result<(String, String), String>),
+    Disconnected,
+}
+
+pub(crate) struct SshWorkerHandle {
+    pub config: SshServerConfig,
+    tx: mpsc::Sender<SshRequest>,
+    pub rx: mpsc::Receiver<SshResponse>,
+}
+
+impl SshWorkerHandle {
+    pub fn send(&self, req: SshRequest) {
+        let _ = self.tx.send(req);
+    }
+}
+
+pub(crate) fn spawn_ssh_worker(
+    config: SshServerConfig,
+    ctx: Arc<OnceLock<eframe::egui::Context>>,
+) -> mpsc::Receiver<Result<SshWorkerHandle, String>> {
+    let (init_tx, init_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let conn = match SshConnection::connect(&config) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = init_tx.send(Err(e));
+                repaint(&ctx);
+                return;
+            }
+        };
+        let (req_tx, req_rx) = mpsc::channel::<SshRequest>();
+        let (resp_tx, resp_rx) = mpsc::channel::<SshResponse>();
+        let handle = SshWorkerHandle {
+            config: config.clone(),
+            tx: req_tx,
+            rx: resp_rx,
+        };
+        let _ = init_tx.send(Ok(handle));
+        repaint(&ctx);
+
+        worker_loop(conn, req_rx, resp_tx, &ctx);
+    });
+    init_rx
+}
+
+fn worker_loop(
+    conn: SshConnection,
+    rx: mpsc::Receiver<SshRequest>,
+    tx: mpsc::Sender<SshResponse>,
+    ctx: &Arc<OnceLock<eframe::egui::Context>>,
+) {
+    while let Ok(req) = rx.recv() {
+        let resp = match req {
+            SshRequest::ListDir(path) => {
+                let result = conn.list_dir(&path).map(|entries| (path, entries));
+                SshResponse::ListDir(result)
+            }
+            SshRequest::ReadFile(path) => {
+                let result = conn.read_file(&path).map(|contents| (path, contents));
+                SshResponse::ReadFile(result)
+            }
+            SshRequest::Disconnect => {
+                conn.disconnect();
+                let _ = tx.send(SshResponse::Disconnected);
+                repaint(ctx);
+                return;
+            }
+        };
+        let _ = tx.send(resp);
+        repaint(ctx);
+    }
+    conn.disconnect();
+}
+
+fn repaint(ctx: &Arc<OnceLock<eframe::egui::Context>>) {
+    if let Some(c) = ctx.get() {
+        c.request_repaint();
     }
 }

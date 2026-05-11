@@ -329,13 +329,15 @@ pub struct DirigentApp {
     // Deferred auto-commit: cue_id waiting for AfterRun agents to finish
     pending_auto_commit: Option<i64>,
 
-    // SSH remote connections
-    ssh_connection: Option<ssh::SshConnection>,
+    // SSH remote connections (dedicated worker thread)
+    ssh_worker: Option<ssh::SshWorkerHandle>,
     ssh_remote_entries: Vec<ssh::RemoteEntry>,
     ssh_remote_path: String,
     ssh_connecting: bool,
-    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshConnection, String>>>,
+    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshWorkerHandle, String>>>,
     ssh_expanded_dirs: HashSet<String>,
+    ssh_listing: bool,
+    ssh_reading_file: Option<String>,
     show_ssh_panel: bool,
     ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
@@ -737,12 +739,14 @@ impl DirigentApp {
 
             pending_auto_commit: None,
 
-            ssh_connection: None,
+            ssh_worker: None,
             ssh_remote_entries: Vec::new(),
             ssh_remote_path: String::new(),
             ssh_connecting: false,
             ssh_connect_rx: None,
             ssh_expanded_dirs: HashSet::new(),
+            ssh_listing: false,
+            ssh_reading_file: None,
             show_ssh_panel: false,
             ssh_test_rx: None,
         }
@@ -993,6 +997,9 @@ impl eframe::App for DirigentApp {
 
         // Poll SSH connection result
         self.process_ssh_connect_result();
+
+        // Poll SSH worker responses (list_dir, read_file)
+        self.process_ssh_responses();
 
         // Poll SSH test connection result
         self.process_ssh_test_result();

@@ -292,14 +292,14 @@ impl DirigentApp {
 
     fn render_ssh_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         ui.menu_button("SSH", |ui| {
-            let is_connected = self.ssh_connection.is_some();
+            let is_connected = self.ssh_worker.is_some();
             let is_connecting = self.ssh_connecting;
 
             if is_connected {
                 let name = self
-                    .ssh_connection
+                    .ssh_worker
                     .as_ref()
-                    .map(|c| c.config.name.clone())
+                    .map(|w| w.config.name.clone())
                     .unwrap_or_default();
                 ui.label(
                     egui::RichText::new(format!("\u{25CF} Connected: {}", name))

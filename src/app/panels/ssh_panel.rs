@@ -28,9 +28,9 @@ impl DirigentApp {
                 self.show_ssh_panel = false;
             }
             let conn_name = self
-                .ssh_connection
+                .ssh_worker
                 .as_ref()
-                .map(|c| c.config.name.clone())
+                .map(|w| w.config.name.clone())
                 .unwrap_or_else(|| "Remote".into());
             let _ = ui.selectable_label(
                 true,
@@ -82,7 +82,7 @@ impl DirigentApp {
             return;
         }
 
-        if self.ssh_connection.is_none() {
+        if self.ssh_worker.is_none() {
             ui.add_space(SPACE_SM);
             ui.label(
                 egui::RichText::new("Not connected")
@@ -90,6 +90,23 @@ impl DirigentApp {
                     .color(self.semantic.tertiary_text),
             );
             return;
+        }
+
+        if self.ssh_listing {
+            ui.add_space(SPACE_SM);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading...");
+            });
+            return;
+        }
+
+        if self.ssh_reading_file.is_some() {
+            ui.add_space(SPACE_SM);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Reading file...");
+            });
         }
 
         if self.ssh_remote_entries.is_empty() {
@@ -151,64 +168,8 @@ impl DirigentApp {
             self.ssh_list_dir(&path);
         }
         if let Some(path) = open_file {
-            self.open_remote_file(&path);
+            self.ssh_read_file(&path);
         }
-    }
-
-    fn open_remote_file(&mut self, remote_path: &str) {
-        let tab_path = std::path::PathBuf::from(format!("ssh://{}", remote_path));
-        if let Some(idx) = self.viewer.tabs.iter().position(|t| t.file_path == tab_path) {
-            self.viewer.active_tab = Some(idx);
-            return;
-        }
-
-        let contents = match self.ssh_read_file(remote_path) {
-            Some(c) => c,
-            None => {
-                self.set_status_message(format!("Failed to read remote file: {}", remote_path));
-                return;
-            }
-        };
-
-        let file_name = remote_path
-            .rsplit('/')
-            .next()
-            .unwrap_or(remote_path)
-            .to_string();
-
-        let lines: Vec<String> = contents.lines().map(|l| l.to_string()).collect();
-
-        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-        let is_markdown = ext == "md" || ext == "mdx";
-
-        let markdown_blocks = if is_markdown {
-            Some(crate::app::markdown_parser::parse_markdown(
-                &lines.join("\n"),
-            ))
-        } else {
-            None
-        };
-
-        use crate::app::types::TabState;
-        let tab = TabState {
-            file_path: std::path::PathBuf::from(format!("ssh://{}", remote_path)),
-            content: lines,
-            selection_start: None,
-            selection_end: None,
-            cue_input: String::new(),
-            cue_images: Vec::new(),
-            markdown_blocks,
-            markdown_rendered: is_markdown,
-            scroll_offset: 0.0,
-            symbols: Vec::new(),
-            image_data: None,
-            image_texture: None,
-            image_zoom: 1.0,
-        };
-
-        self.viewer.tabs.push(tab);
-        self.viewer.active_tab = Some(self.viewer.tabs.len() - 1);
-        self.dismiss_central_overlays();
     }
 }
 
