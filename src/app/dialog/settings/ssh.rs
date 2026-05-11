@@ -85,7 +85,16 @@ impl DirigentApp {
                     {
                         *remove_idx = Some(idx);
                     }
-                    if ui.button("Test Connection").clicked() {
+                    let testing = self.ssh_test_rx.is_some();
+                    let label = if testing {
+                        "Testing…"
+                    } else {
+                        "Test Connection"
+                    };
+                    if ui
+                        .add_enabled(!testing, egui::Button::new(label))
+                        .clicked()
+                    {
                         self.test_ssh_connection(idx);
                     }
                 });
@@ -185,6 +194,9 @@ impl DirigentApp {
     }
 
     fn test_ssh_connection(&mut self, idx: usize) {
+        if self.ssh_test_rx.is_some() {
+            return;
+        }
         let server = &self.settings.ssh_servers[idx];
         let config = crate::ssh::SshServerConfig {
             name: server.name.clone(),
@@ -202,17 +214,47 @@ impl DirigentApp {
             },
             remote_path: server.remote_path.clone(),
         };
-        match crate::ssh::SshConnection::connect(&config) {
-            Ok(conn) => {
-                conn.disconnect();
-                self.set_status_message(format!(
-                    "SSH connection to '{}' ({}@{}) succeeded",
-                    server.name, server.username, server.host
-                ));
+        let success_msg = format!(
+            "SSH connection to '{}' ({}@{}) succeeded",
+            server.name, server.username, server.host
+        );
+        self.set_status_message("Testing SSH connection…".into());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.egui_ctx.clone();
+        std::thread::spawn(move || {
+            let result = match crate::ssh::SshConnection::connect(&config) {
+                Ok(conn) => {
+                    conn.disconnect();
+                    Ok(success_msg)
+                }
+                Err(e) => Err(format!("SSH connection failed: {}", e)),
+            };
+            let _ = tx.send(result);
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
             }
-            Err(e) => {
-                self.set_status_message(format!("SSH connection failed: {}", e));
+        });
+        self.ssh_test_rx = Some(rx);
+    }
+
+    pub(in crate::app) fn process_ssh_test_result(&mut self) {
+        let rx = match self.ssh_test_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.ssh_test_rx = None;
+                self.set_status_message("SSH test connection thread died".into());
+                return;
             }
+        };
+        self.ssh_test_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(msg) => self.set_status_message(msg),
         }
     }
 }

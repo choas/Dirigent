@@ -50,8 +50,18 @@ pub(crate) struct RemoteEntry {
 impl SshConnection {
     pub fn connect(config: &SshServerConfig) -> Result<Self, String> {
         let addr = format!("{}:{}", config.host, config.port);
-        let tcp =
-            TcpStream::connect(&addr).map_err(|e| format!("TCP connect to {}: {}", addr, e))?;
+        let sock_addr: std::net::SocketAddr = addr
+            .parse()
+            .or_else(|_| {
+                use std::net::ToSocketAddrs;
+                addr.to_socket_addrs()
+                    .map_err(|e| format!("resolve {}: {}", addr, e))?
+                    .next()
+                    .ok_or_else(|| format!("no addresses for {}", addr))
+            })
+            .map_err(|e| format!("resolve {}: {}", addr, e))?;
+        let tcp = TcpStream::connect_timeout(&sock_addr, std::time::Duration::from_secs(10))
+            .map_err(|e| format!("TCP connect to {}: {}", addr, e))?;
         tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .map_err(|e| format!("set read timeout: {}", e))?;
 
