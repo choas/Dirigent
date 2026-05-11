@@ -2,7 +2,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 
-use ssh2::Session;
+use ssh2::{CheckResult, KnownHostFileKind, Session};
 
 #[derive(Debug, Clone)]
 pub(crate) enum SshAuthMethod {
@@ -47,6 +47,43 @@ pub(crate) struct RemoteEntry {
     pub size: u64,
 }
 
+fn verify_host_key(session: &Session, host: &str, port: u16) -> Result<(), String> {
+    let (key, _key_type) = session
+        .host_key()
+        .ok_or("SSH server did not present a host key")?;
+
+    let mut known_hosts = session
+        .known_hosts()
+        .map_err(|e| format!("init known hosts: {}", e))?;
+
+    let known_hosts_path = dirs::home_dir()
+        .ok_or("cannot determine home directory")?
+        .join(".ssh")
+        .join("known_hosts");
+
+    if known_hosts_path.exists() {
+        known_hosts
+            .read_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
+            .map_err(|e| format!("read {}: {}", known_hosts_path.display(), e))?;
+    }
+
+    match known_hosts.check_port(host, port, key) {
+        CheckResult::Match => Ok(()),
+        CheckResult::NotFound => Err(format!(
+            "host key for '{}' not found in known_hosts — connect with ssh first to trust the key",
+            host
+        )),
+        CheckResult::Mismatch => Err(format!(
+            "HOST KEY MISMATCH for '{}' — the server's key does not match known_hosts (possible MITM attack)",
+            host
+        )),
+        CheckResult::Failure => Err(format!(
+            "failed to verify host key for '{}'",
+            host
+        )),
+    }
+}
+
 impl SshConnection {
     pub fn connect(config: &SshServerConfig) -> Result<Self, String> {
         let addr = format!("{}:{}", config.host, config.port);
@@ -70,6 +107,8 @@ impl SshConnection {
         session
             .handshake()
             .map_err(|e| format!("SSH handshake with {}: {}", addr, e))?;
+
+        verify_host_key(&session, &config.host, config.port)?;
 
         match &config.auth_method {
             SshAuthMethod::Agent => {
@@ -139,11 +178,26 @@ impl SshConnection {
     }
 
     pub fn read_file(&self, remote_path: &str) -> Result<String, String> {
+        const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+
         let sftp = self
             .session
             .sftp()
             .map_err(|e| format!("open SFTP channel: {}", e))?;
         let resolved = self.resolve_path(remote_path)?;
+
+        let stat = sftp
+            .stat(Path::new(&resolved))
+            .map_err(|e| format!("stat '{}': {}", resolved, e))?;
+        if let Some(size) = stat.size {
+            if size > MAX_FILE_SIZE {
+                return Err(format!(
+                    "file too large: '{}' is {} bytes (limit: {} bytes)",
+                    resolved, size, MAX_FILE_SIZE
+                ));
+            }
+        }
+
         let mut file = sftp
             .open(Path::new(&resolved))
             .map_err(|e| format!("open '{}': {}", resolved, e))?;
