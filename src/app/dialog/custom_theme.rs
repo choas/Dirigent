@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::mpsc;
 
 use eframe::egui;
@@ -5,15 +6,44 @@ use eframe::egui;
 use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{CliProvider, CustomTheme};
 
-fn export_theme(theme: &CustomTheme) -> Option<String> {
+enum ExportThemeError {
+    Cancelled,
+    Serialize(serde_json::Error),
+    Io(std::io::Error),
+}
+
+impl fmt::Display for ExportThemeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => write!(f, "Export cancelled"),
+            Self::Serialize(e) => write!(f, "Failed to serialize theme: {e}"),
+            Self::Io(e) => write!(f, "Failed to write file: {e}"),
+        }
+    }
+}
+
+impl From<serde_json::Error> for ExportThemeError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Serialize(e)
+    }
+}
+
+impl From<std::io::Error> for ExportThemeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+fn export_theme(theme: &CustomTheme) -> Result<String, ExportThemeError> {
     let path = rfd::FileDialog::new()
         .set_title("Export Theme")
         .set_file_name(&format!("{}.json", theme.name.trim()))
         .add_filter("JSON", &["json"])
-        .save_file()?;
-    let json = serde_json::to_string_pretty(theme).ok()?;
-    std::fs::write(&path, &json).ok()?;
-    Some(format!("Theme exported to {}", path.display()))
+        .save_file()
+        .ok_or(ExportThemeError::Cancelled)?;
+    let json = serde_json::to_string_pretty(theme)?;
+    std::fs::write(&path, &json)?;
+    Ok(format!("Theme exported to {}", path.display()))
 }
 
 fn import_theme() -> Result<CustomTheme, String> {
@@ -238,8 +268,9 @@ impl DirigentApp {
         if do_export {
             if let Some(edit) = &self.custom_theme_edit {
                 match export_theme(&edit.theme) {
-                    Some(msg) => self.set_status_message(msg),
-                    None => self.set_status_message("Export cancelled.".to_string()),
+                    Ok(msg) => self.set_status_message(msg),
+                    Err(ExportThemeError::Cancelled) => {}
+                    Err(e) => self.set_status_message(e.to_string()),
                 }
             }
         }
