@@ -156,6 +156,12 @@ impl DirigentApp {
     }
 
     fn open_remote_file(&mut self, remote_path: &str) {
+        let tab_path = std::path::PathBuf::from(format!("ssh://{}", remote_path));
+        if let Some(idx) = self.viewer.tabs.iter().position(|t| t.file_path == tab_path) {
+            self.viewer.active_tab = Some(idx);
+            return;
+        }
+
         let contents = match self.ssh_read_file(remote_path) {
             Some(c) => c,
             None => {
