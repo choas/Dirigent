@@ -8,9 +8,6 @@ impl DirigentApp {
     /// Drain the agent result channel and update state.
     pub(super) fn process_agent_results(&mut self) {
         let results: Vec<agents::AgentResult> = self.agent_state.rx.try_iter().collect();
-        if results.is_empty() {
-            return;
-        }
 
         for result in results {
             self.process_single_agent_result(result);
