@@ -53,18 +53,21 @@ impl DirigentApp {
         self.set_status_message("SSH disconnected".into());
     }
 
+    // TODO: refactor to a dedicated SSH thread with a channel-based request/response
+    // pattern. ssh2::Session is !Send so we can't move the connection across threads;
+    // the planned approach is to keep the session on its own thread and proxy commands
+    // via mpsc channels. Until then, this blocks the UI during SFTP listing.
     pub(super) fn ssh_list_dir(&mut self, path: &str) {
-        let Some(ref conn) = self.ssh_connection else {
+        if self.ssh_connection.is_none() {
             return;
-        };
-        // We can't move the connection to a thread (it's not Send for ssh2),
-        // so perform SFTP listing on the main thread. For a better UX this
-        // could be refactored to use a dedicated SSH thread with a channel,
-        // but for now synchronous SFTP is acceptable.
-        match conn.list_dir(path) {
+        }
+        self.set_status_message("Listing remote directory…".into());
+        let result = self.ssh_connection.as_ref().unwrap().list_dir(path);
+        match result {
             Ok(entries) => {
                 self.ssh_remote_path = path.to_string();
                 self.ssh_remote_entries = entries;
+                self.set_status_message(String::new());
             }
             Err(e) => {
                 self.set_status_message(format!("SSH list dir failed: {}", e));
