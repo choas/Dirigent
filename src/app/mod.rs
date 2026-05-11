@@ -326,8 +326,8 @@ pub struct DirigentApp {
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
 
-    // Deferred auto-commit: cue_id waiting for AfterRun agents to finish
-    pending_auto_commit: Option<i64>,
+    // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
+    pending_auto_commits: Vec<i64>,
 
     // SSH remote connections (dedicated worker thread)
     ssh_worker: Option<ssh::SshWorkerHandle>,
@@ -737,7 +737,7 @@ impl DirigentApp {
 
             custom_theme_edit: None,
 
-            pending_auto_commit: None,
+            pending_auto_commits: Vec::new(),
 
             ssh_worker: None,
             ssh_remote_entries: Vec::new(),

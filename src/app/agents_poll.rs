@@ -13,15 +13,17 @@ impl DirigentApp {
             self.process_single_agent_result(result);
         }
 
-        if let Some(cue_id) = self.pending_auto_commit {
+        if !self.pending_auto_commits.is_empty() {
             let any_running = self
                 .agent_state
                 .statuses
                 .values()
                 .any(|s| *s == AgentStatus::Running);
             if !any_running {
-                self.pending_auto_commit = None;
-                self.process_commit_review(cue_id);
+                let cue_ids = std::mem::take(&mut self.pending_auto_commits);
+                for cue_id in cue_ids {
+                    self.process_commit_review(cue_id);
+                }
             }
         }
     }

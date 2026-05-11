@@ -33,8 +33,10 @@ impl DirigentApp {
         }
 
         let recent_repos = self.settings.recent_repos.clone();
+        let auto_commit = self.settings.auto_commit;
         self.settings = new_settings;
         self.settings.recent_repos = recent_repos;
+        self.settings.auto_commit = auto_commit;
         self.needs_theme_apply = true;
     }
 

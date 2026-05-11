@@ -828,7 +828,7 @@ impl DirigentApp {
 
         if self.settings.auto_commit {
             if agents_started > 0 {
-                self.pending_auto_commit = Some(result.cue_id);
+                self.pending_auto_commits.push(result.cue_id);
             } else {
                 self.process_commit_review(result.cue_id);
             }
