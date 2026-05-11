@@ -93,7 +93,7 @@ impl SshConnection {
             .or_else(|_| {
                 use std::net::ToSocketAddrs;
                 addr.to_socket_addrs()
-                    .map_err(|e| format!("resolve {}: {}", addr, e))?
+                    .map_err(|e| e.to_string())?
                     .next()
                     .ok_or_else(|| format!("no addresses for {}", addr))
             })
@@ -102,6 +102,8 @@ impl SshConnection {
             .map_err(|e| format!("TCP connect to {}: {}", addr, e))?;
         tcp.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .map_err(|e| format!("set read timeout: {}", e))?;
+        tcp.set_write_timeout(Some(std::time::Duration::from_secs(10)))
+            .map_err(|e| format!("set write timeout: {}", e))?;
 
         let mut session = Session::new().map_err(|e| format!("create SSH session: {}", e))?;
         session.set_tcp_stream(tcp);
