@@ -25,8 +25,9 @@ impl DirigentApp {
                 egui::ScrollArea::vertical()
                     .max_height(200.0)
                     .show(ui, |ui| {
+                        let mut error_text = self.git.push_error_message.clone();
                         ui.add(
-                            egui::TextEdit::multiline(&mut self.git.push_error_message.as_str())
+                            egui::TextEdit::multiline(&mut error_text)
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(f32::INFINITY),
                         );
