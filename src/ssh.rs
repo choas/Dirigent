@@ -23,6 +23,24 @@ pub(crate) struct SshServerConfig {
     pub remote_path: String,
 }
 
+impl SshServerConfig {
+    fn redacted_for_handle(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            auth_method: match &self.auth_method {
+                SshAuthMethod::Password { .. } => SshAuthMethod::Password {
+                    password: "********".into(),
+                },
+                other => other.clone(),
+            },
+            remote_path: self.remote_path.clone(),
+        }
+    }
+}
+
 impl Default for SshServerConfig {
     fn default() -> Self {
         Self {
@@ -292,7 +310,7 @@ pub(crate) fn spawn_ssh_worker(
         let (req_tx, req_rx) = mpsc::channel::<SshRequest>();
         let (resp_tx, resp_rx) = mpsc::channel::<SshResponse>();
         let handle = SshWorkerHandle {
-            config: config.clone(),
+            config: config.redacted_for_handle(),
             tx: req_tx,
             rx: resp_rx,
         };
