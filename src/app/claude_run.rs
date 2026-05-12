@@ -592,6 +592,11 @@ impl DirigentApp {
             self.handle_successful_run(&result);
         }
 
+        // Always refresh git state: even error/rate-limited runs may have
+        // committed or pushed during execution.
+        self.reload_git_info();
+        self.reload_commit_history();
+
         // Flush log to DB and clear tracking state after all consumers have
         // read running_logs (usage-limit check, telemetry, plan path, etc.).
         self.flush_and_clear_tracking(&result);
