@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use super::super::{CueAction, DirigentApp};
+use crate::claude;
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
@@ -299,8 +300,11 @@ impl DirigentApp {
                         .find(|c| c.id == cue_id)
                         .map(|c| c.text.clone())
                         .unwrap_or_default();
-                    let commit_msg =
-                        git::generate_commit_message(&cue_text, exec.response.as_deref());
+                    let extracted = exec
+                        .response
+                        .as_deref()
+                        .and_then(claude::extract_commit_message);
+                    let commit_msg = git::generate_commit_message(&cue_text, extracted.as_deref());
                     self.apply_commit_result(
                         cue_id,
                         git::commit_diff(&self.project_root, diff, &commit_msg),

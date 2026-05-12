@@ -87,10 +87,13 @@ pub(crate) fn build_prompt_with_auto_context(
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.\n\n\
-             When you are done, write a short summary of what you changed and why. \
-             This summary will be used as the commit message body, so make it \
-             descriptive and meaningful (e.g. what was the problem, what was changed, \
-             and why).",
+             When you are done, write a short summary of what you changed and why \
+             wrapped in <commit-message> tags. This will be used as the git commit \
+             message body. Keep it concise and descriptive (what was the problem, \
+             what was changed, and why). Example:\n\n\
+             <commit-message>\nRefactored the auth middleware to validate tokens \
+             before checking permissions, fixing a bug where expired tokens could \
+             bypass access controls.\n</commit-message>",
             USER_TEXT_BEGIN, cue_text, USER_TEXT_END, images_section, auto_ctx_section,
         )
     } else {
@@ -106,10 +109,13 @@ pub(crate) fn build_prompt_with_auto_context(
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
              Do not output a diff — use your tools to edit files in place.\n\n\
-             When you are done, write a short summary of what you changed and why. \
-             This summary will be used as the commit message body, so make it \
-             descriptive and meaningful (e.g. what was the problem, what was changed, \
-             and why).",
+             When you are done, write a short summary of what you changed and why \
+             wrapped in <commit-message> tags. This will be used as the git commit \
+             message body. Keep it concise and descriptive (what was the problem, \
+             what was changed, and why). Example:\n\n\
+             <commit-message>\nRefactored the auth middleware to validate tokens \
+             before checking permissions, fixing a bug where expired tokens could \
+             bypass access controls.\n</commit-message>",
             USER_TEXT_BEGIN,
             cue_text,
             USER_TEXT_END,
@@ -331,10 +337,13 @@ pub(crate) fn build_reply_prompt(
          build on them rather than starting over. \
          Make the requested changes directly by editing the files. \
          Do not output a diff — use your tools to edit files in place.\n\n\
-         When you are done, write a short summary of what you changed and why. \
-         This summary will be used as the commit message body, so make it \
-         descriptive and meaningful (e.g. what was the problem, what was changed, \
-         and why).",
+         When you are done, write a short summary of what you changed and why \
+         wrapped in <commit-message> tags. This will be used as the git commit \
+         message body. Keep it concise and descriptive (what was the problem, \
+         what was changed, and why). Example:\n\n\
+         <commit-message>\nRefactored the auth middleware to validate tokens \
+         before checking permissions, fixing a bug where expired tokens could \
+         bypass access controls.\n</commit-message>",
         original_cue, images_section, context, previous_diff, USER_TEXT_BEGIN, reply, USER_TEXT_END,
     )
 }
@@ -355,6 +364,25 @@ pub(crate) fn extract_user_text_from_prompt(prompt: &str) -> String {
         return rest[..end].trim().to_string();
     }
     prompt.to_string()
+}
+
+/// Extract a commit message from the Claude response.
+///
+/// Looks for `<commit-message>…</commit-message>` tags in the response text.
+/// Returns the inner text trimmed, or `None` if no tags are found.
+pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
+    let start_tag = "<commit-message>";
+    let end_tag = "</commit-message>";
+    let begin = response.rfind(start_tag)?;
+    let content_start = begin + start_tag.len();
+    let rest = &response[content_start..];
+    let end = rest.find(end_tag)?;
+    let msg = rest[..end].trim();
+    if msg.is_empty() {
+        None
+    } else {
+        Some(msg.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -519,5 +547,40 @@ mod tests {
         let (name, rest) = parse_command_prefix("[review]").unwrap();
         assert_eq!(name, "review");
         assert_eq!(rest, "");
+    }
+
+    // -- extract_commit_message --
+
+    #[test]
+    fn extract_commit_message_basic() {
+        let response = "I made the changes.\n\n<commit-message>\nFixed the auth bug by adding token validation.\n</commit-message>";
+        assert_eq!(
+            extract_commit_message(response).unwrap(),
+            "Fixed the auth bug by adding token validation."
+        );
+    }
+
+    #[test]
+    fn extract_commit_message_no_tags() {
+        assert!(extract_commit_message("Just a plain response with no tags.").is_none());
+    }
+
+    #[test]
+    fn extract_commit_message_empty_tags() {
+        assert!(extract_commit_message("<commit-message>\n\n</commit-message>").is_none());
+    }
+
+    #[test]
+    fn extract_commit_message_multiline() {
+        let response = "Done!\n\n<commit-message>\nRefactored auth middleware.\n\nSplit token validation into a separate function\nand added expiry checks.\n</commit-message>\n\nLet me know if you need anything else.";
+        let msg = extract_commit_message(response).unwrap();
+        assert!(msg.contains("Refactored auth middleware."));
+        assert!(msg.contains("added expiry checks."));
+    }
+
+    #[test]
+    fn extract_commit_message_uses_last_occurrence() {
+        let response = "Previously: <commit-message>\nold message\n</commit-message>\n\nUpdated: <commit-message>\nnew message\n</commit-message>";
+        assert_eq!(extract_commit_message(response).unwrap(), "new message");
     }
 }
