@@ -312,6 +312,10 @@ fn run_opencode_provider(
 impl DirigentApp {
     /// Build the initial prompt for a cue, gathering auto-context for Claude provider.
     fn build_initial_prompt(&self, effective_text: &str, cue: &Cue) -> String {
+        if claude::is_import_request(effective_text) {
+            return claude::build_import_prompt(effective_text, &cue.attached_images);
+        }
+
         let want_file = self.settings.auto_context_file;
         let want_diff = self.settings.auto_context_git_diff;
         let auto_context = if want_file || want_diff {
@@ -644,12 +648,18 @@ impl DirigentApp {
         } else if let Some(ref limit_line) = usage_limit_msg {
             self.handle_rate_limit(result, limit_line);
             true
-        } else if result.diff.is_some() {
-            self.handle_run_with_diff(result);
-            false
         } else {
-            self.handle_run_no_changes(result);
-            false
+            let imported = self.extract_imported_cues(result);
+            if !imported.is_empty() {
+                self.handle_import_result(result, &imported);
+                false
+            } else if result.diff.is_some() {
+                self.handle_run_with_diff(result);
+                false
+            } else {
+                self.handle_run_no_changes(result);
+                false
+            }
         }
     }
 
@@ -838,6 +848,75 @@ impl DirigentApp {
                 self.process_commit_review(result.cue_id);
             }
         }
+    }
+
+    /// Check response and running log for structured import data.
+    fn extract_imported_cues(&self, result: &ClaudeResult) -> Vec<claude::ImportedCue> {
+        claude::parse_import_cues(&result.response)
+            .or_else(|| {
+                self.claude
+                    .running_logs
+                    .get(&result.cue_id)
+                    .and_then(|(log, _)| claude::parse_import_cues(log))
+            })
+            .unwrap_or_default()
+    }
+
+    fn handle_import_result(&mut self, result: &ClaudeResult, imported: &[claude::ImportedCue]) {
+        let cue_text = self
+            .cues
+            .iter()
+            .find(|c| c.id == result.cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        let source_label = claude::extract_pr_label(&cue_text);
+
+        let mut count = 0;
+        for item in imported {
+            if item.text.trim().is_empty() {
+                continue;
+            }
+            let source_ref = format!("import:{}", item.id);
+            if self
+                .db
+                .cue_exists_by_source_ref(&source_ref)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if self
+                .db
+                .insert_cue_from_source(
+                    &item.text,
+                    &source_label,
+                    "",
+                    &source_ref,
+                    &item.file_path,
+                    item.line_number,
+                )
+                .is_ok()
+            {
+                count += 1;
+            }
+        }
+
+        let (m_cost, m_dur, m_turns) = (
+            Some(result.metrics.cost_usd),
+            Some(result.metrics.duration_ms),
+            Some(result.metrics.num_turns),
+        );
+        let _ = self.db.complete_execution(
+            result.exec_id,
+            &result.response,
+            None,
+            m_cost,
+            m_dur,
+            m_turns,
+        );
+        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+        let activity = format!("Imported {} cue(s)", count);
+        let _ = self.db.log_activity(result.cue_id, &activity);
+        self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
     }
 
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {
