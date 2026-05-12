@@ -86,7 +86,11 @@ pub(crate) fn build_prompt_with_auto_context(
             "## Task\n\n{}{}{}{}{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
-             Do not output a diff — use your tools to edit files in place.",
+             Do not output a diff — use your tools to edit files in place.\n\n\
+             When you are done, write a short summary of what you changed and why. \
+             This summary will be used as the commit message body, so make it \
+             descriptive and meaningful (e.g. what was the problem, what was changed, \
+             and why).",
             USER_TEXT_BEGIN, cue_text, USER_TEXT_END, images_section, auto_ctx_section,
         )
     } else {
@@ -101,7 +105,11 @@ pub(crate) fn build_prompt_with_auto_context(
              Focus on {} in `{}`.\n{}\n\n\
              ## Instructions\n\n\
              Make the requested changes directly by editing the files. \
-             Do not output a diff — use your tools to edit files in place.",
+             Do not output a diff — use your tools to edit files in place.\n\n\
+             When you are done, write a short summary of what you changed and why. \
+             This summary will be used as the commit message body, so make it \
+             descriptive and meaningful (e.g. what was the problem, what was changed, \
+             and why).",
             USER_TEXT_BEGIN,
             cue_text,
             USER_TEXT_END,
@@ -322,7 +330,11 @@ pub(crate) fn build_reply_prompt(
          Adjust the code based on the feedback above. The previous changes are already applied — \
          build on them rather than starting over. \
          Make the requested changes directly by editing the files. \
-         Do not output a diff — use your tools to edit files in place.",
+         Do not output a diff — use your tools to edit files in place.\n\n\
+         When you are done, write a short summary of what you changed and why. \
+         This summary will be used as the commit message body, so make it \
+         descriptive and meaningful (e.g. what was the problem, what was changed, \
+         and why).",
         original_cue, images_section, context, previous_diff, USER_TEXT_BEGIN, reply, USER_TEXT_END,
     )
 }
