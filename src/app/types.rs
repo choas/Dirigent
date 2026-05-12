@@ -632,3 +632,91 @@ impl GitState {
         false
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn mock_tab(path: &str) -> TabState {
+        TabState {
+            file_path: PathBuf::from(path),
+            content: Vec::new(),
+            scroll_offset: 0.0,
+            selection_start: None,
+            selection_end: None,
+            cue_input: String::new(),
+            cue_images: Vec::new(),
+            symbols: Vec::new(),
+            markdown_blocks: None,
+            markdown_rendered: false,
+            image_data: None,
+            image_texture: None,
+            image_zoom: 1.0,
+        }
+    }
+
+    #[test]
+    fn test_close_tab_middle() {
+        let mut state = CodeViewerState {
+            tabs: vec![mock_tab("a"), mock_tab("b"), mock_tab("c")],
+            active_tab: Some(1), // "b" is active
+            scroll_to_line: None,
+            syntax_theme: egui_extras::syntax_highlighting::CodeTheme::dark(12.0),
+            nav_history: NavigationHistory::new(),
+            quick_open_active: false,
+            quick_open_query: String::new(),
+            quick_open_selected: 0,
+            quick_open_show_ignored: false,
+            show_outline: true,
+            scroll_to_heading: None,
+        };
+
+        state.close_tab(0); // close "a"
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.tabs[0].file_path.to_str().unwrap(), "b");
+        assert_eq!(state.active_tab, Some(0)); // active tab should shift
+    }
+
+    #[test]
+    fn test_close_active_tab() {
+        let mut state = CodeViewerState {
+            tabs: vec![mock_tab("a"), mock_tab("b"), mock_tab("c")],
+            active_tab: Some(1), // "b" is active
+            scroll_to_line: None,
+            syntax_theme: egui_extras::syntax_highlighting::CodeTheme::dark(12.0),
+            nav_history: NavigationHistory::new(),
+            quick_open_active: false,
+            quick_open_query: String::new(),
+            quick_open_selected: 0,
+            quick_open_show_ignored: false,
+            show_outline: true,
+            scroll_to_heading: None,
+        };
+
+        state.close_tab(1); // close "b"
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.tabs[1].file_path.to_str().unwrap(), "c");
+        assert_eq!(state.active_tab, Some(1)); // should now point to "c"
+    }
+
+    #[test]
+    fn test_close_last_tab() {
+        let mut state = CodeViewerState {
+            tabs: vec![mock_tab("a")],
+            active_tab: Some(0),
+            scroll_to_line: None,
+            syntax_theme: egui_extras::syntax_highlighting::CodeTheme::dark(12.0),
+            nav_history: NavigationHistory::new(),
+            quick_open_active: false,
+            quick_open_query: String::new(),
+            quick_open_selected: 0,
+            quick_open_show_ignored: false,
+            show_outline: true,
+            scroll_to_heading: None,
+        };
+
+        state.close_tab(0);
+        assert!(state.tabs.is_empty());
+        assert_eq!(state.active_tab, None);
+    }
+}

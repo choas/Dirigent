@@ -12,11 +12,15 @@ impl DirigentApp {
     ) -> TabBarAction {
         let mut action = TabBarAction::None;
 
-        ui.horizontal(|ui| {
-            for i in 0..self.viewer.tabs.len() {
-                self.render_single_tab(ui, i, i == active_idx, &mut action);
-            }
-        });
+        egui::ScrollArea::horizontal()
+            .id_salt("tab_bar_scroll")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for i in 0..self.viewer.tabs.len() {
+                        self.render_single_tab(ui, i, i == active_idx, &mut action);
+                    }
+                });
+            });
 
         ui.separator();
         action

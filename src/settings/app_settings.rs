@@ -269,7 +269,7 @@ impl Default for Settings {
             opencode_env_vars: String::new(),
             opencode_pre_run_script: String::new(),
             opencode_post_run_script: String::new(),
-            gemini_model: "gemini-2.0-flash".to_string(),
+            gemini_model: "gemini-2.5-flash".to_string(),
             gemini_cli_path: String::new(),
             gemini_extra_args: String::new(),
             gemini_env_vars: String::new(),

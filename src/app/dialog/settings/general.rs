@@ -263,12 +263,11 @@ impl DirigentApp {
     fn render_gemini_model_combo(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
         let models = if self.gemini_models.is_empty() {
             vec![
+                "gemini-3-pro-preview".to_string(),
+                "gemini-3-flash-preview".to_string(),
                 "gemini-2.5-pro".to_string(),
                 "gemini-2.5-flash".to_string(),
-                "gemini-2.0-flash".to_string(),
-                "gemini-2.0-pro".to_string(),
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
             ]
         } else {
             self.gemini_models.clone()
@@ -285,6 +284,11 @@ impl DirigentApp {
                         );
                     }
                 });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.gemini_model)
+                    .desired_width(200.0)
+                    .font(egui::TextStyle::Monospace),
+            );
             if self.gemini_models_loading {
                 ui.spinner();
             } else if ui
