@@ -235,6 +235,7 @@ fn process_event_stream(
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
     let mut metrics = StreamMetrics::default();
+    let mut json_buffer = String::new();
 
     for line_result in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -260,8 +261,8 @@ fn process_event_stream(
         }
 
         let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) else {
-            on_log(&line);
-            on_log("\n");
+            json_buffer.push_str(&line);
+            json_buffer.push('\n');
             continue;
         };
 
@@ -274,7 +275,36 @@ fn process_event_stream(
         );
     }
 
+    if final_result.is_empty() && !json_buffer.is_empty() {
+        if let Ok(blob) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+            handle_json_blob(&blob, &mut final_result, &mut metrics, on_log);
+        } else {
+            on_log(&json_buffer);
+        }
+    }
+
     Ok((final_result, edited_files, metrics))
+}
+
+fn handle_json_blob(
+    blob: &serde_json::Value,
+    final_result: &mut String,
+    metrics: &mut StreamMetrics,
+    on_log: &mut impl FnMut(&str),
+) {
+    if let Some(response) = blob.get("response").and_then(|r| r.as_str()) {
+        on_log(response);
+        on_log("\n");
+        *final_result = response.to_string();
+    }
+    if let Some(turns) = blob
+        .get("stats")
+        .and_then(|s| s.get("tools"))
+        .and_then(|t| t.get("totalCalls"))
+        .and_then(|c| c.as_u64())
+    {
+        metrics.num_turns = turns;
+    }
 }
 
 fn dispatch_event(
@@ -389,6 +419,15 @@ fn is_stderr_noise(line: &str) -> bool {
         return true;
     }
     if trimmed == "{" || trimmed == "}" || trimmed.starts_with("status:") {
+        return true;
+    }
+    if trimmed.contains("YOLO mode is enabled") {
+        return true;
+    }
+    if trimmed.starts_with("Ripgrep is not available") {
+        return true;
+    }
+    if trimmed.starts_with("MCP issues detected") {
         return true;
     }
     false
