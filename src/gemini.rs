@@ -81,12 +81,11 @@ pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
         }
         _ => {
             vec![
+                "gemini-3-pro-preview".to_string(),
+                "gemini-3-flash-preview".to_string(),
                 "gemini-2.5-pro".to_string(),
                 "gemini-2.5-flash".to_string(),
-                "gemini-2.0-flash".to_string(),
-                "gemini-2.0-pro".to_string(),
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
             ]
         }
     }
@@ -378,6 +377,53 @@ fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) -> Option<std::proces
     }
 }
 
+fn is_stderr_noise(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with("(node:") && trimmed.contains("DeprecationWarning") {
+        return true;
+    }
+    if trimmed.starts_with("(Use `node --trace-deprecation") {
+        return true;
+    }
+    if trimmed.starts_with("    at ") || trimmed.starts_with("    at\t") {
+        return true;
+    }
+    if trimmed == "{" || trimmed == "}" || trimmed.starts_with("status:") {
+        return true;
+    }
+    false
+}
+
+fn simplify_stderr_line(line: &str) -> String {
+    if let Some(idx) = line.find("Retrying with backoff") {
+        let prefix = &line[..idx];
+        return format!("{}Retrying…", prefix);
+    }
+    line.to_string()
+}
+
+fn friendly_error_from_stderr(stderr: &str) -> Option<String> {
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("503") && (lower.contains("high demand") || lower.contains("unavailable")) {
+        return Some(
+            "Gemini API is temporarily unavailable (503). The model is experiencing high demand — please try again later.".to_string(),
+        );
+    }
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("quota") {
+        return Some(
+            "Gemini API rate limit exceeded (429). Please wait a moment and try again.".to_string(),
+        );
+    }
+    if lower.contains("401") || lower.contains("unauthorized") || lower.contains("unauthenticated")
+    {
+        return Some(
+            "Gemini API authentication failed. Please check your API key or credentials."
+                .to_string(),
+        );
+    }
+    None
+}
+
 fn check_exit_status<F: FnMut(&str)>(
     exit_status: Option<std::process::ExitStatus>,
     stderr: &str,
@@ -387,6 +433,7 @@ fn check_exit_status<F: FnMut(&str)>(
         return Ok(());
     };
     if !stderr.is_empty() {
+        let display_msg = friendly_error_from_stderr(stderr).unwrap_or_else(|| stderr.to_string());
         let mut log = on_log.lock().unwrap_or_else(|e| {
             eprintln!(
                 "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
@@ -394,7 +441,7 @@ fn check_exit_status<F: FnMut(&str)>(
             );
             e.into_inner()
         });
-        log(&format!("\nError: {}\n", stderr));
+        log(&format!("\nError: {}\n", display_msg));
     }
     Err(GeminiError::NonZeroExit(status))
 }
@@ -444,11 +491,15 @@ pub(crate) fn invoke_gemini_streaming(
         for line in reader.lines() {
             match line {
                 Ok(line) => {
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    log(&line);
-                    log("\n");
                     full_stderr.push_str(&line);
                     full_stderr.push('\n');
+                    if is_stderr_noise(&line) {
+                        continue;
+                    }
+                    let display = simplify_stderr_line(&line);
+                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
+                    log(&display);
+                    log("\n");
                 }
                 Err(e) => {
                     let msg = format!("stderr read error: {e}\n");
