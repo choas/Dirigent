@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::agents::{AgentKind, AgentStatus};
-use crate::settings::SemanticColors;
+use crate::settings::{SemanticColors, VcsBackend};
 
 /// Actions deferred from the menu bar closures.
 #[derive(Default)]
@@ -61,10 +61,15 @@ impl DirigentApp {
     }
 
     fn render_git_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
-        ui.menu_button("Git", |ui| {
+        let menu_label = self.settings.vcs_backend.menu_label();
+        ui.menu_button(menu_label, |ui| {
             if self.git.info.is_none() {
+                let no_repo_msg = match self.settings.vcs_backend {
+                    VcsBackend::Jj => "No jj repository",
+                    VcsBackend::Git => "No git repository",
+                };
                 ui.label(
-                    egui::RichText::new("No git repository")
+                    egui::RichText::new(no_repo_msg)
                         .italics()
                         .color(self.semantic.tertiary_text),
                 );
@@ -113,8 +118,15 @@ impl DirigentApp {
     }
 
     fn render_git_menu_pull_push(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
         let pull_label = if self.git.pulling {
-            "Pulling..."
+            if is_jj {
+                "Fetching..."
+            } else {
+                "Pulling..."
+            }
+        } else if is_jj {
+            "Fetch"
         } else {
             "Pull"
         };

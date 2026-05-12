@@ -22,6 +22,7 @@ mod tasks;
 mod theme;
 mod types;
 pub(crate) mod util;
+mod vcs_dispatch;
 mod workflow_graph;
 mod workflow_run;
 
@@ -87,8 +88,9 @@ use crate::agents::AgentRunState;
 use crate::db::{Cue, CueStatus, Database};
 use crate::file_tree::FileTree;
 use crate::git;
+use crate::jj;
 use crate::lsp::LspManager;
-use crate::settings::{self, CustomTheme, SemanticColors, Settings};
+use crate::settings::{self, CustomTheme, SemanticColors, Settings, VcsBackend};
 use crate::ssh;
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
@@ -470,13 +472,41 @@ impl DirigentApp {
             let file_tree = FileTree::scan(&project_root).ok();
             let cues = db.all_cues_limited_archived(10).unwrap_or_default();
             let archived_cue_count = db.archived_cue_count().unwrap_or(0);
-            let git_info = git::read_git_info(&project_root);
-            let dirty_files = git::get_dirty_files(&project_root);
-            let ahead_of_remote = git::get_ahead_of_remote(&project_root);
-            let commit_history =
-                git::read_commit_history(&project_root, 10_usize.max(ahead_of_remote));
-            let commit_history_total = git::count_commits(&project_root);
-            let worktrees = git::list_worktrees(&project_root).unwrap_or_default();
+            let (git_info, dirty_files, ahead_of_remote) = match settings.vcs_backend {
+                VcsBackend::Jj => {
+                    let jp = &settings.jj_cli_path;
+                    (
+                        jj::jj_read_info(&project_root, jp),
+                        jj::jj_get_dirty_files(&project_root, jp),
+                        jj::jj_get_ahead_of_remote(&project_root, jp),
+                    )
+                }
+                VcsBackend::Git => (
+                    git::read_git_info(&project_root),
+                    git::get_dirty_files(&project_root),
+                    git::get_ahead_of_remote(&project_root),
+                ),
+            };
+            let limit = 10_usize.max(ahead_of_remote);
+            let (commit_history, commit_history_total) = match settings.vcs_backend {
+                VcsBackend::Jj => {
+                    let jp = &settings.jj_cli_path;
+                    (
+                        jj::jj_read_commit_history(&project_root, limit, jp),
+                        jj::jj_count_commits(&project_root, jp),
+                    )
+                }
+                VcsBackend::Git => (
+                    git::read_commit_history(&project_root, limit),
+                    git::count_commits(&project_root),
+                ),
+            };
+            let worktrees = match settings.vcs_backend {
+                VcsBackend::Jj => {
+                    jj::jj_list_workspaces(&project_root, &settings.jj_cli_path).unwrap_or_default()
+                }
+                VcsBackend::Git => git::list_worktrees(&project_root).unwrap_or_default(),
+            };
             (
                 file_tree,
                 cues,

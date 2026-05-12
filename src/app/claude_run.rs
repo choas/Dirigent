@@ -9,8 +9,9 @@ use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
 use crate::gemini;
 use crate::git;
+use crate::jj;
 use crate::opencode;
-use crate::settings::{self, CliProvider, CueCommand};
+use crate::settings::{self, CliProvider, CueCommand, VcsBackend};
 use crate::telemetry;
 
 use super::notifications::send_macos_notification;
@@ -169,6 +170,22 @@ struct RunRequest<'a> {
     config: &'a ProviderConfig,
     cue_id: i64,
     exec_id: i64,
+    vcs_backend: VcsBackend,
+    jj_cli_path: String,
+}
+
+fn vcs_get_working_diff(req: &RunRequest, files: &[String]) -> Option<String> {
+    match req.vcs_backend {
+        VcsBackend::Jj => jj::jj_get_working_diff(req.project_root, files, &req.jj_cli_path),
+        VcsBackend::Git => git::get_working_diff(req.project_root, files),
+    }
+}
+
+fn vcs_get_dirty_files(req: &RunRequest) -> std::collections::HashMap<String, char> {
+    match req.vcs_backend {
+        VcsBackend::Jj => jj::jj_get_dirty_files(req.project_root, &req.jj_cli_path),
+        VcsBackend::Git => git::get_dirty_files(req.project_root),
+    }
 }
 
 /// Run the CLI provider on a background thread and produce a `ClaudeResult`.
@@ -207,7 +224,7 @@ fn run_claude_provider(
             let diff = if response.edited_files.is_empty() {
                 claude::parse_diff_from_response(&response.stdout)
             } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
+                vcs_get_working_diff(req, &response.edited_files)
             };
             ClaudeResult {
                 cue_id: req.cue_id,
@@ -233,10 +250,10 @@ fn run_claude_provider(
 /// since a pre-run baseline snapshot. This avoids capturing pre-existing local
 /// modifications in the fallback diff path.
 fn scoped_working_diff(
-    project_root: &Path,
+    req: &RunRequest,
     baseline_dirty: &std::collections::HashSet<String>,
 ) -> Option<String> {
-    let current_dirty = git::get_dirty_files(project_root);
+    let current_dirty = vcs_get_dirty_files(req);
     let new_files: Vec<String> = current_dirty
         .keys()
         .filter(|f| !baseline_dirty.contains(f.as_str()))
@@ -245,7 +262,7 @@ fn scoped_working_diff(
     if new_files.is_empty() {
         return None;
     }
-    git::get_working_diff(project_root, &new_files)
+    vcs_get_working_diff(req, &new_files)
 }
 
 fn run_gemini_provider(
@@ -253,10 +270,8 @@ fn run_gemini_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    let baseline_dirty: std::collections::HashSet<String> =
+        vcs_get_dirty_files(req).keys().cloned().collect();
 
     let gemini_config = gemini::GeminiRunConfig {
         model: &req.config.model,
@@ -277,9 +292,9 @@ fn run_gemini_provider(
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 gemini::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
+                    .or_else(|| scoped_working_diff(req, &baseline_dirty))
             } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
+                vcs_get_working_diff(req, &response.edited_files)
                     .or_else(|| gemini::parse_diff_from_response(&response.stdout))
             };
             let metrics = claude::RunMetrics {
@@ -316,10 +331,8 @@ fn run_opencode_provider(
     // Snapshot dirty files before the run so we can scope the fallback diff
     // to only files newly changed by this run, avoiding the risk of
     // committing pre-existing local modifications.
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    let baseline_dirty: std::collections::HashSet<String> =
+        vcs_get_dirty_files(req).keys().cloned().collect();
 
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
@@ -340,9 +353,9 @@ fn run_opencode_provider(
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
+                    .or_else(|| scoped_working_diff(req, &baseline_dirty))
             } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
+                vcs_get_working_diff(req, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
             };
             let metrics = claude::RunMetrics {
@@ -421,6 +434,8 @@ impl DirigentApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
         let provider_for_log = provider.clone();
+        let vcs_backend = self.settings.vcs_backend.clone();
+        let jj_cli_path = self.settings.jj_cli_path.clone();
 
         let join_handle = std::thread::spawn(move || {
             let on_log = move |text: &str| {
@@ -437,6 +452,8 @@ impl DirigentApp {
                 config: &config,
                 cue_id,
                 exec_id,
+                vcs_backend: vcs_backend.clone(),
+                jj_cli_path: jj_cli_path.clone(),
             };
             let result = run_provider(&req, on_log, cancel_thread);
             let _ = claude_tx.send(result);

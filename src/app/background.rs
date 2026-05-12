@@ -9,7 +9,6 @@ use super::symbols;
 use super::{
     DirigentApp, ELAPSED_REPAINT, FS_RESCAN_DEBOUNCE, LOG_SYNC_INTERVAL, REPAINT_FAST, REPAINT_SLOW,
 };
-use crate::git;
 use crate::settings;
 
 impl DirigentApp {
@@ -50,8 +49,16 @@ impl DirigentApp {
         self.fs_changed.store(false, Ordering::Relaxed);
         self.last_fs_rescan = std::time::Instant::now();
         self.reload_file_tree();
-        self.git.dirty_files = git::get_dirty_files(&self.project_root);
-        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        self.git.dirty_files = super::vcs_dispatch::get_dirty_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+        );
+        self.git.ahead_of_remote = super::vcs_dispatch::get_ahead_of_remote(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+        );
         if !self.show_settings {
             self.reload_settings_from_disk();
         }

@@ -3,6 +3,7 @@ use eframe::egui;
 use super::super::{icon_small, DirigentApp};
 use crate::agents::{AgentKind, AgentStatus};
 use crate::git;
+use crate::settings::VcsBackend;
 
 /// Return the current process RSS in megabytes (macOS only).
 #[cfg(target_os = "macos")]
@@ -97,19 +98,25 @@ impl DirigentApp {
                 ui.separator();
                 ui.label(egui::RichText::new(summary).monospace().small());
             }
-        } else if ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new("not a git repository \u{2014} click to init")
-                        .monospace()
-                        .small()
-                        .color(self.semantic.tertiary_text),
+        } else {
+            let init_label = match self.settings.vcs_backend {
+                VcsBackend::Jj => "not a jj repository \u{2014} click to init",
+                VcsBackend::Git => "not a git repository \u{2014} click to init",
+            };
+            if ui
+                .add(
+                    egui::Label::new(
+                        egui::RichText::new(init_label)
+                            .monospace()
+                            .small()
+                            .color(self.semantic.tertiary_text),
+                    )
+                    .sense(egui::Sense::click()),
                 )
-                .sense(egui::Sense::click()),
-            )
-            .clicked()
-        {
-            self.git_init_confirm = Some(self.project_root.clone());
+                .clicked()
+            {
+                self.git_init_confirm = Some(self.project_root.clone());
+            }
         }
     }
 

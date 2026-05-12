@@ -7,6 +7,8 @@ use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
 use crate::settings::SemanticColors;
 
+use super::super::vcs_dispatch;
+
 /// Read-only search state shared across diff rendering functions.
 struct SearchState<'a> {
     active: bool,
@@ -538,7 +540,13 @@ impl DirigentApp {
             .flatten()
             .and_then(|e| e.response);
         let commit_msg = git::generate_commit_message(cue_text, log_message.as_deref());
-        match git::commit_diff(&self.project_root, diff_text, &commit_msg) {
+        match vcs_dispatch::commit_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            diff_text,
+            &commit_msg,
+        ) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
                 self.set_status_message(format!("Committed: {}", short));
@@ -563,7 +571,12 @@ impl DirigentApp {
 
     fn handle_diff_reject(&mut self, cue_id: i64, diff_text: &str) {
         let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff_text);
-        match git::revert_files(&self.project_root, &file_paths) {
+        match vcs_dispatch::revert_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &file_paths,
+        ) {
             Ok(()) => {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 let result = self.reload_open_tabs_and_notify_lsp();

@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, DiffColorScheme, FontWeight, ThemeChoice};
+use crate::settings::{CliProvider, DiffColorScheme, FontWeight, ThemeChoice, VcsBackend};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -413,6 +413,40 @@ impl DirigentApp {
     }
 
     fn render_settings_misc_rows(&mut self, ui: &mut egui::Ui) {
+        ui.label("VCS Backend:");
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("vcs_backend_combo")
+                .selected_text(self.settings.vcs_backend.display_name())
+                .show_ui(ui, |ui| {
+                    for backend in VcsBackend::all() {
+                        ui.selectable_value(
+                            &mut self.settings.vcs_backend,
+                            backend.clone(),
+                            backend.display_name(),
+                        );
+                    }
+                });
+            if self.settings.vcs_backend == VcsBackend::Jj && self.settings.jj_cli_path.is_empty() {
+                ui.label(
+                    egui::RichText::new("jj not found on PATH")
+                        .small()
+                        .color(self.semantic.danger),
+                );
+            }
+        });
+        ui.end_row();
+
+        if self.settings.vcs_backend == VcsBackend::Jj {
+            ui.label("jj CLI Path:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.jj_cli_path)
+                    .desired_width(250.0)
+                    .hint_text("not found \u{2014} enter path to jj")
+                    .font(egui::TextStyle::Monospace),
+            );
+            ui.end_row();
+        }
+
         ui.label("Notifications:");
         ui.end_row();
 

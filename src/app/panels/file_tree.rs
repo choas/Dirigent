@@ -6,8 +6,9 @@ use eframe::egui;
 use super::super::{DiffReview, DirigentApp, FONT_SCALE_SUBHEADING};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
-use crate::git;
 use crate::settings::SemanticColors;
+
+use super::super::vcs_dispatch;
 
 /// Bundled context for recursive file-tree rendering, reducing parameter count.
 pub(super) struct FileTreeCtx<'a> {
@@ -349,7 +350,13 @@ impl DirigentApp {
     /// Open a diff review for the given commit.
     fn open_commit_diff_review(&mut self, full_hash: &str, message: &str, body: String) {
         let short_hash = &full_hash[..7.min(full_hash.len())];
-        let diff_text = git::get_commit_diff(&self.project_root, full_hash).unwrap_or_default();
+        let diff_text = vcs_dispatch::get_commit_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            full_hash,
+        )
+        .unwrap_or_default();
         let parsed = diff_view::parse_unified_diff(&diff_text);
         let cue_text = if body.len() > message.len() {
             body

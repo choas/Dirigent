@@ -8,6 +8,7 @@ use crate::git;
 use crate::settings::{CliProvider, SourceKind};
 use crate::telemetry;
 
+use super::super::vcs_dispatch;
 use super::helpers::{build_commit_all_subject, parse_schedule_duration};
 
 impl DirigentApp {
@@ -303,7 +304,13 @@ impl DirigentApp {
                         git::generate_commit_message(&cue_text, exec.response.as_deref());
                     self.apply_commit_result(
                         cue_id,
-                        git::commit_diff(&self.project_root, diff, &commit_msg),
+                        vcs_dispatch::commit_diff(
+                            &self.settings.vcs_backend,
+                            &self.settings.jj_cli_path,
+                            &self.project_root,
+                            diff,
+                            &commit_msg,
+                        ),
                     );
                 } else {
                     self.set_status_message("Nothing to commit — no diff in execution".into());
@@ -329,7 +336,12 @@ impl DirigentApp {
                 let _ = self
                     .db
                     .log_activity(cue_id, &format!("Committed ({})", short));
-                let dirty_count = git::get_dirty_files(&self.project_root).len();
+                let dirty_count = vcs_dispatch::get_dirty_files(
+                    &self.settings.vcs_backend,
+                    &self.settings.jj_cli_path,
+                    &self.project_root,
+                )
+                .len();
                 telemetry::emit_git_commit(&self.project_name(), dirty_count);
             }
             Err(e) => {
@@ -356,7 +368,12 @@ impl DirigentApp {
             Ok(Some(exec)) => {
                 if let Some(ref diff) = exec.diff {
                     let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
-                    match git::revert_files(&self.project_root, &file_paths) {
+                    match vcs_dispatch::revert_files(
+                        &self.settings.vcs_backend,
+                        &self.settings.jj_cli_path,
+                        &self.project_root,
+                        &file_paths,
+                    ) {
                         Ok(()) => true,
                         Err(e) => {
                             self.set_status_message(format!("Revert failed: {}", e));
@@ -430,7 +447,12 @@ impl DirigentApp {
             git::DIRIGENT_FOOTER,
         );
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
-        match git::commit_all(&self.project_root, &commit_msg) {
+        match vcs_dispatch::commit_all(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &commit_msg,
+        ) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
                 let plural = if review_ids.len() == 1 { "" } else { "s" };

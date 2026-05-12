@@ -5,6 +5,7 @@ use eframe::egui;
 use git2::{Repository, RepositoryInitOptions};
 
 use super::super::DirigentApp;
+use crate::settings::VcsBackend;
 
 impl DirigentApp {
     const MACOS_GITIGNORE_ENTRIES: &[&str] = &[
@@ -66,19 +67,36 @@ impl DirigentApp {
             return;
         };
 
+        let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
         let mut dismiss = false;
         let mut do_init = false;
 
-        egui::Window::new("Initialize Git Repository?")
+        let title = if is_jj {
+            "Initialize jj Repository?"
+        } else {
+            "Initialize Git Repository?"
+        };
+
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.label(format!("\"{}\" is not a git repository.", path.display()));
+                let vcs_name = if is_jj { "jj" } else { "git" };
+                ui.label(format!(
+                    "\"{}\" is not a {} repository.",
+                    path.display(),
+                    vcs_name
+                ));
                 ui.add_space(8.0);
-                ui.label("Would you like to run git init?");
+                let init_question = if is_jj {
+                    "Would you like to run jj git init --colocate?"
+                } else {
+                    "Would you like to run git init?"
+                };
+                ui.label(init_question);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Initialize").clicked() {
@@ -91,32 +109,81 @@ impl DirigentApp {
             });
 
         if do_init {
-            let mut opts = RepositoryInitOptions::new();
-            opts.initial_head("main");
-            match Repository::init_opts(&path, &opts) {
-                Ok(_) => {
-                    let gitignore_err = Self::setup_gitignore(&path).err();
-                    self.git_init_confirm = None;
-                    if let Some(e) = gitignore_err {
-                        self.set_status_message(format!(
-                            "Initialized git repo but failed to update .gitignore: {}",
-                            e
-                        ));
-                    } else {
-                        self.set_status_message(format!(
-                            "Initialized git repository at {}",
-                            path.display()
-                        ));
-                    }
-                    self.switch_repo(path);
-                }
-                Err(e) => {
-                    self.git_init_confirm = None;
-                    self.set_status_message(format!("git init failed: {}", e));
-                }
+            if is_jj {
+                self.init_jj_repo(&path);
+            } else {
+                self.init_git_repo(&path);
             }
         } else if dismiss {
             self.git_init_confirm = None;
+        }
+    }
+
+    fn init_git_repo(&mut self, path: &Path) {
+        let mut opts = RepositoryInitOptions::new();
+        opts.initial_head("main");
+        match Repository::init_opts(path, &opts) {
+            Ok(_) => {
+                let gitignore_err = Self::setup_gitignore(path).err();
+                self.git_init_confirm = None;
+                if let Some(e) = gitignore_err {
+                    self.set_status_message(format!(
+                        "Initialized git repo but failed to update .gitignore: {}",
+                        e
+                    ));
+                } else {
+                    self.set_status_message(format!(
+                        "Initialized git repository at {}",
+                        path.display()
+                    ));
+                }
+                self.switch_repo(path.to_path_buf());
+            }
+            Err(e) => {
+                self.git_init_confirm = None;
+                self.set_status_message(format!("git init failed: {}", e));
+            }
+        }
+    }
+
+    fn init_jj_repo(&mut self, path: &Path) {
+        let jj_path = &self.settings.jj_cli_path;
+        let mut cmd = if jj_path.is_empty() {
+            std::process::Command::new("jj")
+        } else {
+            std::process::Command::new(jj_path)
+        };
+        let output = cmd
+            .args(["git", "init", "--colocate"])
+            .current_dir(path)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let gitignore_err = Self::setup_gitignore(path).err();
+                self.git_init_confirm = None;
+                if let Some(e) = gitignore_err {
+                    self.set_status_message(format!(
+                        "Initialized jj repo but failed to update .gitignore: {}",
+                        e
+                    ));
+                } else {
+                    self.set_status_message(format!(
+                        "Initialized jj repository (colocated) at {}",
+                        path.display()
+                    ));
+                }
+                self.switch_repo(path.to_path_buf());
+            }
+            Ok(o) => {
+                self.git_init_confirm = None;
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                self.set_status_message(format!("jj init failed: {}", stderr.trim()));
+            }
+            Err(e) => {
+                self.git_init_confirm = None;
+                self.set_status_message(format!("jj init failed: {}", e));
+            }
         }
     }
 }

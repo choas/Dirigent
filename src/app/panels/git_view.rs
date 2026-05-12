@@ -5,8 +5,9 @@ use eframe::egui;
 use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
-use crate::git;
 use crate::settings::SemanticColors;
+
+use super::super::vcs_dispatch;
 
 use super::super::types::GitViewDiffMode;
 
@@ -211,7 +212,12 @@ impl DirigentApp {
     }
 
     fn open_all_changes_diff(&mut self) {
-        if let Some(diff_text) = git::get_working_diff(&self.project_root, &[]) {
+        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &[],
+        ) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
             self.dismiss_central_overlays();
             self.diff_review = Some(super::super::DiffReview {
