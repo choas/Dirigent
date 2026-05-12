@@ -167,10 +167,19 @@ impl SemanticColors {
         }
     }
 
+    pub fn gemini_color(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(138, 173, 244)
+        } else {
+            egui::Color32::from_rgb(66, 99, 198)
+        }
+    }
+
     pub fn provider_color(&self, provider: &CliProvider) -> egui::Color32 {
         match provider {
             CliProvider::Claude => self.claude_color(),
             CliProvider::OpenCode => self.opencode_color(),
+            CliProvider::Gemini => self.gemini_color(),
         }
     }
 

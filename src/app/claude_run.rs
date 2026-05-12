@@ -7,6 +7,7 @@ use std::time::Instant;
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
+use crate::gemini;
 use crate::git;
 use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand};
@@ -179,6 +180,7 @@ fn run_provider(
     match req.provider {
         CliProvider::Claude => run_claude_provider(req, on_log, cancel),
         CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
+        CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
     }
 }
 
@@ -244,6 +246,66 @@ fn scoped_working_diff(
         return None;
     }
     git::get_working_diff(project_root, &new_files)
+}
+
+fn run_gemini_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send + 'static,
+    cancel: Arc<AtomicBool>,
+) -> ClaudeResult {
+    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
+        .keys()
+        .cloned()
+        .collect();
+
+    let gemini_config = gemini::GeminiRunConfig {
+        model: &req.config.model,
+        cli_path: &req.config.cli_path,
+        extra_args: &req.config.extra_args,
+        env_vars: &req.config.env_vars,
+        pre_run_script: &req.config.pre_run_script,
+        post_run_script: &req.config.post_run_script,
+    };
+    let res = gemini::invoke_gemini_streaming(
+        req.prompt,
+        req.project_root,
+        &gemini_config,
+        on_log,
+        cancel,
+    );
+    match res {
+        Ok(response) => {
+            let diff = if response.edited_files.is_empty() {
+                gemini::parse_diff_from_response(&response.stdout)
+                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
+            } else {
+                git::get_working_diff(req.project_root, &response.edited_files)
+                    .or_else(|| gemini::parse_diff_from_response(&response.stdout))
+            };
+            let metrics = claude::RunMetrics {
+                cost_usd: response.cost_usd.unwrap_or(0.0),
+                duration_ms: response.duration_ms.unwrap_or(0),
+                num_turns: response.num_turns.unwrap_or(0),
+                ..claude::RunMetrics::default()
+            };
+            ClaudeResult {
+                cue_id: req.cue_id,
+                exec_id: req.exec_id,
+                diff,
+                response: response.stdout,
+                error: None,
+                metrics,
+            }
+        }
+        Err(e) => ClaudeResult {
+            cue_id: req.cue_id,
+            exec_id: req.exec_id,
+            diff: None,
+            response: String::new(),
+            error: Some(e.to_string()),
+            metrics: claude::RunMetrics::default(),
+        },
+    }
 }
 
 fn run_opencode_provider(

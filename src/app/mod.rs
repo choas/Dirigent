@@ -222,6 +222,11 @@ pub struct DirigentApp {
     opencode_models_loading: bool,
     opencode_models_rx: mpsc::Receiver<Vec<String>>,
 
+    // Gemini models (cached from CLI)
+    pub(super) gemini_models: Vec<String>,
+    gemini_models_loading: bool,
+    gemini_models_rx: mpsc::Receiver<Vec<String>>,
+
     // Agent run history cleanup tracking
     last_agent_cleanup: Instant,
 
@@ -677,6 +682,10 @@ impl DirigentApp {
             opencode_models: Vec::new(),
             opencode_models_loading: false,
             opencode_models_rx: mpsc::channel().1,
+
+            gemini_models: Vec::new(),
+            gemini_models_loading: false,
+            gemini_models_rx: mpsc::channel().1,
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
             follow_up_queue: HashMap::new(),

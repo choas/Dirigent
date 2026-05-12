@@ -7,6 +7,7 @@ mod db;
 mod diff_view;
 mod error;
 mod file_tree;
+mod gemini;
 mod git;
 mod lsp;
 mod opencode;

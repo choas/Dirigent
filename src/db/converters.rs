@@ -68,6 +68,7 @@ pub(super) fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Executio
     let provider_str: String = row.get(7)?;
     let provider = match provider_str.as_str() {
         "OpenCode" => CliProvider::OpenCode,
+        "Gemini" => CliProvider::Gemini,
         _ => CliProvider::Claude,
     };
     let duration_raw: Option<i64> = row.get(9)?;

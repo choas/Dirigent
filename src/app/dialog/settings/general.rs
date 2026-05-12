@@ -116,6 +116,7 @@ impl DirigentApp {
         match self.settings.cli_provider {
             CliProvider::Claude => self.render_claude_model_combo(ui),
             CliProvider::OpenCode => self.render_opencode_model_combo(ui, refresh_models),
+            CliProvider::Gemini => self.render_gemini_model_combo(ui, refresh_models),
         }
         ui.end_row();
     }
@@ -209,6 +210,9 @@ impl DirigentApp {
             CliProvider::OpenCode => {
                 self.render_settings_opencode_cli_fields(ui);
             }
+            CliProvider::Gemini => {
+                self.render_settings_gemini_cli_fields(ui);
+            }
         }
     }
 
@@ -252,6 +256,79 @@ impl DirigentApp {
             ui,
             "Post-run Script:",
             &mut self.settings.claude_post_run_script,
+            "shell command after run",
+        );
+    }
+
+    fn render_gemini_model_combo(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
+        let models = if self.gemini_models.is_empty() {
+            vec![
+                "gemini-2.5-pro".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-2.0-flash".to_string(),
+                "gemini-2.0-pro".to_string(),
+                "gemini-1.5-pro".to_string(),
+                "gemini-1.5-flash".to_string(),
+            ]
+        } else {
+            self.gemini_models.clone()
+        };
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("gemini_model_combo")
+                .selected_text(&self.settings.gemini_model)
+                .show_ui(ui, |ui| {
+                    for model in &models {
+                        ui.selectable_value(
+                            &mut self.settings.gemini_model,
+                            model.clone(),
+                            model.as_str(),
+                        );
+                    }
+                });
+            if self.gemini_models_loading {
+                ui.spinner();
+            } else if ui
+                .small_button("\u{21BB}")
+                .on_hover_text("Refresh available models from Gemini CLI")
+                .clicked()
+            {
+                *refresh_models = true;
+            }
+        });
+    }
+
+    fn render_settings_gemini_cli_fields(&mut self, ui: &mut egui::Ui) {
+        cli_field(
+            ui,
+            "CLI Path:",
+            &mut self.settings.gemini_cli_path,
+            "not found \u{2014} enter path to gemini",
+        );
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.gemini_extra_args,
+            "e.g. --max-turns 10",
+        );
+
+        ui.label("Default Flags:");
+        ui.label(
+            egui::RichText::new("-y --output-format json --model <model>")
+                .monospace()
+                .weak(),
+        );
+        ui.end_row();
+
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.gemini_pre_run_script,
+            "shell command before run",
+        );
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.gemini_post_run_script,
             "shell command after run",
         );
     }

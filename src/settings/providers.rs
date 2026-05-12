@@ -28,6 +28,7 @@ pub(crate) enum CliProvider {
     #[default]
     Claude,
     OpenCode,
+    Gemini,
 }
 
 impl CliProvider {
@@ -35,11 +36,16 @@ impl CliProvider {
         match self {
             CliProvider::Claude => "Claude",
             CliProvider::OpenCode => "OpenCode",
+            CliProvider::Gemini => "Gemini",
         }
     }
 
     pub fn all() -> &'static [CliProvider] {
-        &[CliProvider::Claude, CliProvider::OpenCode]
+        &[
+            CliProvider::Claude,
+            CliProvider::OpenCode,
+            CliProvider::Gemini,
+        ]
     }
 }
 

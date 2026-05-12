@@ -403,6 +403,25 @@ fn run_workflow_analysis(
             .map_err(|e| format!("OpenCode invocation failed: {}", e))?;
             result.stdout
         }
+        CliProvider::Gemini => {
+            let config = crate::gemini::GeminiRunConfig {
+                model: pf.model,
+                cli_path: pf.cli_path,
+                extra_args: pf.extra_args,
+                env_vars: pf.env_vars,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
+            };
+            let result = crate::gemini::invoke_gemini_streaming(
+                prompt,
+                project_root,
+                &config,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("Gemini invocation failed: {}", e))?;
+            result.stdout
+        }
     };
 
     let (plan, warning) = workflow::parse_workflow_response(&response_text, expected_ids);

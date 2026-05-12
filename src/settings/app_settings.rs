@@ -121,6 +121,19 @@ pub(crate) struct Settings {
     pub opencode_pre_run_script: String,
     #[serde(default)]
     pub opencode_post_run_script: String,
+    pub gemini_model: String,
+    #[serde(default)]
+    pub gemini_cli_path: String,
+    #[serde(default)]
+    pub gemini_extra_args: String,
+    /// Environment variable **names** to forward to the CLI process (one per line).
+    /// Values are resolved from the current environment at runtime — never stored.
+    #[serde(default)]
+    pub gemini_env_vars: String,
+    #[serde(default)]
+    pub gemini_pre_run_script: String,
+    #[serde(default)]
+    pub gemini_post_run_script: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -213,6 +226,14 @@ impl Settings {
                 pre_run_script: &self.opencode_pre_run_script,
                 post_run_script: &self.opencode_post_run_script,
             },
+            CliProvider::Gemini => ProviderFields {
+                model: &self.gemini_model,
+                cli_path: &self.gemini_cli_path,
+                extra_args: &self.gemini_extra_args,
+                env_vars: &self.gemini_env_vars,
+                pre_run_script: &self.gemini_pre_run_script,
+                post_run_script: &self.gemini_post_run_script,
+            },
         }
     }
 }
@@ -248,6 +269,12 @@ impl Default for Settings {
             opencode_env_vars: String::new(),
             opencode_pre_run_script: String::new(),
             opencode_post_run_script: String::new(),
+            gemini_model: "gemini-2.0-flash".to_string(),
+            gemini_cli_path: String::new(),
+            gemini_extra_args: String::new(),
+            gemini_env_vars: String::new(),
+            gemini_pre_run_script: String::new(),
+            gemini_post_run_script: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,
