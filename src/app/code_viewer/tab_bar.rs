@@ -62,30 +62,32 @@ impl DirigentApp {
 
         let tab_resp = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add(egui::Label::new(text).sense(egui::Sense::empty()))
+                let label_resp = ui
+                    .add(egui::Label::new(text).sense(egui::Sense::click()))
                     .on_hover_text(&rel);
-                if ui
+
+                ui.add_space(4.0);
+
+                let close_clicked = ui
                     .add(
-                        egui::Label::new(
-                            egui::RichText::new("\u{00D7}")
-                                .small()
+                        egui::Button::new(
+                            crate::app::icon_small("\u{2715}", self.settings.font_size)
                                 .color(self.semantic.tertiary_text),
                         )
-                        .sense(egui::Sense::click()),
+                        .frame(false),
                     )
                     .on_hover_text("Close tab")
-                    .clicked()
-                {
+                    .clicked();
+
+                if close_clicked {
                     *action = TabBarAction::CloseOne(i);
+                } else if label_resp.clicked() {
+                    *action = TabBarAction::Activate(i);
                 }
             })
         });
 
-        let frame_resp = tab_resp.response.interact(egui::Sense::click());
-        if frame_resp.clicked() {
-            *action = TabBarAction::Activate(i);
-        }
-        self.render_tab_context_menu(&frame_resp, i, action);
+        self.render_tab_context_menu(&tab_resp.response, i, action);
     }
 
     /// Show the right-click context menu on a tab.
