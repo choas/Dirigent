@@ -20,6 +20,8 @@ use crate::settings;
 use helpers::{build_section_header, format_import_message, render_cue_pool_buttons};
 use markdown_import::{parse_markdown_sections, pick_markdown_file};
 
+use std::path::PathBuf;
+
 impl DirigentApp {
     pub(super) fn render_cue_pool(&mut self, ui: &mut egui::Ui) {
         // Clean up expired transition flashes
@@ -31,11 +33,16 @@ impl DirigentApp {
             .min_size(200.0)
             .max_size(500.0)
             .show_inside(ui, |ui| {
-                let (selected_play_prompt, custom_cue_requested, import_requested) =
-                    self.render_cue_pool_header(ui);
+                let (
+                    selected_play_prompt,
+                    custom_cue_requested,
+                    import_requested,
+                    inbox_import_requested,
+                ) = self.render_cue_pool_header(ui);
                 self.handle_playbook_selection(selected_play_prompt);
                 self.handle_custom_cue_request(custom_cue_requested);
                 self.handle_import_request(import_requested);
+                self.handle_inbox_import(inbox_import_requested);
                 self.render_source_filter(ui);
                 let reuse_cue = self.render_prompt_history(ui);
                 self.handle_reuse_cue(reuse_cue);
@@ -84,8 +91,8 @@ impl DirigentApp {
             });
     }
 
-    fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool) {
-        let mut result = (None, false, false);
+    fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool, bool) {
+        let mut result = (None, false, false, false);
         let heading_text = &self.cached_heading_text;
         let font_size = self.settings.font_size;
         ui.horizontal(|ui| {
@@ -95,7 +102,7 @@ impl DirigentApp {
                     .strong(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                result = render_cue_pool_buttons(ui, &self.settings.playbook);
+                result = render_cue_pool_buttons(ui, &self.settings.playbook, &self.inbox_files);
             });
         });
         result
@@ -224,6 +231,55 @@ impl DirigentApp {
             }
         }
         (new_count, updated_count)
+    }
+
+    fn handle_inbox_import(&mut self, requested: bool) {
+        if !requested {
+            return;
+        }
+        let files: Vec<PathBuf> = std::mem::take(&mut self.inbox_files);
+        if files.is_empty() {
+            return;
+        }
+        let mut new_count = 0usize;
+        let mut updated_count = 0usize;
+        for path in &files {
+            let Ok(content) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let text = content.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let source_ref = format!("inbox#{}", path.display());
+            match self.db.cue_exists_by_source_ref(&source_ref) {
+                Ok(true) => {
+                    if self
+                        .db
+                        .update_cue_by_source_ref(&source_ref, &text, "", 0)
+                        .is_ok()
+                    {
+                        updated_count += 1;
+                    }
+                }
+                Ok(false) => {
+                    if self
+                        .db
+                        .insert_cue_from_source(&text, "inbox", "", &source_ref, "", 0)
+                        .is_ok()
+                    {
+                        new_count += 1;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to check inbox source ref {}: {}", source_ref, e);
+                }
+            }
+        }
+        self.reload_cues();
+        self.inbox_files = super::scan_inbox_folder(&self.project_root);
+        let msg = format_import_message(new_count, updated_count, ".Dirigent/inbox");
+        self.set_status_message(msg);
     }
 
     fn render_source_filter(&mut self, ui: &mut egui::Ui) {

@@ -248,6 +248,9 @@ pub struct DirigentApp {
     // Tag input for "Tag All Review" (visible when toggled)
     tag_all_review_input: Option<String>,
 
+    // Inbox folder files (cached, rescanned on fs change)
+    inbox_files: Vec<PathBuf>,
+
     // Lava lamp enlarged toggle
     lava_lamp_big: bool,
 
@@ -523,6 +526,7 @@ impl DirigentApp {
         let initial_has_running = cues.iter().any(|c| c.status == CueStatus::Ready);
         let initial_heading = cue_pool::helpers::build_heading_text(&cues);
         let initial_labels = cue_pool::helpers::collect_unique_labels(&cues, &settings.sources);
+        let initial_inbox_files = scan_inbox_folder(&project_root);
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
@@ -693,6 +697,7 @@ impl DirigentApp {
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),
             tag_all_review_input: None,
+            inbox_files: initial_inbox_files,
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
@@ -949,6 +954,20 @@ impl DirigentApp {
         // But the graph overlay is dismissed so the code viewer becomes visible.
         self.show_workflow_graph = false;
     }
+}
+
+fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {
+    let inbox_dir = project_root.join(".Dirigent").join("inbox");
+    let Ok(entries) = std::fs::read_dir(&inbox_dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort();
+    files
 }
 
 impl eframe::App for DirigentApp {

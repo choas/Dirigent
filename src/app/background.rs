@@ -56,6 +56,7 @@ impl DirigentApp {
             self.reload_settings_from_disk();
         }
         self.reload_open_tabs();
+        self.inbox_files = super::scan_inbox_folder(&self.project_root);
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
     }
 

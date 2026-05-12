@@ -37,10 +37,12 @@ pub(in crate::app) fn build_heading_text(cues: &[Cue]) -> String {
 pub(super) fn render_cue_pool_buttons(
     ui: &mut egui::Ui,
     playbook: &[settings::Play],
-) -> (Option<String>, bool, bool) {
+    inbox_files: &[std::path::PathBuf],
+) -> (Option<String>, bool, bool, bool) {
     let mut selected_play_prompt = None;
     let mut custom_cue_requested = false;
     let mut import_requested = false;
+    let mut inbox_import_requested = false;
 
     let plus_btn = ui.button("+").on_hover_text("Playbook");
     if ui
@@ -49,6 +51,16 @@ pub(super) fn render_cue_pool_buttons(
         .clicked()
     {
         import_requested = true;
+    }
+    if !inbox_files.is_empty() {
+        let label = format!("\u{1F4E5} {}", inbox_files.len());
+        if ui
+            .button(label)
+            .on_hover_text("Import cues from .Dirigent/inbox")
+            .clicked()
+        {
+            inbox_import_requested = true;
+        }
     }
     egui::Popup::menu(&plus_btn)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -69,7 +81,12 @@ pub(super) fn render_cue_pool_buttons(
             }
         });
 
-    (selected_play_prompt, custom_cue_requested, import_requested)
+    (
+        selected_play_prompt,
+        custom_cue_requested,
+        import_requested,
+        inbox_import_requested,
+    )
 }
 
 /// Collect unique source labels from cues and settings.
