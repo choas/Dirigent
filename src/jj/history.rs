@@ -3,6 +3,10 @@ use std::path::Path;
 use crate::git::CommitInfo;
 
 /// Read commit history via `jj log`.
+///
+/// Uses change_id as the primary identifier (stored in `full_hash` and
+/// `parent_hashes`) so that graph computation and diff lookups work with
+/// jj's native revision identifiers.
 pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -> Vec<CommitInfo> {
     let limit_str = limit.to_string();
     let output = super::jj_cmd(jj_path)
@@ -14,13 +18,13 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
             "-T",
             concat!(
                 r#"change_id ++ "\t""#,
-                r#" ++ commit_id ++ "\t""#,
                 r#" ++ description.first_line() ++ "\t""#,
                 r#" ++ author.name() ++ "\t""#,
                 r#" ++ author.timestamp() ++ "\t""#,
                 r#" ++ bookmarks ++ "\t""#,
                 r#" ++ tags ++ "\t""#,
-                r#" ++ parents.map(|p| p.commit_id()).join(",") ++ "\n""#,
+                r#" ++ parents.map(|p| p.change_id()).join(",") ++ "\t""#,
+                r#" ++ if(empty, "empty", "") ++ "\n""#,
             ),
         ])
         .current_dir(path)
@@ -38,6 +42,7 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut result = Vec::new();
+    let mut is_first = true;
 
     for line in stdout.lines() {
         if line.trim().is_empty() {
@@ -49,18 +54,26 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         }
 
         let change_id = parts[0].trim().to_string();
-        let full_hash = parts[1].trim().to_string();
         let short_hash = if change_id.len() >= 7 {
             change_id[..7].to_string()
         } else {
             change_id.clone()
         };
-        let message = parts[2].trim().to_string();
-        let author = parts[3].trim().to_string();
-        let timestamp_str = parts[4].trim();
-        let bookmarks_str = parts[5].trim();
-        let tags_str = parts[6].trim();
-        let parents_str = parts[7].trim();
+        let mut message = parts[1].trim().to_string();
+        let author = parts[2].trim().to_string();
+        let timestamp_str = parts[3].trim();
+        let bookmarks_str = parts[4].trim();
+        let tags_str = parts[5].trim();
+        let parents_str = parts[6].trim();
+        let is_empty = parts[7].trim() == "empty";
+
+        if message.is_empty() {
+            message = "(no description yet)".to_string();
+        }
+
+        let wc_prefix = if is_first { "@ " } else { "" };
+        let empty_suffix = if is_empty { " (empty)" } else { "" };
+        message = format!("{}{}{}", wc_prefix, message, empty_suffix);
 
         let time_ago = parse_jj_timestamp(timestamp_str, now);
 
@@ -91,7 +104,7 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         let is_merge = parent_hashes.len() > 1;
 
         result.push(CommitInfo {
-            full_hash,
+            full_hash: change_id,
             short_hash,
             message,
             body: String::new(),
@@ -102,6 +115,7 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
             tag_labels,
             is_merge,
         });
+        is_first = false;
     }
 
     result

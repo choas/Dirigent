@@ -8,6 +8,8 @@ use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
 use crate::settings::SemanticColors;
 
+use crate::settings::VcsBackend;
+
 use super::super::vcs_dispatch;
 
 /// Bundled context for recursive file-tree rendering, reducing parameter count.
@@ -247,8 +249,13 @@ impl DirigentApp {
         } else {
             String::new()
         };
+        let log_name = match self.settings.vcs_backend {
+            VcsBackend::Jj => "jj Log",
+            VcsBackend::Git => "Git Log",
+        };
         let header_text = format!(
-            "Git Log ({}/{}){}",
+            "{} ({}/{}){}",
+            log_name,
             self.git.commit_history.len(),
             self.git.commit_history_total,
             ahead_label
