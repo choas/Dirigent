@@ -35,6 +35,32 @@ impl DiffColorScheme {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum RunningAnimation {
+    Off,
+    #[default]
+    LavaLamp,
+    ClaudeCodeName,
+}
+
+impl RunningAnimation {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            RunningAnimation::Off => "Off",
+            RunningAnimation::LavaLamp => "Lava Lamp",
+            RunningAnimation::ClaudeCodeName => "Claude Code",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [RunningAnimation] {
+        &[
+            RunningAnimation::Off,
+            RunningAnimation::LavaLamp,
+            RunningAnimation::ClaudeCodeName,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum FontWeight {
     Light,
     #[default]
@@ -139,8 +165,10 @@ pub(crate) struct Settings {
     pub notify_sound: bool,
     #[serde(default = "default_true")]
     pub notify_popup: bool,
-    #[serde(default = "default_true")]
-    pub lava_lamp_enabled: bool,
+    #[serde(default)]
+    pub running_animation: RunningAnimation,
+    #[serde(default)]
+    pub claude_code_display_name: String,
     #[serde(default)]
     pub diff_color_scheme: DiffColorScheme,
     #[serde(default = "default_font_family")]
@@ -278,7 +306,8 @@ impl Default for Settings {
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,
-            lava_lamp_enabled: true,
+            running_animation: RunningAnimation::LavaLamp,
+            claude_code_display_name: String::new(),
             diff_color_scheme: DiffColorScheme::default(),
             font_family: default_font_family(),
             font_size: default_font_size(),

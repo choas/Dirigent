@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, DiffColorScheme, FontWeight, ThemeChoice};
+use crate::settings::{CliProvider, DiffColorScheme, FontWeight, RunningAnimation, ThemeChoice};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -424,12 +424,29 @@ impl DirigentApp {
         ui.checkbox(&mut self.settings.notify_popup, "Show macOS notification");
         ui.end_row();
 
-        ui.label("Lava Lamp:");
-        ui.checkbox(
-            &mut self.settings.lava_lamp_enabled,
-            "Show lava lamp while running",
-        );
+        ui.label("Animation:");
+        egui::ComboBox::from_id_salt("running_animation_combo")
+            .selected_text(self.settings.running_animation.display_name())
+            .show_ui(ui, |ui| {
+                for anim in RunningAnimation::all() {
+                    ui.selectable_value(
+                        &mut self.settings.running_animation,
+                        anim.clone(),
+                        anim.display_name(),
+                    );
+                }
+            });
         ui.end_row();
+
+        if self.settings.running_animation == RunningAnimation::ClaudeCodeName {
+            ui.label("  Name:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.claude_code_display_name)
+                    .desired_width(160.0)
+                    .hint_text("optional"),
+            );
+            ui.end_row();
+        }
 
         ui.label("Diff Colors:");
         egui::ComboBox::from_id_salt("diff_color_combo")

@@ -358,7 +358,9 @@ impl DirigentApp {
     }
 
     fn render_lava_lamp(&mut self, ui: &mut egui::Ui, panel_rect: egui::Rect) {
-        if !self.settings.lava_lamp_enabled {
+        use crate::settings::RunningAnimation;
+
+        if self.settings.running_animation == RunningAnimation::Off {
             return;
         }
         if !self.cached_has_running_cue {
@@ -366,23 +368,46 @@ impl DirigentApp {
         }
         let margin = 8.0;
         let scale = if self.lava_lamp_big { 3.0 } else { 1.0 };
-        let (lamp_w, lamp_h) = super::lava_lamp::size(scale);
-        let origin = egui::pos2(
-            panel_rect.right() - lamp_w - margin,
-            panel_rect.bottom() - lamp_h - margin,
-        );
-        let lamp_rect = egui::Rect::from_min_size(origin, egui::vec2(lamp_w, lamp_h));
-        let resp = ui.allocate_rect(lamp_rect, egui::Sense::click());
-        if resp.clicked() {
-            self.lava_lamp_big = !self.lava_lamp_big;
+        let is_dark = self.settings.theme.is_dark();
+        let accent = self.semantic.accent;
+
+        match self.settings.running_animation {
+            RunningAnimation::LavaLamp => {
+                let (w, h) = super::lava_lamp::size(scale);
+                let origin = egui::pos2(
+                    panel_rect.right() - w - margin,
+                    panel_rect.bottom() - h - margin,
+                );
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(w, h));
+                let resp = ui.allocate_rect(rect, egui::Sense::click());
+                if resp.clicked() {
+                    self.lava_lamp_big = !self.lava_lamp_big;
+                }
+                super::lava_lamp::paint_at(ui.painter(), ui.ctx(), origin, accent, is_dark, scale);
+            }
+            RunningAnimation::ClaudeCodeName => {
+                let name = &self.settings.claude_code_display_name;
+                let (w, h) = super::claude_code_name::size(scale, name);
+                let origin = egui::pos2(
+                    panel_rect.right() - w - margin,
+                    panel_rect.bottom() - h - margin,
+                );
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(w, h));
+                let resp = ui.allocate_rect(rect, egui::Sense::click());
+                if resp.clicked() {
+                    self.lava_lamp_big = !self.lava_lamp_big;
+                }
+                super::claude_code_name::paint_at(
+                    ui.painter(),
+                    ui.ctx(),
+                    origin,
+                    accent,
+                    is_dark,
+                    scale,
+                    name,
+                );
+            }
+            RunningAnimation::Off => {}
         }
-        super::lava_lamp::paint_at(
-            ui.painter(),
-            ui.ctx(),
-            origin,
-            self.semantic.accent,
-            self.settings.theme.is_dark(),
-            scale,
-        );
     }
 }

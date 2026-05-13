@@ -1,5 +1,6 @@
 mod agents_poll;
 mod background;
+mod claude_code_name;
 mod claude_run;
 mod code_viewer;
 mod cue_pool;
