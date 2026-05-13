@@ -42,13 +42,44 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
     Ok(format!("Fetched ({})", summary))
 }
 
+/// Read bookmarks for a given revision (e.g. `@`, `@-`).
+fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> {
+    let output = super::jj_cmd(jj_path)
+        .args(["log", "-r", rev, "--no-graph", "-T", "bookmarks"])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            raw.split_whitespace()
+                .map(|s| s.trim_end_matches('*').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Describe the current working-copy commit and create a new empty change.
 /// This is the jj equivalent of `git add -A && git commit -m "..."`.
+///
+/// After committing, any bookmarks on the parent (`@-` before the commit,
+/// which becomes `@--` after) are advanced to the newly committed change
+/// (`@-` after the commit). This mimics git's branch-advancement behaviour.
 pub(crate) fn jj_commit_all(
     repo_path: &Path,
     commit_message: &str,
     jj_path: &str,
 ) -> crate::error::Result<String> {
+    // Before committing, check whether @ already carries a bookmark.
+    // If not, remember the parent's bookmarks so we can advance them.
+    let wc_bookmarks = bookmarks_for_rev(repo_path, "@", jj_path);
+    let parent_bookmarks = if wc_bookmarks.is_empty() {
+        bookmarks_for_rev(repo_path, "@-", jj_path)
+    } else {
+        Vec::new()
+    };
+
     // `jj commit` describes the current change and creates a new empty child.
     let output = super::jj_cmd(jj_path)
         .args(["commit", "-m", commit_message])
@@ -83,6 +114,15 @@ pub(crate) fn jj_commit_all(
     } else {
         "unknown".to_string()
     };
+
+    // Advance the parent's bookmarks to the committed change so the
+    // bookmark tracks forward, matching git's branch behaviour.
+    for bm in &parent_bookmarks {
+        let _ = super::jj_cmd(jj_path)
+            .args(["bookmark", "set", bm, "-r", "@-"])
+            .current_dir(repo_path)
+            .output();
+    }
 
     Ok(change_id)
 }

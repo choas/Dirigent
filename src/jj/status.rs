@@ -26,11 +26,34 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
 
-    let branch = lines
+    let mut branch = lines
         .first()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "(no bookmark)".to_string());
+        .unwrap_or_default();
+
+    // If @ has no bookmark, check the parent — after `jj commit` the
+    // bookmark lives on @- and the new @ is an empty child without one.
+    if branch.is_empty() {
+        let parent_out = super::jj_cmd(jj_path)
+            .args(["log", "-r", "@-", "--no-graph", "-T", "bookmarks"])
+            .current_dir(path)
+            .output()
+            .ok();
+        if let Some(po) = parent_out {
+            if po.status.success() {
+                let raw = String::from_utf8_lossy(&po.stdout);
+                let parent_bm = raw.trim().to_string();
+                if !parent_bm.is_empty() {
+                    branch = parent_bm;
+                }
+            }
+        }
+    }
+
+    if branch.is_empty() {
+        branch = "(no bookmark)".to_string();
+    }
 
     let change_id = lines
         .get(1)
