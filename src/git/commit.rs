@@ -254,43 +254,78 @@ pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
 /// Max length for including a log message in the commit body.
 const MAX_LOG_MESSAGE_LEN: usize = 500;
 
-/// Generate a conventional commit message from cue text.
+/// Generate a conventional commit message from the CLI-generated commit
+/// message and/or cue text.
 ///
-/// Format: `type: description\n\n[body]\n\nDirigent: https://github.com/choas/Dirigent`
+/// When `cli_message` is provided (extracted from `<commit-message>` tags),
+/// it drives both the subject line and message body.  The cue text is
+/// appended so the original user intent is preserved in the commit.
 ///
-/// When `log_message` is provided and not too large, it is appended to the body.
-pub(crate) fn generate_commit_message(cue_text: &str, log_message: Option<&str>) -> String {
-    let commit_type = detect_commit_type(cue_text);
-    let raw_desc = strip_type_prefix(cue_text);
-    let description = format_description(raw_desc);
-
-    // Build subject line within 72-char limit.
-    let prefix = format!("{}: ", commit_type);
-    let max_desc = 72 - prefix.len();
-    let subject_desc = if description.len() > max_desc {
-        format!(
-            "{}...",
-            crate::app::truncate_str(&description, max_desc - 3)
-        )
-    } else {
-        description.clone()
-    };
-
-    let subject = format!("{}{}", prefix, subject_desc);
-
-    let log_body = log_message
+/// Format: `type: title\n\n[cli body]\n\nCue: cue_text\n\nDirigent: …`
+pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>) -> String {
+    let cli_body = cli_message
         .map(|m| m.trim())
         .filter(|t| !t.is_empty() && t.len() <= MAX_LOG_MESSAGE_LEN);
 
-    let msg = match (cue_text.len() > 68, log_body) {
-        (true, Some(log)) => format!(
-            "{}\n\n{}\n\n{}\n\n{}",
-            subject, cue_text, log, DIRIGENT_FOOTER
-        ),
-        (true, None) => format!("{}\n\n{}\n\n{}", subject, cue_text, DIRIGENT_FOOTER),
-        (false, Some(log)) => format!("{}\n\n{}\n\n{}", subject, log, DIRIGENT_FOOTER),
-        (false, None) => format!("{}\n\n{}", subject, DIRIGENT_FOOTER),
+    let (subject, body_parts) = if let Some(cli) = cli_body {
+        let first_line = cli.lines().next().unwrap_or(cli);
+        let commit_type = detect_commit_type(first_line);
+        let raw_desc = strip_type_prefix(first_line);
+        let description = format_description(raw_desc);
+
+        let prefix = format!("{}: ", commit_type);
+        let max_desc = 72 - prefix.len();
+        let subject_desc = if description.len() > max_desc {
+            format!(
+                "{}...",
+                crate::app::truncate_str(&description, max_desc - 3)
+            )
+        } else {
+            description
+        };
+        let subject = format!("{}{}", prefix, subject_desc);
+
+        let mut parts = Vec::new();
+        // Include the full CLI message as body when it spans multiple lines.
+        let remaining: String = cli.lines().skip(1).collect::<Vec<_>>().join("\n");
+        let remaining = remaining.trim();
+        if !remaining.is_empty() {
+            parts.push(remaining.to_string());
+        }
+        parts.push(format!("Cue: {}", cue_text));
+
+        (subject, parts)
+    } else {
+        let commit_type = detect_commit_type(cue_text);
+        let raw_desc = strip_type_prefix(cue_text);
+        let description = format_description(raw_desc);
+
+        let prefix = format!("{}: ", commit_type);
+        let max_desc = 72 - prefix.len();
+        let subject_desc = if description.len() > max_desc {
+            format!(
+                "{}...",
+                crate::app::truncate_str(&description, max_desc - 3)
+            )
+        } else {
+            description
+        };
+        let subject = format!("{}{}", prefix, subject_desc);
+
+        let mut parts = Vec::new();
+        if cue_text.len() > 68 {
+            parts.push(cue_text.to_string());
+        }
+
+        (subject, parts)
     };
+
+    let mut sections = vec![subject.clone()];
+    for p in &body_parts {
+        sections.push(p.clone());
+    }
+    sections.push(DIRIGENT_FOOTER.to_string());
+    let msg = sections.join("\n\n");
 
     // Validate with commitlint-rs — log any issues for diagnostics.
     let violations = lint_commit_message(&msg);
@@ -604,21 +639,32 @@ mod tests {
     }
 
     #[test]
-    fn generate_commit_message_with_log() {
+    fn generate_commit_message_with_cli_message() {
         let msg = generate_commit_message("Fix typo", Some("Fixed a typo in the README file"));
-        assert!(msg.starts_with("fix: fix typo"));
-        assert!(msg.contains("Fixed a typo in the README file"));
+        // Subject derived from CLI message, not cue text
+        assert!(msg.starts_with("fix: fixed a typo in the README file"));
+        assert!(msg.contains("Cue: Fix typo"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
         assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
-    fn generate_commit_message_skips_large_log() {
-        let large_log = "x".repeat(501);
-        let msg = generate_commit_message("Fix typo", Some(&large_log));
-        assert!(!msg.contains(&large_log));
+    fn generate_commit_message_cli_multiline() {
+        let cli = "Added new button component\n\nThis adds a reusable button with variants.";
+        let msg = generate_commit_message("add a button", Some(cli));
+        assert!(msg.starts_with("feat: added new button component"));
+        assert!(msg.contains("This adds a reusable button with variants."));
+        assert!(msg.contains("Cue: add a button"));
+        assert!(msg.ends_with(DIRIGENT_FOOTER));
+    }
+
+    #[test]
+    fn generate_commit_message_skips_large_cli() {
+        let large_cli = "x".repeat(501);
+        let msg = generate_commit_message("Fix typo", Some(&large_cli));
+        assert!(!msg.contains(&large_cli));
         let parts: Vec<&str> = msg.split("\n\n").collect();
-        assert_eq!(parts.len(), 2); // subject + footer only, no log body
+        assert_eq!(parts.len(), 2); // subject + footer only, no cli body
     }
 
     // --- lint_commit_message ---

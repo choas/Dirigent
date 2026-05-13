@@ -2,6 +2,7 @@ use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_LG};
 use crate::agents::AgentTrigger;
+use crate::claude;
 use crate::db::CueStatus;
 use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
@@ -545,13 +546,14 @@ impl DirigentApp {
     }
 
     fn handle_diff_accept(&mut self, cue_id: i64, diff_text: &str, cue_text: &str) {
-        let log_message = self
+        let extracted = self
             .db
             .get_latest_execution(cue_id)
             .ok()
             .flatten()
-            .and_then(|e| e.response);
-        let commit_msg = git::generate_commit_message(cue_text, log_message.as_deref());
+            .and_then(|e| e.response)
+            .and_then(|r| claude::extract_commit_message(&r));
+        let commit_msg = git::generate_commit_message(cue_text, extracted.as_deref());
         match git::commit_diff(&self.project_root, diff_text, &commit_msg) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
