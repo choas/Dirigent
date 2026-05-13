@@ -301,7 +301,10 @@ impl DirigentApp {
                 for (idx, commit) in self.git.commit_history.iter().enumerate() {
                     let is_unpushed = idx < ahead;
                     let graph_row = self.git.graph_rows.get(idx);
-                    let highlight_lane = lineage.as_ref().filter(|l| l.rows[idx]).map(|l| l.lane);
+                    let highlight_lane = lineage
+                        .as_ref()
+                        .filter(|l| l.rows.get(idx).copied().unwrap_or(false))
+                        .map(|l| l.lane);
                     let (clicked, hovered) = render_commit_row(
                         ui,
                         &CommitRowParams {
