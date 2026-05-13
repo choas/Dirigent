@@ -13,7 +13,7 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
             "@",
             "--no-graph",
             "-T",
-            r#"separate("\n", bookmarks, change_id.shortest(7), description.first_line())"#,
+            r#"bookmarks ++ "\n" ++ change_id.shortest(7) ++ "\n" ++ description.first_line()"#,
         ])
         .current_dir(path)
         .output()
