@@ -15,6 +15,7 @@ pub(crate) struct CommitInfo {
     pub branch_labels: Vec<String>,
     pub tag_labels: Vec<String>,
     pub is_merge: bool,
+    pub is_working_copy: bool,
 }
 
 pub(crate) fn read_commit_history(path: &Path, limit: usize) -> Vec<CommitInfo> {
@@ -112,6 +113,7 @@ fn commit_to_info(
         branch_labels,
         tag_labels,
         is_merge,
+        is_working_copy: false,
     })
 }
 

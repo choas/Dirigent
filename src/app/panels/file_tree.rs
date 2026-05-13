@@ -652,7 +652,9 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let dot = if params.is_unpushed { "\u{25CF} " } else { "" };
     let label = format!("{}{} {}", dot, params.commit.short_hash, msg);
 
-    let text_color = if params.is_unpushed {
+    let text_color = if params.commit.is_working_copy {
+        params.semantic.accent
+    } else if params.is_unpushed {
         ui.visuals().warn_fg_color
     } else {
         ui.visuals().text_color()

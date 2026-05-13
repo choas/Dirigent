@@ -114,6 +114,7 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
             branch_labels,
             tag_labels,
             is_merge,
+            is_working_copy: is_first,
         });
         is_first = false;
     }
