@@ -278,6 +278,7 @@ impl DirigentApp {
             diff,
             cue_text: text,
             commit_hash: None,
+            commit_author: None,
             parsed,
             view_mode: DiffViewMode::Inline,
             read_only,

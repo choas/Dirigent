@@ -67,6 +67,7 @@ impl DirigentApp {
         let diff_text = review.diff.clone();
         let cue_text = review.cue_text.clone();
         let commit_hash = review.commit_hash.clone();
+        let commit_author = review.commit_author.clone();
         let parsed = review.parsed.clone();
         let view_mode = review.view_mode;
         let read_only = review.read_only;
@@ -97,6 +98,7 @@ impl DirigentApp {
                 prompt_expanded,
                 &cue_text,
                 commit_hash.as_deref(),
+                commit_author.as_deref(),
             );
             ui.separator();
 
@@ -196,6 +198,7 @@ impl DirigentApp {
         prompt_expanded: bool,
         cue_text: &str,
         commit_hash: Option<&str>,
+        commit_author: Option<&str>,
     ) {
         if prompt_expanded {
             ui.group(|ui| {
@@ -209,6 +212,17 @@ impl DirigentApp {
                         if ui.button(hash).on_hover_text("Copy commit ID").clicked() {
                             ui.ctx().copy_text(hash.to_string());
                         }
+                    });
+                    ui.add_space(4.0);
+                }
+                if let Some(author) = commit_author {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Author:")
+                                .color(sem.secondary_text)
+                                .strong(),
+                        );
+                        ui.label(egui::RichText::new(author).color(sem.secondary_text));
                     });
                     ui.add_space(4.0);
                 }

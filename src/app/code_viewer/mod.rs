@@ -323,6 +323,7 @@ impl DirigentApp {
                 diff: diff_text,
                 cue_text: format!("Uncommitted changes: {}", rel_path),
                 commit_hash: None,
+                commit_author: None,
                 parsed,
                 view_mode: DiffViewMode::Inline,
                 read_only: true,

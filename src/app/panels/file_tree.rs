@@ -260,14 +260,17 @@ impl DirigentApp {
         .default_open(self.git.show_log)
         .show(ui, |ui| self.render_git_log_entries(ui));
         self.git.show_log = header_resp.fully_open();
-        if let Some(Some((full_hash, message, body))) = header_resp.body_returned {
-            self.open_commit_diff_review(&full_hash, &message, body);
+        if let Some(Some((full_hash, message, body, author))) = header_resp.body_returned {
+            self.open_commit_diff_review(&full_hash, &message, body, &author);
         }
     }
 
     /// Render individual commit entries inside the git log scroll area.
-    fn render_git_log_entries(&mut self, ui: &mut egui::Ui) -> Option<(String, String, String)> {
-        let mut clicked_commit: Option<(String, String, String)> = None;
+    fn render_git_log_entries(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> Option<(String, String, String, String)> {
+        let mut clicked_commit: Option<(String, String, String, String)> = None;
         let mut load_more = false;
 
         // Precompute graph column width: each lane = 12px, cap at 6 lanes.
@@ -318,6 +321,7 @@ impl DirigentApp {
                             commit.full_hash.clone(),
                             commit.message.clone(),
                             commit.body.clone(),
+                            commit.author.clone(),
                         ));
                     }
                     if hovered {
@@ -347,7 +351,13 @@ impl DirigentApp {
     }
 
     /// Open a diff review for the given commit.
-    fn open_commit_diff_review(&mut self, full_hash: &str, message: &str, body: String) {
+    fn open_commit_diff_review(
+        &mut self,
+        full_hash: &str,
+        message: &str,
+        body: String,
+        author: &str,
+    ) {
         let short_hash = &full_hash[..7.min(full_hash.len())];
         let diff_text = git::get_commit_diff(&self.project_root, full_hash).unwrap_or_default();
         let parsed = diff_view::parse_unified_diff(&diff_text);
@@ -362,6 +372,7 @@ impl DirigentApp {
             diff: diff_text,
             cue_text,
             commit_hash: Some(full_hash.to_string()),
+            commit_author: Some(author.to_string()),
             parsed,
             view_mode: DiffViewMode::Inline,
             read_only: true,

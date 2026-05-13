@@ -46,6 +46,7 @@ pub(super) struct DiffReview {
     pub(super) diff: String,
     pub(super) cue_text: String,
     pub(super) commit_hash: Option<String>,
+    pub(super) commit_author: Option<String>,
     pub(super) parsed: ParsedDiff,
     pub(super) view_mode: DiffViewMode,
     pub(super) read_only: bool,
