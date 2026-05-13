@@ -638,8 +638,7 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let text_x = row_rect.left() + params.graph_col_width + 2.0;
     let text_y = row_rect.center().y;
 
-    let author_overhead = 3 + params.commit.author.len(); // " - {author}"
-    let msg_budget = params.max_msg_chars.saturating_sub(author_overhead).max(10);
+    let msg_budget = params.max_msg_chars.max(10);
     let msg = if params.commit.message.len() > msg_budget + 3 {
         format!(
             "{}...",
@@ -649,10 +648,7 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
         params.commit.message.clone()
     };
     let dot = if params.is_unpushed { "\u{25CF} " } else { "" };
-    let label = format!(
-        "{}{} {} - {}",
-        dot, params.commit.short_hash, msg, params.commit.author
-    );
+    let label = format!("{}{} {}", dot, params.commit.short_hash, msg);
 
     let text_color = if params.is_unpushed {
         ui.visuals().warn_fg_color
