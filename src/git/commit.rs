@@ -286,12 +286,8 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let subject = format!("{}{}", prefix, subject_desc);
 
         let mut parts = Vec::new();
-        // Include the full CLI message as body when it spans multiple lines.
-        let remaining: String = cli.lines().skip(1).collect::<Vec<_>>().join("\n");
-        let remaining = remaining.trim();
-        if !remaining.is_empty() {
-            parts.push(remaining.to_string());
-        }
+        // Include the full CLI message in the body.
+        parts.push(cli.to_string());
         parts.push(format!("Cue: {}", cue_text));
 
         (subject, parts)
@@ -643,6 +639,8 @@ mod tests {
         let msg = generate_commit_message("Fix typo", Some("Fixed a typo in the README file"));
         // Subject derived from CLI message, not cue text
         assert!(msg.starts_with("fix: fixed a typo in the README file"));
+        // Full CLI message preserved in body
+        assert!(msg.contains("Fixed a typo in the README file"));
         assert!(msg.contains("Cue: Fix typo"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
         assert!(lint_commit_message(&msg).is_empty());
@@ -653,7 +651,9 @@ mod tests {
         let cli = "Added new button component\n\nThis adds a reusable button with variants.";
         let msg = generate_commit_message("add a button", Some(cli));
         assert!(msg.starts_with("feat: added new button component"));
-        assert!(msg.contains("This adds a reusable button with variants."));
+        // Full CLI message (title + body) preserved in body section
+        assert!(msg
+            .contains("Added new button component\n\nThis adds a reusable button with variants."));
         assert!(msg.contains("Cue: add a button"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
     }
