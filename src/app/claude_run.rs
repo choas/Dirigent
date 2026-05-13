@@ -995,20 +995,28 @@ impl DirigentApp {
             m_dur,
             m_turns,
         );
+        let has_question = claude::response_has_question(&result.response);
         let preview = self.cue_preview(result.cue_id);
-        self.set_status_message(format!(
-            "Claude completed but no file changes detected for \"{}\"",
-            preview
-        ));
-        // Moving to Done even when Claude produced no file changes is intentional:
-        // the AI examined the cue, decided nothing needed changing, and that
-        // counts as "addressed."  The cue should not stay in Review or loop
-        // back to Inbox — the human can always re-open it from Done if they
-        // disagree with the AI's assessment.
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-        let _ = self
-            .db
-            .log_activity(result.cue_id, "Run completed — no changes");
+        if has_question {
+            self.set_status_message(format!("Claude is asking a question about \"{}\"", preview));
+            let _ = self.db.update_cue_has_question(result.cue_id, true);
+            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+            let _ = self
+                .db
+                .log_activity(result.cue_id, "Run completed — question pending");
+            self.reply_inputs
+                .entry(result.cue_id)
+                .or_insert_with(String::new);
+        } else {
+            self.set_status_message(format!(
+                "Claude completed but no file changes detected for \"{}\"",
+                preview
+            ));
+            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+            let _ = self
+                .db
+                .log_activity(result.cue_id, "Run completed — no changes");
+        }
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.

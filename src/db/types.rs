@@ -108,6 +108,8 @@ pub(crate) struct Cue {
     pub tag: Option<String>,
     /// Path to a Claude Code plan file (set when ExitPlanMode is detected in output).
     pub plan_path: Option<String>,
+    /// True when Claude's response contained a question requiring user input.
+    pub has_question: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

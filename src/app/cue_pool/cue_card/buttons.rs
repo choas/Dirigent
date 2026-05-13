@@ -235,7 +235,11 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let fs = self.settings.font_size;
-        ui.label(icon("\u{2713}", fs).color(self.semantic.success));
+        if cue.has_question {
+            ui.label(icon("?", fs).color(self.semantic.warning).strong());
+        } else {
+            ui.label(icon("\u{2713}", fs).color(self.semantic.success));
+        }
         if cue.plan_path.is_some() {
             self.render_plan_buttons(ui, cue, actions, fs);
         }

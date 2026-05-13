@@ -95,6 +95,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_cue_has_question(&self, id: i64, has_question: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cues SET has_question = ?1 WHERE id = ?2",
+            params![has_question as i64, id],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_cue(&self, id: i64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(

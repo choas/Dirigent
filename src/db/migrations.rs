@@ -200,6 +200,7 @@ impl Database {
         self.add_column("cues", "attached_images", "TEXT")?;
         self.add_column("cues", "tag", "TEXT")?;
         self.add_column("cues", "plan_path", "TEXT")?;
+        self.add_column("cues", "has_question", "INTEGER DEFAULT 0")?;
 
         // Column migrations — executions
         self.rename_column("executions", "comment_id", "cue_id")?;

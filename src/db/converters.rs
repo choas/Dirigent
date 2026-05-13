@@ -35,10 +35,11 @@ const COL_SOURCE_REF: usize = 8;
 const COL_ATTACHED_IMAGES: usize = 9;
 const COL_TAG: usize = 10;
 const COL_PLAN_PATH: usize = 11;
+const COL_HAS_QUESTION: usize = 12;
 
 /// Column list for SELECT queries that feed into [`row_to_cue`].
 pub(super) const CUE_COLUMNS: &str =
-    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path";
+    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path, has_question";
 
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(COL_STATUS)?;
@@ -60,6 +61,7 @@ pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         attached_images,
         tag: row.get(COL_TAG)?,
         plan_path: row.get(COL_PLAN_PATH)?,
+        has_question: row.get::<_, Option<i64>>(COL_HAS_QUESTION)?.unwrap_or(0) != 0,
     })
 }
 

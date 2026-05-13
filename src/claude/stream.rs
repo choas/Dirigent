@@ -398,6 +398,23 @@ pub(crate) fn detect_usage_limit(text: &str) -> Option<&str> {
     None
 }
 
+/// Check whether the CLI response text contains a question directed at the user.
+/// Looks for question marks at the end of substantive sentences and common
+/// question-asking patterns (e.g. "Could you…?", "Should I…?").
+pub(crate) fn response_has_question(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    for line in trimmed.lines().rev().take(20) {
+        let line = line.trim();
+        if line.ends_with('?') && line.len() > 5 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Handle a "rate_limit_event": log the retry delay if present.
 fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&str)) {
     if let Some(seconds) = event
@@ -451,6 +468,27 @@ mod tests {
         }
         log.push_str("\u{2192} ExitPlanMode\n");
         assert!(extract_plan_path(&log).is_none());
+    }
+
+    #[test]
+    fn response_has_question_detects_questions() {
+        assert!(response_has_question(
+            "I noticed a few things.\nWhich approach would you prefer?"
+        ));
+        assert!(response_has_question(
+            "Should I refactor the module or just fix the bug?"
+        ));
+        assert!(response_has_question("Could you clarify what you mean?"));
+    }
+
+    #[test]
+    fn response_has_question_ignores_non_questions() {
+        assert!(!response_has_question("Done. No changes needed."));
+        assert!(!response_has_question("The code looks correct as written."));
+        assert!(!response_has_question(""));
+        assert!(!response_has_question("   "));
+        // Very short fragments with ? should not trigger (len <= 5)
+        assert!(!response_has_question("ok?"));
     }
 
     #[test]
