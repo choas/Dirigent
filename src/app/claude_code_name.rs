@@ -9,6 +9,7 @@ const PX: f32 = 3.0;
 
 const W: usize = 9;
 const H: usize = 11;
+const ARM_LEN: usize = 2;
 
 // 1 = body, 2 = eye
 const CHARACTER: [[u8; W]; H] = [
@@ -60,7 +61,7 @@ fn compute_colors(accent: egui::Color32, is_dark: bool, breath: f32) -> BodyColo
 
 pub fn size(scale: f32, display_name: &str) -> (f32, f32) {
     let px = PX * scale;
-    let char_w = W as f32 * px;
+    let char_w = (W + 2 * ARM_LEN) as f32 * px;
     let char_h = H as f32 * px;
     let text_h = if display_name.is_empty() {
         0.0
@@ -91,12 +92,12 @@ pub fn paint_at(
     let eyes_closed = blink_cycle > 3.8 && blink_cycle < 3.95;
 
     let mut char_origin = origin;
+    let full_char_w = (W + 2 * ARM_LEN) as f32 * px;
 
     if !display_name.is_empty() {
         let text_size = 10.0 * scale;
-        let char_w = W as f32 * px;
         let text_w = display_name.len() as f32 * 6.0 * scale;
-        let total_w = char_w.max(text_w);
+        let total_w = full_char_w.max(text_w);
         let text_x = origin.x + (total_w - text_w) / 2.0;
         painter.text(
             egui::pos2(text_x, origin.y),
@@ -106,8 +107,10 @@ pub fn paint_at(
             colors.text,
         );
         char_origin.y += text_size + 4.0 * scale;
-        let char_w_total = W as f32 * px;
-        char_origin.x = origin.x + (total_w - char_w_total) / 2.0;
+        let body_w = W as f32 * px;
+        char_origin.x = origin.x + (total_w - body_w) / 2.0;
+    } else {
+        char_origin.x = origin.x + ARM_LEN as f32 * px;
     }
 
     // Gentle bob
@@ -135,6 +138,42 @@ pub fn paint_at(
             );
             painter.rect_filled(px_rect, 0.0, color);
         }
+    }
+
+    // Animated arms waving in opposite phases
+    let arm_speed = 2.5;
+    let left_wave = (t * arm_speed).sin();
+    let right_wave = (t * arm_speed + std::f32::consts::PI).sin();
+    let shoulder_row = 7.0;
+
+    for seg in 0..ARM_LEN {
+        let factor = (seg + 1) as f32 / ARM_LEN as f32;
+
+        let left_y_off = left_wave * px * 1.5 * factor;
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(
+                    char_origin.x - (seg as f32 + 1.0) * px,
+                    char_origin.y + shoulder_row * px + left_y_off,
+                ),
+                egui::vec2(px, px),
+            ),
+            0.0,
+            colors.body,
+        );
+
+        let right_y_off = right_wave * px * 1.5 * factor;
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(
+                    char_origin.x + W as f32 * px + seg as f32 * px,
+                    char_origin.y + shoulder_row * px + right_y_off,
+                ),
+                egui::vec2(px, px),
+            ),
+            0.0,
+            colors.body,
+        );
     }
 
     ctx.request_repaint_after(std::time::Duration::from_millis(50));
