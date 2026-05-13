@@ -1,21 +1,19 @@
 # How to use Dirigent with jj (Jujutsu)
 
-## The jj philosophy in 30 seconds
+## Why jj?
 
-In jj, **your working copy is always a commit**. There is no staging area, no
-`git add`, no "uncommitted changes" in the git sense. Every edit you make is
-instantly part of the current working-copy commit. When you're ready to move on,
-you *describe* that commit and start a new one on top.
+jj is a modern version control system that removes friction from your workflow.
+The biggest difference from git: **your working copy is always a commit**. There
+is no staging area, no `git add`, no "uncommitted changes." Every edit you make
+is instantly part of the current working-copy commit. When you're ready to move
+on, you *describe* that commit and start a new one on top.
 
-This changes everything about how you think about version control:
+This means fewer steps, fewer mistakes, and you can never lose uncommitted work.
 
-| Git                          | jj                                      |
+| Git concept                  | jj equivalent                            |
 |------------------------------|------------------------------------------|
-| Edit files, then stage+commit| Edit files -- they're already committed  |
-| `git add -A && git commit`   | `jj commit -m "..."`                     |
 | Branches                     | Bookmarks                                |
-| `git checkout <branch>`      | `jj new <bookmark>`                      |
-| `git stash`                  | Not needed -- just `jj new` and come back|
+| `git add` + `git commit`    | `jj commit` (one step, no staging)       |
 | `git push`                   | `jj git push`                            |
 | `git pull`                   | `jj git fetch`                           |
 | Worktrees                    | Workspaces                               |
@@ -36,239 +34,234 @@ be found automatically.
 
 ---
 
-## How "committing" works in jj
+## Your day-to-day workflow in Dirigent
 
-This is the most important conceptual shift:
+This section walks through the full cycle: starting work, making changes,
+committing, pushing, and creating a PR. Everything described here is what you
+see and do inside Dirigent -- jj commands are shown in parentheses for context.
 
-### In git (the old way)
-```
-1. Edit files
-2. git add file1.rs file2.rs     # stage
-3. git commit -m "my change"     # commit
-```
+### 1. Start from a bookmark
 
-### In jj (the jj way)
-```
-1. Edit files                     # already part of the working-copy commit (@)
-2. jj commit -m "my change"      # describe @ and create a new empty child
-```
+Use the **branch/bookmark picker** in the repo bar and select where you want to
+start (e.g. `main`). Dirigent creates a new working-copy commit on top of that
+bookmark. You're ready to edit.
 
-`jj commit` does two things:
-- Sets the description (commit message) on the *current* working-copy commit
-- Creates a **new empty change** on top, which becomes your new working copy
+> Under the hood: `jj new main`
 
-After `jj commit`, your working directory is clean -- not because changes were
-"saved away", but because you're now sitting on a fresh, empty commit. Your
-previous work is the parent (`@-`).
+### 2. Create a cue and let Claude work
 
-### In Dirigent
+Create a cue describing what you want changed. Run Claude on it. Claude edits
+files -- those edits are immediately part of your working-copy commit. There is
+no staging step. The **file tree** shows dirty-file indicators and the **status
+bar** shows counts like `M3 A2 D1` (3 modified, 2 added, 1 deleted).
 
-When you click **Commit** in Dirigent (or a cue triggers a commit):
-- Dirigent calls `jj commit -m "<message>"`
-- The status bar updates to show the new (empty) working-copy change ID
-- The history view shows your described commit as `@-`
+The cue moves to **Review** status with a diff preview so you can inspect
+Claude's changes.
 
-There is no "stage files" step. All your edits are already in the commit.
+### 3. Commit
 
----
+When you're happy with the changes, click **Commit** (or use the commit action
+on the cue). Enter a commit message. Dirigent does three things:
 
-## Core workflows
+1. Finalizes the commit message on the current working-copy commit
+2. Creates a new empty commit on top, which becomes your new working copy
+3. Automatically advances any bookmarks so they follow your latest work
 
-### Starting fresh work
+After the commit:
+- The **status bar** updates to show the new change ID
+- The **history panel** shows your described commit with its bookmark label
+- The cue moves from **Review** to **Done**
+- The status message confirms: "Committed: a1b2c3d"
 
-You're always on a working-copy commit. Just start editing. If you want to
-start from a specific bookmark:
+Your working directory now looks clean -- not because changes disappeared, but
+because you're sitting on a fresh, empty commit. Your work is safely in the
+parent commit.
 
-```
-jj new main
-```
+### 4. Keep going -- or push
 
-In Dirigent: use the **branch/bookmark switcher** in the repo bar and select a
-bookmark. Dirigent calls `jj new <bookmark>` under the hood.
+You have two choices:
 
-### Saving your work (committing)
+**Keep working:** Create another cue, let Claude make more changes, commit
+again. Each commit stacks on top of the previous one. The history panel shows
+the growing chain. You can make as many commits as you like before pushing.
 
-```
-jj commit -m "add user authentication"
-```
+**Push to the remote:** Click **Push** in the toolbar. Dirigent pushes all
+bookmarks that track a remote. The status bar shows "Pushing..." during the
+operation, then confirms with "Pushed (updated 1 bookmark)". The history panel
+refreshes to show the remote tracking state.
 
-In Dirigent: enter your commit message and click **Commit**. That's it.
+### 5. Create a pull request
 
-Your work is now a described commit. You're on a new empty change, ready for
-the next task.
-
-### Checking what changed
-
-```
-jj diff              # what changed in the working copy vs parent
-jj log               # commit history
-jj status            # summary of working-copy changes
-```
-
-In Dirigent: the **file tree** shows dirty-file indicators, the **status bar**
-shows modified/added/deleted counts, and the **history panel** shows the full
-log.
-
-### Pushing to a remote
-
-```
-jj git push
-```
-
-In Dirigent: click **Push** in the toolbar. Dirigent calls `jj git push` which
-pushes all bookmarks that track a remote.
-
-You need to have a bookmark pointing at the change you want to push. If your
-working-copy commit has no bookmark, create one first:
-
-```
-jj bookmark create my-feature -r @-
-```
-
-### Fetching from a remote
-
-```
-jj git fetch
-```
-
-In Dirigent: click **Pull/Fetch** in the toolbar.
-
-### Undoing / reverting files
-
-```
-jj restore --from @- path/to/file.rs
-```
-
-This restores `file.rs` from the parent commit. In Dirigent, use the
-**Revert** action on individual files.
-
-### Describing without advancing (amend the message)
-
-If you want to set or change the description of the *current* working-copy
-commit without creating a new child:
-
-```
-jj describe -m "work in progress on auth"
-```
-
-This is useful when you want to annotate what you're doing but aren't done yet.
+Click **Create PR**. Dirigent automatically pushes first (if needed), then
+opens the PR creation dialog with a pre-filled branch name and title. After
+creation, the PR URL appears in the status bar.
 
 ---
 
-## Key jj concepts mapped to Dirigent
+## What happens after multiple commits?
 
-### The `@` symbol
-
-`@` always means "the current working-copy commit." In Dirigent's history view,
-this is the topmost entry. Its change ID is shown in the status bar.
-
-### Change IDs vs commit hashes
-
-jj has two identifiers per commit:
-- **Change ID** -- stable across rewrites (e.g. `kkmpptqz`). This is jj's
-  primary identifier
-- **Commit hash** -- like git's SHA, changes when a commit is rewritten
-
-Dirigent shows the short change ID (7 chars) in the history panel and status
-bar, similar to how git shows short SHAs.
-
-### Bookmarks (not branches)
-
-jj calls branches **bookmarks**. They are lightweight pointers, like git
-branches, but they don't move automatically with new commits. You explicitly
-set them:
+A typical session looks like this:
 
 ```
-jj bookmark set my-feature        # point bookmark at current change
-jj bookmark create my-feature     # create new bookmark at current change
+You start from main
+  |
+  v
+Cue 1: "add user authentication"
+  -> Claude edits files
+  -> You review the diff
+  -> You commit: "add user authentication"         <- commit a1b2c3d
+  |
+  v
+Cue 2: "add tests for auth module"
+  -> Claude edits files
+  -> You review the diff
+  -> You commit: "add tests for auth module"       <- commit e4f5g6h
+  |
+  v
+Cue 3: "fix edge case in token refresh"
+  -> Claude edits files
+  -> You review the diff
+  -> You commit: "fix edge case in token refresh"  <- commit i7j8k9l
+  |
+  v
+You push -- all three commits go to the remote
+  |
+  v
+You create a PR
 ```
 
-In Dirigent, the **branch/bookmark list** shows all bookmarks.
+Each commit is a clean, described unit of work. The history panel shows the
+full chain with the commit graph. Your bookmark advances automatically with
+each commit, so when you push, all commits behind that bookmark go to the
+remote.
 
-### Workspaces (not worktrees)
-
-jj workspaces are like git worktrees -- separate working directories sharing
-the same repo. In Dirigent, the **Worktree Manager** creates and removes
-workspaces via `jj workspace add` and `jj workspace forget`.
+**You don't need to push after every commit.** Commits are local. Push when
+you're ready to share -- after one commit or after ten.
 
 ---
 
-## The jj workflow compared to typical git
+## Why push?
 
-### Git workflow
-```
-git checkout -b feature
-# edit files
-git add .
-git commit -m "implement feature"
-# edit more
-git add .
-git commit -m "fix tests"
-git push -u origin feature
-```
+Commits in jj are local until you push. They are safe (jj records every
+operation and you can undo anything with `jj op restore`), but they only exist
+on your machine.
 
-### jj workflow
-```
-jj new main                              # start from main
-jj bookmark create feature               # name this line of work
-# edit files (already in working copy)
-jj commit -m "implement feature"         # describe and advance
-# edit more (already in new working copy)
-jj commit -m "fix tests"                 # describe and advance
-jj git push                              # push tracked bookmarks
-```
+Push when you want to:
+- **Share your work** -- make it visible to collaborators
+- **Create a PR** -- Dirigent pushes automatically when you create a PR
+- **Back up** -- a remote is your off-machine safety net
+- **Trigger CI** -- most CI systems run on push events
 
-### Dirigent + jj workflow
-```
-1. Select "main" bookmark in Dirigent's branch picker
-2. Edit files in your editor (Dirigent watches for changes)
-3. Click Commit, type "implement feature"
-4. Continue editing
-5. Click Commit, type "fix tests"
-6. Click Push
-```
+You need a **bookmark** pointing at your commits for push to work. Dirigent
+handles this automatically: when you commit, it advances the bookmark to your
+latest commit. If you started from `main` without creating a bookmark first,
+you'll need to create one before pushing (via `jj bookmark create my-feature`
+in the terminal).
 
 ---
 
-## Tips for git users switching to jj
+## Understanding the status bar
 
-1. **Stop thinking about staging.** There is no staging area. All edits are
-   part of the current commit. This feels weird for a day, then it feels
-   freeing.
+The status bar gives you a quick read on the state of your repo:
 
-2. **`jj commit` != `git commit`.** In jj, `commit` means "finalize the
-   description and move on." In git, `commit` means "save staged changes."
-   The mental model is different even though the command name is the same.
+| What you see         | What it means                                         |
+|----------------------|-------------------------------------------------------|
+| `◉ my-feature`      | Active bookmark name                                  |
+| `M3 A2 D1`          | 3 modified, 2 added, 1 deleted files in working copy  |
+| `↑2`                | 2 commits ahead of the remote (not yet pushed)        |
+| Change ID on hover  | The 7-character jj change ID + description            |
 
-3. **You can't lose work as easily.** jj's operation log (`jj op log`) records
-   every repo mutation. You can undo any operation with `jj op restore`.
+When the status bar shows `↑2`, that means you have 2 local commits that
+haven't been pushed yet. This is your signal that a push is available.
 
-4. **Conflicts are not emergencies.** jj can store conflicted states in
-   commits. You can commit, rebase, and push conflicted code (to save
-   progress) and resolve later.
+---
 
-5. **Bookmarks are explicit.** Unlike git branches, bookmarks don't auto-advance
-   when you commit. Set them intentionally with `jj bookmark set`.
+## Understanding the history panel
 
-6. **No detached HEAD anxiety.** In jj, you're always on a change. There's no
-   concept of being "detached" -- every working copy is a first-class commit.
+The history panel shows your commit history as a graph, similar to `jj log`.
+Each entry shows:
+
+- **Change ID** (7 characters) -- jj's stable identifier for the commit
+- **Commit message** -- the first line of the description
+- **Author and time** -- who and when
+- **Bookmark labels** -- colored tags showing which bookmarks point here
+- **`@` marker** -- indicates the current working-copy commit (the topmost entry)
+- **(empty)** -- marks commits with no file changes (like your fresh working copy after a commit)
+
+The graph lines show parent-child relationships between commits, so you can see
+how your work branches and merges.
+
+---
+
+## Key differences from the git workflow
+
+### No staging area
+
+In git, you select which files to include in a commit (`git add`). In jj, all
+changes in the working copy are part of the current commit. Dirigent reflects
+this: there is no "stage files" step. When you click Commit, everything goes in.
+
+This feels strange for about a day, then it feels freeing.
+
+### Bookmarks don't auto-advance (but Dirigent handles it)
+
+In raw jj, bookmarks are explicit -- they don't follow new commits the way git
+branches do. Dirigent bridges this gap: after each commit, it automatically
+advances your bookmark to the newly committed change. This gives you the
+familiar git-branch-follows-commits behavior without manual bookmark management.
+
+### You can't lose work
+
+jj's operation log records every repo mutation. If something goes wrong, you
+can undo any operation with `jj op restore`. Conflicts can be stored in commits
+too -- you can commit conflicted code, keep working, and resolve later. There
+is no "detached HEAD" anxiety.
+
+---
+
+## Common tasks
+
+### Revert a file
+
+In the file tree, use the **Revert** action on individual files. This restores
+the file from the parent commit, undoing changes in the working copy.
+
+> Under the hood: `jj restore --from @- path/to/file.rs`
+
+### Switch to a different bookmark
+
+Use the **branch/bookmark picker** in the repo bar. Selecting a bookmark
+creates a new working-copy commit at that bookmark's position.
+
+> Under the hood: `jj new <bookmark>`
+
+### Fetch from the remote
+
+Click **Pull/Fetch** in the toolbar to get the latest changes from the remote.
+
+> Under the hood: `jj git fetch`
+
+### Work on multiple things at once (workspaces)
+
+Use the **Worktree Manager** to create and manage jj workspaces. Each workspace
+is a separate working directory sharing the same repo -- like git worktrees.
+
+> Under the hood: `jj workspace add`, `jj workspace forget`
 
 ---
 
 ## Quick reference
 
-| What you want to do          | jj command                              | Dirigent action           |
-|------------------------------|-----------------------------------------|---------------------------|
-| Start new work from main     | `jj new main`                           | Branch picker > main      |
-| See what changed             | `jj diff`                               | File tree indicators      |
-| Commit current work          | `jj commit -m "msg"`                    | Commit button             |
-| Describe without committing  | `jj describe -m "msg"`                  | --                        |
-| View history                 | `jj log`                                | History panel             |
-| Create a bookmark            | `jj bookmark create name`               | --                        |
-| Push to remote               | `jj git push`                           | Push button               |
-| Fetch from remote            | `jj git fetch`                          | Pull button               |
-| Revert a file                | `jj restore --from @- file`             | Revert action on file     |
-| Undo last operation          | `jj op restore @-`                      | --                        |
-| List workspaces              | `jj workspace list`                     | Worktree Manager          |
-| Create workspace             | `jj workspace add --name X path`        | Worktree Manager > Add    |
-| Switch bookmark              | `jj new <bookmark>`                     | Branch picker             |
+| What you want to do          | Dirigent action                | jj command (FYI)                   |
+|------------------------------|--------------------------------|------------------------------------|
+| Start new work from main     | Branch picker > main           | `jj new main`                      |
+| See what changed             | File tree + status bar         | `jj diff`, `jj status`            |
+| Commit current work          | Commit button + message        | `jj commit -m "msg"`              |
+| View history                 | History panel                  | `jj log`                           |
+| Push to remote               | Push button                    | `jj git push`                      |
+| Fetch from remote            | Pull/Fetch button              | `jj git fetch`                     |
+| Revert a file                | Revert action on file          | `jj restore --from @- file`       |
+| Switch bookmark              | Branch picker                  | `jj new <bookmark>`               |
+| Manage workspaces            | Worktree Manager               | `jj workspace add/forget`          |
+| Create a bookmark            | *(terminal)*                   | `jj bookmark create name`         |
+| Undo last operation          | *(terminal)*                   | `jj op restore @-`                |
