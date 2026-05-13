@@ -84,10 +84,15 @@ impl DirigentApp {
     /// Render the git branch and status summary in the status bar.
     fn render_status_bar_git_info(&mut self, ui: &mut egui::Ui) {
         if let Some(ref info) = self.git.info {
-            let branch_label = ui.label(icon_small(
+            let is_default_branch = info.branch == "main" || info.branch == "master";
+            let mut branch_text = icon_small(
                 &format!("\u{25CF} {}", info.branch),
                 self.settings.font_size,
-            ));
+            );
+            if !is_default_branch {
+                branch_text = branch_text.color(egui::Color32::from_rgb(255, 165, 0));
+            }
+            let branch_label = ui.label(branch_text);
             branch_label.on_hover_text(format!(
                 "{} {}",
                 info.last_commit_hash, info.last_commit_message
