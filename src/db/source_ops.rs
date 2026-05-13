@@ -41,6 +41,28 @@ impl Database {
         }
     }
 
+    /// Get the source_id for a given source_ref (used for checksum comparison).
+    pub fn get_source_id_by_source_ref(&self, source_ref: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source_id FROM cues WHERE source_ref = ?1 LIMIT 1")?;
+        let result = stmt.query_row(params![source_ref], |row| row.get::<_, Option<String>>(0));
+        match result {
+            Ok(id) => Ok(id),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Update source_id for a cue identified by source_ref.
+    pub fn update_source_id_by_source_ref(&self, source_ref: &str, source_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cues SET source_id = ?1 WHERE source_ref = ?2",
+            params![source_id, source_ref],
+        )?;
+        Ok(())
+    }
+
     /// Update text and location of an existing cue identified by source_ref.
     pub fn update_cue_by_source_ref(
         &self,

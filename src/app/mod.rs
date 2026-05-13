@@ -526,7 +526,20 @@ impl DirigentApp {
         let initial_has_running = cues.iter().any(|c| c.status == CueStatus::Ready);
         let initial_heading = cue_pool::helpers::build_heading_text(&cues);
         let initial_labels = cue_pool::helpers::collect_unique_labels(&cues, &settings.sources);
-        let initial_inbox_files = scan_inbox_folder(&project_root);
+        let initial_inbox_files: Vec<PathBuf> = scan_inbox_folder(&project_root)
+            .into_iter()
+            .filter(|path| {
+                let Ok(content) = std::fs::read_to_string(path) else {
+                    return true;
+                };
+                let checksum = compute_file_checksum(content.trim());
+                let source_ref = format!("inbox#{}", path.display());
+                match db.get_source_id_by_source_ref(&source_ref) {
+                    Ok(Some(stored)) => stored != checksum,
+                    _ => true,
+                }
+            })
+            .collect();
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
@@ -937,6 +950,23 @@ impl DirigentApp {
         }
     }
 
+    fn scan_and_filter_inbox(&self) -> Vec<PathBuf> {
+        scan_inbox_folder(&self.project_root)
+            .into_iter()
+            .filter(|path| {
+                let Ok(content) = std::fs::read_to_string(path) else {
+                    return true;
+                };
+                let checksum = compute_file_checksum(content.trim());
+                let source_ref = format!("inbox#{}", path.display());
+                match self.db.get_source_id_by_source_ref(&source_ref) {
+                    Ok(Some(stored)) => stored != checksum,
+                    _ => true,
+                }
+            })
+            .collect()
+    }
+
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
     /// so the code viewer becomes visible.
     fn dismiss_central_overlays(&mut self) {
@@ -954,6 +984,13 @@ impl DirigentApp {
         // But the graph overlay is dismissed so the code viewer becomes visible.
         self.show_workflow_graph = false;
     }
+}
+
+fn compute_file_checksum(content: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {

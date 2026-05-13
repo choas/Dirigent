@@ -251,6 +251,7 @@ impl DirigentApp {
             if text.is_empty() {
                 continue;
             }
+            let checksum = super::compute_file_checksum(&text);
             let source_ref = format!("inbox#{}", path.display());
             match self.db.cue_exists_by_source_ref(&source_ref) {
                 Ok(true) => {
@@ -259,13 +260,16 @@ impl DirigentApp {
                         .update_cue_by_source_ref(&source_ref, &text, "", 0)
                         .is_ok()
                     {
+                        let _ = self
+                            .db
+                            .update_source_id_by_source_ref(&source_ref, &checksum);
                         updated_count += 1;
                     }
                 }
                 Ok(false) => {
                     if self
                         .db
-                        .insert_cue_from_source(&text, "inbox", "", &source_ref, "", 0)
+                        .insert_cue_from_source(&text, "inbox", &checksum, &source_ref, "", 0)
                         .is_ok()
                     {
                         new_count += 1;
@@ -277,7 +281,7 @@ impl DirigentApp {
             }
         }
         self.reload_cues();
-        self.inbox_files = super::scan_inbox_folder(&self.project_root);
+        self.inbox_files = self.scan_and_filter_inbox();
         let msg = format_import_message(new_count, updated_count, ".Dirigent/inbox");
         self.set_status_message(msg);
     }
