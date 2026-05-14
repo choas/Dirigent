@@ -1,9 +1,10 @@
 /target
-.DS_Store
 .dirigent/
 .Dirigent/
 .claude/
 analyze_*
+# macOS
+.DS_Store
 Dirigent.app
 .cache
 .env
