@@ -68,7 +68,7 @@ pub fn size(scale: f32, display_name: &str) -> (f32, f32) {
     } else {
         10.0 * scale + 4.0 * scale
     };
-    let w = char_w.max(display_name.len() as f32 * 6.0 * scale);
+    let w = char_w.max(display_name.chars().count() as f32 * 6.0 * scale);
     (w, char_h + text_h)
 }
 
@@ -96,7 +96,7 @@ pub fn paint_at(
 
     if !display_name.is_empty() {
         let text_size = 10.0 * scale;
-        let text_w = display_name.len() as f32 * 6.0 * scale;
+        let text_w = display_name.chars().count() as f32 * 6.0 * scale;
         let total_w = full_char_w.max(text_w);
         let text_x = origin.x + (total_w - text_w) / 2.0;
         painter.text(
