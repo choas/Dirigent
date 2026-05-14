@@ -134,8 +134,8 @@ pub struct DirigentApp {
 
     // Git state
     pub(super) git: GitState,
-    git_status_rx: mpsc::Receiver<(HashMap<String, char>, usize)>,
-    git_status_tx: mpsc::Sender<(HashMap<String, char>, usize)>,
+    git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
+    git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
     // Settings & theme
     settings: Settings,
@@ -879,6 +879,12 @@ impl DirigentApp {
     }
 
     fn reload_cues(&mut self) {
+        let was_ready: std::collections::HashSet<i64> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Ready)
+            .map(|c| c.id)
+            .collect();
         self.cues = self
             .db
             .all_cues_limited_archived(self.archived_cue_limit)
@@ -909,12 +915,11 @@ impl DirigentApp {
         self.logbook_expanded.retain(|id| live_ids.contains(id));
         self.agent_output_expanded
             .retain(|(cue_id, _)| live_ids.contains(cue_id));
-        // Only invalidate activity cache for running cues (they get new data)
-        // and cues no longer in the list. Idle cues keep their cached activity.
         self.activity_cache.retain(|id, _| {
             self.cues
                 .iter()
                 .any(|c| c.id == *id && c.status != CueStatus::Ready)
+                && !was_ready.contains(id)
         });
         // Recompute cue-derived caches (avoids scanning all cues every frame).
         self.cached_has_running_cue = self.cues.iter().any(|c| c.status == CueStatus::Ready);
