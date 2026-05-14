@@ -39,7 +39,7 @@ thread_local! {
         RefCell::new((HashMap::with_capacity(4096), 0));
 }
 
-const MAX_CACHE_ENTRIES: usize = 50_000;
+const MAX_CACHE_ENTRIES: usize = 10_000;
 
 pub(crate) fn clear_highlight_cache() {
     HIGHLIGHT_CACHE.with(|c| {
