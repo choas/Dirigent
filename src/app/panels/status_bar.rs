@@ -211,7 +211,9 @@ impl DirigentApp {
         let mem = get_memory_usage_mb();
         let frame_ms = self.last_frame_time.as_secs_f64() * 1000.0;
         let poll_ms = self.last_poll_time.as_secs_f64() * 1000.0;
-        let render_ms = self.last_render_time.as_secs_f64() * 1000.0;
+        let tree_ms = self.last_render_file_tree_time.as_secs_f64() * 1000.0;
+        let pool_ms = self.last_render_cue_pool_time.as_secs_f64() * 1000.0;
+        let code_ms = self.last_render_code_viewer_time.as_secs_f64() * 1000.0;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(mb) = mem {
                 ui.label(
@@ -231,13 +233,13 @@ impl DirigentApp {
             };
             ui.label(
                 egui::RichText::new(format!(
-                    "{frame_ms:.1} ms (poll {poll_ms:.1} | render {render_ms:.1})"
+                    "{frame_ms:.1} ms  poll {poll_ms:.1} | tree {tree_ms:.1} | pool {pool_ms:.1} | code {code_ms:.1}"
                 ))
                 .monospace()
                 .small()
                 .color(frame_color),
             )
-            .on_hover_text("Frame time: total (poll | render). Budget: 16.6 ms");
+            .on_hover_text("Frame: total ms  poll | file tree | cue pool | code viewer. Budget: 16.6 ms");
         });
     }
 

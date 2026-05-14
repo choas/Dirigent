@@ -280,7 +280,7 @@ pub struct DirigentApp {
     /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
     cue_generation: u64,
     /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
-    cached_lines_with_cues: Option<(String, u64, HashMap<usize, bool>)>,
+    cached_lines_with_cues: Option<(String, u64, std::sync::Arc<HashMap<usize, bool>>)>,
 
     // Prompt history search
     prompt_history_query: String,
@@ -355,6 +355,9 @@ pub struct DirigentApp {
     last_frame_time: Duration,
     last_poll_time: Duration,
     last_render_time: Duration,
+    last_render_file_tree_time: Duration,
+    last_render_cue_pool_time: Duration,
+    last_render_code_viewer_time: Duration,
 }
 
 /// State for the custom theme editor dialog.
@@ -787,6 +790,9 @@ impl DirigentApp {
             last_frame_time: Duration::ZERO,
             last_poll_time: Duration::ZERO,
             last_render_time: Duration::ZERO,
+            last_render_file_tree_time: Duration::ZERO,
+            last_render_cue_pool_time: Duration::ZERO,
+            last_render_code_viewer_time: Duration::ZERO,
         }
     }
 
