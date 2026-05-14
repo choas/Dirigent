@@ -206,22 +206,35 @@ impl DirigentApp {
         }
     }
 
-    /// Render right-aligned info (memory usage) in the status bar.
+    /// Render right-aligned info (frame time, memory usage) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
         let mem = get_memory_usage_mb();
-        if mem.is_some() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(mb) = mem {
-                    ui.label(
-                        egui::RichText::new(format!("{mb} MB"))
-                            .monospace()
-                            .small()
-                            .color(self.semantic.muted_text()),
-                    )
-                    .on_hover_text("Process memory (RSS)");
-                }
-            });
-        }
+        let frame_ms = self.last_frame_time.as_secs_f64() * 1000.0;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(mb) = mem {
+                ui.label(
+                    egui::RichText::new(format!("{mb} MB"))
+                        .monospace()
+                        .small()
+                        .color(self.semantic.muted_text()),
+                )
+                .on_hover_text("Process memory (RSS)");
+            }
+            let frame_color = if frame_ms > 33.0 {
+                self.semantic.danger
+            } else if frame_ms > 16.6 {
+                egui::Color32::from_rgb(255, 165, 0) // orange
+            } else {
+                self.semantic.muted_text()
+            };
+            ui.label(
+                egui::RichText::new(format!("{frame_ms:.1} ms"))
+                    .monospace()
+                    .small()
+                    .color(frame_color),
+            )
+            .on_hover_text("Last frame time (budget: 16.6 ms)");
+        });
     }
 
     /// Render the transient status message with auto-dismiss and fade.

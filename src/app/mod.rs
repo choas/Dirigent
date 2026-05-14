@@ -349,6 +349,9 @@ pub struct DirigentApp {
     ssh_reading_file: Option<String>,
     show_ssh_panel: bool,
     ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
+
+    // Frame timing for status bar display
+    last_frame_time: Duration,
 }
 
 /// State for the custom theme editor dialog.
@@ -777,6 +780,7 @@ impl DirigentApp {
             ssh_reading_file: None,
             show_ssh_panel: false,
             ssh_test_rx: None,
+            last_frame_time: Duration::ZERO,
         }
     }
 
@@ -1098,13 +1102,7 @@ impl eframe::App for DirigentApp {
         // Render all panels and dialogs
         self.render_panels_and_dialogs(ui);
 
-        let frame_elapsed = frame_start.elapsed();
-        if frame_elapsed > Duration::from_millis(32) {
-            eprintln!(
-                "[perf] slow frame: {:.1}ms",
-                frame_elapsed.as_secs_f64() * 1000.0
-            );
-        }
+        self.last_frame_time = frame_start.elapsed();
     }
 }
 
