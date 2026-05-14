@@ -485,8 +485,6 @@ fn render_sbs_file_hunks(
     sep_color: egui::Color32,
 ) {
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-        let pairs = resolve_sbs_pairs(hunk);
-
         egui::Grid::new(format!(
             "sbs_{}_{}_{}",
             file.new_path, hunk_idx, hunk.new_start
@@ -504,8 +502,10 @@ fn render_sbs_file_hunks(
                 dc,
             };
 
-            for (left, right) in &pairs {
-                render_sbs_row(ui, *left, *right, &ctx, sep_color);
+            for (left_idx, right_idx) in &hunk.sbs_pairs {
+                let left = left_idx.map(|i| (i, &hunk.lines[i]));
+                let right = right_idx.map(|i| (i, &hunk.lines[i]));
+                render_sbs_row(ui, left, right, &ctx, sep_color);
                 ui.end_row();
             }
         });
@@ -632,6 +632,7 @@ fn render_sbs_row(
 // ---------------------------------------------------------------------------
 
 /// A side-by-side pair with optional original line indices (borrows from the hunk).
+#[cfg(test)]
 type SbsPair<'a> = (Option<(usize, &'a DiffLine)>, Option<(usize, &'a DiffLine)>);
 
 /// Build index-only side-by-side pairs at parse time (avoids recomputing every frame).
@@ -669,21 +670,6 @@ fn build_sbs_pair_indices(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usiz
     }
 
     pairs
-}
-
-/// Resolve cached index pairs to references for rendering.
-fn resolve_sbs_pairs<'a>(
-    hunk: &'a DiffHunk,
-) -> Vec<SbsPair<'a>> {
-    hunk.sbs_pairs
-        .iter()
-        .map(|(left, right)| {
-            (
-                left.map(|idx| (idx, &hunk.lines[idx])),
-                right.map(|idx| (idx, &hunk.lines[idx])),
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

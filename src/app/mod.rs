@@ -134,6 +134,8 @@ pub struct DirigentApp {
 
     // Git state
     pub(super) git: GitState,
+    git_status_rx: mpsc::Receiver<(HashMap<String, char>, usize)>,
+    git_status_tx: mpsc::Sender<(HashMap<String, char>, usize)>,
 
     // Settings & theme
     settings: Settings,
@@ -518,6 +520,7 @@ impl DirigentApp {
         let (file_tree_error_tx, file_tree_error_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
         let (goto_def_tx, goto_def_rx) = mpsc::channel();
+        let (git_status_tx, git_status_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -589,6 +592,8 @@ impl DirigentApp {
             confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
+            git_status_tx,
+            git_status_rx,
             git: GitState {
                 info: git_info,
                 dirty_files,

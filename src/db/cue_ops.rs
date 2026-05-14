@@ -129,21 +129,13 @@ impl Database {
 
     /// Load all non-archived cues plus the most recent `archived_limit` archived cues.
     pub fn all_cues_limited_archived(&self, archived_limit: usize) -> Result<Vec<Cue>> {
-        let mut cues = Vec::new();
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CUE_COLUMNS} FROM cues WHERE status != 'archived' ORDER BY id"
-        ))?;
-        let rows = stmt.query_map([], row_to_cue)?;
-        for row in rows {
-            cues.push(row?);
-        }
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {CUE_COLUMNS} FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1"
+            "SELECT {CUE_COLUMNS} FROM cues WHERE status != 'archived' \
+             UNION ALL \
+             SELECT * FROM (SELECT {CUE_COLUMNS} FROM cues WHERE status = 'archived' ORDER BY id DESC LIMIT ?1)"
         ))?;
         let rows = stmt.query_map(params![archived_limit as i64], row_to_cue)?;
-        for row in rows {
-            cues.push(row?);
-        }
+        let mut cues: Vec<Cue> = rows.collect::<std::result::Result<_, _>>()?;
         cues.sort_by_key(|c| c.id);
         Ok(cues)
     }

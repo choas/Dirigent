@@ -7,6 +7,11 @@ use eframe::egui;
 use egui_extras::syntax_highlighting::SyntectSettings;
 use syntect::parsing::SyntaxDefinition;
 
+struct CacheEntry {
+    job: egui::text::LayoutJob,
+    generation: u64,
+}
+
 /// Custom `SyntectSettings` that extends syntect's defaults with extra languages
 /// (e.g. Kotlin) that are not shipped in the default Sublime Text syntax pack.
 pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| {
@@ -30,14 +35,18 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
 });
 
 thread_local! {
-    static HIGHLIGHT_CACHE: RefCell<HashMap<u64, egui::text::LayoutJob>> =
-        RefCell::new(HashMap::with_capacity(4096));
+    static HIGHLIGHT_CACHE: RefCell<(HashMap<u64, CacheEntry>, u64)> =
+        RefCell::new((HashMap::with_capacity(4096), 0));
 }
 
 const MAX_CACHE_ENTRIES: usize = 50_000;
 
 pub(crate) fn clear_highlight_cache() {
-    HIGHLIGHT_CACHE.with(|c| c.borrow_mut().clear());
+    HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        inner.0.clear();
+        inner.1 = 0;
+    });
 }
 
 fn cache_key(code: &str, language: &str) -> u64 {
@@ -60,7 +69,15 @@ pub(crate) fn highlight(
 ) -> egui::text::LayoutJob {
     let key = cache_key(code, language);
 
-    let cached = HIGHLIGHT_CACHE.with(|c| c.borrow().get(&key).cloned());
+    let cached = HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        let gen = inner.1;
+        if let Some(entry) = inner.0.get_mut(&key) {
+            entry.generation = gen;
+            return Some(entry.job.clone());
+        }
+        None
+    });
     if let Some(job) = cached {
         return job;
     }
@@ -81,11 +98,17 @@ pub(crate) fn highlight(
     }
 
     HIGHLIGHT_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
+        let mut inner = c.borrow_mut();
+        let (cache, gen) = &mut *inner;
         if cache.len() >= MAX_CACHE_ENTRIES {
-            cache.clear();
+            let cutoff = gen.saturating_sub(*gen / 2);
+            cache.retain(|_, v| v.generation >= cutoff);
         }
-        cache.insert(key, job.clone());
+        *gen += 1;
+        cache.insert(key, CacheEntry {
+            job: job.clone(),
+            generation: *gen,
+        });
     });
 
     job

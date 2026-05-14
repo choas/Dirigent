@@ -52,9 +52,15 @@ impl DirigentApp {
         self.confirm_delete_archived = false;
         self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
-        self.git.dirty_files = git::get_dirty_files(&self.project_root);
-        self.git.recompute_dirty_dirs(&self.project_root);
-        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        {
+            let root = self.project_root.clone();
+            let tx = self.git_status_tx.clone();
+            std::thread::spawn(move || {
+                let dirty = git::get_dirty_files(&root);
+                let ahead = git::get_ahead_of_remote(&root);
+                let _ = tx.send((dirty, ahead));
+            });
+        }
         self.viewer.tabs.clear();
         self.viewer.active_tab = None;
         self.viewer.nav_history = NavigationHistory::new();

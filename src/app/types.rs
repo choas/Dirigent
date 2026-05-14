@@ -146,6 +146,8 @@ pub(super) struct TabState {
     pub(super) image_texture: Option<eframe::egui::TextureHandle>,
     /// Current zoom level for image viewer (1.0 = fit to area).
     pub(super) image_zoom: f32,
+    /// Last known modification time (for skipping unchanged files during reload).
+    pub(super) last_mtime: Option<std::time::SystemTime>,
 }
 
 impl TabState {
@@ -160,6 +162,13 @@ impl TabState {
             return Ok(false);
         }
 
+        let meta = std::fs::metadata(&self.file_path)?;
+        if let Ok(mtime) = meta.modified() {
+            if self.last_mtime == Some(mtime) {
+                return Ok(false);
+            }
+        }
+
         let bytes = std::fs::read(&self.file_path)?;
 
         if bytes.contains(&0) {
@@ -170,6 +179,8 @@ impl TabState {
             .lines()
             .map(String::from)
             .collect();
+
+        self.last_mtime = meta.modified().ok();
 
         if new_content == self.content {
             return Ok(false);
@@ -229,9 +240,11 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
             image_data: Some(color_image),
             image_texture: None,
             image_zoom: 1.0,
+            last_mtime: None,
         });
     }
 
+    let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
     let content = std::fs::read_to_string(path).ok()?;
     let is_md = path
         .extension()
@@ -259,6 +272,7 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         image_data: None,
         image_texture: None,
         image_zoom: 1.0,
+        last_mtime: mtime,
     })
 }
 
@@ -671,6 +685,7 @@ mod tests {
             image_data: None,
             image_texture: None,
             image_zoom: 1.0,
+            last_mtime: None,
         }
     }
 

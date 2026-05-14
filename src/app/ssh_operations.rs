@@ -199,6 +199,7 @@ impl DirigentApp {
             image_data: None,
             image_texture: None,
             image_zoom: 1.0,
+            last_mtime: None,
         };
 
         self.viewer.tabs.push(tab);
