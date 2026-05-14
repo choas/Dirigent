@@ -219,64 +219,77 @@ is no "detached HEAD" anxiety.
 
 ---
 
-## Parallel cues and isolation
+## One workspace per cue
 
-### The problem: shared working copy
+### Every cue gets its own workspace
 
-If you run two cues in parallel -- say, "add authentication" and "add logging" --
-both Claude sessions edit files in the same working copy. When you commit, jj
-captures *everything* in the working copy. If one cue is still running, the
-commit would include its half-finished changes alongside the other cue's
-completed work. That's an inconsistent commit.
-
-This isn't specific to jj -- git has the exact same problem. But jj gives you a
-clean escape hatch: **workspaces**.
-
-### The solution: one workspace per cue
-
-A jj workspace is a separate working directory backed by the same repo. Each
-workspace has its own working-copy commit, so changes in one workspace don't
-bleed into another. This is how Dirigent isolates parallel cues:
+Dirigent creates a dedicated jj workspace for *every* cue -- even when only one
+is running. This keeps the design simple and consistent: the default workspace
+stays clean (it's where you browse code), and each cue's changes are fully
+isolated from the start. There's no special "single cue" vs "parallel cues" mode.
 
 ```
-repo/                      <- workspace "default", cue 1 runs here
-repo-workspace-logging/    <- workspace "logging", cue 2 runs here
+repo/                          <- default workspace (browsing, no cue runs here)
+repo-workspace-add-auth/       <- workspace for cue "add authentication"
+repo-workspace-add-logging/    <- workspace for cue "add logging"
 ```
 
-Each cue edits files in its own workspace. When cue 1 finishes, you commit in
-the default workspace -- only cue 1's changes are included. Cue 2 keeps running
-in its workspace without interference. When cue 2 finishes, you commit there.
-Two clean, independent commits.
+jj workspaces are lightweight -- they share the repo store, each has an
+independent working-copy commit, and creating or tearing down a workspace is
+fast with no side effects on other workspaces. This makes "one workspace per cue"
+cheap enough to be the default, not a special case.
 
-Dirigent's **Worktree Manager** handles workspace creation and cleanup. When you
-run parallel cues, Dirigent can create a workspace for each one, ensuring
-isolation. After both are committed, you can stack them (rebase one on top of
-the other) or merge them.
+### Auto-commit and bookmarks
+
+When a cue finishes, Dirigent automatically commits the changes in that cue's
+workspace and sets a **bookmark** pointing to the new commit. The user doesn't
+have to remember to commit -- it just happens. The bookmark is named after the
+cue (e.g., `cue/add-authentication`), so every cue's result is easy to find in
+the log.
 
 > Under the hood:
 > ```
-> jj workspace add ../repo-workspace-logging    # create isolated workspace
-> # ... cue 2 runs in the new workspace ...
-> jj commit -m "add logging"                    # commit only this workspace's changes
-> jj workspace forget logging                   # clean up when done
+> jj workspace add ../repo-workspace-add-auth   # Dirigent creates workspace
+> # ... Claude runs the cue ...
+> jj commit -m "add authentication"             # Dirigent auto-commits
+> jj bookmark set cue/add-auth                  # Dirigent sets bookmark
+> jj workspace forget add-auth                  # Dirigent cleans up workspace
 > ```
 
-### What if you don't use workspaces?
+After both cues are committed, the user can review them independently. If they
+look good, stack them (rebase one on top of the other) or merge them.
 
-If two cues run in the same working copy, treat them as sequential: wait for one
-to finish and commit before running the next. Or, after both finish, use
-`jj split` to separate the interleaved changes into distinct commits. But
-workspaces are the cleaner approach -- they prevent the problem instead of fixing
-it after the fact.
+### Reverting a cue is just moving a bookmark
 
-### Why jj is better than git here
+This is where jj shines compared to git. If the user doesn't like what a cue
+produced, reverting is trivial: move the bookmark back (or delete it). In jj,
+bookmarks are just pointers -- the commit still exists in the log but is no
+longer referenced. Nothing is destroyed, and the operation is instant.
+
+```
+jj bookmark delete cue/add-auth     # drop the bookmark, changes become hidden
+```
+
+If the user changes their mind later, the commit is still in `jj log --revisions
+'hidden()'` and can be restored. Compare this to git, where reverting means
+creating a new revert commit (which clutters history) or using `git reset --hard`
+(which can lose work if you're not careful). jj's approach is non-destructive by
+default.
+
+Even for partial reverts, jj makes it easy:
+
+```
+jj backout -r <cue-commit>         # create an inverse commit, keeping history clean
+```
+
+### Why not git worktrees?
 
 Git worktrees achieve similar isolation, but they're heavier: each worktree is a
 full checkout with its own `.git` link, and branch management gets awkward (you
-can't have the same branch checked out in two worktrees). jj workspaces are
-lightweight -- they share the repo store, each has an independent working-copy
-commit, and there are no branch conflicts. Creating and tearing down a workspace
-is fast and has no side effects on other workspaces.
+can't have the same branch checked out in two worktrees). jj workspaces share
+the repo store, have independent working-copy commits, and have no branch
+conflicts. The "one workspace per cue" model would be cumbersome with git
+worktrees -- with jj workspaces it's natural.
 
 ---
 
