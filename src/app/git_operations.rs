@@ -788,7 +788,7 @@ impl DirigentApp {
         std::thread::spawn(move || {
             let dirty = git::get_dirty_files(&root);
             let ahead = git::get_ahead_of_remote(&root);
-            let _ = tx.send((dirty, ahead));
+            let _ = tx.send((root, dirty, ahead));
         });
     }
 

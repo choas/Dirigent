@@ -52,13 +52,14 @@ impl DirigentApp {
         self.confirm_delete_archived = false;
         self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
+        while self.git_status_rx.try_recv().is_ok() {}
         {
             let root = self.project_root.clone();
             let tx = self.git_status_tx.clone();
             std::thread::spawn(move || {
                 let dirty = git::get_dirty_files(&root);
                 let ahead = git::get_ahead_of_remote(&root);
-                let _ = tx.send((dirty, ahead));
+                let _ = tx.send((root, dirty, ahead));
             });
         }
         self.viewer.tabs.clear();
