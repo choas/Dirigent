@@ -64,8 +64,8 @@ impl DirigentApp {
                 ui.separator();
                 self.render_git_view_mode_toggle(ui);
                 ui.separator();
-                self.render_git_view_file_list(ui);
                 self.render_git_view_footer(ui);
+                self.render_git_view_file_list(ui);
             });
     }
 
@@ -181,20 +181,21 @@ impl DirigentApp {
         if self.git.dirty_files.is_empty() {
             return;
         }
-        ui.separator();
-        ui.add_space(SPACE_SM);
-        let btn = egui::Button::new(
-            egui::RichText::new("\u{2714} Commit Changes").color(self.semantic.accent_text()),
-        )
-        .fill(self.semantic.accent);
-        if ui
-            .add_sized([ui.available_width(), 0.0], btn)
-            .on_hover_text("Create a Cue to commit with an AI-generated message")
-            .clicked()
-        {
-            self.create_commit_cue();
-        }
-        ui.add_space(SPACE_SM);
+        egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
+            ui.add_space(SPACE_SM);
+            let btn = egui::Button::new(
+                egui::RichText::new("\u{2714} Commit Changes").color(self.semantic.accent_text()),
+            )
+            .fill(self.semantic.accent);
+            if ui
+                .add_sized([ui.available_width(), 0.0], btn)
+                .on_hover_text("Create a Cue to commit with an AI-generated message")
+                .clicked()
+            {
+                self.create_commit_cue();
+            }
+            ui.add_space(SPACE_SM);
+        });
     }
 
     fn open_git_view_file(&mut self, rel_path: &str) {
