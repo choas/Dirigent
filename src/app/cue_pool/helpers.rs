@@ -38,8 +38,8 @@ pub(super) fn render_cue_pool_buttons(
     ui: &mut egui::Ui,
     playbook: &[settings::Play],
     inbox_files: &[std::path::PathBuf],
-) -> (Option<String>, bool, bool, bool) {
-    let mut selected_play_prompt = None;
+) -> (Option<settings::Play>, bool, bool, bool) {
+    let mut selected_play = None;
     let mut custom_cue_requested = false;
     let mut import_requested = false;
     let mut inbox_import_requested = false;
@@ -70,7 +70,7 @@ pub(super) fn render_cue_pool_buttons(
             ui.separator();
             for play in playbook {
                 if ui.selectable_label(false, &play.name).clicked() {
-                    selected_play_prompt = Some(play.prompt.clone());
+                    selected_play = Some(play.clone());
                 }
             }
             if !playbook.is_empty() {
@@ -82,7 +82,7 @@ pub(super) fn render_cue_pool_buttons(
         });
 
     (
-        selected_play_prompt,
+        selected_play,
         custom_cue_requested,
         import_requested,
         inbox_import_requested,

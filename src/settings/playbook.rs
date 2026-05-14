@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Play {
     pub name: String,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl Play {
@@ -11,6 +13,15 @@ impl Play {
         Self {
             name: name.into(),
             prompt: prompt.into(),
+            command: None,
+        }
+    }
+
+    fn with_command(name: &str, prompt: &str, command: &str) -> Self {
+        Self {
+            name: name.into(),
+            prompt: prompt.into(),
+            command: Some(command.into()),
         }
     }
 }
@@ -92,6 +103,7 @@ pub(crate) fn default_playbook() -> Vec<Play> {
         Play::new("Fix all warnings", "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them."),
         Play::new("Commit changes", "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit."),
         Play::new("Zero day test", "Somebody told me there is an RCE 0-day when this project opens a file. Find it."),
-        Play::new("Pin dependency versions", "Detect the project type and its dependency file (e.g. Cargo.toml, package.json, go.mod, requirements.txt, pyproject.toml, pom.xml, build.gradle, Gemfile, etc.). For every dependency that uses a version range, caret (^), tilde (~), wildcard (*), or any specifier that allows automatic minor or patch updates, resolve it to the exact latest version available and pin it (e.g. change ^1.2.3 or ~1.2 to the exact latest version like 1.4.0). This protects against supply-chain attacks where a hijacked package publishes a malicious minor or patch release that gets pulled in automatically. Do not change dependencies that are already pinned to an exact version. IMPORTANT: Only pin a version if it was released more than 24 hours ago. Skip any dependency whose latest version was published within the last 24 hours — a freshly published version has not had time for community vetting and could be a supply-chain attack. After updating, verify the project still builds."),
+        Play::with_command("Pin dependency versions", "Detect the project type and its dependency file (e.g. Cargo.toml, package.json, go.mod, requirements.txt, pyproject.toml, pom.xml, build.gradle, Gemfile, etc.). For every dependency that uses a version range, caret (^), tilde (~), wildcard (*), or any specifier that allows automatic minor or patch updates, resolve it to the exact latest version available and pin it (e.g. change ^1.2.3 or ~1.2 to the exact latest version like 1.4.0). This protects against supply-chain attacks where a hijacked package publishes a malicious minor or patch release that gets pulled in automatically. Do not change dependencies that are already pinned to an exact version. IMPORTANT: Only pin a version if it was released more than 24 hours ago. Skip any dependency whose latest version was published within the last 24 hours — a freshly published version has not had time for community vetting and could be a supply-chain attack. After updating, verify the project still builds.",
+            "if [ -f Cargo.toml ]; then awk '/^\\[.*dependencies/{f=1;next} /^\\[/{f=0} f' Cargo.toml | grep -E '=\\s*\"' | grep -v '\"=' || echo 'All Cargo.toml versions are exact pins (=x.y.z)'; elif [ -f package.json ]; then grep -nE '\"[~^>=<*]' package.json || echo 'All package.json versions are exact pins'; elif [ -f requirements.txt ]; then grep -nE '(>=|<=|~=|!=|>|<)' requirements.txt || echo 'All requirements.txt versions are exact pins'; elif [ -f go.mod ]; then cat go.mod; else echo 'No recognized dependency file found'; fi"),
     ]
 }

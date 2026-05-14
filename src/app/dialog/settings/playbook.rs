@@ -27,6 +27,7 @@ impl DirigentApp {
                 self.settings.playbook.push(settings::Play {
                     name: "New Play".to_string(),
                     prompt: String::new(),
+                    command: None,
                 });
             }
             if ui.small_button("Reset Defaults").clicked() {
@@ -90,6 +91,22 @@ impl DirigentApp {
                     .hint_text("Prompt text...")
                     .font(egui::TextStyle::Monospace),
             );
+            let cmd = self.settings.playbook[i]
+                .command
+                .get_or_insert_with(String::new);
+            ui.add(
+                egui::TextEdit::singleline(cmd)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Command (optional, runs before prompt)...")
+                    .font(egui::TextStyle::Monospace),
+            );
+            if self.settings.playbook[i]
+                .command
+                .as_ref()
+                .is_some_and(|c| c.is_empty())
+            {
+                self.settings.playbook[i].command = None;
+            }
         });
     }
 }

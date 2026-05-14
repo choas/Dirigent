@@ -34,12 +34,12 @@ impl DirigentApp {
             .max_size(500.0)
             .show_inside(ui, |ui| {
                 let (
-                    selected_play_prompt,
+                    selected_play,
                     custom_cue_requested,
                     import_requested,
                     inbox_import_requested,
                 ) = self.render_cue_pool_header(ui);
-                self.handle_playbook_selection(selected_play_prompt);
+                self.handle_playbook_selection(selected_play);
                 self.handle_custom_cue_request(custom_cue_requested);
                 self.handle_import_request(import_requested);
                 self.handle_inbox_import(inbox_import_requested);
@@ -91,7 +91,10 @@ impl DirigentApp {
             });
     }
 
-    fn render_cue_pool_header(&mut self, ui: &mut egui::Ui) -> (Option<String>, bool, bool, bool) {
+    fn render_cue_pool_header(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> (Option<crate::settings::Play>, bool, bool, bool) {
         let mut result = (None, false, false, false);
         let heading_text = &self.cached_heading_text;
         let font_size = self.settings.font_size;
@@ -108,10 +111,11 @@ impl DirigentApp {
         result
     }
 
-    fn handle_playbook_selection(&mut self, selected_play_prompt: Option<String>) {
-        let Some(prompt) = selected_play_prompt else {
+    fn handle_playbook_selection(&mut self, selected_play: Option<crate::settings::Play>) {
+        let Some(play) = selected_play else {
             return;
         };
+        let prompt = self.build_play_prompt(&play);
         let vars = settings::parse_play_variables(&prompt);
         if vars.is_empty() {
             match self.db.insert_global_cue(&prompt) {
@@ -160,6 +164,45 @@ impl DirigentApp {
                 custom_text,
                 auto_resolved,
             });
+        }
+    }
+
+    fn build_play_prompt(&self, play: &crate::settings::Play) -> String {
+        let Some(ref cmd) = play.command else {
+            return play.prompt.clone();
+        };
+        if cmd.trim().is_empty() {
+            return play.prompt.clone();
+        }
+        match std::process::Command::new("sh")
+            .args(["-c", cmd])
+            .current_dir(&self.project_root)
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let mut result = play.prompt.clone();
+                let combined = if !stderr.is_empty() && !stdout.is_empty() {
+                    format!("{}\n{}", stdout.trim(), stderr.trim())
+                } else if !stdout.is_empty() {
+                    stdout.trim().to_string()
+                } else {
+                    stderr.trim().to_string()
+                };
+                if !combined.is_empty() {
+                    result.push_str(&format!(
+                        "\n\nCommand `{}` output:\n```\n{}\n```",
+                        cmd, combined
+                    ));
+                }
+                result
+            }
+            Err(e) => {
+                let mut result = play.prompt.clone();
+                result.push_str(&format!("\n\n(Command `{}` failed: {})", cmd, e));
+                result
+            }
         }
     }
 
