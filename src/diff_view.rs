@@ -503,8 +503,8 @@ fn render_sbs_file_hunks(
             };
 
             for (left_idx, right_idx) in &hunk.sbs_pairs {
-                let left = left_idx.map(|i| (i, &hunk.lines[i]));
-                let right = right_idx.map(|i| (i, &hunk.lines[i]));
+                let left = left_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
+                let right = right_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 render_sbs_row(ui, left, right, &ctx, sep_color);
                 ui.end_row();
             }
