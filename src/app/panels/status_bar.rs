@@ -206,22 +206,51 @@ impl DirigentApp {
         }
     }
 
-    /// Render right-aligned info (memory usage) in the status bar.
+    /// Render right-aligned info (frame time breakdown, memory usage) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
-        let mem = get_memory_usage_mb();
-        if mem.is_some() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(mb) = mem {
-                    ui.label(
-                        egui::RichText::new(format!("{mb} MB"))
-                            .monospace()
-                            .small()
-                            .color(self.semantic.muted_text()),
-                    )
-                    .on_hover_text("Process memory (RSS)");
-                }
-            });
+        if !self.settings.show_frame_timing {
+            return;
         }
+        let mem = get_memory_usage_mb();
+        let frame_ms = self.last_frame_time.as_secs_f64() * 1000.0;
+        let poll_ms = self.last_poll_time.as_secs_f64() * 1000.0;
+        let tree_ms = self.last_render_file_tree_time.as_secs_f64() * 1000.0;
+        let pool_ms = self.last_render_cue_pool_time.as_secs_f64() * 1000.0;
+        let code_ms = self.last_render_code_viewer_time.as_secs_f64() * 1000.0;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(mb) = mem {
+                ui.label(
+                    egui::RichText::new(format!("{mb} MB"))
+                        .monospace()
+                        .small()
+                        .color(self.semantic.muted_text()),
+                )
+                .on_hover_text("Process memory (RSS)");
+            }
+            let frame_color = if frame_ms > 33.0 {
+                self.semantic.danger
+            } else if frame_ms > 16.6 {
+                egui::Color32::from_rgb(255, 165, 0) // orange
+            } else {
+                self.semantic.muted_text()
+            };
+            let timing_text = format!(
+                "{frame_ms:.1} ms  poll {poll_ms:.1} | tree {tree_ms:.1} | pool {pool_ms:.1} | code {code_ms:.1}"
+            );
+            let resp = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&timing_text)
+                        .monospace()
+                        .small()
+                        .color(frame_color),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .on_hover_text("Click to copy. Frame: total ms  poll | file tree | cue pool | code viewer. Budget: 16.6 ms");
+            if resp.clicked() {
+                ui.ctx().copy_text(timing_text);
+            }
+        });
     }
 
     /// Render the transient status message with auto-dismiss and fade.

@@ -806,10 +806,11 @@ pub(crate) fn fetch_sentry_issues(
     let client = http_client()?;
 
     let url = format!(
-        "{}/api/0/projects/{}/{}/issues/?query=is:unresolved&limit=50",
+        "{}/api/0/projects/{}/{}/issues/?query={}&limit=50",
         base,
         url_encode(organization),
         url_encode(project),
+        url_encode("is:unresolved"),
     );
 
     let resp = client

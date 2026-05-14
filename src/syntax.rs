@@ -1,8 +1,16 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 use eframe::egui;
 use egui_extras::syntax_highlighting::SyntectSettings;
 use syntect::parsing::SyntaxDefinition;
+
+struct CacheEntry {
+    job: egui::text::LayoutJob,
+    generation: u64,
+}
 
 /// Custom `SyntectSettings` that extends syntect's defaults with extra languages
 /// (e.g. Kotlin) that are not shipped in the default Sublime Text syntax pack.
@@ -26,13 +34,32 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
     }
 });
 
-/// Convenience wrapper around `egui_extras::syntax_highlighting::highlight_with`
-/// that uses our custom syntax settings (which include Kotlin, Dart, etc.).
-///
-/// Post-processes the LayoutJob to fix egui_extras bugs:
-/// - Strips incorrect underlines (egui_extras checks ITALIC instead of UNDERLINE)
-/// - Strips strikethrough for safety
-/// - Clears per-section background colors and expansion to avoid colored rectangles
+thread_local! {
+    static HIGHLIGHT_CACHE: RefCell<(HashMap<u64, CacheEntry>, u64)> =
+        RefCell::new((HashMap::with_capacity(MAX_CACHE_ENTRIES), 0));
+}
+
+const MAX_CACHE_ENTRIES: usize = 10_000;
+
+pub(crate) fn clear_highlight_cache() {
+    HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        inner.0.clear();
+        inner.1 = 0;
+    });
+}
+
+fn cache_key(code: &str, language: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    language.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Cached wrapper around `egui_extras::syntax_highlighting::highlight_with`.
+/// Returns a cached LayoutJob when the same (code, language) pair is seen again,
+/// avoiding repeated syntect regex parsing. Call `clear_highlight_cache()` on
+/// theme or font changes.
 pub(crate) fn highlight(
     ctx: &egui::Context,
     style: &egui::Style,
@@ -40,6 +67,21 @@ pub(crate) fn highlight(
     code: &str,
     language: &str,
 ) -> egui::text::LayoutJob {
+    let key = cache_key(code, language);
+
+    let cached = HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        let gen = inner.1;
+        if let Some(entry) = inner.0.get_mut(&key) {
+            entry.generation = gen;
+            return Some(entry.job.clone());
+        }
+        None
+    });
+    if let Some(job) = cached {
+        return job;
+    }
+
     let mut job = egui_extras::syntax_highlighting::highlight_with(
         ctx,
         style,
@@ -54,6 +96,21 @@ pub(crate) fn highlight(
         section.format.background = egui::Color32::TRANSPARENT;
         section.format.expand_bg = 0.0;
     }
+
+    HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        let (cache, gen) = &mut *inner;
+        if cache.len() >= MAX_CACHE_ENTRIES {
+            let cutoff = gen.saturating_sub(*gen / 2);
+            cache.retain(|_, v| v.generation >= cutoff);
+        }
+        *gen += 1;
+        cache.insert(key, CacheEntry {
+            job: job.clone(),
+            generation: *gen,
+        });
+    });
+
     job
 }
 

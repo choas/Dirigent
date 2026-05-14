@@ -783,8 +783,13 @@ impl DirigentApp {
 
     pub(super) fn reload_git_info(&mut self) {
         self.git.info = git::read_git_info(&self.project_root);
-        self.git.dirty_files = git::get_dirty_files(&self.project_root);
-        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        let root = self.project_root.clone();
+        let tx = self.git_status_tx.clone();
+        std::thread::spawn(move || {
+            let dirty = git::get_dirty_files(&root);
+            let ahead = git::get_ahead_of_remote(&root);
+            let _ = tx.send((root, dirty, ahead));
+        });
     }
 
     pub(super) fn reload_commit_history(&mut self) {

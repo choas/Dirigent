@@ -42,6 +42,15 @@ impl DirigentApp {
 
     /// Handle filesystem changes: rescan file tree, reload tabs, trigger agents.
     pub(super) fn handle_fs_changes(&mut self) {
+        // Poll for background git status results
+        if let Ok((root, dirty_files, ahead)) = self.git_status_rx.try_recv() {
+            if root == self.project_root {
+                self.git.dirty_files = dirty_files;
+                self.git.recompute_dirty_dirs(&self.project_root);
+                self.git.ahead_of_remote = ahead;
+            }
+        }
+
         let fs_ready = self.fs_changed.load(Ordering::Relaxed)
             && self.last_fs_rescan.elapsed() >= FS_RESCAN_DEBOUNCE;
         if !fs_ready {
@@ -50,8 +59,13 @@ impl DirigentApp {
         self.fs_changed.store(false, Ordering::Relaxed);
         self.last_fs_rescan = std::time::Instant::now();
         self.reload_file_tree();
-        self.git.dirty_files = git::get_dirty_files(&self.project_root);
-        self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+        let root = self.project_root.clone();
+        let tx = self.git_status_tx.clone();
+        std::thread::spawn(move || {
+            let dirty = git::get_dirty_files(&root);
+            let ahead = git::get_ahead_of_remote(&root);
+            let _ = tx.send((root, dirty, ahead));
+        });
         if !self.show_settings {
             self.reload_settings_from_disk();
         }

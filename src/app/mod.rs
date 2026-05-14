@@ -134,6 +134,8 @@ pub struct DirigentApp {
 
     // Git state
     pub(super) git: GitState,
+    git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
+    git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
     // Settings & theme
     settings: Settings,
@@ -217,6 +219,7 @@ pub struct DirigentApp {
 
     // Per-cue agent runs viewer (cue ID whose agent runs to show in central panel)
     show_agent_runs_for_cue: Option<i64>,
+    cached_agent_runs_for_cue: (Option<i64>, Vec<crate::db::AgentRunEntry>),
 
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
@@ -279,7 +282,7 @@ pub struct DirigentApp {
     /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
     cue_generation: u64,
     /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
-    cached_lines_with_cues: Option<(String, u64, HashMap<usize, bool>)>,
+    cached_lines_with_cues: Option<(String, u64, std::sync::Arc<HashMap<usize, bool>>)>,
 
     // Prompt history search
     prompt_history_query: String,
@@ -349,6 +352,14 @@ pub struct DirigentApp {
     ssh_reading_file: Option<String>,
     show_ssh_panel: bool,
     ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
+
+    // Frame timing for status bar display
+    last_frame_time: Duration,
+    last_poll_time: Duration,
+    last_render_time: Duration,
+    last_render_file_tree_time: Duration,
+    last_render_cue_pool_time: Duration,
+    last_render_code_viewer_time: Duration,
 }
 
 /// State for the custom theme editor dialog.
@@ -509,6 +520,7 @@ impl DirigentApp {
         let (file_tree_error_tx, file_tree_error_rx) = mpsc::channel();
         let (search_result_tx, search_result_rx) = mpsc::channel();
         let (goto_def_tx, goto_def_rx) = mpsc::channel();
+        let (git_status_tx, git_status_rx) = mpsc::channel();
 
         let syntax_theme = if settings.theme.is_dark() {
             egui_extras::syntax_highlighting::CodeTheme::dark(12.0)
@@ -529,17 +541,7 @@ impl DirigentApp {
         let initial_labels = cue_pool::helpers::collect_unique_labels(&cues, &settings.sources);
         let initial_inbox_files: Vec<PathBuf> = scan_inbox_folder(&project_root)
             .into_iter()
-            .filter(|path| {
-                let Ok(content) = std::fs::read_to_string(path) else {
-                    return true;
-                };
-                let checksum = compute_file_checksum(content.trim());
-                let source_ref = format!("inbox#{}", path.display());
-                match db.get_source_id_by_source_ref(&source_ref) {
-                    Ok(Some(stored)) => stored != checksum,
-                    _ => true,
-                }
-            })
+            .filter(|path| should_keep_inbox_file(&db, path))
             .collect();
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
@@ -550,7 +552,7 @@ impl DirigentApp {
             }
         }
 
-        DirigentApp {
+        let mut app = DirigentApp {
             project_root,
             db,
             file_tree,
@@ -580,9 +582,12 @@ impl DirigentApp {
             confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
+            git_status_tx,
+            git_status_rx,
             git: GitState {
                 info: git_info,
                 dirty_files,
+                dirty_dirs: HashSet::new(),
                 show_git_view: false,
                 git_view_diff_mode: GitViewDiffMode::DiffOnly,
                 git_view_expanded_dirs: HashSet::new(),
@@ -697,6 +702,7 @@ impl DirigentApp {
             activity_cache: HashMap::new(),
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
+            cached_agent_runs_for_cue: (None, Vec::new()),
             opencode_models: Vec::new(),
             opencode_models_loading: false,
             opencode_models_rx: mpsc::channel().1,
@@ -777,7 +783,15 @@ impl DirigentApp {
             ssh_reading_file: None,
             show_ssh_panel: false,
             ssh_test_rx: None,
-        }
+            last_frame_time: Duration::ZERO,
+            last_poll_time: Duration::ZERO,
+            last_render_time: Duration::ZERO,
+            last_render_file_tree_time: Duration::ZERO,
+            last_render_cue_pool_time: Duration::ZERO,
+            last_render_code_viewer_time: Duration::ZERO,
+        };
+        app.git.recompute_dirty_dirs(&app.project_root);
+        app
     }
 
     /// Return the project directory name (for telemetry and display).
@@ -855,6 +869,12 @@ impl DirigentApp {
     }
 
     fn reload_cues(&mut self) {
+        let was_ready: std::collections::HashSet<i64> = self
+            .cues
+            .iter()
+            .filter(|c| c.status == CueStatus::Ready)
+            .map(|c| c.id)
+            .collect();
         self.cues = self
             .db
             .all_cues_limited_archived(self.archived_cue_limit)
@@ -885,8 +905,12 @@ impl DirigentApp {
         self.logbook_expanded.retain(|id| live_ids.contains(id));
         self.agent_output_expanded
             .retain(|(cue_id, _)| live_ids.contains(cue_id));
-        // Invalidate activity cache so expanded logbooks pick up new data.
-        self.activity_cache.clear();
+        self.activity_cache.retain(|id, _| {
+            self.cues
+                .iter()
+                .any(|c| c.id == *id && c.status != CueStatus::Ready)
+                && !was_ready.contains(id)
+        });
         // Recompute cue-derived caches (avoids scanning all cues every frame).
         self.cached_has_running_cue = self.cues.iter().any(|c| c.status == CueStatus::Ready);
         self.cached_heading_text = crate::app::cue_pool::helpers::build_heading_text(&self.cues);
@@ -954,17 +978,7 @@ impl DirigentApp {
     fn scan_and_filter_inbox(&self) -> Vec<PathBuf> {
         scan_inbox_folder(&self.project_root)
             .into_iter()
-            .filter(|path| {
-                let Ok(content) = std::fs::read_to_string(path) else {
-                    return true;
-                };
-                let checksum = compute_file_checksum(content.trim());
-                let source_ref = format!("inbox#{}", path.display());
-                match self.db.get_source_id_by_source_ref(&source_ref) {
-                    Ok(Some(stored)) => stored != checksum,
-                    _ => true,
-                }
-            })
+            .filter(|path| should_keep_inbox_file(&self.db, path))
             .collect()
     }
 
@@ -987,11 +1001,20 @@ impl DirigentApp {
     }
 }
 
+fn should_keep_inbox_file(db: &Database, path: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    let checksum = compute_file_checksum(content.trim());
+    let source_ref = format!("inbox#{}", path.display());
+    match db.get_source_id_by_source_ref(&source_ref) {
+        Ok(Some(stored)) => stored != checksum,
+        _ => true,
+    }
+}
+
 fn compute_file_checksum(content: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
 fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {
@@ -1010,6 +1033,7 @@ fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {
 
 impl eframe::App for DirigentApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let frame_start = Instant::now();
         let ctx = ui.ctx();
         // Store egui context so the file watcher can request repaints
         let _ = self.egui_ctx.set(ctx.clone());
@@ -1083,6 +1107,8 @@ impl eframe::App for DirigentApp {
         // Schedule repaint intervals
         self.schedule_repaints(ctx);
 
+        self.last_poll_time = frame_start.elapsed();
+
         // Handle drag & drop of files onto the window
         self.handle_drag_and_drop(ctx);
 
@@ -1090,7 +1116,11 @@ impl eframe::App for DirigentApp {
         self.handle_global_shortcuts(ctx);
 
         // Render all panels and dialogs
+        let render_start = Instant::now();
         self.render_panels_and_dialogs(ui);
+        self.last_render_time = render_start.elapsed();
+
+        self.last_frame_time = frame_start.elapsed();
     }
 }
 

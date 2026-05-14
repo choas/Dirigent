@@ -261,7 +261,7 @@ fn process_event_stream(
         }
 
         let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) else {
-            json_buffer.push_str(&line);
+            json_buffer.push_str(json_str);
             json_buffer.push('\n');
             continue;
         };

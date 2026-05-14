@@ -146,6 +146,8 @@ pub(super) struct TabState {
     pub(super) image_texture: Option<eframe::egui::TextureHandle>,
     /// Current zoom level for image viewer (1.0 = fit to area).
     pub(super) image_zoom: f32,
+    /// Last known modification time (for skipping unchanged files during reload).
+    pub(super) last_mtime: Option<std::time::SystemTime>,
 }
 
 impl TabState {
@@ -160,6 +162,21 @@ impl TabState {
             return Ok(false);
         }
 
+        let meta = std::fs::metadata(&self.file_path)?;
+        match meta.modified() {
+            Ok(mtime) => {
+                if self.last_mtime == Some(mtime) {
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: failed to read mtime for {}: {e}",
+                    self.file_path.display()
+                );
+            }
+        }
+
         let bytes = std::fs::read(&self.file_path)?;
 
         if bytes.contains(&0) {
@@ -170,6 +187,14 @@ impl TabState {
             .lines()
             .map(String::from)
             .collect();
+
+        self.last_mtime = meta.modified().map_err(|e| {
+            eprintln!(
+                "warning: failed to read mtime for {}: {e}",
+                self.file_path.display()
+            );
+            e
+        }).ok();
 
         if new_content == self.content {
             return Ok(false);
@@ -229,9 +254,11 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
             image_data: Some(color_image),
             image_texture: None,
             image_zoom: 1.0,
+            last_mtime: None,
         });
     }
 
+    let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
     let content = std::fs::read_to_string(path).ok()?;
     let is_md = path
         .extension()
@@ -259,6 +286,7 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
         image_data: None,
         image_texture: None,
         image_zoom: 1.0,
+        last_mtime: mtime,
     })
 }
 
@@ -470,6 +498,8 @@ pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
+    /// Absolute paths of directories that contain at least one dirty file (pre-computed).
+    pub(super) dirty_dirs: HashSet<PathBuf>,
     /// Whether the git changes view is shown instead of the file tree.
     pub(super) show_git_view: bool,
     /// Display mode for git view: full file or diff only.
@@ -576,6 +606,22 @@ pub(crate) struct GitState {
 }
 
 impl GitState {
+    /// Recompute `dirty_dirs` from `dirty_files`. Call after every `dirty_files` update.
+    pub(super) fn recompute_dirty_dirs(&mut self, project_root: &std::path::Path) {
+        self.dirty_dirs.clear();
+        for rel in self.dirty_files.keys() {
+            let mut dir = project_root.join(rel);
+            while dir.pop() {
+                if !dir.starts_with(project_root) || dir == *project_root {
+                    break;
+                }
+                if !self.dirty_dirs.insert(dir.clone()) {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Dismiss the topmost git-related modal dialog (priority order).
     /// Returns `true` if a modal was dismissed.
     pub(super) fn dismiss_topmost_modal(&mut self) -> bool {
@@ -653,6 +699,7 @@ mod tests {
             image_data: None,
             image_texture: None,
             image_zoom: 1.0,
+            last_mtime: None,
         }
     }
 

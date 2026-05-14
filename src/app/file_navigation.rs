@@ -113,15 +113,18 @@ impl DirigentApp {
     }
 
     /// Cached version: only recomputes when the file or cue generation changes.
-    pub(super) fn lines_with_cues_cached(&mut self, rel_path: &str) -> HashMap<usize, bool> {
+    pub(super) fn lines_with_cues_cached(
+        &mut self,
+        rel_path: &str,
+    ) -> std::sync::Arc<HashMap<usize, bool>> {
         if let Some((ref cached_path, gen, ref map)) = self.cached_lines_with_cues {
             if cached_path == rel_path && gen == self.cue_generation {
-                return map.clone();
+                return std::sync::Arc::clone(map);
             }
         }
-        let map = self.compute_lines_with_cues();
+        let map = std::sync::Arc::new(self.compute_lines_with_cues());
         self.cached_lines_with_cues =
-            Some((rel_path.to_string(), self.cue_generation, map.clone()));
+            Some((rel_path.to_string(), self.cue_generation, std::sync::Arc::clone(&map)));
         map
     }
 }

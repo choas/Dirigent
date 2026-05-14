@@ -236,7 +236,8 @@ impl DirigentApp {
     ) {
         let fs = self.settings.font_size;
         if cue.has_question {
-            ui.label(icon("?", fs).color(self.semantic.warning).strong());
+            ui.label(icon("?", fs).color(self.semantic.warning).strong())
+                .on_hover_text("Has question");
         } else {
             ui.label(icon("\u{2713}", fs).color(self.semantic.success));
         }

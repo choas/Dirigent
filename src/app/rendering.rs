@@ -133,6 +133,8 @@ impl DirigentApp {
         self.render_repo_bar(ui);
         self.render_status_bar(ui);
         self.render_prompt_field(ui);
+
+        let t = std::time::Instant::now();
         if self.search.in_files_active {
             self.render_search_in_files_panel_wrapper(ui);
         } else if self.show_ssh_panel {
@@ -142,8 +144,16 @@ impl DirigentApp {
         } else {
             self.render_file_tree_panel(ui);
         }
+        self.last_render_file_tree_time = t.elapsed();
+
+        let t = std::time::Instant::now();
         self.render_cue_pool(ui);
+        self.last_render_cue_pool_time = t.elapsed();
+
+        let t = std::time::Instant::now();
         self.render_code_viewer(ui);
+        self.last_render_code_viewer_time = t.elapsed();
+
         let ctx = ui.ctx().clone();
         self.render_modal_overlay(&ctx);
         self.render_floating_dialogs(&ctx);
