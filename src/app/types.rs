@@ -163,9 +163,17 @@ impl TabState {
         }
 
         let meta = std::fs::metadata(&self.file_path)?;
-        if let Ok(mtime) = meta.modified() {
-            if self.last_mtime == Some(mtime) {
-                return Ok(false);
+        match meta.modified() {
+            Ok(mtime) => {
+                if self.last_mtime == Some(mtime) {
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: failed to read mtime for {}: {e}",
+                    self.file_path.display()
+                );
             }
         }
 
@@ -180,7 +188,13 @@ impl TabState {
             .map(String::from)
             .collect();
 
-        self.last_mtime = meta.modified().ok();
+        self.last_mtime = meta.modified().map_err(|e| {
+            eprintln!(
+                "warning: failed to read mtime for {}: {e}",
+                self.file_path.display()
+            );
+            e
+        }).ok();
 
         if new_content == self.content {
             return Ok(false);
