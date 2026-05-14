@@ -541,17 +541,7 @@ impl DirigentApp {
         let initial_labels = cue_pool::helpers::collect_unique_labels(&cues, &settings.sources);
         let initial_inbox_files: Vec<PathBuf> = scan_inbox_folder(&project_root)
             .into_iter()
-            .filter(|path| {
-                let Ok(content) = std::fs::read_to_string(path) else {
-                    return true;
-                };
-                let checksum = compute_file_checksum(content.trim());
-                let source_ref = format!("inbox#{}", path.display());
-                match db.get_source_id_by_source_ref(&source_ref) {
-                    Ok(Some(stored)) => stored != checksum,
-                    _ => true,
-                }
-            })
+            .filter(|path| should_keep_inbox_file(&db, path))
             .collect();
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
@@ -988,17 +978,7 @@ impl DirigentApp {
     fn scan_and_filter_inbox(&self) -> Vec<PathBuf> {
         scan_inbox_folder(&self.project_root)
             .into_iter()
-            .filter(|path| {
-                let Ok(content) = std::fs::read_to_string(path) else {
-                    return true;
-                };
-                let checksum = compute_file_checksum(content.trim());
-                let source_ref = format!("inbox#{}", path.display());
-                match self.db.get_source_id_by_source_ref(&source_ref) {
-                    Ok(Some(stored)) => stored != checksum,
-                    _ => true,
-                }
-            })
+            .filter(|path| should_keep_inbox_file(&self.db, path))
             .collect()
     }
 
@@ -1018,6 +998,18 @@ impl DirigentApp {
         // workflow_plan is NOT cleared here — it stays until explicitly cancelled.
         // But the graph overlay is dismissed so the code viewer becomes visible.
         self.show_workflow_graph = false;
+    }
+}
+
+fn should_keep_inbox_file(db: &Database, path: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    let checksum = compute_file_checksum(content.trim());
+    let source_ref = format!("inbox#{}", path.display());
+    match db.get_source_id_by_source_ref(&source_ref) {
+        Ok(Some(stored)) => stored != checksum,
+        _ => true,
     }
 }
 
