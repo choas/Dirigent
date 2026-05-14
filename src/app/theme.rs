@@ -112,6 +112,7 @@ impl DirigentApp {
         } else {
             egui_extras::syntax_highlighting::CodeTheme::light(self.settings.font_size)
         };
+        crate::syntax::clear_highlight_cache();
 
         let mut style = (*ctx.global_style()).clone();
         let font_family = &self.settings.font_family;

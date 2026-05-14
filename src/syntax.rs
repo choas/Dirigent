@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 use eframe::egui;
@@ -26,13 +29,28 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
     }
 });
 
-/// Convenience wrapper around `egui_extras::syntax_highlighting::highlight_with`
-/// that uses our custom syntax settings (which include Kotlin, Dart, etc.).
-///
-/// Post-processes the LayoutJob to fix egui_extras bugs:
-/// - Strips incorrect underlines (egui_extras checks ITALIC instead of UNDERLINE)
-/// - Strips strikethrough for safety
-/// - Clears per-section background colors and expansion to avoid colored rectangles
+thread_local! {
+    static HIGHLIGHT_CACHE: RefCell<HashMap<u64, egui::text::LayoutJob>> =
+        RefCell::new(HashMap::with_capacity(4096));
+}
+
+const MAX_CACHE_ENTRIES: usize = 50_000;
+
+pub(crate) fn clear_highlight_cache() {
+    HIGHLIGHT_CACHE.with(|c| c.borrow_mut().clear());
+}
+
+fn cache_key(code: &str, language: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    language.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Cached wrapper around `egui_extras::syntax_highlighting::highlight_with`.
+/// Returns a cached LayoutJob when the same (code, language) pair is seen again,
+/// avoiding repeated syntect regex parsing. Call `clear_highlight_cache()` on
+/// theme or font changes.
 pub(crate) fn highlight(
     ctx: &egui::Context,
     style: &egui::Style,
@@ -40,6 +58,13 @@ pub(crate) fn highlight(
     code: &str,
     language: &str,
 ) -> egui::text::LayoutJob {
+    let key = cache_key(code, language);
+
+    let cached = HIGHLIGHT_CACHE.with(|c| c.borrow().get(&key).cloned());
+    if let Some(job) = cached {
+        return job;
+    }
+
     let mut job = egui_extras::syntax_highlighting::highlight_with(
         ctx,
         style,
@@ -54,6 +79,15 @@ pub(crate) fn highlight(
         section.format.background = egui::Color32::TRANSPARENT;
         section.format.expand_bg = 0.0;
     }
+
+    HIGHLIGHT_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        if cache.len() >= MAX_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(key, job.clone());
+    });
+
     job
 }
 

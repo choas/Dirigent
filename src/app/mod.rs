@@ -885,8 +885,13 @@ impl DirigentApp {
         self.logbook_expanded.retain(|id| live_ids.contains(id));
         self.agent_output_expanded
             .retain(|(cue_id, _)| live_ids.contains(cue_id));
-        // Invalidate activity cache so expanded logbooks pick up new data.
-        self.activity_cache.clear();
+        // Only invalidate activity cache for running cues (they get new data)
+        // and cues no longer in the list. Idle cues keep their cached activity.
+        self.activity_cache.retain(|id, _| {
+            self.cues
+                .iter()
+                .any(|c| c.id == *id && c.status != CueStatus::Ready)
+        });
         // Recompute cue-derived caches (avoids scanning all cues every frame).
         self.cached_has_running_cue = self.cues.iter().any(|c| c.status == CueStatus::Ready);
         self.cached_heading_text = crate::app::cue_pool::helpers::build_heading_text(&self.cues);
@@ -1010,6 +1015,7 @@ fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {
 
 impl eframe::App for DirigentApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let frame_start = Instant::now();
         let ctx = ui.ctx();
         // Store egui context so the file watcher can request repaints
         let _ = self.egui_ctx.set(ctx.clone());
@@ -1091,6 +1097,14 @@ impl eframe::App for DirigentApp {
 
         // Render all panels and dialogs
         self.render_panels_and_dialogs(ui);
+
+        let frame_elapsed = frame_start.elapsed();
+        if frame_elapsed > Duration::from_millis(32) {
+            eprintln!(
+                "[perf] slow frame: {:.1}ms",
+                frame_elapsed.as_secs_f64() * 1000.0
+            );
+        }
     }
 }
 

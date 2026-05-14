@@ -27,6 +27,7 @@ pub(crate) struct FileDiff {
 pub(crate) struct DiffHunk {
     pub new_start: usize,
     pub lines: Vec<DiffLine>,
+    pub sbs_pairs: Vec<(Option<usize>, Option<usize>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,9 +94,11 @@ fn parse_file_hunks(lines: &[&str], mut i: usize) -> (Vec<DiffHunk>, usize) {
         let (hunk_lines, next_i) = parse_hunk_lines(lines, i, old_start, new_start);
         i = next_i;
 
+        let sbs_pairs = build_sbs_pair_indices(&hunk_lines);
         hunks.push(DiffHunk {
             new_start,
             lines: hunk_lines,
+            sbs_pairs,
         });
     }
 
@@ -482,7 +485,7 @@ fn render_sbs_file_hunks(
     sep_color: egui::Color32,
 ) {
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-        let pairs = build_side_by_side_pairs(&hunk.lines);
+        let pairs = resolve_sbs_pairs(hunk);
 
         egui::Grid::new(format!(
             "sbs_{}_{}_{}",
@@ -631,27 +634,26 @@ fn render_sbs_row(
 /// A side-by-side pair with optional original line indices (borrows from the hunk).
 type SbsPair<'a> = (Option<(usize, &'a DiffLine)>, Option<(usize, &'a DiffLine)>);
 
-/// Build paired (old, new) lines for side-by-side rendering.
-/// Each entry carries the original index into the hunk's lines vec.
-fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair<'_>> {
-    let mut pairs: Vec<SbsPair<'_>> = Vec::new();
+/// Build index-only side-by-side pairs at parse time (avoids recomputing every frame).
+fn build_sbs_pair_indices(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usize>)> {
+    let mut pairs = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
         match lines[i].kind {
             DiffLineKind::Context => {
-                pairs.push((Some((i, &lines[i])), Some((i, &lines[i]))));
+                pairs.push((Some(i), Some(i)));
                 i += 1;
             }
             DiffLineKind::Deletion => {
                 let mut dels = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Deletion {
-                    dels.push((i, &lines[i]));
+                    dels.push(i);
                     i += 1;
                 }
                 let mut adds = Vec::new();
                 while i < lines.len() && lines[i].kind == DiffLineKind::Addition {
-                    adds.push((i, &lines[i]));
+                    adds.push(i);
                     i += 1;
                 }
                 let max_len = dels.len().max(adds.len());
@@ -660,13 +662,42 @@ fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair<'_>> {
                 }
             }
             DiffLineKind::Addition => {
-                pairs.push((None, Some((i, &lines[i]))));
+                pairs.push((None, Some(i)));
                 i += 1;
             }
         }
     }
 
     pairs
+}
+
+/// Resolve cached index pairs to references for rendering.
+fn resolve_sbs_pairs<'a>(
+    hunk: &'a DiffHunk,
+) -> Vec<SbsPair<'a>> {
+    hunk.sbs_pairs
+        .iter()
+        .map(|(left, right)| {
+            (
+                left.map(|idx| (idx, &hunk.lines[idx])),
+                right.map(|idx| (idx, &hunk.lines[idx])),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn build_side_by_side_pairs(lines: &[DiffLine]) -> Vec<SbsPair<'_>> {
+    let indices = build_sbs_pair_indices(lines);
+    indices
+        .into_iter()
+        .map(|(left, right)| {
+            (
+                left.map(|idx| (idx, &lines[idx])),
+                right.map(|idx| (idx, &lines[idx])),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -839,9 +870,8 @@ mod tests {
     fn count_file_changes_mixed() {
         let file = FileDiff {
             new_path: "test.rs".into(),
-            hunks: vec![DiffHunk {
-                new_start: 1,
-                lines: vec![
+            hunks: {
+                let lines = vec![
                     DiffLine {
                         kind: DiffLineKind::Context,
                         old_lineno: Some(1),
@@ -866,8 +896,10 @@ mod tests {
                         new_lineno: Some(3),
                         content: "new2".into(),
                     },
-                ],
-            }],
+                ];
+                let sbs_pairs = build_sbs_pair_indices(&lines);
+                vec![DiffHunk { new_start: 1, lines, sbs_pairs }]
+            },
         };
         let (adds, dels) = count_file_changes(&file);
         assert_eq!(adds, 2);

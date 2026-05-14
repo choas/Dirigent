@@ -46,3 +46,12 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tempfile = "=3.27.0"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

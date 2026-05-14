@@ -117,7 +117,8 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT e.cue_id, e.cost_usd, e.duration_ms, e.num_turns \
              FROM executions e \
-             WHERE e.id = (SELECT MAX(e2.id) FROM executions e2 WHERE e2.cue_id = e.cue_id)",
+             INNER JOIN (SELECT cue_id, MAX(id) AS max_id FROM executions GROUP BY cue_id) latest \
+             ON e.id = latest.max_id",
         )?;
         let mut map = std::collections::HashMap::new();
         let mut rows = stmt.query([])?;
