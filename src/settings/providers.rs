@@ -57,6 +57,7 @@ pub(crate) enum SourceKind {
     Notion,
     Trello,
     Asana,
+    Sentry,
     Mcp,
     Custom,
 }
@@ -70,6 +71,7 @@ impl SourceKind {
             SourceKind::Notion => "Notion",
             SourceKind::Trello => "Trello",
             SourceKind::Asana => "Asana",
+            SourceKind::Sentry => "Sentry",
             SourceKind::Mcp => "MCP",
             SourceKind::Custom => "Custom",
         }
@@ -83,6 +85,7 @@ impl SourceKind {
             SourceKind::Notion => "notion",
             SourceKind::Trello => "trello",
             SourceKind::Asana => "asana",
+            SourceKind::Sentry => "sentry",
             SourceKind::Mcp => "mcp",
             SourceKind::Custom => "custom",
         }
@@ -96,6 +99,7 @@ impl SourceKind {
             SourceKind::Notion,
             SourceKind::Trello,
             SourceKind::Asana,
+            SourceKind::Sentry,
             SourceKind::Mcp,
             SourceKind::Custom,
         ]

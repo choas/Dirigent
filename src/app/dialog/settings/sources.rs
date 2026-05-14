@@ -80,7 +80,7 @@ impl DirigentApp {
 
         if self.settings.sources.is_empty() {
             ui.label(
-                egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Trello, Asana, SonarQube, Notion, MCP, or custom commands.")
+                egui::RichText::new("No sources configured. Add a source to pull cues from GitHub Issues, Trello, Asana, SonarQube, Sentry, Notion, MCP, or custom commands.")
                     .italics()
                     .color(self.semantic.tertiary_text),
             );
@@ -214,6 +214,7 @@ impl DirigentApp {
             SourceKind::Trello => self.render_source_trello_fields(ui, i),
             SourceKind::Asana => self.render_source_asana_fields(ui, i),
             SourceKind::Notion => self.render_source_notion_fields(ui, i),
+            SourceKind::Sentry => self.render_source_sentry_fields(ui, i),
             SourceKind::Custom | SourceKind::Mcp => self.render_source_custom_fields(ui, i),
         }
     }
@@ -309,6 +310,36 @@ impl DirigentApp {
             &mut self.settings.sources[i].project_key,
             "e.g. 120345678901234",
             200.0,
+        );
+    }
+
+    fn render_source_sentry_fields(&mut self, ui: &mut egui::Ui, i: usize) {
+        source_text_field(
+            ui,
+            "Host URL:",
+            &mut self.settings.sources[i].host_url,
+            "https://sentry.io (or self-hosted)",
+            200.0,
+        );
+        source_text_field(
+            ui,
+            "Organization:",
+            &mut self.settings.sources[i].channel,
+            "e.g. my-org",
+            200.0,
+        );
+        source_text_field(
+            ui,
+            "Project:",
+            &mut self.settings.sources[i].project_key,
+            "e.g. my-project",
+            200.0,
+        );
+        source_password_field(
+            ui,
+            "Auth Token:",
+            &mut self.settings.sources[i].token,
+            "from env SENTRY_AUTH_TOKEN or .env",
         );
     }
 

@@ -770,6 +770,104 @@ pub(crate) fn fetch_asana_tasks(
         .collect())
 }
 
+/// Fetch unresolved issues from a Sentry project using the Sentry Web API.
+/// Requires an auth token and an organization/project slug pair.
+/// Supports both SaaS (`https://sentry.io`) and self-hosted instances.
+pub(crate) fn fetch_sentry_issues(
+    token: &str,
+    organization: &str,
+    project: &str,
+    host_url: &str,
+    source_label: &str,
+) -> crate::error::Result<Vec<SourceItem>> {
+    if token.is_empty() {
+        return Err(DirigentError::Source(
+            "Sentry auth token is empty (set in source config or SENTRY_AUTH_TOKEN in .env)"
+                .to_string(),
+        ));
+    }
+    if organization.is_empty() {
+        return Err(DirigentError::Source(
+            "Sentry organization slug is empty".to_string(),
+        ));
+    }
+    if project.is_empty() {
+        return Err(DirigentError::Source(
+            "Sentry project slug is empty".to_string(),
+        ));
+    }
+
+    let base = if host_url.is_empty() {
+        "https://sentry.io"
+    } else {
+        host_url.trim_end_matches('/')
+    };
+
+    let client = http_client()?;
+
+    let url = format!(
+        "{}/api/0/projects/{}/{}/issues/?query=is:unresolved&limit=50",
+        base,
+        url_encode(organization),
+        url_encode(project),
+    );
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Sentry request failed: {e}")))?;
+    let resp = check_response(resp, "Sentry API")?;
+
+    let issues: Vec<serde_json::Value> = resp
+        .json()
+        .map_err(|e| DirigentError::Source(format!("Sentry response parse error: {e}")))?;
+
+    Ok(issues
+        .iter()
+        .filter_map(|issue| {
+            let id = issue.get("id")?.as_str()?;
+            let title = issue.get("title")?.as_str()?;
+            let culprit = issue.get("culprit").and_then(|c| c.as_str()).unwrap_or("");
+            let level = issue
+                .get("level")
+                .and_then(|l| l.as_str())
+                .unwrap_or("error");
+            let count = issue.get("count").and_then(|c| c.as_str()).unwrap_or("0");
+            let permalink = issue
+                .get("permalink")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            let external_id = if permalink.is_empty() {
+                format!("sentry:{}", id)
+            } else {
+                permalink.to_string()
+            };
+
+            let location = if culprit.is_empty() {
+                String::new()
+            } else {
+                format!(" in {}", culprit)
+            };
+
+            let text = format!(
+                "[{}] {}{} ({}x)",
+                level.to_uppercase(),
+                title,
+                location,
+                count
+            );
+
+            let mut item = SourceItem::new(external_id, text, source_label);
+            if !culprit.is_empty() {
+                item = item.with_location(culprit, 0);
+            }
+            Some(item)
+        })
+        .collect())
+}
+
 /// Fetch all databases and pages visible to the Notion integration token.
 ///
 /// Uses the Notion Search API (`POST /v1/search`) to list every object the

@@ -308,6 +308,13 @@ fn fetch_by_kind(
         SourceKind::Asana => {
             sources::fetch_asana_tasks(&token(), &source.project_key, &source.label)
         }
+        SourceKind::Sentry => sources::fetch_sentry_issues(
+            &token(),
+            &source.channel,
+            &source.project_key,
+            &source.host_url,
+            &source.label,
+        ),
         SourceKind::Notion => sources::fetch_notion_tasks(
             &token(),
             &source.project_key,
