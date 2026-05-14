@@ -612,7 +612,7 @@ impl GitState {
         for rel in self.dirty_files.keys() {
             let mut dir = project_root.join(rel);
             while dir.pop() {
-                if dir < *project_root {
+                if !dir.starts_with(project_root) || dir == *project_root {
                     break;
                 }
                 if !self.dirty_dirs.insert(dir.clone()) {
