@@ -219,6 +219,67 @@ is no "detached HEAD" anxiety.
 
 ---
 
+## Parallel cues and isolation
+
+### The problem: shared working copy
+
+If you run two cues in parallel -- say, "add authentication" and "add logging" --
+both Claude sessions edit files in the same working copy. When you commit, jj
+captures *everything* in the working copy. If one cue is still running, the
+commit would include its half-finished changes alongside the other cue's
+completed work. That's an inconsistent commit.
+
+This isn't specific to jj -- git has the exact same problem. But jj gives you a
+clean escape hatch: **workspaces**.
+
+### The solution: one workspace per cue
+
+A jj workspace is a separate working directory backed by the same repo. Each
+workspace has its own working-copy commit, so changes in one workspace don't
+bleed into another. This is how Dirigent isolates parallel cues:
+
+```
+repo/                      <- workspace "default", cue 1 runs here
+repo-workspace-logging/    <- workspace "logging", cue 2 runs here
+```
+
+Each cue edits files in its own workspace. When cue 1 finishes, you commit in
+the default workspace -- only cue 1's changes are included. Cue 2 keeps running
+in its workspace without interference. When cue 2 finishes, you commit there.
+Two clean, independent commits.
+
+Dirigent's **Worktree Manager** handles workspace creation and cleanup. When you
+run parallel cues, Dirigent can create a workspace for each one, ensuring
+isolation. After both are committed, you can stack them (rebase one on top of
+the other) or merge them.
+
+> Under the hood:
+> ```
+> jj workspace add ../repo-workspace-logging    # create isolated workspace
+> # ... cue 2 runs in the new workspace ...
+> jj commit -m "add logging"                    # commit only this workspace's changes
+> jj workspace forget logging                   # clean up when done
+> ```
+
+### What if you don't use workspaces?
+
+If two cues run in the same working copy, treat them as sequential: wait for one
+to finish and commit before running the next. Or, after both finish, use
+`jj split` to separate the interleaved changes into distinct commits. But
+workspaces are the cleaner approach -- they prevent the problem instead of fixing
+it after the fact.
+
+### Why jj is better than git here
+
+Git worktrees achieve similar isolation, but they're heavier: each worktree is a
+full checkout with its own `.git` link, and branch management gets awkward (you
+can't have the same branch checked out in two worktrees). jj workspaces are
+lightweight -- they share the repo store, each has an independent working-copy
+commit, and there are no branch conflicts. Creating and tearing down a workspace
+is fast and has no side effects on other workspaces.
+
+---
+
 ## Common tasks
 
 ### Revert a file
