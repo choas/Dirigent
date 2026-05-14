@@ -231,15 +231,22 @@ impl DirigentApp {
             } else {
                 self.semantic.muted_text()
             };
-            ui.label(
-                egui::RichText::new(format!(
-                    "{frame_ms:.1} ms  poll {poll_ms:.1} | tree {tree_ms:.1} | pool {pool_ms:.1} | code {code_ms:.1}"
-                ))
-                .monospace()
-                .small()
-                .color(frame_color),
+            let timing_text = format!(
+                "{frame_ms:.1} ms  poll {poll_ms:.1} | tree {tree_ms:.1} | pool {pool_ms:.1} | code {code_ms:.1}"
+            );
+            let resp = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&timing_text)
+                        .monospace()
+                        .small()
+                        .color(frame_color),
+                )
+                .sense(egui::Sense::click()),
             )
-            .on_hover_text("Frame: total ms  poll | file tree | cue pool | code viewer. Budget: 16.6 ms");
+            .on_hover_text("Click to copy. Frame: total ms  poll | file tree | cue pool | code viewer. Budget: 16.6 ms");
+            if resp.clicked() {
+                ui.ctx().copy_text(timing_text);
+            }
         });
     }
 
