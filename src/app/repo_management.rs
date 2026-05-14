@@ -52,6 +52,9 @@ impl DirigentApp {
         self.confirm_delete_archived = false;
         self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
+        self.git.dirty_files.clear();
+        self.git.dirty_dirs.clear();
+        self.git.ahead_of_remote = 0;
         while self.git_status_rx.try_recv().is_ok() {}
         {
             let root = self.project_root.clone();
