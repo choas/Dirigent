@@ -217,6 +217,7 @@ pub struct DirigentApp {
 
     // Per-cue agent runs viewer (cue ID whose agent runs to show in central panel)
     show_agent_runs_for_cue: Option<i64>,
+    cached_agent_runs_for_cue: (Option<i64>, Vec<crate::db::AgentRunEntry>),
 
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
@@ -352,6 +353,8 @@ pub struct DirigentApp {
 
     // Frame timing for status bar display
     last_frame_time: Duration,
+    last_poll_time: Duration,
+    last_render_time: Duration,
 }
 
 /// State for the custom theme editor dialog.
@@ -700,6 +703,7 @@ impl DirigentApp {
             activity_cache: HashMap::new(),
             agent_output_expanded: HashSet::new(),
             show_agent_runs_for_cue: None,
+            cached_agent_runs_for_cue: (None, Vec::new()),
             opencode_models: Vec::new(),
             opencode_models_loading: false,
             opencode_models_rx: mpsc::channel().1,
@@ -781,6 +785,8 @@ impl DirigentApp {
             show_ssh_panel: false,
             ssh_test_rx: None,
             last_frame_time: Duration::ZERO,
+            last_poll_time: Duration::ZERO,
+            last_render_time: Duration::ZERO,
         }
     }
 
@@ -1093,6 +1099,8 @@ impl eframe::App for DirigentApp {
         // Schedule repaint intervals
         self.schedule_repaints(ctx);
 
+        self.last_poll_time = frame_start.elapsed();
+
         // Handle drag & drop of files onto the window
         self.handle_drag_and_drop(ctx);
 
@@ -1100,7 +1108,9 @@ impl eframe::App for DirigentApp {
         self.handle_global_shortcuts(ctx);
 
         // Render all panels and dialogs
+        let render_start = Instant::now();
         self.render_panels_and_dialogs(ui);
+        self.last_render_time = render_start.elapsed();
 
         self.last_frame_time = frame_start.elapsed();
     }

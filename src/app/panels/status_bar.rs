@@ -206,10 +206,12 @@ impl DirigentApp {
         }
     }
 
-    /// Render right-aligned info (frame time, memory usage) in the status bar.
+    /// Render right-aligned info (frame time breakdown, memory usage) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
         let mem = get_memory_usage_mb();
         let frame_ms = self.last_frame_time.as_secs_f64() * 1000.0;
+        let poll_ms = self.last_poll_time.as_secs_f64() * 1000.0;
+        let render_ms = self.last_render_time.as_secs_f64() * 1000.0;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(mb) = mem {
                 ui.label(
@@ -228,12 +230,14 @@ impl DirigentApp {
                 self.semantic.muted_text()
             };
             ui.label(
-                egui::RichText::new(format!("{frame_ms:.1} ms"))
-                    .monospace()
-                    .small()
-                    .color(frame_color),
+                egui::RichText::new(format!(
+                    "{frame_ms:.1} ms (poll {poll_ms:.1} | render {render_ms:.1})"
+                ))
+                .monospace()
+                .small()
+                .color(frame_color),
             )
-            .on_hover_text("Last frame time (budget: 16.6 ms)");
+            .on_hover_text("Frame time: total (poll | render). Budget: 16.6 ms");
         });
     }
 

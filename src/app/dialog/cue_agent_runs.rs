@@ -11,7 +11,11 @@ impl DirigentApp {
             return;
         };
         let cue_text = self.cue_text_truncated(cue_id);
-        let runs = self.db.get_agent_runs_for_cue(cue_id).unwrap_or_default();
+        if self.cached_agent_runs_for_cue.0 != Some(cue_id) {
+            let runs = self.db.get_agent_runs_for_cue(cue_id).unwrap_or_default();
+            self.cached_agent_runs_for_cue = (Some(cue_id), runs);
+        }
+        let runs = self.cached_agent_runs_for_cue.1.clone();
 
         let mut close = false;
 

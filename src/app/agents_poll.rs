@@ -31,6 +31,7 @@ impl DirigentApp {
     /// Process a single agent result: persist to DB, update state, set status
     /// messages, log activity, and trigger chained agents.
     fn process_single_agent_result(&mut self, result: AgentResult) {
+        self.cached_agent_runs_for_cue = (None, Vec::new());
         if let Err(e) = self.persist_agent_result(&result) {
             eprintln!(
                 "Failed to persist agent result for {:?}: {e:#}",
