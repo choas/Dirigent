@@ -559,7 +559,7 @@ impl DirigentApp {
             }
         }
 
-        DirigentApp {
+        let mut app = DirigentApp {
             project_root,
             db,
             file_tree,
@@ -592,6 +592,7 @@ impl DirigentApp {
             git: GitState {
                 info: git_info,
                 dirty_files,
+                dirty_dirs: HashSet::new(),
                 show_git_view: false,
                 git_view_diff_mode: GitViewDiffMode::DiffOnly,
                 git_view_expanded_dirs: HashSet::new(),
@@ -793,7 +794,9 @@ impl DirigentApp {
             last_render_file_tree_time: Duration::ZERO,
             last_render_cue_pool_time: Duration::ZERO,
             last_render_code_viewer_time: Duration::ZERO,
-        }
+        };
+        app.git.recompute_dirty_dirs(&app.project_root);
+        app
     }
 
     /// Return the project directory name (for telemetry and display).

@@ -784,6 +784,7 @@ impl DirigentApp {
     pub(super) fn reload_git_info(&mut self) {
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.recompute_dirty_dirs(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
     }
 

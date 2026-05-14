@@ -16,6 +16,7 @@ pub(super) struct FileTreeCtx<'a> {
     pub action: &'a mut Option<FileTreeAction>,
     pub project_root: &'a Path,
     pub dirty_files: &'a HashMap<String, char>,
+    pub dirty_dirs: &'a HashSet<PathBuf>,
     pub semantic: &'a SemanticColors,
     pub depth: usize,
     pub font_size: f32,
@@ -77,6 +78,7 @@ impl DirigentApp {
                                 action: &mut action,
                                 project_root: &self.project_root,
                                 dirty_files: &self.git.dirty_files,
+                                dirty_dirs: &self.git.dirty_dirs,
                                 semantic: &self.semantic,
                                 depth: 0,
                                 font_size: self.settings.font_size,
@@ -401,7 +403,7 @@ impl DirigentApp {
     fn render_dir_entry(ui: &mut egui::Ui, entry: &FileEntry, ctx: &mut FileTreeCtx<'_>) {
         let indent = ctx.depth as f32 * 16.0;
         let is_expanded = ctx.expanded.contains(&entry.path);
-        let dir_has_dirty = Self::dir_has_dirty_files(entry, ctx.project_root, ctx.dirty_files);
+        let dir_has_dirty = ctx.dirty_dirs.contains(&entry.path);
 
         let (row_rect, response) = allocate_tree_row(ui);
         paint_hover_highlight(ui, &response, row_rect);
@@ -505,26 +507,6 @@ impl DirigentApp {
         );
     }
 
-    /// Check if a directory contains any dirty files (recursively).
-    fn dir_has_dirty_files(
-        entry: &FileEntry,
-        project_root: &Path,
-        dirty_files: &HashMap<String, char>,
-    ) -> bool {
-        if !entry.is_dir {
-            let rel = entry
-                .path
-                .strip_prefix(project_root)
-                .unwrap_or(&entry.path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            return dirty_files.contains_key(&rel);
-        }
-        entry
-            .children
-            .iter()
-            .any(|child| Self::dir_has_dirty_files(child, project_root, dirty_files))
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -470,6 +470,8 @@ pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
+    /// Absolute paths of directories that contain at least one dirty file (pre-computed).
+    pub(super) dirty_dirs: HashSet<PathBuf>,
     /// Whether the git changes view is shown instead of the file tree.
     pub(super) show_git_view: bool,
     /// Display mode for git view: full file or diff only.
@@ -576,6 +578,22 @@ pub(crate) struct GitState {
 }
 
 impl GitState {
+    /// Recompute `dirty_dirs` from `dirty_files`. Call after every `dirty_files` update.
+    pub(super) fn recompute_dirty_dirs(&mut self, project_root: &std::path::Path) {
+        self.dirty_dirs.clear();
+        for rel in self.dirty_files.keys() {
+            let mut dir = project_root.join(rel);
+            while dir.pop() {
+                if dir < *project_root {
+                    break;
+                }
+                if !self.dirty_dirs.insert(dir.clone()) {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Dismiss the topmost git-related modal dialog (priority order).
     /// Returns `true` if a modal was dismissed.
     pub(super) fn dismiss_topmost_modal(&mut self) -> bool {

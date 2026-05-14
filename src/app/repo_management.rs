@@ -53,6 +53,7 @@ impl DirigentApp {
         self.reload_cues();
         self.git.info = git::read_git_info(&self.project_root);
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.recompute_dirty_dirs(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
         self.viewer.tabs.clear();
         self.viewer.active_tab = None;

@@ -51,6 +51,7 @@ impl DirigentApp {
         self.last_fs_rescan = std::time::Instant::now();
         self.reload_file_tree();
         self.git.dirty_files = git::get_dirty_files(&self.project_root);
+        self.git.recompute_dirty_dirs(&self.project_root);
         self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
         if !self.show_settings {
             self.reload_settings_from_disk();
