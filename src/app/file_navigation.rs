@@ -123,8 +123,11 @@ impl DirigentApp {
             }
         }
         let map = std::sync::Arc::new(self.compute_lines_with_cues());
-        self.cached_lines_with_cues =
-            Some((rel_path.to_string(), self.cue_generation, std::sync::Arc::clone(&map)));
+        self.cached_lines_with_cues = Some((
+            rel_path.to_string(),
+            self.cue_generation,
+            std::sync::Arc::clone(&map),
+        ));
         map
     }
 }

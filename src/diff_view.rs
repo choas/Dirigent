@@ -884,7 +884,11 @@ mod tests {
                     },
                 ];
                 let sbs_pairs = build_sbs_pair_indices(&lines);
-                vec![DiffHunk { new_start: 1, lines, sbs_pairs }]
+                vec![DiffHunk {
+                    new_start: 1,
+                    lines,
+                    sbs_pairs,
+                }]
             },
         };
         let (adds, dels) = count_file_changes(&file);

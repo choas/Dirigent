@@ -188,13 +188,16 @@ impl TabState {
             .map(String::from)
             .collect();
 
-        self.last_mtime = meta.modified().map_err(|e| {
-            eprintln!(
-                "warning: failed to read mtime for {}: {e}",
-                self.file_path.display()
-            );
-            e
-        }).ok();
+        self.last_mtime = meta
+            .modified()
+            .map_err(|e| {
+                eprintln!(
+                    "warning: failed to read mtime for {}: {e}",
+                    self.file_path.display()
+                );
+                e
+            })
+            .ok();
 
         if new_content == self.content {
             return Ok(false);

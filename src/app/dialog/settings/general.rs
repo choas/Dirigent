@@ -468,8 +468,11 @@ impl DirigentApp {
         ui.end_row();
 
         ui.label("Frame Timing:");
-        ui.checkbox(&mut self.settings.show_frame_timing, "Show frame timing in status bar")
-            .on_hover_text("Display per-frame timing breakdown and memory usage in the status bar.");
+        ui.checkbox(
+            &mut self.settings.show_frame_timing,
+            "Show frame timing in status bar",
+        )
+        .on_hover_text("Display per-frame timing breakdown and memory usage in the status bar.");
         ui.end_row();
     }
 }

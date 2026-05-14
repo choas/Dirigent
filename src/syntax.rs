@@ -105,10 +105,13 @@ pub(crate) fn highlight(
             cache.retain(|_, v| v.generation >= cutoff);
         }
         *gen += 1;
-        cache.insert(key, CacheEntry {
-            job: job.clone(),
-            generation: *gen,
-        });
+        cache.insert(
+            key,
+            CacheEntry {
+                job: job.clone(),
+                generation: *gen,
+            },
+        );
     });
 
     job
