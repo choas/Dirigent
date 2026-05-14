@@ -466,5 +466,10 @@ impl DirigentApp {
         ui.checkbox(&mut self.settings.allow_home_folder_access, "Allow AI access to home folders")
             .on_hover_text("When disabled, installs a Claude Code PreToolUse hook that blocks access to personal directories like ~/Documents, ~/Desktop, ~/Downloads, ~/Photos, ~/Music, ~/Library, ~/.ssh, etc.");
         ui.end_row();
+
+        ui.label("Frame Timing:");
+        ui.checkbox(&mut self.settings.show_frame_timing, "Show frame timing in status bar")
+            .on_hover_text("Display per-frame timing breakdown and memory usage in the status bar.");
+        ui.end_row();
     }
 }

@@ -222,6 +222,9 @@ pub(crate) struct Settings {
     /// instead of actually editing files.
     #[serde(default = "default_true")]
     pub allow_dangerous_skip_permissions: bool,
+    /// Show frame timing breakdown and memory usage in the status bar.
+    #[serde(default)]
+    pub show_frame_timing: bool,
 }
 
 /// Common per-provider fields extracted from [`Settings`].
@@ -326,6 +329,7 @@ impl Default for Settings {
             auto_context_git_diff: false,
             auto_commit: false,
             allow_dangerous_skip_permissions: true,
+            show_frame_timing: false,
         }
     }
 }

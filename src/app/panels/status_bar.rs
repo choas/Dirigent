@@ -208,6 +208,9 @@ impl DirigentApp {
 
     /// Render right-aligned info (frame time breakdown, memory usage) in the status bar.
     fn render_status_bar_cached_cost(&self, ui: &mut egui::Ui) {
+        if !self.settings.show_frame_timing {
+            return;
+        }
         let mem = get_memory_usage_mb();
         let frame_ms = self.last_frame_time.as_secs_f64() * 1000.0;
         let poll_ms = self.last_poll_time.as_secs_f64() * 1000.0;
