@@ -36,7 +36,7 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
 
 thread_local! {
     static HIGHLIGHT_CACHE: RefCell<(HashMap<u64, CacheEntry>, u64)> =
-        RefCell::new((HashMap::with_capacity(4096), 0));
+        RefCell::new((HashMap::with_capacity(MAX_CACHE_ENTRIES), 0));
 }
 
 const MAX_CACHE_ENTRIES: usize = 10_000;
