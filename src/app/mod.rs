@@ -1014,10 +1014,7 @@ fn should_keep_inbox_file(db: &Database, path: &Path) -> bool {
 }
 
 fn compute_file_checksum(content: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
 fn scan_inbox_folder(project_root: &Path) -> Vec<PathBuf> {
