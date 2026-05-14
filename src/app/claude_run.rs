@@ -1012,6 +1012,7 @@ impl DirigentApp {
                 "Claude completed but no file changes detected for \"{}\"",
                 preview
             ));
+            let _ = self.db.update_cue_has_question(result.cue_id, false);
             let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
             let _ = self
                 .db
