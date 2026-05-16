@@ -62,7 +62,12 @@ impl DirigentApp {
     pub(super) fn nav_back(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_back() {
             let file_path = path.clone();
-            self.viewer.open_file_without_history(path);
+            if self.viewer.open_file_without_history(path).is_none() {
+                let name = file_path.file_name().unwrap_or_default().to_string_lossy();
+                self.set_status_message(format!("Could not open file: {}", name));
+                self.viewer.nav_history.go_forward();
+                return;
+            }
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
             if self.settings.lsp_enabled {
@@ -75,7 +80,12 @@ impl DirigentApp {
     pub(super) fn nav_forward(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_forward() {
             let file_path = path.clone();
-            self.viewer.open_file_without_history(path);
+            if self.viewer.open_file_without_history(path).is_none() {
+                let name = file_path.file_name().unwrap_or_default().to_string_lossy();
+                self.set_status_message(format!("Could not open file: {}", name));
+                self.viewer.nav_history.go_back();
+                return;
+            }
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
             if self.settings.lsp_enabled {
