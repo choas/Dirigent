@@ -61,18 +61,26 @@ impl DirigentApp {
     /// Navigate back in history.
     pub(super) fn nav_back(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_back() {
+            let file_path = path.clone();
             self.viewer.open_file_without_history(path);
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
+            if self.settings.lsp_enabled {
+                self.lsp.notify_file_opened(&file_path);
+            }
         }
     }
 
     /// Navigate forward in history.
     pub(super) fn nav_forward(&mut self) {
         if let Some((path, line)) = self.viewer.nav_history.go_forward() {
+            let file_path = path.clone();
             self.viewer.open_file_without_history(path);
             self.viewer.scroll_to_line = Some(line);
             self.dismiss_central_overlays();
+            if self.settings.lsp_enabled {
+                self.lsp.notify_file_opened(&file_path);
+            }
         }
     }
 

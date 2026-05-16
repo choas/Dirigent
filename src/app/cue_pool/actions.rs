@@ -463,6 +463,7 @@ impl DirigentApp {
 
     fn process_queue_next(&mut self, id: i64) {
         if self.run_queue.contains(&id) {
+            self.set_status_message("Cue is already queued".into());
             return;
         }
         self.run_queue.push(id);
@@ -554,6 +555,8 @@ impl DirigentApp {
             );
             let _ = self.db.log_activity(cue_id, "Running plan");
             self.trigger_claude_reply(cue_id, &reply, &[]);
+        } else {
+            self.set_status_message("No plan available for this cue".into());
         }
     }
 
@@ -641,7 +644,10 @@ impl DirigentApp {
 
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
-            None => return,
+            None => {
+                self.set_status_message("Cue not found".into());
+                return;
+            }
         };
         let source_ref = match &cue.source_ref {
             Some(r) => r.clone(),

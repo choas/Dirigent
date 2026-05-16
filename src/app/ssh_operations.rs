@@ -202,6 +202,14 @@ impl DirigentApp {
             last_mtime: None,
         };
 
+        if self.viewer.tabs.len() >= 20 {
+            let close_idx = if self.viewer.active_tab == Some(0) {
+                1
+            } else {
+                0
+            };
+            self.viewer.close_tab(close_idx);
+        }
         self.viewer.tabs.push(tab);
         self.viewer.active_tab = Some(self.viewer.tabs.len() - 1);
         self.dismiss_central_overlays();

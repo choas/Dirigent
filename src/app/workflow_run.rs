@@ -80,9 +80,13 @@ impl DirigentApp {
     pub(super) fn start_workflow(&mut self) {
         let plan = match self.workflow_plan.as_mut() {
             Some(p) => p,
-            None => return,
+            None => {
+                self.set_status_message("No workflow plan to start".into());
+                return;
+            }
         };
         if plan.steps.is_empty() {
+            self.set_status_message("Workflow plan has no steps".into());
             return;
         }
         plan.current_step = 0;
@@ -237,7 +241,10 @@ impl DirigentApp {
     pub(super) fn resume_workflow(&mut self) {
         let plan = match self.workflow_plan.as_mut() {
             Some(p) => p,
-            None => return,
+            None => {
+                self.set_status_message("No active workflow to resume".into());
+                return;
+            }
         };
 
         // Find the paused step and mark it completed

@@ -77,6 +77,7 @@ impl DirigentApp {
         self.git.commit_history_total = git::count_commits(&self.project_root);
         self.git.history_cache_key = (String::new(), 0);
         self.expanded_dirs = HashSet::new();
+        self.git.git_view_expanded_dirs.clear();
         self.diff_review = None;
         self.prompt_history_query = String::new();
         self.prompt_history_results = Vec::new();

@@ -221,7 +221,9 @@ fn strip_type_prefix(text: &str) -> &str {
         if i < bytes.len() && bytes[i] == b' ' {
             i += 1;
         }
-        return &text[i..];
+        if text.is_char_boundary(i) {
+            return &text[i..];
+        }
     }
     text
 }

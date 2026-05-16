@@ -202,7 +202,10 @@ fn collect_remote_branches(
             continue;
         }
         // Strip "origin/" (or any remote name) prefix.
-        let short = &full[full.find('/').unwrap() + 1..];
+        let short = match full.find('/') {
+            Some(pos) => &full[pos + 1..],
+            None => continue,
+        };
         if !short.is_empty() && !checked_out.contains(short) {
             branches.insert(short.to_string());
         }
