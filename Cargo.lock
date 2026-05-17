@@ -16,6 +16,7 @@ dependencies = [
  "git2",
  "image",
  "libc",
+ "log",
  "lsp-types",
  "notify",
  "objc",
