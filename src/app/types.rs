@@ -170,10 +170,7 @@ impl TabState {
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "warning: failed to read mtime for {}: {e}",
-                    self.file_path.display()
-                );
+                log::warn!("failed to read mtime for {}: {e}", self.file_path.display());
             }
         }
 
@@ -191,10 +188,7 @@ impl TabState {
         self.last_mtime = meta
             .modified()
             .map_err(|e| {
-                eprintln!(
-                    "warning: failed to read mtime for {}: {e}",
-                    self.file_path.display()
-                );
+                log::warn!("failed to read mtime for {}: {e}", self.file_path.display());
                 e
             })
             .ok();

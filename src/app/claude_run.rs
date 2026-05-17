@@ -464,7 +464,7 @@ impl DirigentApp {
         let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("Failed to create execution record for cue {cue_id}: {e}");
+                log::error!("Failed to create execution record for cue {cue_id}: {e}");
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
@@ -496,7 +496,7 @@ impl DirigentApp {
             &self.project_root,
             self.settings.allow_home_folder_access,
         ) {
-            eprintln!("Failed to sync home guard hook: {e:#}");
+            log::error!("Failed to sync home guard hook: {e:#}");
             return;
         }
 
@@ -543,7 +543,7 @@ impl DirigentApp {
             &self.project_root,
             self.settings.allow_home_folder_access,
         ) {
-            eprintln!("Failed to sync home guard hook: {e:#}");
+            log::error!("Failed to sync home guard hook: {e:#}");
             return;
         }
 

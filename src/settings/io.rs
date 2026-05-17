@@ -112,7 +112,7 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     };
     // Reject shell_init values that contain known dangerous patterns.
     if !validate_shell_init(&settings.agent_shell_init) {
-        eprintln!(
+        log::warn!(
             "[settings] rejecting agent_shell_init with blocked command pattern: {:?}",
             settings.agent_shell_init
         );
@@ -158,7 +158,7 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     }
     if env_changed {
         if let Err(e) = save_settings(project_root, &settings) {
-            eprintln!("Failed to save settings after env migration: {e}");
+            log::warn!("Failed to save settings after env migration: {e}");
         }
     }
     settings

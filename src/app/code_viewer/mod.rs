@@ -456,7 +456,7 @@ impl DirigentApp {
                     self.reload_cues();
                 }
                 Err(e) => {
-                    eprintln!("Failed to insert cue: {e}");
+                    log::error!("Failed to insert cue: {e}");
                 }
             }
         }
@@ -478,7 +478,7 @@ impl DirigentApp {
                 self.reload_cues();
             }
             Err(e) => {
-                eprintln!("Failed to insert cue: {e}");
+                log::error!("Failed to insert cue: {e}");
             }
         }
     }

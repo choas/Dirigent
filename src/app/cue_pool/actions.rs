@@ -628,7 +628,7 @@ impl DirigentApp {
                 .join(format!("split-ref-{}.md", cue_id));
             if let Err(e) = std::fs::remove_file(&path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("Failed to remove {}: {e}", path.display());
+                    log::error!("Failed to remove {}: {e}", path.display());
                 }
             }
         }

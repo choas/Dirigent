@@ -44,8 +44,8 @@ pub(super) fn build_claude_command(
 /// Falls back to whitespace splitting if quotes are malformed.
 fn append_extra_args(cmd: &mut Command, extra_args: &str) {
     let args = shlex::split(extra_args).unwrap_or_else(|| {
-        eprintln!(
-            "warning: extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
+        log::warn!(
+            "extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
         );
         extra_args.split_whitespace().map(String::from).collect()
     });
@@ -79,10 +79,7 @@ pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
                 cmd.env(name, value);
             }
             Err(_) => {
-                eprintln!(
-                    "warning: env var '{}' not found in environment, skipping",
-                    name
-                );
+                log::warn!("env var '{}' not found in environment, skipping", name);
             }
         }
     }
@@ -101,7 +98,7 @@ pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
         Ok(c) => c,
         Err(e) => {
             if env_path.exists() {
-                eprintln!("warning: .Dirigent/.env exists but is unreadable: {e}");
+                log::warn!(".Dirigent/.env exists but is unreadable: {e}");
             }
             return;
         }

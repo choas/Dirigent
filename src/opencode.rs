@@ -479,7 +479,7 @@ fn check_exit_status<F: FnMut(&str)>(
     };
     if !stderr.is_empty() {
         let mut log = on_log.lock().unwrap_or_else(|e| {
-            eprintln!(
+            log::error!(
                 "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
                 e
             );
@@ -507,7 +507,7 @@ pub(crate) fn invoke_opencode_streaming(
 
     {
         let mut log = on_log.lock().unwrap_or_else(|e| {
-            eprintln!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
+            log::error!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
             e.into_inner()
         });
         run_hook_script(
@@ -581,7 +581,7 @@ pub(crate) fn invoke_opencode_streaming(
 
     if final_result.is_empty() && !stderr.is_empty() {
         let mut log = on_log.lock().unwrap_or_else(|e| {
-            eprintln!(
+            log::error!(
                 "Mutex poisoned while acquiring on_log for empty-result error: {:?}",
                 e
             );
@@ -592,7 +592,7 @@ pub(crate) fn invoke_opencode_streaming(
 
     {
         let mut log = on_log.lock().unwrap_or_else(|e| {
-            eprintln!(
+            log::error!(
                 "Mutex poisoned while acquiring on_log for post-run: {:?}",
                 e
             );

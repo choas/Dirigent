@@ -9,6 +9,7 @@ mod error;
 mod file_tree;
 mod gemini;
 mod git;
+mod log_collector;
 mod lsp;
 mod opencode;
 mod prompt_hints;
@@ -314,6 +315,7 @@ fn load_logo_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    log_collector::init();
     telemetry::init();
 
     let sentry_dsn = std::env::var("SENTRY_DSN")

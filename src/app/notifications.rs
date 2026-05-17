@@ -72,10 +72,10 @@ pub(super) fn send_macos_notification(title: &str, subtitle: &str, body: &str) {
             }
             NotificationOutcome::Delivered => {}
             NotificationOutcome::NotAuthorized => {
-                eprintln!("macOS notifications not authorized for this app");
+                log::warn!("macOS notifications not authorized for this app");
             }
             NotificationOutcome::Failed(e) => {
-                eprintln!("notification delivery failed: {e}");
+                log::error!("notification delivery failed: {e}");
             }
         }
 
@@ -518,7 +518,7 @@ fn fallback_osascript_notification(title: &str, subtitle: &str, body: &str) {
             });
         }
         Err(e) => {
-            eprintln!("fallback notification failed to spawn osascript: {e}");
+            log::warn!("fallback notification failed to spawn osascript: {e}");
         }
     }
 }

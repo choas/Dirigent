@@ -364,7 +364,7 @@ impl DirigentApp {
                         Ok(Some("updated")) => updated_count += 1,
                         Ok(_) => {}
                         Err(e) => {
-                            eprintln!("DB error updating finding {}: {e}", finding.external_id);
+                            log::error!("DB error updating finding {}: {e}", finding.external_id);
                             error_count += 1;
                         }
                     }
@@ -372,7 +372,7 @@ impl DirigentApp {
                 }
                 Ok(None) => {} // New finding — fall through to insert
                 Err(e) => {
-                    eprintln!(
+                    log::error!(
                         "DB error looking up source ref {}: {e}",
                         finding.external_id
                     );
@@ -390,14 +390,14 @@ impl DirigentApp {
             ) {
                 Ok(id) => {
                     if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
-                        eprintln!("DB error tagging new cue {id}: {e}");
+                        log::error!("DB error tagging new cue {id}: {e}");
                         error_count += 1;
                     } else {
                         new_count += 1;
                     }
                 }
                 Err(e) => {
-                    eprintln!("DB error inserting finding {}: {e}", finding.external_id);
+                    log::error!("DB error inserting finding {}: {e}", finding.external_id);
                     error_count += 1;
                 }
             }

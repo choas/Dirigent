@@ -131,8 +131,8 @@ impl DirigentApp {
         match super::super::create_tab_state(new_path) {
             Some(new_tab) => self.viewer.tabs[idx] = new_tab,
             None => {
-                eprintln!(
-                    "Warning: failed to create tab state for renamed file: {}",
+                log::warn!(
+                    "failed to create tab state for renamed file: {}",
                     new_path.display()
                 );
                 self.viewer.close_tab(idx);

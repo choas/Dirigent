@@ -226,7 +226,7 @@ impl LspManager {
     /// Start a single language server.
     fn start_one(&mut self, cfg: &LspServerConfig) {
         let msg = format!("Starting LSP: {} ({})", cfg.name, cfg.command);
-        eprintln!("[lsp] {}", msg);
+        log::debug!("[lsp] {}", msg);
         self.log(msg);
         self.failed_servers.remove(&cfg.id);
 
@@ -245,7 +245,7 @@ impl LspManager {
             }
             Err(e) => {
                 let msg = format!("Failed to start {}: {}", cfg.name, e);
-                eprintln!("[lsp] {}", msg);
+                log::debug!("[lsp] {}", msg);
                 self.log(msg.clone());
                 self.failed_servers.insert(cfg.id.clone(), msg);
             }
@@ -264,7 +264,7 @@ impl LspManager {
                 .insert(name.to_string(), (shutdown_id, Instant::now()));
             self.extension_map.retain(|_, v| v != name);
             let msg = format!("Stopping LSP: {}", name);
-            eprintln!("[lsp] {}", msg);
+            log::debug!("[lsp] {}", msg);
             self.log(msg);
         }
     }
@@ -289,7 +289,7 @@ impl LspManager {
         self.initialized.remove(name);
         self.pending_init.remove(name);
         let msg = format!("Force-stopped LSP: {}", name);
-        eprintln!("[lsp] {}", msg);
+        log::debug!("[lsp] {}", msg);
         self.log(msg);
     }
 
@@ -372,7 +372,7 @@ impl LspManager {
             }
             self.cleanup_server_requests(&name);
             let msg = format!("LSP server exited: {}", name);
-            eprintln!("[lsp] {}", msg);
+            log::debug!("[lsp] {}", msg);
             self.log(msg.clone());
             self.failed_servers.insert(name.clone(), msg);
             self.clients.remove(&name);
@@ -413,7 +413,7 @@ impl LspManager {
         self.initialized.remove(name);
         self.pending_init.remove(name);
         let msg = format!("Stopped LSP: {}", name);
-        eprintln!("[lsp] {}", msg);
+        log::debug!("[lsp] {}", msg);
         self.log(msg);
     }
 
@@ -424,7 +424,7 @@ impl LspManager {
                 self.handle_response(server_name, msg.clone(), id, result, error);
             }
             LspMessage::Request { id, method, .. } => {
-                eprintln!("[lsp] server request: {} (id={})", method, id);
+                log::debug!("[lsp] server request: {} (id={})", method, id);
                 self.forward_event(server_name, msg);
             }
             LspMessage::Notification { method, params } => {
@@ -435,7 +435,7 @@ impl LspManager {
             }
             LspMessage::ServerExited(reason) => {
                 let msg = format!("LSP {}: {}", server_name, reason);
-                eprintln!("[lsp] {}", msg);
+                log::debug!("[lsp] {}", msg);
                 self.log(msg);
             }
         }
@@ -510,7 +510,7 @@ impl LspManager {
     /// Handle a failed initialize response.
     fn handle_initialize_failure(&mut self, server_name: &str, error: &Option<serde_json::Value>) {
         let msg = format!("LSP {} initialize failed: {:?}", server_name, error);
-        eprintln!("[lsp] {}", msg);
+        log::debug!("[lsp] {}", msg);
         self.log(msg.clone());
         self.failed_servers.insert(server_name.to_string(), msg);
         if let Some(client) = self.clients.remove(server_name) {
@@ -534,7 +534,7 @@ impl LspManager {
         }
         self.initialized.insert(server_name.to_string(), true);
         let msg = format!("LSP {} initialized", server_name);
-        eprintln!("[lsp] {}", msg);
+        log::debug!("[lsp] {}", msg);
         self.log(msg);
     }
 
@@ -546,7 +546,7 @@ impl LspManager {
         error: &Option<serde_json::Value>,
     ) {
         if error.is_some() {
-            eprintln!("[lsp] {:?} request error: {:?}", kind, error);
+            log::warn!("[lsp] {:?} request error: {:?}", kind, error);
             match kind {
                 PendingRequestKind::Hover => self.hover_pending = false,
                 PendingRequestKind::Definition => self.definition_pending = false,
@@ -750,7 +750,7 @@ impl LspManager {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                eprintln!("[lsp:{}] {} diagnostics for {}", server_name, count, short);
+                log::debug!("[lsp:{}] {} diagnostics for {}", server_name, count, short);
             }
             self.diagnostics.insert(path, diags);
         }
@@ -771,7 +771,7 @@ impl LspManager {
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
-                    eprintln!("[lsp:{}] didOpen: {}", server_name, short);
+                    log::debug!("[lsp:{}] didOpen: {}", server_name, short);
                 }
             }
         }

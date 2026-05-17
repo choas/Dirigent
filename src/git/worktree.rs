@@ -271,7 +271,7 @@ fn copy_claude_settings(src_root: &Path, dst_root: &Path) {
     }
     let dst_dir = dst_root.join(".claude");
     if let Err(e) = copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
-        eprintln!("warning: failed to copy .claude/ settings to worktree: {e}");
+        log::warn!("failed to copy .claude/ settings to worktree: {e}");
     }
 }
 

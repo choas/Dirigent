@@ -115,7 +115,7 @@ impl DirigentApp {
                     self.reload_cues();
                     if failure_count > 0 {
                         for err in &errors {
-                            eprintln!("insert_cue failed: {}", err);
+                            log::error!("insert_cue failed: {}", err);
                         }
                         self.set_status_message(format!(
                             "Split into {} cues, {} failed",

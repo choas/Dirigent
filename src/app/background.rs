@@ -196,7 +196,7 @@ impl DirigentApp {
         if let Some((def_path, def_line)) = self.lsp.definition_result.take() {
             self.lsp_goto_def_fallback_word = None;
             if !self.is_within_project_root(&def_path) {
-                eprintln!(
+                log::warn!(
                     "[lsp] rejecting definition outside project root: {:?}",
                     def_path
                 );
@@ -253,7 +253,7 @@ impl DirigentApp {
         }
         if target_line > 0 {
             if !self.is_within_project_root(&file_path) {
-                eprintln!(
+                log::warn!(
                     "[goto-def] rejecting path outside project root: {:?}",
                     file_path
                 );

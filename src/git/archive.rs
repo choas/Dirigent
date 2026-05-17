@@ -95,7 +95,7 @@ pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(e) => {
-            eprintln!(
+            log::error!(
                 "failed to read archives dir {}: {e}",
                 archives_dir.display()
             );

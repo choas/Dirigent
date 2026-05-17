@@ -519,7 +519,7 @@ impl DirigentApp {
                 self.reapply_pr_filter_patterns();
             }
             Err(e) => {
-                eprintln!("Failed to delete PR filter pattern {}: {}", id, e);
+                log::error!("Failed to delete PR filter pattern {}: {}", id, e);
                 self.set_status_message(format!("Failed to delete filter pattern: {}", e));
             }
         }
@@ -541,7 +541,7 @@ impl DirigentApp {
                 self.git.editing_pattern = None;
             }
             Err(e) => {
-                eprintln!("Failed to update PR filter pattern {}: {}", id, e);
+                log::error!("Failed to update PR filter pattern {}: {}", id, e);
                 self.set_status_message(format!("Failed to update filter pattern: {}", e));
             }
         }

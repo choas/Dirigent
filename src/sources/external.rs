@@ -26,7 +26,7 @@ fn url_encode(s: &str) -> String {
 /// Print a warning to stderr at most once per flag.
 fn warn_once(flag: &AtomicBool, msg: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
-        eprintln!("{msg}");
+        log::warn!("{msg}");
     }
 }
 
@@ -479,7 +479,7 @@ fn sonar_component_to_path(component: &str) -> String {
                 | std::path::Component::Prefix(_)
         )
     }) {
-        eprintln!(
+        log::warn!(
             "[sonar] rejecting component path with traversal: {:?}",
             path
         );

@@ -328,7 +328,7 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
     // Validate with commitlint-rs — log any issues for diagnostics.
     let violations = lint_commit_message(&msg);
     if !violations.is_empty() {
-        eprintln!(
+        log::warn!(
             "[commitlint] generated message has {} violation(s): {}",
             violations.len(),
             violations.join("; ")

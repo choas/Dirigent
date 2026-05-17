@@ -269,7 +269,7 @@ impl DirigentApp {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to check source ref {}: {}", source_ref, e);
+                    log::error!("Failed to check source ref {}: {}", source_ref, e);
                 }
             }
         }
@@ -319,7 +319,7 @@ impl DirigentApp {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to check inbox source ref {}: {}", source_ref, e);
+                    log::error!("Failed to check inbox source ref {}: {}", source_ref, e);
                 }
             }
         }

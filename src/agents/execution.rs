@@ -311,11 +311,11 @@ fn wait_with_timeout(
         match child.try_wait() {
             Ok(Some(status)) => {
                 let stdout = collect_drained(stdout_handle).unwrap_or_else(|e| {
-                    eprintln!("Failed to read child stdout: {e}");
+                    log::error!("Failed to read child stdout: {e}");
                     format!("[stdout capture failed: {e}]").into_bytes()
                 });
                 let stderr = collect_drained(stderr_handle).unwrap_or_else(|e| {
-                    eprintln!("Failed to read child stderr: {e}");
+                    log::error!("Failed to read child stderr: {e}");
                     format!("[stderr capture failed: {e}]").into_bytes()
                 });
                 return WaitResult::Completed(std::process::Output {

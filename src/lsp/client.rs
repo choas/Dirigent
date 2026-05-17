@@ -73,7 +73,7 @@ fn drain_stderr(name: String, stderr: ChildStderr) {
     let reader = BufReader::new(stderr);
     for line in reader.lines() {
         match line {
-            Ok(l) => eprintln!("[lsp:{}:stderr] {}", name, l),
+            Ok(l) => log::debug!("[lsp:{}:stderr] {}", name, l),
             Err(_) => break,
         }
     }
@@ -463,21 +463,21 @@ impl LspClient {
         let mut writer = match self.writer.lock() {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("[lsp] failed to acquire writer lock: {e}");
+                log::error!("[lsp] failed to acquire writer lock: {e}");
                 return;
             }
         };
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
         if let Err(e) = writer.write_all(header.as_bytes()) {
-            eprintln!("[lsp] failed to write header: {e}");
+            log::error!("[lsp] failed to write header: {e}");
             return;
         }
         if let Err(e) = writer.write_all(body.as_bytes()) {
-            eprintln!("[lsp] failed to write body: {e}");
+            log::error!("[lsp] failed to write body: {e}");
             return;
         }
         if let Err(e) = writer.flush() {
-            eprintln!("[lsp] failed to flush: {e}");
+            log::error!("[lsp] failed to flush: {e}");
         }
     }
 }
@@ -573,7 +573,7 @@ fn resolve_command(command: &str, shell_init: &str) -> Option<String> {
     // The command field comes from settings.json which may be attacker-controlled
     // (e.g. a malicious .Dirigent/settings.json checked into a repository).
     if !is_safe_command_name(command) {
-        eprintln!(
+        log::warn!(
             "[lsp] refusing to resolve command with unsafe characters: {:?}",
             command
         );

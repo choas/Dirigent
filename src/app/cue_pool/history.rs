@@ -117,7 +117,7 @@ impl DirigentApp {
                 self.prompt_history_results.clear();
             }
             Err(e) => {
-                eprintln!("Failed to insert cue: {e}");
+                log::error!("Failed to insert cue: {e}");
             }
         }
     }

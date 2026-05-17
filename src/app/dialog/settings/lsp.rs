@@ -54,7 +54,7 @@ impl DirigentApp {
 
     fn log_lsp_error(&mut self, result: Result<(), String>) {
         if let Err(e) = result {
-            eprintln!("[lsp] {}", e);
+            log::error!("[lsp] {}", e);
             self.lsp.log(e);
         }
     }

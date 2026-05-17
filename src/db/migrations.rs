@@ -299,7 +299,7 @@ impl Database {
             "INSERT OR IGNORE INTO settings_migrations (name, applied_at) VALUES (?1, ?2)",
             params![name, now],
         ) {
-            eprintln!("Failed to record settings migration '{name}': {e}");
+            log::error!("Failed to record settings migration '{name}': {e}");
         }
     }
 

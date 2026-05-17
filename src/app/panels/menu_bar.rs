@@ -57,6 +57,11 @@ impl DirigentApp {
                 self.show_settings = true;
                 ui.close();
             }
+            ui.separator();
+            if ui.button("Logs").clicked() {
+                self.show_log_viewer = !self.show_log_viewer;
+                ui.close();
+            }
         });
     }
 

@@ -21,7 +21,7 @@ impl DirigentApp {
                     match git::list_branches(&self.project_root) {
                         Ok(branches) => self.git.available_branches = branches,
                         Err(e) => {
-                            eprintln!(
+                            log::error!(
                                 "Failed to list branches for {}: {e}",
                                 self.project_root.display()
                             );

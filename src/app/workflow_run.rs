@@ -433,7 +433,7 @@ fn run_workflow_analysis(
 
     let (plan, warning) = workflow::parse_workflow_response(&response_text, expected_ids);
     if let Some(ref w) = warning {
-        eprintln!("[workflow] Warning: {}", w);
+        log::warn!("[workflow] {}", w);
     }
     Ok((plan, warning))
 }

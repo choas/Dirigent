@@ -174,6 +174,11 @@ pub struct DirigentApp {
 
     // About dialog
     show_about: bool,
+
+    // Log viewer
+    show_log_viewer: bool,
+    log_viewer_filter: log::LevelFilter,
+    log_viewer_auto_scroll: bool,
     logo_texture: Option<egui::TextureHandle>,
 
     // File-system watcher
@@ -441,11 +446,11 @@ impl DirigentApp {
         let mut settings = settings::load_settings(&project_root);
         // Apply one-time settings migrations (e.g. updated default plays).
         if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
-            eprintln!("settings migration error: {e:#}");
+            log::warn!("settings migration error: {e:#}");
             false
         }) {
             if let Err(e) = settings::save_settings(&project_root, &settings) {
-                eprintln!("Failed to save migrated settings: {e}");
+                log::warn!("Failed to save migrated settings: {e}");
             }
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -547,7 +552,7 @@ impl DirigentApp {
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
         if settings.lsp_enabled {
             if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
-                eprintln!("[lsp] Failed to start servers: {}", e);
+                log::error!("[lsp] Failed to start servers: {}", e);
                 lsp_manager.log(e);
             }
         }
@@ -672,6 +677,9 @@ impl DirigentApp {
             conversation_replies: HashMap::new(),
             conversation_reply_images: HashMap::new(),
             show_about: false,
+            show_log_viewer: false,
+            log_viewer_filter: log::LevelFilter::Trace,
+            log_viewer_auto_scroll: true,
             logo_texture: None,
             _fs_watcher,
             fs_changed,
