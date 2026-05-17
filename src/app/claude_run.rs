@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -50,6 +50,8 @@ pub(crate) struct ClaudeRunState {
     pub(super) expand_running: bool,
     /// Cached past executions for the conversation view (loaded on open).
     pub(super) conversation_history: Vec<Execution>,
+    /// jj workspace paths for per-cue isolation (cue_id -> workspace directory).
+    pub(super) workspace_paths: HashMap<i64, PathBuf>,
 }
 
 impl ClaudeRunState {
@@ -68,6 +70,7 @@ impl ClaudeRunState {
             last_log_flush: Instant::now(),
             expand_running: false,
             conversation_history: Vec::new(),
+            workspace_paths: HashMap::new(),
         }
     }
 }
@@ -428,7 +431,12 @@ impl DirigentApp {
         provider: CliProvider,
         config: ProviderConfig,
     ) -> TaskHandle {
-        let project_root = self.project_root.clone();
+        let project_root = self
+            .claude
+            .workspace_paths
+            .get(&cue_id)
+            .cloned()
+            .unwrap_or_else(|| self.project_root.clone());
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -540,12 +548,33 @@ impl DirigentApp {
             }
         };
 
+        // For jj repos, create a dedicated workspace so the default working copy
+        // stays clean and multiple cues can run in parallel without conflicts.
+        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
+            && !self.claude.workspace_paths.contains_key(&cue_id)
+        {
+            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
+            match jj::jj_create_workspace(
+                &self.project_root,
+                &ws_name,
+                &self.settings.jj_cli_path,
+            ) {
+                Ok(ws_path) => {
+                    self.claude.workspace_paths.insert(cue_id, ws_path);
+                }
+                Err(e) => {
+                    eprintln!("Failed to create jj workspace for cue {cue_id}: {e}");
+                }
+            }
+        }
+
         let (effective_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
         if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command) {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.cleanup_jj_workspace(cue_id);
             self.reload_cues();
         }
     }
@@ -577,6 +606,26 @@ impl DirigentApp {
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
+
+        // For jj repos, ensure a workspace exists for this cue (may have been
+        // created during the initial run, or we recover/create one for the reply).
+        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
+            && !self.claude.workspace_paths.contains_key(&cue_id)
+        {
+            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
+            if let Some(parent) = self.project_root.parent() {
+                let expected = parent.join(&ws_name);
+                if expected.is_dir() {
+                    self.claude.workspace_paths.insert(cue_id, expected);
+                } else if let Ok(ws_path) = jj::jj_create_workspace(
+                    &self.project_root,
+                    &ws_name,
+                    &self.settings.jj_cli_path,
+                ) {
+                    self.claude.workspace_paths.insert(cue_id, ws_path);
+                }
+            }
+        }
 
         let previous_diff = self
             .db
@@ -859,6 +908,7 @@ impl DirigentApp {
         let _ = self.db.fail_execution(result.exec_id, error);
         let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
         let _ = self.db.log_activity(result.cue_id, "Run failed");
+        self.cleanup_jj_workspace(result.cue_id);
         let provider_name = self
             .claude
             .running_logs
@@ -882,6 +932,7 @@ impl DirigentApp {
         let _ = self.db.log_activity(result.cue_id, &activity);
         self.cue_warnings
             .insert(result.cue_id, limit_line.to_string());
+        self.cleanup_jj_workspace(result.cue_id);
         telemetry::emit_execution_rate_limited(&self.project_name(), result.cue_id, limit_line);
     }
 
@@ -919,6 +970,18 @@ impl DirigentApp {
         }
         let agents_started =
             self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
+
+        // For jj workspace cues, commit in workspace and set a bookmark so
+        // the changes are preserved and easy to find in the log.
+        if matches!(self.settings.vcs_backend, VcsBackend::Jj) {
+            if let Some(ws_path) = self.claude.workspace_paths.get(&result.cue_id).cloned() {
+                self.jj_workspace_commit_and_bookmark(
+                    result.cue_id,
+                    &ws_path,
+                    &result.response,
+                );
+            }
+        }
 
         if self.settings.auto_commit {
             if agents_started > 0 {
@@ -1026,6 +1089,7 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(result.cue_id, "Run completed — no changes");
+        self.cleanup_jj_workspace(result.cue_id);
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.
@@ -1096,6 +1160,58 @@ impl DirigentApp {
             self.claude
                 .running_logs
                 .insert(cue_id, (text, CliProvider::Claude));
+        }
+    }
+
+    /// Commit changes in a jj workspace and set a cue bookmark.
+    fn jj_workspace_commit_and_bookmark(
+        &mut self,
+        cue_id: i64,
+        ws_path: &Path,
+        response: &str,
+    ) {
+        let cue_text = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let commit_msg = git::generate_commit_message(&cue_text, Some(response));
+        match jj::jj_commit_all(ws_path, &commit_msg, &jj_path) {
+            Ok(change_id) => {
+                let bookmark = jj::cue_bookmark_name(cue_id, &cue_text);
+                let _ = jj::jj_set_bookmark(ws_path, &bookmark, "@-", &jj_path);
+                let short = &change_id[..7.min(change_id.len())];
+                let _ = self.db.log_activity(
+                    cue_id,
+                    &format!("Committed in workspace ({short}), bookmark: {bookmark}"),
+                );
+            }
+            Err(e) => {
+                eprintln!("jj workspace commit failed for cue {cue_id}: {e}");
+            }
+        }
+    }
+
+    /// Clean up a jj workspace: forget it in jj and remove the directory.
+    /// No-op if the cue has no workspace.
+    pub(super) fn cleanup_jj_workspace(&mut self, cue_id: i64) {
+        if let Some(ws_path) = self.claude.workspace_paths.remove(&cue_id) {
+            let ws_name = ws_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !ws_name.is_empty() {
+                let _ = jj::jj_remove_workspace(
+                    &self.project_root,
+                    &ws_name,
+                    &self.settings.jj_cli_path,
+                );
+            }
+            if ws_path.is_dir() {
+                let _ = std::fs::remove_dir_all(&ws_path);
+            }
         }
     }
 

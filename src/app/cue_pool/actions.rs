@@ -291,6 +291,20 @@ impl DirigentApp {
     }
 
     pub(in crate::app) fn process_commit_review(&mut self, cue_id: i64) {
+        // For jj workspace cues the commit+bookmark was already done in
+        // handle_run_with_diff. Just transition to Done and clean up.
+        if self.claude.workspace_paths.contains_key(&cue_id) {
+            self.set_status_message("Accepted — changes committed in workspace".to_string());
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+            let _ = self
+                .db
+                .log_activity(cue_id, "Accepted (workspace commit)");
+            self.cleanup_jj_workspace(cue_id);
+            self.reload_git_info();
+            self.reload_commit_history();
+            return;
+        }
+
         match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
                 if let Some(ref diff) = exec.diff {
@@ -364,6 +378,29 @@ impl DirigentApp {
     }
 
     fn process_revert_review(&mut self, cue_id: i64) {
+        // For jj workspace cues: delete the bookmark and forget the workspace.
+        // The commit stays in the repo (hidden) but is no longer referenced.
+        if self.claude.workspace_paths.contains_key(&cue_id) {
+            let cue_text = self
+                .cues
+                .iter()
+                .find(|c| c.id == cue_id)
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+            let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
+            let _ = crate::jj::jj_delete_bookmark(
+                &self.project_root,
+                &bookmark,
+                &self.settings.jj_cli_path,
+            );
+            self.cleanup_jj_workspace(cue_id);
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
+            self.set_status_message("Reverted — bookmark deleted, workspace removed".to_string());
+            self.reload_git_info();
+            return;
+        }
+
         let reverted = match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
                 if let Some(ref diff) = exec.diff {

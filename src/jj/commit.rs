@@ -141,6 +141,49 @@ pub(crate) fn jj_commit_diff(
     jj_commit_all(repo_path, commit_message, jj_path)
 }
 
+/// Set (or move) a bookmark on a specific revision.
+pub(crate) fn jj_set_bookmark(
+    repo_path: &Path,
+    name: &str,
+    rev: &str,
+    jj_path: &str,
+) -> crate::error::Result<()> {
+    let output = super::jj_cmd(jj_path)
+        .args(["bookmark", "set", name, "-r", rev])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj bookmark set failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Delete a bookmark.
+pub(crate) fn jj_delete_bookmark(
+    repo_path: &Path,
+    name: &str,
+    jj_path: &str,
+) -> crate::error::Result<()> {
+    let output = super::jj_cmd(jj_path)
+        .args(["bookmark", "delete", name])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj bookmark delete failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Revert specific files by restoring them from the parent commit.
 pub(crate) fn jj_revert_files(
     repo_path: &Path,

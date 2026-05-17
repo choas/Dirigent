@@ -140,6 +140,116 @@ you're ready to share -- after one commit or after ten.
 
 ---
 
+## Squashing commits before you push
+
+After a session with multiple commits, you might want to combine them into a
+single commit before pushing -- especially if the intermediate commits are just
+"work in progress" steps that don't make sense on their own.
+
+This is particularly useful when a cue has follow-up prompts. A single cue might
+produce several commits: the initial implementation, then a fix based on review
+feedback, then a squash of the final result. Each follow-up is a separate commit
+in jj, but the whole sequence is really one logical change. Squashing collapses
+that chain into one commit so the history reads as "what was done", not "how many
+tries it took".
+
+### Squash everything into one commit
+
+If your bookmark `my-feature` has 3 commits stacked on `main`, you can fold
+them all into one:
+
+```
+jj squash --from main..my-feature --into <first-commit>
+```
+
+Or more commonly, squash each commit into its parent one at a time:
+
+```
+jj squash -r <commit-to-fold>
+```
+
+This takes the changes from that commit and merges them into its parent, then
+removes the now-empty commit. The bookmark stays where it was -- pointing at
+your combined work.
+
+### The simple case: squash the current commit into its parent
+
+If you're sitting on a commit and want to fold it into the one below:
+
+```
+jj squash
+```
+
+That's it. No arguments needed. The working-copy commit's changes move into the
+parent, and you get a fresh empty working-copy commit on top.
+
+### Squash workflow in Dirigent
+
+A typical example: you create a cue "add user authentication". Claude produces
+the initial implementation. You review the diff, spot a missing edge case, and
+send a follow-up prompt: "handle expired tokens gracefully". Claude commits
+again. Then one more follow-up: "add tests for the auth module". Three commits,
+one logical feature -- a natural candidate for squashing.
+
+```
+After the cue and two follow-ups:
+  main
+    |
+    v
+  "add user authentication"         <- commit a1b2c3d  (initial cue)
+    |
+  "handle expired tokens"           <- commit e4f5g6h  (follow-up 1)
+    |
+  "add tests for auth module"       <- commit i7j8k9l  (follow-up 2)  ◉ my-feature
+    |
+  (empty working copy)              <- @ you are here
+
+After squashing:
+  main
+    |
+    v
+  "add user authentication"         <- single commit, ◉ my-feature
+    |
+  (empty working copy)              <- @ you are here
+```
+
+In the terminal:
+
+```
+jj squash -r e4f5g6h    # fold follow-up 1 into the initial commit
+jj squash -r i7j8k9l    # fold follow-up 2 into the initial commit
+```
+
+Or use the revision set to squash all at once:
+
+```
+jj squash --from 'main..@-' --into <first-commit>
+```
+
+After squashing, the bookmark still points at your feature work. Push as
+normal -- the remote sees a single clean commit representing the entire cue,
+not the back-and-forth that produced it.
+
+### When NOT to squash
+
+- **Each commit is meaningful on its own** -- reviewers might prefer separate
+  commits for "add feature" and "add tests for feature"
+- **You've already pushed** -- squashing rewrites history. If collaborators
+  have fetched your commits, squashing forces them to deal with divergence
+- **You want full traceability** -- keeping each cue as its own commit gives
+  you a 1:1 map between cues and commits in the history
+
+### Quick reference
+
+| What you want                     | Command                                        |
+|-----------------------------------|------------------------------------------------|
+| Squash current into parent        | `jj squash`                                    |
+| Squash a specific commit          | `jj squash -r <commit>`                        |
+| Squash a range into one           | `jj squash --from 'main..@-' --into <target>`  |
+| Interactive squash (pick changes) | `jj squash -i`                                 |
+
+---
+
 ## Why push?
 
 Commits in jj are local until you push. They are safe (jj records every
@@ -244,8 +354,8 @@ cheap enough to be the default, not a special case.
 When a cue finishes, Dirigent automatically commits the changes in that cue's
 workspace and sets a **bookmark** pointing to the new commit. The user doesn't
 have to remember to commit -- it just happens. The bookmark is named after the
-cue (e.g., `cue/add-authentication`), so every cue's result is easy to find in
-the log.
+cue (e.g., `cue/42-add-authentication`), so every cue's result is easy to find
+in the log.
 
 > Under the hood:
 > ```
@@ -259,12 +369,13 @@ the log.
 After both cues are committed, the user can review them independently. If they
 look good, stack them (rebase one on top of the other) or merge them.
 
-### Reverting a cue is just moving a bookmark
+### Reverting a cue is just deleting a bookmark
 
 This is where jj shines compared to git. If the user doesn't like what a cue
-produced, reverting is trivial: move the bookmark back (or delete it). In jj,
-bookmarks are just pointers -- the commit still exists in the log but is no
-longer referenced. Nothing is destroyed, and the operation is instant.
+produced, reverting is trivial: Dirigent deletes the bookmark and cleans up the
+workspace. In jj, bookmarks are just pointers -- the commit still exists in the
+log but is no longer referenced. Nothing is destroyed, and the operation is
+instant.
 
 ```
 jj bookmark delete cue/add-auth     # drop the bookmark, changes become hidden
@@ -337,5 +448,7 @@ is a separate working directory sharing the same repo -- like git worktrees.
 | Revert a file                | Revert action on file          | `jj restore --from @- file`       |
 | Switch bookmark              | Branch picker                  | `jj new <bookmark>`               |
 | Manage workspaces            | Worktree Manager               | `jj workspace add/forget`          |
+| Squash current into parent   | *(terminal)*                   | `jj squash`                        |
+| Squash a specific commit     | *(terminal)*                   | `jj squash -r <commit>`           |
 | Create a bookmark            | *(terminal)*                   | `jj bookmark create name`         |
 | Undo last operation          | *(terminal)*                   | `jj op restore @-`                |

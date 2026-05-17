@@ -156,6 +156,50 @@ pub(crate) fn jj_checkout_bookmark(
     Ok(())
 }
 
+fn cue_slug(cue_text: &str) -> String {
+    let raw: String = cue_text
+        .chars()
+        .take(60)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let parts: Vec<&str> = raw.split('-').filter(|s| !s.is_empty()).collect();
+    let joined = parts.join("-");
+    if joined.len() > 30 {
+        let end = joined[..30]
+            .rfind('-')
+            .unwrap_or(joined.floor_char_boundary(30));
+        joined[..end].to_string()
+    } else {
+        joined
+    }
+}
+
+/// Generate a jj workspace name for a cue, e.g. `cue-42-add-authentication`.
+pub(crate) fn cue_workspace_name(cue_id: i64, cue_text: &str) -> String {
+    let slug = cue_slug(cue_text);
+    if slug.is_empty() {
+        format!("cue-{}", cue_id)
+    } else {
+        format!("cue-{}-{}", cue_id, slug)
+    }
+}
+
+/// Generate a jj bookmark name for a cue, e.g. `cue/42-add-authentication`.
+pub(crate) fn cue_bookmark_name(cue_id: i64, cue_text: &str) -> String {
+    let slug = cue_slug(cue_text);
+    if slug.is_empty() {
+        format!("cue/{}", cue_id)
+    } else {
+        format!("cue/{}-{}", cue_id, slug)
+    }
+}
+
 /// List available bookmarks (equivalent to `git branch` list).
 pub(crate) fn jj_list_bookmarks(
     repo_path: &Path,
