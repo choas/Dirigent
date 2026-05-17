@@ -184,6 +184,118 @@ pub(crate) fn jj_delete_bookmark(
     Ok(())
 }
 
+/// Count how many non-empty commits sit between `trunk()` and a bookmark.
+#[allow(dead_code)]
+pub(crate) fn jj_bookmark_commit_count(
+    repo_path: &Path,
+    bookmark: &str,
+    jj_path: &str,
+) -> usize {
+    let revset = format!("trunk()..{}", bookmark);
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "-r",
+            &revset,
+            "-T",
+            r#"if(!empty, change_id ++ "\n")"#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout.lines().filter(|l| !l.trim().is_empty()).count()
+        }
+        _ => 0,
+    }
+}
+
+/// Squash all commits on a bookmark into a single commit.
+///
+/// Finds all commits between `trunk()` and the bookmark, then squashes each
+/// one (from newest to oldest) into its parent, leaving a single commit.
+/// Returns the number of commits that were squashed.
+pub(crate) fn jj_squash_bookmark(
+    repo_path: &Path,
+    bookmark: &str,
+    jj_path: &str,
+) -> crate::error::Result<usize> {
+    let revset = format!("trunk()..{}", bookmark);
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "-r",
+            &revset,
+            "-T",
+            r#"change_id ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj log for squash failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let change_ids: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+
+    if change_ids.len() <= 1 {
+        return Ok(0);
+    }
+
+    // change_ids are newest-first; squash each into its parent, skipping the
+    // oldest (which is the target that absorbs everything).
+    let mut squashed = 0;
+    for cid in &change_ids[..change_ids.len() - 1] {
+        let sq_output = super::jj_cmd(jj_path)
+            .args(["squash", "-r", cid.trim()])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !sq_output.status.success() {
+            let stderr = String::from_utf8_lossy(&sq_output.stderr);
+            return Err(DirigentError::GitCommand(format!(
+                "jj squash -r {} failed: {}",
+                cid.trim(),
+                stderr.trim()
+            )));
+        }
+        squashed += 1;
+    }
+
+    // Move the bookmark to the surviving commit (now the only one in the range).
+    let surviving = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "-r",
+            &revset,
+            "-T",
+            r#"change_id"#,
+        ])
+        .current_dir(repo_path)
+        .output()?;
+    if surviving.status.success() {
+        let rev = String::from_utf8_lossy(&surviving.stdout);
+        let rev = rev.trim();
+        if !rev.is_empty() {
+            let _ = super::jj_cmd(jj_path)
+                .args(["bookmark", "set", bookmark, "-r", rev])
+                .current_dir(repo_path)
+                .output();
+        }
+    }
+
+    Ok(squashed)
+}
+
 /// Revert specific files by restoring them from the parent commit.
 pub(crate) fn jj_revert_files(
     repo_path: &Path,

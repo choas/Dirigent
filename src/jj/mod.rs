@@ -6,7 +6,7 @@ mod worktree;
 
 pub(crate) use commit::{
     jj_commit_all, jj_commit_diff, jj_delete_bookmark, jj_pull, jj_push, jj_revert_files,
-    jj_set_bookmark,
+    jj_set_bookmark, jj_squash_bookmark,
 };
 pub(crate) use diff::jj_get_working_diff;
 pub(crate) use history::{jj_count_commits, jj_get_commit_diff, jj_read_commit_history};

@@ -152,6 +152,9 @@ impl DirigentApp {
             CueAction::SplitCue => {
                 self.start_split_cue(id);
             }
+            CueAction::SquashBookmark => {
+                self.process_squash_bookmark(id);
+            }
         }
         self.reload_cues();
     }
@@ -684,6 +687,47 @@ impl DirigentApp {
         }
         let plural = if total == 1 { "" } else { "s" };
         self.set_status_message(format!("Deleted {} archived cue{}", total, plural));
+    }
+
+    fn process_squash_bookmark(&mut self, cue_id: i64) {
+        use crate::settings::VcsBackend;
+        if self.settings.vcs_backend != VcsBackend::Jj {
+            self.set_status_message("Squash is only available with the jj backend".into());
+            return;
+        }
+        let cue_text = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
+        let jj_path = self.settings.jj_cli_path.clone();
+
+        match crate::jj::jj_squash_bookmark(&self.project_root, &bookmark, &jj_path) {
+            Ok(0) => {
+                self.set_status_message(format!(
+                    "Nothing to squash — bookmark \"{}\" has 0 or 1 commits",
+                    bookmark
+                ));
+            }
+            Ok(n) => {
+                let plural = if n == 1 { "" } else { "s" };
+                self.set_status_message(format!(
+                    "Squashed {} commit{} on \"{}\" into one",
+                    n, plural, bookmark
+                ));
+                let _ = self.db.log_activity(
+                    cue_id,
+                    &format!("Squashed {} commit{} on {}", n, plural, bookmark),
+                );
+            }
+            Err(e) => {
+                self.set_status_message(format!("Squash failed: {}", e));
+            }
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
     }
 
     fn process_notion_done(&mut self, cue_id: i64) {

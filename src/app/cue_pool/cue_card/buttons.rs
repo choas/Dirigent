@@ -3,7 +3,7 @@ use eframe::egui;
 use super::super::super::{icon, CueAction, DirigentApp};
 use super::utils::{format_queue_label, toggle_reply_input};
 use crate::db::{Cue, CueStatus};
-use crate::settings::SourceKind;
+use crate::settings::{SourceKind, VcsBackend};
 
 impl DirigentApp {
     pub(in crate::app) fn render_status_buttons(
@@ -241,6 +241,15 @@ impl DirigentApp {
         }
         self.render_notion_done_button(ui, cue, actions, fs);
         self.render_push_button(ui, cue, actions, fs);
+        if self.settings.vcs_backend == VcsBackend::Jj {
+            if ui
+                .small_button(icon("\u{2261} Squash", fs))
+                .on_hover_text("Squash all commits on this cue's bookmark into one")
+                .clicked()
+            {
+                actions.push((cue.id, CueAction::SquashBookmark));
+            }
+        }
         self.render_log_and_agents_buttons(ui, cue, actions, fs);
         if ui
             .small_button(icon("\u{21A9} Reply", fs))

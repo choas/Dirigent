@@ -119,6 +119,8 @@ pub(super) enum CueAction {
     DeleteAllArchived,
     /// Split a cue into multiple sub-cues using LLM analysis.
     SplitCue,
+    /// Squash all commits on this cue's bookmark into a single commit (jj only).
+    SquashBookmark,
 }
 
 /// State for a single open file tab.
