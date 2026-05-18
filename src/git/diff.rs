@@ -137,8 +137,23 @@ pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) 
         if path.is_empty() {
             continue;
         }
-        // Strip dir prefix if present
-        let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
+        // Only strip the repo-name prefix when the original path does NOT exist
+        // in the repo (i.e., it was spuriously added by the AI). When the path
+        // exists as-is, keep it — it's a real subdirectory that happens to share
+        // the repo's name.
+        let path = if !dir_prefix.is_empty() {
+            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
+                if repo_path.join(path).exists() {
+                    path
+                } else {
+                    stripped
+                }
+            } else {
+                path
+            }
+        } else {
+            path
+        };
         let path = path.to_string();
         if !path.is_empty() && !paths.contains(&path) {
             paths.push(path);
@@ -169,7 +184,22 @@ pub(super) fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String>
             None => continue,
         };
         let path = rest.trim();
-        let path = path.strip_prefix(dir_prefix.as_str()).unwrap_or(path);
+        if path.is_empty() {
+            continue;
+        }
+        let path = if !dir_prefix.is_empty() {
+            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
+                if repo_path.join(path).exists() {
+                    path
+                } else {
+                    stripped
+                }
+            } else {
+                path
+            }
+        } else {
+            path
+        };
         let path = path.to_string();
         if !path.is_empty() && !file_paths.contains(&path) {
             file_paths.push(path);
