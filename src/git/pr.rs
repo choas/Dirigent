@@ -15,6 +15,18 @@ pub(crate) fn create_pull_request(
 ) -> crate::error::Result<String> {
     use std::process::Command;
 
+    // Explicitly resolve the current branch so we can pass --head to `gh`.
+    // Without this, `gh pr create` can fail inside linked worktrees because
+    // it cannot infer the head branch from the worktree's .git file.
+    let repo = Repository::discover(repo_path)?;
+    let head_ref = repo
+        .head()
+        .map_err(|e| DirigentError::GitCommand(format!("cannot determine HEAD: {}", e)))?;
+    let branch_name = head_ref
+        .shorthand()
+        .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
+        .to_string();
+
     let mut cmd = Command::new("gh");
     cmd.arg("pr")
         .arg("create")
@@ -23,7 +35,9 @@ pub(crate) fn create_pull_request(
         .arg("--body")
         .arg(body)
         .arg("--base")
-        .arg(base);
+        .arg(base)
+        .arg("--head")
+        .arg(&branch_name);
     if draft {
         cmd.arg("--draft");
     }
