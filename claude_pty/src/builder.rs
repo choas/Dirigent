@@ -35,6 +35,7 @@ pub struct ClaudeCodeBuilder {
     allowed_tools: Vec<String>,
     disallowed_tools: Vec<String>,
     extra_args: Vec<String>,
+    env_vars: Vec<(String, String)>,
     rows: u16,
     cols: u16,
 }
@@ -49,6 +50,7 @@ impl Default for ClaudeCodeBuilder {
             allowed_tools: Vec::new(),
             disallowed_tools: Vec::new(),
             extra_args: Vec::new(),
+            env_vars: Vec::new(),
             rows: 40,
             cols: 120,
         }
@@ -107,6 +109,22 @@ impl ClaudeCodeBuilder {
         self
     }
 
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn envs<I, K, V>(mut self, vars: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env_vars
+            .extend(vars.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
     pub fn pty_size(mut self, rows: u16, cols: u16) -> Self {
         self.rows = rows;
         self.cols = cols;
@@ -143,6 +161,7 @@ impl ClaudeCodeBuilder {
         Ok(ResolvedSpec {
             binary,
             args,
+            env_vars: self.env_vars.clone(),
             cwd: self.cwd.clone(),
             rows: self.rows,
             cols: self.cols,
@@ -159,6 +178,7 @@ impl ClaudeCodeBuilder {
 pub(crate) struct ResolvedSpec {
     pub binary: PathBuf,
     pub args: Vec<String>,
+    pub env_vars: Vec<(String, String)>,
     pub cwd: Option<PathBuf>,
     pub rows: u16,
     pub cols: u16,
