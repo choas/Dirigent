@@ -1,7 +1,7 @@
 //! Animated pixel-art Claude character overlay.
 //!
-//! A cute pixel creature with antennae and eyes, gently breathing
-//! and blinking, with the display name rendered above.
+//! A pixelated creature with antennae and eyes, all motion and color
+//! snapped to the pixel grid like the lava lamp overlay.
 
 use eframe::egui;
 
@@ -26,6 +26,9 @@ const CHARACTER: [[u8; W]; H] = [
     [0, 1, 1, 0, 0, 0, 1, 1, 0], // feet
 ];
 
+/// Discrete brightness levels for the pixelated breath effect.
+const BREATH_LEVELS: [f32; 3] = [0.7, 0.85, 1.0];
+
 struct BodyColors {
     body: egui::Color32,
     eye: egui::Color32,
@@ -33,12 +36,13 @@ struct BodyColors {
     text: egui::Color32,
 }
 
-fn compute_colors(accent: egui::Color32, is_dark: bool, breath: f32) -> BodyColors {
+fn compute_colors(accent: egui::Color32, is_dark: bool, breath_step: usize) -> BodyColors {
     let [ar, ag, ab, _] = accent.to_array();
+    let b = BREATH_LEVELS[breath_step % BREATH_LEVELS.len()];
     let body = egui::Color32::from_rgb(
-        (ar as f32 * breath).min(255.0) as u8,
-        (ag as f32 * breath).min(255.0) as u8,
-        (ab as f32 * breath).min(255.0) as u8,
+        (ar as f32 * b).min(255.0) as u8,
+        (ag as f32 * b).min(255.0) as u8,
+        (ab as f32 * b).min(255.0) as u8,
     );
     let eye = if is_dark {
         egui::Color32::from_rgb(30, 25, 25)
@@ -57,6 +61,11 @@ fn compute_colors(accent: egui::Color32, is_dark: bool, breath: f32) -> BodyColo
         eye_closed,
         text,
     }
+}
+
+/// Quantize time to discrete steps, producing a stepped tick counter.
+fn tick(t: f32, interval: f32) -> i32 {
+    (t / interval).floor() as i32
 }
 
 pub fn size(scale: f32, display_name: &str) -> (f32, f32) {
@@ -84,12 +93,13 @@ pub fn paint_at(
     let px = PX * scale;
     let t = ctx.input(|i| i.time) as f32;
 
-    let breath = 0.8 + 0.2 * (t * 1.2).sin();
-    let colors = compute_colors(accent, is_dark, breath);
+    // Breath cycles through discrete brightness levels (~1.5s per step)
+    let breath_step = (tick(t, 1.5).rem_euclid(BREATH_LEVELS.len() as i32)) as usize;
+    let colors = compute_colors(accent, is_dark, breath_step);
 
-    // Blink: eyes close briefly every ~4 seconds
-    let blink_cycle = t % 4.0;
-    let eyes_closed = blink_cycle > 3.8 && blink_cycle < 3.95;
+    // Blink: eyes close for one full tick every ~8 ticks (4s)
+    let blink_tick = tick(t, 0.5).rem_euclid(8);
+    let eyes_closed = blink_tick == 7;
 
     let mut char_origin = origin;
     let full_char_w = (W + 2 * ARM_LEN) as f32 * px;
@@ -113,8 +123,10 @@ pub fn paint_at(
         char_origin.x = origin.x + ARM_LEN as f32 * px;
     }
 
-    // Gentle bob
-    let bob = (t * 0.8).sin() * px * 0.5;
+    // Bob snapped to whole-pixel offsets: cycles 0, -1, 0, +1 pixels
+    let bob_pattern: [i32; 4] = [0, -1, 0, 1];
+    let bob_idx = (tick(t, 0.6).rem_euclid(4)) as usize;
+    let bob = bob_pattern[bob_idx] as f32 * px;
     char_origin.y += bob;
 
     for row in 0..H {
@@ -140,21 +152,19 @@ pub fn paint_at(
         }
     }
 
-    // Animated arms waving in opposite phases
-    let arm_speed = 2.5;
-    let left_wave = (t * arm_speed).sin();
-    let right_wave = (t * arm_speed + std::f32::consts::PI).sin();
-    let shoulder_row = 7.0;
+    // Arms wave in discrete pixel steps: offset cycles -1, 0, +1, 0
+    let arm_pattern: [i32; 4] = [-1, 0, 1, 0];
+    let left_idx = (tick(t, 0.5).rem_euclid(4)) as usize;
+    let right_idx = (tick(t, 0.5).rem_euclid(4) + 2).rem_euclid(4) as usize;
+    let shoulder_row = 7;
 
     for seg in 0..ARM_LEN {
-        let factor = (seg + 1) as f32 / ARM_LEN as f32;
-
-        let left_y_off = left_wave * px * 1.5 * factor;
+        let left_off = arm_pattern[(left_idx + seg) % 4] as f32 * px;
         painter.rect_filled(
             egui::Rect::from_min_size(
                 egui::pos2(
                     char_origin.x - (seg as f32 + 1.0) * px,
-                    char_origin.y + shoulder_row * px + left_y_off,
+                    char_origin.y + shoulder_row as f32 * px + left_off,
                 ),
                 egui::vec2(px, px),
             ),
@@ -162,12 +172,12 @@ pub fn paint_at(
             colors.body,
         );
 
-        let right_y_off = right_wave * px * 1.5 * factor;
+        let right_off = arm_pattern[(right_idx + seg) % 4] as f32 * px;
         painter.rect_filled(
             egui::Rect::from_min_size(
                 egui::pos2(
                     char_origin.x + W as f32 * px + seg as f32 * px,
-                    char_origin.y + shoulder_row * px + right_y_off,
+                    char_origin.y + shoulder_row as f32 * px + right_off,
                 ),
                 egui::vec2(px, px),
             ),
@@ -176,5 +186,5 @@ pub fn paint_at(
         );
     }
 
-    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    ctx.request_repaint_after(std::time::Duration::from_millis(500));
 }
