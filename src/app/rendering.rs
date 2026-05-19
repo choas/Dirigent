@@ -62,6 +62,7 @@ impl DirigentApp {
             || self.rename_target.is_some()
             || self.git_init_confirm.is_some()
             || self.git.show_push_error
+            || self.git.show_pr_error
             || self.git.show_pull_diverged
             || self.git.show_pull_unmerged
             || self.git.show_merge_conflicts
@@ -238,6 +239,7 @@ impl DirigentApp {
         self.render_git_init_dialog(ctx);
         self.render_create_pr_dialog(ctx);
         self.render_push_error_dialog(ctx);
+        self.render_pr_error_dialog(ctx);
         self.render_pull_diverged_dialog(ctx);
         self.render_pull_unmerged_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);

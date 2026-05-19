@@ -11,6 +11,7 @@ mod log_viewer;
 mod merge_conflicts;
 mod move_to_branch;
 mod play_variables;
+mod pr_error;
 mod pull_diverged;
 mod pull_unmerged;
 mod push_error;

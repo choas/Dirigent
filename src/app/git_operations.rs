@@ -158,7 +158,9 @@ impl DirigentApp {
                 self.reload_commit_history();
             }
             Err(e) => {
-                self.set_status_message(format!("PR failed: {}", e));
+                self.git.pr_error_message = e;
+                self.git.show_pr_error = true;
+                self.set_status_message("PR creation failed — see dialog".to_string());
             }
         }
     }

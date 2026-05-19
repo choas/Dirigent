@@ -612,6 +612,8 @@ impl DirigentApp {
                 push_rx: None,
                 show_push_error: false,
                 push_error_message: String::new(),
+                show_pr_error: false,
+                pr_error_message: String::new(),
                 pulling: false,
                 pull_rx: None,
                 show_pull_diverged: false,

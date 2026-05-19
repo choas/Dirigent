@@ -527,6 +527,10 @@ pub(crate) struct GitState {
     pub(super) show_push_error: bool,
     /// The error message from a failed push.
     pub(super) push_error_message: String,
+    /// Show dialog when PR creation fails.
+    pub(super) show_pr_error: bool,
+    /// The error message from a failed PR creation.
+    pub(super) pr_error_message: String,
     /// Whether a git pull is currently in progress.
     pub(super) pulling: bool,
     pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -637,6 +641,11 @@ impl GitState {
         if self.show_push_error {
             self.show_push_error = false;
             self.push_error_message.clear();
+            return true;
+        }
+        if self.show_pr_error {
+            self.show_pr_error = false;
+            self.pr_error_message.clear();
             return true;
         }
         if self.show_pull_diverged {
