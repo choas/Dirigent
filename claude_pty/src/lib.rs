@@ -49,7 +49,7 @@ pub mod event;
 pub mod session;
 
 pub use builder::{ClaudeCode, ClaudeCodeBuilder, PermissionMode};
-pub use event::Event;
+pub use event::{Event, PollEvent};
 pub use session::Session;
 
 #[derive(Debug, thiserror::Error)]

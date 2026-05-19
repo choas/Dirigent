@@ -1,30 +1,19 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use super::cli::{
-    apply_dirigent_env, build_claude_command, resolve_claude_binary, run_lifecycle_script,
-};
-use super::stream::{read_stream_events, spawn_stderr_reader, spawn_watchdog};
+use claude_pty::ClaudeCode;
+
+use super::cli::{load_dirigent_env_pairs, resolve_env_pairs, run_lifecycle_script};
+use super::stream::consume_pty_events;
 use super::types::{ClaudeError, ClaudeResponse};
 
-/// Reap the child process (works whether it exited naturally or was killed).
-fn reap_child(child: &Arc<Mutex<std::process::Child>>) {
-    match child.lock() {
-        Ok(mut c) => {
-            let _ = c.wait();
-        }
-        Err(poisoned) => {
-            let _ = poisoned.into_inner().wait();
-        }
-    }
-}
-
-/// Invoke `claude -p <prompt> --output-format stream-json` with live progress
-/// streaming to a shared log buffer. Parses JSON events from stdout in real-time.
+/// Invoke the Claude Code TUI under a PTY, send `prompt`, and stream live
+/// progress to `on_log`. Returns the accumulated response text.
 ///
-/// The `cancel` token allows the caller to abort the run: a watchdog thread
-/// monitors the flag and kills the child process when it is set.
+/// The interactive TUI is launched (no `--print` / `--output-format`), the
+/// trust-folder dialog is auto-accepted, and the prompt is sent on the first
+/// `❯` indicator. Screen output is forwarded to `on_log` as it arrives.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn invoke_claude_streaming(
     prompt: &str,
@@ -39,55 +28,38 @@ pub(crate) fn invoke_claude_streaming(
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    use std::process::Stdio;
-
-    let claude_bin = resolve_claude_binary(cli_path)?;
-    let mut cmd = build_claude_command(
-        claude_bin,
-        prompt,
-        model,
-        extra_args,
-        env_vars,
-        skip_permissions,
-    );
-
-    // Run pre-run script first so it can modify .Dirigent/.env before we read it.
     run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
 
-    // Inject .Dirigent/.env overrides so AI runs use dev credentials.
-    apply_dirigent_env(&mut cmd, project_root);
-
-    let mut child = cmd
-        .current_dir(project_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(ClaudeError::SpawnFailed)?;
-
-    let stderr_handle = child.stderr.take().expect("stderr must be piped");
-    let stdout_handle = child.stdout.take().expect("stdout must be piped");
-    let child = Arc::new(Mutex::new(child));
-
-    let (done, watchdog) = spawn_watchdog(&child, &cancel);
-    let stderr_thread = spawn_stderr_reader(stderr_handle);
-    let state = read_stream_events(stdout_handle, &cancel, &mut on_log);
-
-    done.store(true, Ordering::Relaxed);
-    let _ = watchdog.join();
-    reap_child(&child);
-    let stderr = stderr_thread.join().unwrap_or_default();
-
-    if cancel.load(Ordering::Relaxed) {
-        return Err(ClaudeError::Cancelled);
+    let mut builder = ClaudeCode::builder().cwd(project_root);
+    if !cli_path.is_empty() {
+        builder = builder.binary(cli_path);
+    }
+    if !model.is_empty() {
+        builder = builder.model(model);
+    }
+    if !extra_args.is_empty() {
+        let args = shlex::split(extra_args).unwrap_or_else(|| {
+            extra_args.split_whitespace().map(String::from).collect()
+        });
+        builder = builder.extra_args(args);
+    }
+    if skip_permissions {
+        builder = builder.permission_mode(claude_pty::PermissionMode::BypassPermissions);
+    }
+    let mut envs = resolve_env_pairs(env_vars);
+    envs.extend(load_dirigent_env_pairs(project_root));
+    if !envs.is_empty() {
+        builder = builder.envs(envs);
     }
 
-    if !stderr.is_empty() {
-        // Filter stderr through the same non-JSON handler used for stdout
-        // so OpenCode INFO noise doesn't leak into the log.
-        for line in stderr.lines() {
-            super::stream::handle_non_json_line_for_claude(line, &mut on_log);
+    let mut session = builder.open().map_err(|e| match e {
+        claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
+        claude_pty::Error::Spawn(msg) | claude_pty::Error::Io(msg) => {
+            ClaudeError::SpawnFailed(std::io::Error::other(msg))
         }
-    }
+    })?;
+
+    let state = consume_pty_events(&mut session, prompt, &cancel, &mut on_log);
 
     run_lifecycle_script(
         post_run_script,
@@ -97,9 +69,12 @@ pub(crate) fn invoke_claude_streaming(
         false,
     )?;
 
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(ClaudeError::Cancelled);
+    }
+
     Ok(ClaudeResponse {
-        stdout: state.final_result,
-        edited_files: state.edited_files,
-        metrics: state.metrics,
+        stdout: state.response,
+        metrics: Default::default(),
     })
 }

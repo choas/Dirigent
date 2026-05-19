@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::builder::ResolvedSpec;
-use crate::event::Event;
+use crate::event::{Event, PollEvent};
 use crate::Error;
 
 pub struct Session {
@@ -34,6 +34,9 @@ impl Session {
         let mut cmd = CommandBuilder::new(&spec.binary);
         for arg in &spec.args {
             cmd.arg(arg);
+        }
+        for (key, value) in &spec.env_vars {
+            cmd.env(key, value);
         }
         if let Some(cwd) = &spec.cwd {
             cmd.cwd(cwd);
@@ -89,6 +92,22 @@ impl Session {
         let mut c = self.child.lock().map_err(|_| Error::Io("child poisoned".into()))?;
         c.kill().map_err(|e| Error::Io(e.to_string()))?;
         Ok(())
+    }
+
+    /// Non-blocking event poll. Returns [`PollEvent::Ready`] with the
+    /// next event if one is buffered, [`PollEvent::Pending`] if the
+    /// channel is open but empty, or [`PollEvent::Closed`] when the
+    /// reader thread has exited and no events remain.
+    pub fn poll_event(&mut self) -> PollEvent {
+        let rx = match self.events.as_mut() {
+            Some(rx) => rx,
+            None => return PollEvent::Closed,
+        };
+        match rx.try_recv() {
+            Ok(event) => PollEvent::Ready(event),
+            Err(mpsc::error::TryRecvError::Empty) => PollEvent::Pending,
+            Err(mpsc::error::TryRecvError::Disconnected) => PollEvent::Closed,
+        }
     }
 }
 

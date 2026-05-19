@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Result of a non-blocking [`Session::poll_event`](crate::Session::poll_event) call.
+#[derive(Debug)]
+pub enum PollEvent {
+    /// An event was available.
+    Ready(Event),
+    /// Channel open but no event buffered yet.
+    Pending,
+    /// Reader thread exited and no events remain.
+    Closed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {

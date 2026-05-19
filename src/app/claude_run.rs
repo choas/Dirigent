@@ -12,7 +12,6 @@ use crate::git;
 use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand};
 use crate::telemetry;
-
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
 use super::DirigentApp;
@@ -189,6 +188,11 @@ fn run_claude_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
+    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
+        .keys()
+        .cloned()
+        .collect();
+
     let res = claude::invoke_claude_streaming(
         req.prompt,
         req.project_root,
@@ -204,11 +208,8 @@ fn run_claude_provider(
     );
     match res {
         Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                claude::parse_diff_from_response(&response.stdout)
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-            };
+            let diff = scoped_working_diff(req.project_root, &baseline_dirty)
+                .or_else(|| claude::parse_diff_from_response(&response.stdout));
             ClaudeResult {
                 cue_id: req.cue_id,
                 exec_id: req.exec_id,

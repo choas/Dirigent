@@ -3,59 +3,6 @@ use std::process::Command;
 
 use super::types::ClaudeError;
 
-/// Resolve the Claude binary path and verify it exists on PATH.
-pub(super) fn resolve_claude_binary(cli_path: &str) -> Result<&str, ClaudeError> {
-    let claude_bin = if cli_path.is_empty() {
-        "claude"
-    } else {
-        cli_path
-    };
-    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
-    Ok(claude_bin)
-}
-
-/// Build the `Command` with prompt, flags, extra args, and env vars.
-pub(super) fn build_claude_command(
-    claude_bin: &str,
-    prompt: &str,
-    model: &str,
-    extra_args: &str,
-    env_vars: &str,
-    skip_permissions: bool,
-) -> Command {
-    let mut cmd = Command::new(claude_bin);
-    cmd.arg("-p")
-        .arg(prompt)
-        .arg("--verbose")
-        .arg("--output-format")
-        .arg("stream-json");
-    if skip_permissions {
-        cmd.arg("--dangerously-skip-permissions");
-    }
-    if !model.is_empty() {
-        cmd.arg("--model").arg(model);
-    }
-    append_extra_args(&mut cmd, extra_args);
-    apply_env_vars(&mut cmd, env_vars);
-    cmd
-}
-
-/// Append extra arguments to the command, respecting shell quoting.
-/// Falls back to whitespace splitting if quotes are malformed.
-fn append_extra_args(cmd: &mut Command, extra_args: &str) {
-    let args = shlex::split(extra_args).unwrap_or_else(|| {
-        log::warn!(
-            "extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
-        );
-        extra_args.split_whitespace().map(String::from).collect()
-    });
-    for arg in args {
-        if !arg.is_empty() {
-            cmd.arg(arg);
-        }
-    }
-}
-
 /// Resolve environment variable **names** (one per line, # comments allowed)
 /// from the current process environment and apply them to the command.
 /// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
@@ -160,6 +107,63 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Resolve environment variable **names** (one per line, `#` comments allowed)
+/// from the current process environment and return them as `(key, value)` pairs.
+pub(super) fn resolve_env_pairs(env_vars: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for line in env_vars.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let name = match line.split_once('=') {
+            Some((key, _)) => key.trim(),
+            None => line,
+        };
+        if name.is_empty() {
+            continue;
+        }
+        match std::env::var(name) {
+            Ok(value) => pairs.push((name.to_string(), value)),
+            Err(_) => {
+                log::warn!("env var '{}' not found in environment, skipping", name);
+            }
+        }
+    }
+    pairs
+}
+
+/// Load KEY=VALUE pairs from `.Dirigent/.env` relative to `project_root`.
+pub(super) fn load_dirigent_env_pairs(project_root: &Path) -> Vec<(String, String)> {
+    let env_path = project_root.join(".Dirigent").join(".env");
+    let content = match std::fs::read_to_string(&env_path) {
+        Ok(c) => c,
+        Err(e) => {
+            if env_path.exists() {
+                log::warn!(".Dirigent/.env exists but is unreadable: {e}");
+            }
+            return Vec::new();
+        }
+    };
+    let mut pairs = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = match line.split_once('=') {
+            Some((k, v)) => (k.trim(), v.trim()),
+            None => continue,
+        };
+        if key.is_empty() {
+            continue;
+        }
+        let value = strip_surrounding_quotes(value);
+        pairs.push((key.to_string(), value.to_string()));
+    }
+    pairs
 }
 
 /// Run a lifecycle script (pre-run or post-run).
