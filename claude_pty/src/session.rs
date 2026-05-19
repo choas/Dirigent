@@ -407,13 +407,6 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
                     active_confirmation = current_confirmation;
                 }
 
-                let prompt_now =
-                    cleaned_acc.trim_end().ends_with('❯') || cleaned_acc.contains("❯\u{a0}");
-                if prompt_now && !prompt_seen {
-                    let _ = tx.blocking_send(Event::TuiPrompt);
-                }
-                prompt_seen = prompt_now;
-
                 let screen_ref = vt.screen();
                 let contents = screen_ref.contents();
                 let plain_rows: Vec<String> =
@@ -421,6 +414,15 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
                 let ansi_rows: Vec<String> = (0..plain_rows.len() as u16)
                     .map(|r| ansi_row(screen_ref, r))
                     .collect();
+
+                let prompt_now = plain_rows
+                    .get(cursor_row as usize)
+                    .map(|l| l.contains('❯'))
+                    .unwrap_or(false);
+                if prompt_now && !prompt_seen {
+                    let _ = tx.blocking_send(Event::TuiPrompt);
+                }
+                prompt_seen = prompt_now;
 
                 let (start, end) = chat_region_bounds(&plain_rows);
                 let mut chat_plain: Vec<String> =
