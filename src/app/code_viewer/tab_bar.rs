@@ -91,7 +91,12 @@ impl DirigentApp {
             })
         });
 
-        self.render_tab_context_menu(&tab_resp.response, i, action);
+        let tab_interact = ui.interact(
+            tab_resp.response.rect,
+            tab_resp.response.id.with("ctx"),
+            egui::Sense::click(),
+        );
+        self.render_tab_context_menu(&tab_interact, i, action);
     }
 
     /// Show the right-click context menu on a tab.
