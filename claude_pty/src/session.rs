@@ -350,7 +350,8 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
 
     let mut accumulated = String::new();
     let mut active_confirmation: Option<&'static str> = None;
-    let mut prompt_seen = false;
+    let mut prompt_count: usize = 0;
+    let mut last_response_count: usize = 0;
     let mut prev_chat_lines: Vec<String> = Vec::new();
     let mut emitted_lines: std::collections::HashSet<String> =
         std::collections::HashSet::new();
@@ -415,16 +416,22 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
                     .map(|r| ansi_row(screen_ref, r))
                     .collect();
 
-                let prompt_now = plain_rows
-                    .get(cursor_row as usize)
-                    .map(|l| l.contains('❯'))
-                    .unwrap_or(false);
-                if prompt_now && !prompt_seen {
-                    let _ = tx.blocking_send(Event::TuiPrompt);
-                }
-                prompt_seen = prompt_now;
-
                 let (start, end) = chat_region_bounds(&plain_rows);
+
+                let prompt_visible = plain_rows[end..]
+                    .iter()
+                    .any(|l| l.contains("❯\u{a0}") || l.trim_end() == "❯");
+                let response_count = plain_rows[start..end]
+                    .iter()
+                    .filter(|l| l.contains('⏺') || l.contains('●'))
+                    .count();
+                let should_fire = prompt_visible
+                    && (prompt_count == 0 || response_count > last_response_count);
+                if should_fire {
+                    let _ = tx.blocking_send(Event::TuiPrompt);
+                    prompt_count += 1;
+                    last_response_count = response_count;
+                }
                 let mut chat_plain: Vec<String> =
                     plain_rows[start..end].to_vec();
                 let mut chat_ansi: Vec<String> =
