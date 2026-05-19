@@ -15,9 +15,7 @@ pub(crate) fn create_pull_request(
 ) -> crate::error::Result<String> {
     use std::process::Command;
 
-    // Explicitly resolve the current branch so we can pass --head to `gh`.
-    // Without this, `gh pr create` can fail inside linked worktrees because
-    // it cannot infer the head branch from the worktree's .git file.
+    // Resolve the current branch so we can pass --head to `gh`.
     let repo = Repository::discover(repo_path)?;
     let head_ref = repo
         .head()
@@ -26,6 +24,12 @@ pub(crate) fn create_pull_request(
         .shorthand()
         .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
         .to_string();
+
+    // Run `gh` from the main worktree directory. When the current repo_path
+    // is a linked worktree nested inside the main repo (e.g. .claude/worktrees/),
+    // `gh` can fail to resolve the GitHub remote context, producing
+    // "Head sha can't be blank" / "Head ref must be a branch" errors.
+    let gh_dir = main_worktree_path(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
 
     let mut cmd = Command::new("gh");
     cmd.arg("pr")
@@ -42,7 +46,7 @@ pub(crate) fn create_pull_request(
         cmd.arg("--draft");
     }
 
-    let output = cmd.current_dir(repo_path).output()?;
+    let output = cmd.current_dir(&gh_dir).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
