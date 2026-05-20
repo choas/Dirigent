@@ -169,7 +169,7 @@ fn build_gemini_command(
     cmd.arg(prompt);
 
     claude::apply_env_vars(&mut cmd, config.env_vars, on_log);
-    crate::claude::apply_dirigent_env(&mut cmd, project_root);
+    crate::claude::apply_dirigent_env(&mut cmd, project_root, on_log);
 
     cmd.current_dir(project_root)
         .stdout(Stdio::piped())

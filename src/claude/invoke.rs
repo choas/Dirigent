@@ -172,7 +172,7 @@ fn invoke_headless(
     // between modes): Settings `env_vars` first, then `.Dirigent/.env`.
     // `Command::env` overwrites on duplicate keys, so `.Dirigent/.env` wins.
     apply_env_vars(&mut cmd, env_vars, on_log);
-    apply_dirigent_env(&mut cmd, project_root);
+    apply_dirigent_env(&mut cmd, project_root, on_log);
 
     let mut child = cmd
         .current_dir(project_root)
@@ -307,7 +307,7 @@ fn compose_pty_envs(
 ) -> Vec<(String, String)> {
     let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
     envs.extend(resolve_env_pairs(env_vars, on_log));
-    envs.extend(load_dirigent_env_pairs(project_root));
+    envs.extend(load_dirigent_env_pairs(project_root, on_log));
     envs
 }
 
@@ -355,7 +355,7 @@ mod tests {
 
         let mut headless_cmd = Command::new("true");
         apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
-        apply_dirigent_env(&mut headless_cmd, project_root);
+        apply_dirigent_env(&mut headless_cmd, project_root, &mut |_| {});
         let headless = cmd_envs(&headless_cmd);
 
         let pty_pairs = compose_pty_envs(settings_env_vars, project_root, &mut |_| {});
@@ -395,7 +395,7 @@ mod tests {
 
         let mut headless_cmd = Command::new("true");
         apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
-        apply_dirigent_env(&mut headless_cmd, project_root);
+        apply_dirigent_env(&mut headless_cmd, project_root, &mut |_| {});
         let headless = cmd_envs(&headless_cmd);
 
         let pty = effective_envs(&compose_pty_envs(

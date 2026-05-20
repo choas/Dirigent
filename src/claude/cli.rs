@@ -24,8 +24,16 @@ pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str, on_log: &mut dyn
 ///
 /// Lines that are empty, start with `#`, or lack an `=` sign are skipped.
 /// Values may be optionally quoted with `"` or `'`.
-pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
-    for (key, value) in load_dirigent_env_pairs(project_root) {
+///
+/// On Unix, surfaces a one-time warning via `on_log` if the file is readable
+/// by group or other — `.Dirigent/.env` routinely holds API keys, so loose
+/// permissions are a real exfiltration risk on shared dev machines.
+pub(crate) fn apply_dirigent_env(
+    cmd: &mut Command,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+) {
+    for (key, value) in load_dirigent_env_pairs(project_root, on_log) {
         cmd.env(key, value);
     }
 }
@@ -110,7 +118,14 @@ pub(super) fn resolve_env_pairs(
 }
 
 /// Load KEY=VALUE pairs from `.Dirigent/.env` relative to `project_root`.
-pub(super) fn load_dirigent_env_pairs(project_root: &Path) -> Vec<(String, String)> {
+///
+/// Also performs a one-time Unix permission check (see
+/// [`warn_if_loose_dirigent_env_permissions`]) and surfaces a warning through
+/// `on_log` if the file is group/other-readable.
+pub(super) fn load_dirigent_env_pairs(
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+) -> Vec<(String, String)> {
     let env_path = project_root.join(".Dirigent").join(".env");
     let content = match std::fs::read_to_string(&env_path) {
         Ok(c) => c,
@@ -121,7 +136,50 @@ pub(super) fn load_dirigent_env_pairs(project_root: &Path) -> Vec<(String, Strin
             return Vec::new();
         }
     };
+    warn_if_loose_dirigent_env_permissions(&env_path, on_log);
     parse_dotenv_lines(&content)
+}
+
+/// Emit a one-time warning if `.Dirigent/.env` is readable by group or other
+/// (i.e. mode bits `& 0o077 != 0`). The file routinely holds long-lived API
+/// keys (ANTHROPIC_API_KEY, GH tokens, …), so loose permissions are a real
+/// exfiltration risk on shared dev machines.
+///
+/// The warning is fired at most once per process via [`std::sync::Once`] so
+/// repeated runs don't spam the live run log.
+#[cfg(unix)]
+fn warn_if_loose_dirigent_env_permissions(path: &Path, on_log: &mut dyn FnMut(&str)) {
+    use std::sync::Once;
+    static WARNED: Once = Once::new();
+
+    let Some(msg) = loose_dirigent_env_permission_warning(path) else {
+        return;
+    };
+    WARNED.call_once(|| {
+        log::warn!("{}", msg.trim_end());
+        on_log(&msg);
+    });
+}
+
+#[cfg(not(unix))]
+fn warn_if_loose_dirigent_env_permissions(_path: &Path, _on_log: &mut dyn FnMut(&str)) {}
+
+/// Pure helper: return `Some(warning)` if `path` is group/other-readable on
+/// Unix, `None` otherwise. Split out from the `Once`-gated wrapper so unit
+/// tests can exercise the bit math without colliding on the process-wide flag.
+#[cfg(unix)]
+fn loose_dirigent_env_permission_warning(path: &Path) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode();
+    if mode & 0o077 == 0 {
+        return None;
+    }
+    Some(format!(
+        "\u{26A0} {} has loose permissions (mode {:o}); secrets may leak to other users. Run: chmod 600 {}\n",
+        path.display(),
+        mode & 0o777,
+        path.display(),
+    ))
 }
 
 /// Parse dotenv-style KEY=VALUE lines into pairs.
@@ -322,5 +380,48 @@ mod tests {
             pairs,
             vec![("DIRIGENT_LEGACY_VAR".to_string(), "real_value".to_string())]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_permission_warning_fires_for_group_or_other_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "ANTHROPIC_API_KEY=sk-secret\n").unwrap();
+
+        // 0o644 is the typical default — group + other are readable.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let warning = loose_dirigent_env_permission_warning(&path)
+            .expect("0o644 must trigger a warning — group/other can read the file");
+        assert!(
+            warning.contains("chmod 600"),
+            "warning should tell the user how to fix it, got: {warning:?}",
+        );
+        assert!(
+            warning.contains(&path.display().to_string()),
+            "warning should name the offending file, got: {warning:?}",
+        );
+
+        // 0o600 is the secure permission — owner-only.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            loose_dirigent_env_permission_warning(&path).is_none(),
+            "0o600 is the recommended mode and must not warn",
+        );
+
+        // 0o604 — group bits clear but other can read. Must still warn.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o604)).unwrap();
+        assert!(
+            loose_dirigent_env_permission_warning(&path).is_some(),
+            "0o604 leaks to `other` and must warn",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_permission_warning_silent_for_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(loose_dirigent_env_permission_warning(&tmp.path().join("nonexistent")).is_none());
     }
 }
