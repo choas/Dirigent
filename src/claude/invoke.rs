@@ -246,14 +246,18 @@ fn spawn_cancel_watchdog(
     cancel: Arc<AtomicBool>,
     done: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
+    // Check `cancel` before `done`: if cancellation stopped the stdout reader
+    // and the main thread set `done` before this watchdog woke from sleep,
+    // checking `done` first would let it exit without killing, leaving
+    // `reap_child` to wait on a still-running process.
     thread::spawn(move || loop {
-        if done.load(Ordering::Relaxed) {
-            return;
-        }
         if cancel.load(Ordering::Relaxed) {
             if let Ok(mut c) = child.lock() {
                 let _ = c.kill();
             }
+            return;
+        }
+        if done.load(Ordering::Relaxed) {
             return;
         }
         thread::sleep(Duration::from_millis(100));
