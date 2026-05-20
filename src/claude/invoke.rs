@@ -317,6 +317,32 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
 
+    /// RAII guard that sets a process env var on creation and restores the
+    /// previous value (or removes it) on drop — even if the test panics.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var_os(key);
+            // SAFETY: test-only; the guard ensures restore-on-drop.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                // SAFETY: test-only restore of the previous value.
+                Some(v) => unsafe { std::env::set_var(self.key, v) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     /// Collapse a list of `(key, value)` env pairs the same way the underlying
     /// command builders do: insert in order, last-write wins.
     fn effective_envs(pairs: &[(String, String)]) -> HashMap<String, String> {
@@ -350,7 +376,7 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_var("DIRIGENT_PRECEDENCE_KEY", "from_process_env");
+        let _guard = EnvVarGuard::set("DIRIGENT_PRECEDENCE_KEY", "from_process_env");
         let settings_env_vars = "DIRIGENT_PRECEDENCE_KEY\n";
 
         let mut headless_cmd = Command::new("true");
@@ -360,8 +386,6 @@ mod tests {
 
         let pty_pairs = compose_pty_envs(settings_env_vars, project_root, &mut |_| {});
         let pty = effective_envs(&pty_pairs);
-
-        std::env::remove_var("DIRIGENT_PRECEDENCE_KEY");
 
         assert_eq!(
             headless.get(OsStr::new("DIRIGENT_PRECEDENCE_KEY")),
@@ -390,7 +414,7 @@ mod tests {
         let project_root = tmp.path();
         // No .Dirigent/.env on purpose — Settings should be the only source.
 
-        std::env::set_var("DIRIGENT_SETTINGS_ONLY_KEY", "settings_value");
+        let _guard = EnvVarGuard::set("DIRIGENT_SETTINGS_ONLY_KEY", "settings_value");
         let settings_env_vars = "DIRIGENT_SETTINGS_ONLY_KEY\n";
 
         let mut headless_cmd = Command::new("true");
@@ -403,8 +427,6 @@ mod tests {
             project_root,
             &mut |_| {},
         ));
-
-        std::env::remove_var("DIRIGENT_SETTINGS_ONLY_KEY");
 
         assert_eq!(
             headless.get(OsStr::new("DIRIGENT_SETTINGS_ONLY_KEY")),
