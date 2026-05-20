@@ -31,6 +31,7 @@ pub(super) fn consume_pty_events(
 
     loop {
         if cancel.load(Ordering::Relaxed) {
+            on_log("\n⚠ Run cancelled.\n");
             let _ = session.kill();
             break;
         }
@@ -44,14 +45,16 @@ pub(super) fn consume_pty_events(
                     }
                     Event::TuiPrompt => {
                         if !prompt_sent {
-                            // Send text and Enter as two separate writes
-                            // with settling time between. Claude's TUI
-                            // treats a fast `text\r` burst as paste — the
-                            // \r ends up in the buffer instead of submitting.
                             std::thread::sleep(Duration::from_millis(300));
-                            let _ = session.write_raw(prompt.as_bytes());
+                            if let Err(e) = session.write_raw(prompt.as_bytes()) {
+                                on_log(&format!("\n⚠ Failed to send prompt: {e}\n"));
+                                break;
+                            }
                             std::thread::sleep(Duration::from_millis(200));
-                            let _ = session.write_raw(b"\r");
+                            if let Err(e) = session.write_raw(b"\r") {
+                                on_log(&format!("\n⚠ Failed to submit prompt: {e}\n"));
+                                break;
+                            }
                             prompt_sent = true;
                         } else {
                             graceful_exit(session);
@@ -146,10 +149,12 @@ fn report_exit_status(
             }
         }
         Some(s) => {
-            on_log(&format!("\n⚠ Claude exited with status: {}\n", s));
+            on_log(&format!("\n⚠ Claude process exited: {}\n", s));
         }
         None => {
-            if prompt_sent && !has_response {
+            if !prompt_sent {
+                on_log("\n⚠ Claude process ended before prompt could be sent.\n");
+            } else if !has_response {
                 on_log("\n⚠ Claude process ended without producing output.\n");
             }
         }
