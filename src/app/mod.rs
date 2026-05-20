@@ -1,4 +1,5 @@
 mod agents_poll;
+mod ansi;
 mod background;
 mod claude_code_name;
 mod claude_run;

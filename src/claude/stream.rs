@@ -28,6 +28,7 @@ pub(super) fn consume_pty_events(
     };
     let mut prompt_sent = false;
     let mut last_event_time = Instant::now();
+    let mut prev_empty = false;
 
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -58,11 +59,16 @@ pub(super) fn consume_pty_events(
                             break;
                         }
                     }
-                    Event::TuiScreen { ref lines, .. } => {
-                        for line in lines {
-                            on_log(line);
+                    Event::TuiScreen { ref lines, ref lines_ansi, .. } => {
+                        for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
+                            let is_empty = plain.trim().is_empty();
+                            if is_empty && prev_empty {
+                                continue;
+                            }
+                            prev_empty = is_empty;
+                            on_log(ansi);
                             on_log("\n");
-                            state.response.push_str(line);
+                            state.response.push_str(plain);
                             state.response.push('\n');
                         }
                     }

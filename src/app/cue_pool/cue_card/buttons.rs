@@ -308,7 +308,11 @@ impl DirigentApp {
             .claude
             .running_logs
             .get(&cue.id)
-            .map(|(log, _)| log.to_lowercase().contains("push"))
+            .map(|(log, _)| {
+                crate::app::util::strip_ansi(log)
+                    .to_lowercase()
+                    .contains("push")
+            })
             .unwrap_or(false);
         if self.git.ahead_of_remote == 0 || self.git.pushing || !log_mentions_push {
             return;

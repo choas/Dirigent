@@ -407,15 +407,11 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             } else {
-                // ANSI already stripped upstream: streaming callback (claude_run.rs)
-                // and build_completed_result (execution.rs) both strip before persistence.
-                ui.label(egui::RichText::new(current_running_log).monospace().small());
+                self.render_ansi_log(ui, current_running_log);
             }
-        // Completed execution log is already ANSI-stripped upstream
-        // (build_completed_result in execution.rs), no further stripping needed.
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
-                ui.label(egui::RichText::new(log_text.as_str()).monospace().small());
+                self.render_ansi_log(ui, log_text);
             } else {
                 ui.label(
                     egui::RichText::new("(no output)")
@@ -430,6 +426,17 @@ impl DirigentApp {
                     .color(self.semantic.tertiary_text),
             );
         }
+    }
+
+    /// Render log text that may contain ANSI SGR sequences from Claude Code's
+    /// TUI. The Claude PTY emits `lines_ansi` with embedded color escapes; the
+    /// streaming callback now passes them through unstripped so colors survive.
+    fn render_ansi_log(&self, ui: &mut egui::Ui, text: &str) {
+        let size = ui.text_style_height(&egui::TextStyle::Small);
+        let font_id = egui::FontId::new(size, egui::FontFamily::Monospace);
+        let default_color = ui.visuals().text_color();
+        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color);
+        ui.label(job);
     }
 
     /// Open a file picker dialog and add selected files to the reply attachments.
