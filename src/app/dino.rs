@@ -262,10 +262,7 @@ pub fn paint_at(
         let top_row = GROUND_ROW - stone.height as usize;
         let x = origin.x + stone.col_f * px;
         let y = origin.y + top_row as f32 * px;
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(x, y),
-            egui::vec2(stone_w_px, stone_h_px),
-        );
+        let rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(stone_w_px, stone_h_px));
         painter.rect_filled(rect, 0.0, colors.stone);
     }
 

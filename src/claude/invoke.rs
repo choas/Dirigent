@@ -375,7 +375,9 @@ mod tests {
         );
         assert_eq!(
             headless.get(OsStr::new("DIRIGENT_PRECEDENCE_KEY")).cloned(),
-            pty.get("DIRIGENT_PRECEDENCE_KEY").cloned().map(OsString::from),
+            pty.get("DIRIGENT_PRECEDENCE_KEY")
+                .cloned()
+                .map(OsString::from),
             "headless and PTY paths must agree on the resolved value",
         );
     }
