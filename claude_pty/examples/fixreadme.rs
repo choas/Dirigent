@@ -3,9 +3,7 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut session = ClaudeCode::builder()
-        .cwd(std::env::current_dir()?)
-        .open()?;
+    let mut session = ClaudeCode::builder().cwd(std::env::current_dir()?).open()?;
     let mut stream = session.take_events().unwrap();
     let mut prompt_sent = false;
     let start = std::time::Instant::now();
@@ -18,10 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
 
-        let evt = match tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            stream.next(),
-        ).await {
+        let evt = match tokio::time::timeout(std::time::Duration::from_secs(1), stream.next()).await
+        {
             Ok(Some(evt)) => evt,
             Ok(None) => break,
             Err(_) => continue,
@@ -39,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if !prompt_sent {
                     // eprintln!("[{elapsed:.1}s] Sending: say hi in one word");
                     // session.send_line("say hi in one word")?;
-                    eprintln!("[{elapsed:.1}s] Sending: update the README.md for the Claude PTY part");
+                    eprintln!(
+                        "[{elapsed:.1}s] Sending: update the README.md for the Claude PTY part"
+                    );
                     session.send_line("update the README.md for the Claude PTY part")?;
                     prompt_sent = true;
                 } else {
@@ -47,15 +45,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
-            Event::TuiScreen { lines, cursor_row, cursor_col, .. } => {
+            Event::TuiScreen {
+                lines,
+                cursor_row,
+                cursor_col,
+                ..
+            } => {
                 if gap > 0.5 {
-                    eprintln!("[{elapsed:.1}s +{gap:.1}s] SCREEN (cursor={cursor_row},{cursor_col}):");
+                    eprintln!(
+                        "[{elapsed:.1}s +{gap:.1}s] SCREEN (cursor={cursor_row},{cursor_col}):"
+                    );
                     for line in lines {
                         eprintln!("  | {line}");
                     }
                 }
             }
-            Event::TuiOutput { text, cursor_row, cursor_col, .. } => {
+            Event::TuiOutput {
+                text,
+                cursor_row,
+                cursor_col,
+                ..
+            } => {
                 if gap > 0.5 || text.contains('❯') {
                     let preview: String = text.chars().take(120).collect();
                     eprintln!("[{elapsed:.1}s +{gap:.1}s] OUTPUT (cursor={cursor_row},{cursor_col}, has_❯={}): {preview:?}", text.contains('❯'));

@@ -196,11 +196,10 @@ impl DirigentApp {
                     egui::Stroke::new(1.0, self.semantic.prompt_border()),
                 );
 
-                let (rect, _) =
-                    ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), HEARTBEAT_HEIGHT),
-                        egui::Sense::hover(),
-                    );
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), HEARTBEAT_HEIGHT),
+                    egui::Sense::hover(),
+                );
 
                 let baseline_y = rect.center().y + HEARTBEAT_HEIGHT * 0.25;
                 let peak_height = (baseline_y - rect.top() - 2.0).max(4.0);
@@ -266,9 +265,8 @@ impl DirigentApp {
                         let line_y = baseline_y - peak_height * 0.5;
                         let mut sorted: Vec<f32> = beats.clone();
                         // Oldest first → drawn left-to-right.
-                        sorted.sort_by(|a, b| {
-                            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-                        });
+                        sorted
+                            .sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
                         for (i, &age) in sorted.iter().enumerate() {
                             let frac = 1.0 - (age / window_secs);
                             if !(0.0..=1.0).contains(&frac) {
@@ -307,9 +305,8 @@ impl DirigentApp {
                     HeartbeatStyle::Off => {}
                 }
 
-                ui.ctx().request_repaint_after(
-                    std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS),
-                );
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS));
             });
     }
 
@@ -613,12 +610,7 @@ impl DirigentApp {
             addition_bg: Some(self.semantic.addition_bg()),
             deletion_bg: Some(self.semantic.deletion_bg()),
         };
-        let job = crate::app::ansi::ansi_to_layout_job(
-            text,
-            font_id,
-            default_color,
-            &overrides,
-        );
+        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
         ui.label(job);
     }
 

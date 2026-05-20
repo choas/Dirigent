@@ -2,7 +2,9 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtyPair, PtySize};
+use portable_pty::{
+    native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtyPair, PtySize,
+};
 use regex::Regex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -82,14 +84,20 @@ impl Session {
     }
 
     pub fn write_raw(&self, data: &[u8]) -> Result<(), Error> {
-        let mut w = self.writer.lock().map_err(|_| Error::Io("writer poisoned".into()))?;
+        let mut w = self
+            .writer
+            .lock()
+            .map_err(|_| Error::Io("writer poisoned".into()))?;
         w.write_all(data).map_err(|e| Error::Io(e.to_string()))?;
         w.flush().map_err(|e| Error::Io(e.to_string()))?;
         Ok(())
     }
 
     pub fn kill(&self) -> Result<(), Error> {
-        let mut c = self.child.lock().map_err(|_| Error::Io("child poisoned".into()))?;
+        let mut c = self
+            .child
+            .lock()
+            .map_err(|_| Error::Io("child poisoned".into()))?;
         c.kill().map_err(|e| Error::Io(e.to_string()))?;
         Ok(())
     }
@@ -117,12 +125,7 @@ impl Drop for Session {
     }
 }
 
-fn spawn_reader(
-    reader: Box<dyn Read + Send>,
-    tx: mpsc::Sender<Event>,
-    rows: u16,
-    cols: u16,
-) {
+fn spawn_reader(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, cols: u16) {
     thread::spawn(move || read_tui(reader, tx, rows, cols));
 }
 
@@ -357,10 +360,8 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
     // re-emission on transient screen clears (e.g. `\x1b[2J`) where the
     // viewport briefly empties before the same content reappears.
     const EMITTED_LINES_CAP: usize = 4096;
-    let mut emitted_lines: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    let mut emitted_order: std::collections::VecDeque<String> =
-        std::collections::VecDeque::new();
+    let mut emitted_lines: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut emitted_order: std::collections::VecDeque<String> = std::collections::VecDeque::new();
 
     let idle_timeout = std::time::Duration::from_secs(5);
     let poll_interval = std::time::Duration::from_millis(100);
@@ -372,8 +373,7 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
     // Decouple blocking reads from timeout-based prompt detection:
     // a reader thread sends raw chunks through a channel, and the
     // processing loop uses recv_timeout to check idle timers.
-    let (data_tx, data_rx) =
-        std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(64);
+    let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(64);
     thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 8192];
@@ -444,8 +444,7 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
 
                 let screen_ref = vt.screen();
                 let contents = screen_ref.contents();
-                let plain_rows: Vec<String> =
-                    contents.lines().map(|s| s.to_string()).collect();
+                let plain_rows: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
                 let ansi_rows: Vec<String> = (0..plain_rows.len() as u16)
                     .map(|r| ansi_row(screen_ref, r))
                     .collect();
@@ -459,8 +458,8 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     .iter()
                     .filter(|l| l.contains('⏺') || l.contains('●'))
                     .count();
-                let should_fire = prompt_visible
-                    && (prompt_count == 0 || response_count > last_response_count);
+                let should_fire =
+                    prompt_visible && (prompt_count == 0 || response_count > last_response_count);
                 if should_fire {
                     if prompt_count == 0 {
                         let _ = tx.blocking_send(Event::TuiPrompt);
@@ -474,10 +473,8 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     pending_prompt = false;
                 }
 
-                let mut chat_plain: Vec<String> =
-                    plain_rows[start..end].to_vec();
-                let mut chat_ansi: Vec<String> =
-                    ansi_rows[start..end].to_vec();
+                let mut chat_plain: Vec<String> = plain_rows[start..end].to_vec();
+                let mut chat_ansi: Vec<String> = ansi_rows[start..end].to_vec();
                 while chat_plain.first().is_some_and(|l| l.trim().is_empty()) {
                     chat_plain.remove(0);
                     chat_ansi.remove(0);
@@ -615,21 +612,33 @@ mod tests {
             "────────────────────────────────────────────────".to_string(),
             "❯  ".to_string(),
         ];
-        assert_eq!(trim_to_chat_region(lines), vec!["  some paragraph".to_string()]);
+        assert_eq!(
+            trim_to_chat_region(lines),
+            vec!["  some paragraph".to_string()]
+        );
     }
 
     #[test]
     fn delta_lines_returns_only_new_suffix() {
         let prev: Vec<String> = ["a", "b", "c"].into_iter().map(String::from).collect();
-        let next: Vec<String> = ["a", "b", "c", "d", "e"].into_iter().map(String::from).collect();
-        assert_eq!(delta_lines(&prev, &next), vec!["d".to_string(), "e".to_string()]);
+        let next: Vec<String> = ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(
+            delta_lines(&prev, &next),
+            vec!["d".to_string(), "e".to_string()]
+        );
     }
 
     #[test]
     fn delta_lines_handles_divergence() {
         let prev: Vec<String> = ["a", "b", "c"].into_iter().map(String::from).collect();
         let next: Vec<String> = ["a", "X", "c"].into_iter().map(String::from).collect();
-        assert_eq!(delta_lines(&prev, &next), vec!["X".to_string(), "c".to_string()]);
+        assert_eq!(
+            delta_lines(&prev, &next),
+            vec!["X".to_string(), "c".to_string()]
+        );
     }
 
     struct ChunkedReader {
@@ -668,7 +677,12 @@ mod tests {
         let mut saw_output = false;
         rt.block_on(async {
             while let Some(evt) = rx.recv().await {
-                if let Event::TuiOutput { cursor_row, cursor_col, .. } = evt {
+                if let Event::TuiOutput {
+                    cursor_row,
+                    cursor_col,
+                    ..
+                } = evt
+                {
                     last_row = cursor_row;
                     last_col = cursor_col;
                     saw_output = true;
@@ -800,9 +814,7 @@ mod tests {
             let reader: Box<dyn Read + Send> = Box::new(cursor);
             read_tui(reader, tx, 40, 120);
         });
-        rt.block_on(async {
-            while rx.recv().await.is_some() {}
-        });
+        rt.block_on(async { while rx.recv().await.is_some() {} });
         handle.join().expect("read_tui must not panic");
     }
 }

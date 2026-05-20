@@ -113,7 +113,7 @@ fn invoke_pty(
     // the override doesn't intercept. User env (CLI/.Dirigent/.env) is
     // appended after, so an explicit `FORCE_COLOR=…` still wins.
     let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
-    envs.extend(resolve_env_pairs(env_vars));
+    envs.extend(resolve_env_pairs(env_vars, on_log));
     envs.extend(load_dirigent_env_pairs(project_root));
     builder = builder.envs(envs);
 
@@ -170,7 +170,7 @@ fn invoke_headless(
             }
         }
     }
-    apply_env_vars(&mut cmd, env_vars);
+    apply_env_vars(&mut cmd, env_vars, on_log);
     apply_dirigent_env(&mut cmd, project_root);
 
     let mut child = cmd

@@ -7,8 +7,12 @@ use super::types::ClaudeError;
 /// from the current process environment and apply them to the command.
 /// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
 /// for backward compatibility with old KEY=VALUE config entries.
-pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
-    for (name, value) in resolve_env_pairs(env_vars) {
+///
+/// Missing names are surfaced through `on_log` so the GUI run log shows that
+/// an expected auth token (e.g. `ANTHROPIC_API_KEY`) was not set, instead of
+/// the run failing opaquely.
+pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str, on_log: &mut dyn FnMut(&str)) {
+    for (name, value) in resolve_env_pairs(env_vars, on_log) {
         cmd.env(name, value);
     }
 }
@@ -70,7 +74,14 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
 
 /// Resolve environment variable **names** (one per line, `#` comments allowed)
 /// from the current process environment and return them as `(key, value)` pairs.
-pub(super) fn resolve_env_pairs(env_vars: &str) -> Vec<(String, String)> {
+///
+/// Missing names are reported via `on_log` (and `log::warn!`) so the live run
+/// log surfaces an unset auth token instead of the user only seeing an opaque
+/// downstream failure.
+pub(super) fn resolve_env_pairs(
+    env_vars: &str,
+    on_log: &mut dyn FnMut(&str),
+) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     for line in env_vars.lines() {
         let line = line.trim();
@@ -88,6 +99,10 @@ pub(super) fn resolve_env_pairs(env_vars: &str) -> Vec<(String, String)> {
             Ok(value) => pairs.push((name.to_string(), value)),
             Err(_) => {
                 log::warn!("env var '{}' not found in environment, skipping", name);
+                on_log(&format!(
+                    "\u{26A0} env var '{}' not found in environment, skipping\n",
+                    name
+                ));
             }
         }
     }
@@ -272,10 +287,14 @@ mod tests {
     #[test]
     fn resolve_env_pairs_resolves_names_from_process_env() {
         // Use a name that is overwhelmingly likely to be set on dev machines.
-        // We assert only that the helper round-trips known-present names and
-        // silently drops unknown ones (the warn! is fire-and-forget).
+        // We assert that the helper round-trips known-present names, drops
+        // unknown ones, and forwards a warning about missing names to on_log.
         std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123");
-        let pairs = resolve_env_pairs("DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n");
+        let mut log_buf = String::new();
+        let pairs = resolve_env_pairs(
+            "DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n",
+            &mut |s| log_buf.push_str(s),
+        );
         std::env::remove_var("DIRIGENT_TEST_ENV_VAR");
         assert_eq!(
             pairs,
@@ -284,19 +303,24 @@ mod tests {
                 "test_value_123".to_string()
             )]
         );
+        assert!(
+            log_buf.contains("DIRIGENT_MISSING_VAR"),
+            "missing var should be reported via on_log, got: {log_buf:?}"
+        );
+        assert!(
+            !log_buf.contains("DIRIGENT_TEST_ENV_VAR"),
+            "present var should not be reported, got: {log_buf:?}"
+        );
     }
 
     #[test]
     fn resolve_env_pairs_strips_legacy_key_equals_value_suffix() {
         std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value");
-        let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n");
+        let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {});
         std::env::remove_var("DIRIGENT_LEGACY_VAR");
         assert_eq!(
             pairs,
-            vec![(
-                "DIRIGENT_LEGACY_VAR".to_string(),
-                "real_value".to_string()
-            )]
+            vec![("DIRIGENT_LEGACY_VAR".to_string(), "real_value".to_string())]
         );
     }
 }

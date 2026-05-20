@@ -259,7 +259,10 @@ mod tests {
             &no_overrides(),
         );
         assert_eq!(job_text(&job), "hi");
-        assert_eq!(job.sections[0].format.color, egui::Color32::from_rgb(10, 20, 30));
+        assert_eq!(
+            job.sections[0].format.color,
+            egui::Color32::from_rgb(10, 20, 30)
+        );
     }
 
     #[test]
@@ -321,7 +324,13 @@ mod tests {
             egui::Color32::WHITE,
             &overrides,
         );
-        assert_eq!(job.sections[0].format.color, egui::Color32::from_rgb(200, 200, 0));
-        assert_eq!(job.sections[1].format.color, egui::Color32::from_rgb(0, 0, 200));
+        assert_eq!(
+            job.sections[0].format.color,
+            egui::Color32::from_rgb(200, 200, 0)
+        );
+        assert_eq!(
+            job.sections[1].format.color,
+            egui::Color32::from_rgb(0, 0, 200)
+        );
     }
 }

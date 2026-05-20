@@ -147,6 +147,7 @@ fn build_gemini_command(
     prompt: &str,
     project_root: &Path,
     config: &GeminiRunConfig<'_>,
+    on_log: &mut dyn FnMut(&str),
 ) -> Result<Command, GeminiError> {
     use std::process::Stdio;
 
@@ -167,7 +168,7 @@ fn build_gemini_command(
 
     cmd.arg(prompt);
 
-    claude::apply_env_vars(&mut cmd, config.env_vars);
+    claude::apply_env_vars(&mut cmd, config.env_vars, on_log);
     crate::claude::apply_dirigent_env(&mut cmd, project_root);
 
     cmd.current_dir(project_root)
@@ -511,9 +512,18 @@ pub(crate) fn invoke_gemini_streaming(
     }
 
     let run_start = Instant::now();
-    let mut child = build_gemini_command(&gemini_bin, prompt, project_root, config)?
-        .spawn()
-        .map_err(GeminiError::SpawnFailed)?;
+    let mut child = {
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            log::error!(
+                "Mutex poisoned while acquiring on_log for command build: {:?}",
+                e
+            );
+            e.into_inner()
+        });
+        build_gemini_command(&gemini_bin, prompt, project_root, config, &mut *log)?
+            .spawn()
+            .map_err(GeminiError::SpawnFailed)?
+    };
 
     let stderr_handle = child.stderr.take().expect("stderr must be piped");
     let stdout_handle = child.stdout.take().expect("stdout must be piped");

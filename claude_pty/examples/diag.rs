@@ -3,9 +3,7 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut session = ClaudeCode::builder()
-        .cwd(std::env::current_dir()?)
-        .open()?;
+    let mut session = ClaudeCode::builder().cwd(std::env::current_dir()?).open()?;
     let mut stream = session.take_events().unwrap();
     let mut prompt_sent = false;
     let start = std::time::Instant::now();
@@ -18,11 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("timeout after 30s".into());
         }
 
-        let next = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            stream.next(),
-        )
-        .await;
+        let next = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next()).await;
 
         let evt = match next {
             Ok(Some(evt)) => evt,
@@ -50,15 +44,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
-            Event::TuiScreen { lines, cursor_row, cursor_col, .. } => {
+            Event::TuiScreen {
+                lines,
+                cursor_row,
+                cursor_col,
+                ..
+            } => {
                 if gap > 0.5 {
-                    eprintln!("[{elapsed:.1}s +{gap:.1}s] SCREEN (cursor={cursor_row},{cursor_col}):");
+                    eprintln!(
+                        "[{elapsed:.1}s +{gap:.1}s] SCREEN (cursor={cursor_row},{cursor_col}):"
+                    );
                     for line in lines {
                         eprintln!("  | {line}");
                     }
                 }
             }
-            Event::TuiOutput { text, cursor_row, cursor_col, .. } => {
+            Event::TuiOutput {
+                text,
+                cursor_row,
+                cursor_col,
+                ..
+            } => {
                 if gap > 0.5 || text.contains('❯') {
                     let preview: String = text.chars().take(120).collect();
                     eprintln!("[{elapsed:.1}s +{gap:.1}s] OUTPUT (cursor={cursor_row},{cursor_col}, has_❯={}): {preview:?}", text.contains('❯'));

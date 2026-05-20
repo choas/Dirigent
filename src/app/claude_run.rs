@@ -4,6 +4,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
+use super::notifications::send_macos_notification;
+use super::tasks::TaskHandle;
+use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
@@ -12,9 +15,6 @@ use crate::git;
 use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand};
 use crate::telemetry;
-use super::notifications::send_macos_notification;
-use super::tasks::TaskHandle;
-use super::DirigentApp;
 
 /// Result of a background Claude invocation.
 struct ClaudeResult {
@@ -225,8 +225,7 @@ fn resolve_run_diff(
             return Some(d);
         }
     }
-    scoped_working_diff(project_root, baseline)
-        .or_else(|| (outcome.parse_diff)(&outcome.stdout))
+    scoped_working_diff(project_root, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
 }
 
 /// Build a `ClaudeResult` from a provider's outcome (or error). Centralizing
@@ -1112,8 +1111,7 @@ impl DirigentApp {
             } else {
                 None
             };
-            let visible_text: &str =
-                cleaned_owned.as_deref().unwrap_or(update.text.as_str());
+            let visible_text: &str = cleaned_owned.as_deref().unwrap_or(update.text.as_str());
 
             let buf = &mut self
                 .claude

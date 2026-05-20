@@ -649,8 +649,7 @@ mod tests {
         // Claude TUI renders real newlines as the literal characters `\` + `n`
         // and Claude mirrors that in replies. The extractor must convert them
         // back to real newlines so the commit subject is clean.
-        let response =
-            "<commit-message>\\nFixed the actual bug.\\n</commit-message>";
+        let response = "<commit-message>\\nFixed the actual bug.\\n</commit-message>";
         assert_eq!(
             extract_commit_message(response).unwrap(),
             "Fixed the actual bug.",

@@ -58,7 +58,11 @@ pub(super) fn consume_pty_events(
                             break;
                         }
                     }
-                    Event::TuiScreen { ref lines, ref lines_ansi, .. } => {
+                    Event::TuiScreen {
+                        ref lines,
+                        ref lines_ansi,
+                        ..
+                    } => {
                         for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
                             if plain.trim().is_empty() {
                                 // Drop the empty line from the visible log
@@ -84,9 +88,7 @@ pub(super) fn consume_pty_events(
                 }
             }
             PollEvent::Pending => {
-                if prompt_sent
-                    && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS)
-                {
+                if prompt_sent && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS) {
                     graceful_exit(session);
                     break;
                 }
