@@ -194,10 +194,7 @@ fn run_claude_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    let baseline = snapshot_dirty_state(req.project_root);
 
     let res = claude::invoke_claude_streaming(
         req.prompt,
@@ -215,7 +212,7 @@ fn run_claude_provider(
     );
     match res {
         Ok(response) => {
-            let diff = scoped_working_diff(req.project_root, &baseline_dirty)
+            let diff = scoped_working_diff(req.project_root, &baseline)
                 .or_else(|| claude::parse_diff_from_response(&response.stdout));
             ClaudeResult {
                 cue_id: req.cue_id,
@@ -237,23 +234,56 @@ fn run_claude_provider(
     }
 }
 
-/// Compute a working-tree diff scoped to only files that were *newly* changed
-/// since a pre-run baseline snapshot. This avoids capturing pre-existing local
-/// modifications in the fallback diff path.
+/// Hash the bytes of a file. Returns `None` when the file cannot be read
+/// (e.g. it has been deleted in the working tree).
+fn hash_file_bytes(path: &Path) -> Option<u64> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// Snapshot every currently-dirty file's content hash before a run starts.
+/// `scoped_working_diff` consults this to decide whether an already-dirty
+/// file was further modified by the run.
+fn snapshot_dirty_state(project_root: &Path) -> HashMap<String, Option<u64>> {
+    git::get_dirty_files(project_root)
+        .into_keys()
+        .map(|f| {
+            let hash = hash_file_bytes(&project_root.join(&f));
+            (f, hash)
+        })
+        .collect()
+}
+
+/// Compute a working-tree diff scoped to files actually changed by the run.
+///
+/// A file is included when it became dirty during the run (absent from the
+/// baseline) or when its content hash differs from the pre-run snapshot
+/// (the run further edited an already-dirty file). This avoids the prior
+/// failure mode where edits to an already-dirty file produced `None` and
+/// caused the run to be falsely marked "no changes".
 fn scoped_working_diff(
     project_root: &Path,
-    baseline_dirty: &std::collections::HashSet<String>,
+    baseline: &HashMap<String, Option<u64>>,
 ) -> Option<String> {
     let current_dirty = git::get_dirty_files(project_root);
-    let new_files: Vec<String> = current_dirty
-        .keys()
-        .filter(|f| !baseline_dirty.contains(f.as_str()))
-        .cloned()
+    let changed: Vec<String> = current_dirty
+        .into_keys()
+        .filter(|f| {
+            let current = hash_file_bytes(&project_root.join(f));
+            match baseline.get(f) {
+                None => true,
+                Some(prev) => prev != &current,
+            }
+        })
         .collect();
-    if new_files.is_empty() {
+    if changed.is_empty() {
         return None;
     }
-    git::get_working_diff(project_root, &new_files)
+    git::get_working_diff(project_root, &changed)
 }
 
 fn run_gemini_provider(
@@ -261,10 +291,7 @@ fn run_gemini_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    let baseline = snapshot_dirty_state(req.project_root);
 
     let gemini_config = gemini::GeminiRunConfig {
         model: &req.config.model,
@@ -285,7 +312,7 @@ fn run_gemini_provider(
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 gemini::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
+                    .or_else(|| scoped_working_diff(req.project_root, &baseline))
             } else {
                 git::get_working_diff(req.project_root, &response.edited_files)
                     .or_else(|| gemini::parse_diff_from_response(&response.stdout))
@@ -321,13 +348,10 @@ fn run_opencode_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    // Snapshot dirty files before the run so we can scope the fallback diff
-    // to only files newly changed by this run, avoiding the risk of
-    // committing pre-existing local modifications.
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    // Snapshot dirty files before the run so the fallback diff can detect
+    // which files were actually modified — including ones that were already
+    // dirty at baseline — by comparing post-run content to pre-run hashes.
+    let baseline = snapshot_dirty_state(req.project_root);
 
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
@@ -348,7 +372,7 @@ fn run_opencode_provider(
         Ok(response) => {
             let diff = if response.edited_files.is_empty() {
                 opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
+                    .or_else(|| scoped_working_diff(req.project_root, &baseline))
             } else {
                 git::get_working_diff(req.project_root, &response.edited_files)
                     .or_else(|| opencode::parse_diff_from_response(&response.stdout))
