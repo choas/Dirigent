@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use claude_pty::{Event, PollEvent, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const IDLE_EXIT_SECS: u64 = 10;
 
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
@@ -14,8 +15,8 @@ pub(super) struct PtyResult {
 ///
 /// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
 /// and sends `prompt` on the first `TuiPrompt`. When a second prompt appears
-/// (Claude finished and is waiting for new input) or the session ends
-/// (`LibDone`), the loop exits.
+/// (Claude finished and is waiting for new input), the idle-exit timer fires,
+/// or the session ends (`LibDone`), the loop exits gracefully.
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
@@ -26,6 +27,7 @@ pub(super) fn consume_pty_events(
         response: String::new(),
     };
     let mut prompt_sent = false;
+    let mut last_event_time = Instant::now();
 
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -34,35 +36,51 @@ pub(super) fn consume_pty_events(
         }
 
         match session.poll_event() {
-            PollEvent::Ready(event) => match event {
-                Event::TuiToolConfirmation { .. } => {
-                    let _ = session.write_raw(b"\r");
-                }
-                Event::TuiPrompt => {
-                    if !prompt_sent {
-                        let _ = session.send_line(prompt);
-                        prompt_sent = true;
-                    } else {
-                        let _ = session.kill();
+            PollEvent::Ready(event) => {
+                last_event_time = Instant::now();
+                match event {
+                    Event::TuiToolConfirmation { .. } => {
+                        let _ = session.write_raw(b"\r");
+                    }
+                    Event::TuiPrompt => {
+                        if !prompt_sent {
+                            // Send text and Enter as two separate writes
+                            // with settling time between. Claude's TUI
+                            // treats a fast `text\r` burst as paste — the
+                            // \r ends up in the buffer instead of submitting.
+                            std::thread::sleep(Duration::from_millis(300));
+                            let _ = session.write_raw(prompt.as_bytes());
+                            std::thread::sleep(Duration::from_millis(200));
+                            let _ = session.write_raw(b"\r");
+                            prompt_sent = true;
+                        } else {
+                            graceful_exit(session);
+                            break;
+                        }
+                    }
+                    Event::TuiScreen { ref lines, .. } => {
+                        for line in lines {
+                            on_log(line);
+                            on_log("\n");
+                            state.response.push_str(line);
+                            state.response.push('\n');
+                        }
+                    }
+                    Event::LibDone => break,
+                    Event::LibError { ref message } => {
+                        on_log(&format!("error: {}\n", message));
                         break;
                     }
+                    _ => {}
                 }
-                Event::TuiScreen { ref lines, .. } => {
-                    for line in lines {
-                        on_log(line);
-                        on_log("\n");
-                        state.response.push_str(line);
-                        state.response.push('\n');
-                    }
-                }
-                Event::LibDone => break,
-                Event::LibError { ref message } => {
-                    on_log(&format!("error: {}\n", message));
+            }
+            PollEvent::Pending => {
+                if prompt_sent
+                    && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS)
+                {
+                    graceful_exit(session);
                     break;
                 }
-                _ => {}
-            },
-            PollEvent::Pending => {
                 std::thread::sleep(POLL_INTERVAL);
             }
             PollEvent::Closed => break,
@@ -70,6 +88,26 @@ pub(super) fn consume_pty_events(
     }
 
     state
+}
+
+/// End the Claude TUI cleanly: Ctrl-C twice (first interrupts the current
+/// operation, second requests exit), drain events for up to 5 s waiting for
+/// `LibDone`, then fall back to a hard kill.
+fn graceful_exit(session: &mut Session) {
+    let _ = session.write_raw(b"\x03");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = session.write_raw(b"\x03");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match session.poll_event() {
+            PollEvent::Ready(Event::LibDone) => return,
+            PollEvent::Ready(_) => {}
+            PollEvent::Pending => std::thread::sleep(POLL_INTERVAL),
+            PollEvent::Closed => return,
+        }
+    }
+    let _ = session.kill();
 }
 
 // ── OpenCode log filtering (used by the opencode provider) ─────────
