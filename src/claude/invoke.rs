@@ -99,9 +99,8 @@ fn invoke_pty(
         builder = builder.model(model);
     }
     if !extra_args.is_empty() {
-        let args = shlex::split(extra_args).unwrap_or_else(|| {
-            extra_args.split_whitespace().map(String::from).collect()
-        });
+        let args = shlex::split(extra_args)
+            .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
         builder = builder.extra_args(args);
     }
     if skip_permissions {
@@ -113,8 +112,7 @@ fn invoke_pty(
     // the PTY as truecolor-capable and emits 24-bit RGB for diffs, which
     // the override doesn't intercept. User env (CLI/.Dirigent/.env) is
     // appended after, so an explicit `FORCE_COLOR=…` still wins.
-    let mut envs: Vec<(String, String)> =
-        vec![("FORCE_COLOR".to_string(), "1".to_string())];
+    let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
     envs.extend(resolve_env_pairs(env_vars));
     envs.extend(load_dirigent_env_pairs(project_root));
     builder = builder.envs(envs);
@@ -148,7 +146,11 @@ fn invoke_headless(
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    let claude_bin = if cli_path.is_empty() { "claude" } else { cli_path };
+    let claude_bin = if cli_path.is_empty() {
+        "claude"
+    } else {
+        cli_path
+    };
     which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
 
     let mut cmd = Command::new(claude_bin);
@@ -160,9 +162,8 @@ fn invoke_headless(
         cmd.arg("--model").arg(model);
     }
     if !extra_args.is_empty() {
-        let args = shlex::split(extra_args).unwrap_or_else(|| {
-            extra_args.split_whitespace().map(String::from).collect()
-        });
+        let args = shlex::split(extra_args)
+            .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
         for arg in args {
             if !arg.is_empty() {
                 cmd.arg(arg);
@@ -179,8 +180,14 @@ fn invoke_headless(
         .spawn()
         .map_err(ClaudeError::SpawnFailed)?;
 
-    let stdout_handle = child.stdout.take().expect("stdout must be piped");
-    let stderr_handle = child.stderr.take().expect("stderr must be piped");
+    let stdout_handle = child
+        .stdout
+        .take()
+        .ok_or_else(|| ClaudeError::SpawnFailed(std::io::Error::other("stdout was not piped")))?;
+    let stderr_handle = child
+        .stderr
+        .take()
+        .ok_or_else(|| ClaudeError::SpawnFailed(std::io::Error::other("stderr was not piped")))?;
     let child = Arc::new(Mutex::new(child));
 
     let done = Arc::new(AtomicBool::new(false));
