@@ -189,6 +189,66 @@ fn run_provider(
     }
 }
 
+/// Normalized outcome from any CLI provider's streaming invocation. Each
+/// provider adapts its specific response into this common shape so the
+/// post-run diff resolution and `ClaudeResult` mapping can be shared via
+/// `finalize_run` — keeping provider-specific drift out of the result path.
+struct ProviderRunOutcome {
+    stdout: String,
+    edited_files: Vec<String>,
+    metrics: claude::RunMetrics,
+    parse_diff: fn(&str) -> Option<String>,
+}
+
+/// Resolve the run diff using a consistent source order across providers:
+/// `git diff` over files the provider claims it edited, then `git diff`
+/// over files whose content actually changed vs. the pre-run baseline,
+/// then a diff parsed out of the provider's response text.
+fn resolve_run_diff(
+    project_root: &Path,
+    baseline: &HashMap<String, Option<u64>>,
+    outcome: &ProviderRunOutcome,
+) -> Option<String> {
+    if !outcome.edited_files.is_empty() {
+        if let Some(d) = git::get_working_diff(project_root, &outcome.edited_files) {
+            return Some(d);
+        }
+    }
+    scoped_working_diff(project_root, baseline)
+        .or_else(|| (outcome.parse_diff)(&outcome.stdout))
+}
+
+/// Build a `ClaudeResult` from a provider's outcome (or error). Centralizing
+/// this here prevents the three providers from drifting in how they map
+/// success/failure into the result type.
+fn finalize_run<E: std::fmt::Display>(
+    req: &RunRequest,
+    baseline: &HashMap<String, Option<u64>>,
+    res: Result<ProviderRunOutcome, E>,
+) -> ClaudeResult {
+    match res {
+        Ok(outcome) => {
+            let diff = resolve_run_diff(req.project_root, baseline, &outcome);
+            ClaudeResult {
+                cue_id: req.cue_id,
+                exec_id: req.exec_id,
+                diff,
+                response: outcome.stdout,
+                error: None,
+                metrics: outcome.metrics,
+            }
+        }
+        Err(e) => ClaudeResult {
+            cue_id: req.cue_id,
+            exec_id: req.exec_id,
+            diff: None,
+            response: String::new(),
+            error: Some(e.to_string()),
+            metrics: claude::RunMetrics::default(),
+        },
+    }
+}
+
 fn run_claude_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send + 'static,
@@ -209,29 +269,14 @@ fn run_claude_provider(
         req.config.use_pty,
         on_log,
         cancel,
-    );
-    match res {
-        Ok(response) => {
-            let diff = scoped_working_diff(req.project_root, &baseline)
-                .or_else(|| claude::parse_diff_from_response(&response.stdout));
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: response.stdout,
-                error: None,
-                metrics: response.metrics,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
-        },
-    }
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: Vec::new(),
+        metrics: response.metrics,
+        parse_diff: claude::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
 }
 
 /// Fingerprint a file for change detection. Returns `None` when the file
@@ -329,40 +374,19 @@ fn run_gemini_provider(
         &gemini_config,
         on_log,
         cancel,
-    );
-    match res {
-        Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                gemini::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline))
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-                    .or_else(|| gemini::parse_diff_from_response(&response.stdout))
-            };
-            let metrics = claude::RunMetrics {
-                cost_usd: response.cost_usd.unwrap_or(0.0),
-                duration_ms: response.duration_ms.unwrap_or(0),
-                num_turns: response.num_turns.unwrap_or(0),
-                ..claude::RunMetrics::default()
-            };
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: response.stdout,
-                error: None,
-                metrics,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: response.edited_files,
+        metrics: claude::RunMetrics {
+            cost_usd: response.cost_usd.unwrap_or(0.0),
+            duration_ms: response.duration_ms.unwrap_or(0),
+            num_turns: response.num_turns.unwrap_or(0),
+            ..claude::RunMetrics::default()
         },
-    }
+        parse_diff: gemini::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
 }
 
 fn run_opencode_provider(
@@ -389,40 +413,19 @@ fn run_opencode_provider(
         &opencode_config,
         on_log,
         cancel,
-    );
-    match res {
-        Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline))
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-                    .or_else(|| opencode::parse_diff_from_response(&response.stdout))
-            };
-            let metrics = claude::RunMetrics {
-                cost_usd: response.cost_usd.unwrap_or(0.0),
-                duration_ms: response.duration_ms.unwrap_or(0),
-                num_turns: response.num_turns.unwrap_or(0),
-                ..claude::RunMetrics::default()
-            };
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: response.stdout,
-                error: None,
-                metrics,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: response.edited_files,
+        metrics: claude::RunMetrics {
+            cost_usd: response.cost_usd.unwrap_or(0.0),
+            duration_ms: response.duration_ms.unwrap_or(0),
+            num_turns: response.num_turns.unwrap_or(0),
+            ..claude::RunMetrics::default()
         },
-    }
+        parse_diff: opencode::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
 }
 
 impl DirigentApp {
