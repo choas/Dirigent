@@ -213,39 +213,94 @@ impl DirigentApp {
                 );
 
                 let style = self.settings.heartbeat_style.clone();
-                let n = (rect.width() as usize).clamp(32, 600);
-                let mut points = Vec::with_capacity(n);
-                for i in 0..n {
-                    let frac = i as f32 / (n as f32 - 1.0);
-                    let x = rect.left() + frac * rect.width();
-                    // Newest sample is on the right edge (frac == 1.0).
-                    let t_from_now = (1.0 - frac) * window_secs;
-                    let mut intensity = 0.0_f32;
-                    for &age in &beats {
-                        let dt = t_from_now - age;
-                        let pulse = match style {
-                            HeartbeatStyle::GabbaPeak => {
-                                // Sharp triangular peak: narrow, hard edges.
-                                let norm = (dt / (HEARTBEAT_PULSE_SECS * 0.4)).abs();
-                                (1.0 - norm).max(0.0)
-                            }
-                            _ => {
-                                // Smooth Gaussian curve.
+                match style {
+                    HeartbeatStyle::Curve => {
+                        let n = (rect.width() as usize).clamp(32, 600);
+                        let mut points = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let frac = i as f32 / (n as f32 - 1.0);
+                            let x = rect.left() + frac * rect.width();
+                            let t_from_now = (1.0 - frac) * window_secs;
+                            let mut intensity = 0.0_f32;
+                            for &age in &beats {
+                                let dt = t_from_now - age;
                                 let norm = dt / HEARTBEAT_PULSE_SECS;
-                                (-(norm * norm)).exp()
+                                let pulse = (-(norm * norm)).exp();
+                                if pulse > intensity {
+                                    intensity = pulse;
+                                }
                             }
-                        };
-                        if pulse > intensity {
-                            intensity = pulse;
+                            let y = baseline_y - intensity * peak_height;
+                            points.push(egui::pos2(x, y));
+                        }
+                        ui.painter().add(egui::Shape::line(
+                            points,
+                            egui::Stroke::new(1.5, stroke_color),
+                        ));
+                    }
+                    HeartbeatStyle::GabbaPeak => {
+                        // One filled rectangle per beat: hard edges, flat top.
+                        let rect_half_width = 3.0;
+                        let rect_top = baseline_y - peak_height;
+                        for &age in &beats {
+                            let frac = 1.0 - (age / window_secs);
+                            if !(0.0..=1.0).contains(&frac) {
+                                continue;
+                            }
+                            let x = rect.left() + frac * rect.width();
+                            let bar = egui::Rect::from_min_max(
+                                egui::pos2(x - rect_half_width, rect_top),
+                                egui::pos2(x + rect_half_width, baseline_y),
+                            );
+                            ui.painter().rect_filled(bar, 0.0, stroke_color);
                         }
                     }
-                    let y = baseline_y - intensity * peak_height;
-                    points.push(egui::pos2(x, y));
+                    HeartbeatStyle::MorseCode => {
+                        // Dot at each beat, line connecting to the next beat.
+                        let dot_radius = 2.5;
+                        let line_y = baseline_y - peak_height * 0.5;
+                        let mut sorted: Vec<f32> = beats.clone();
+                        // Oldest first → drawn left-to-right.
+                        sorted.sort_by(|a, b| {
+                            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        for (i, &age) in sorted.iter().enumerate() {
+                            let frac = 1.0 - (age / window_secs);
+                            if !(0.0..=1.0).contains(&frac) {
+                                continue;
+                            }
+                            let x = rect.left() + frac * rect.width();
+                            ui.painter().circle_filled(
+                                egui::pos2(x, line_y),
+                                dot_radius,
+                                stroke_color,
+                            );
+                            let next_x = if i + 1 < sorted.len() {
+                                let next_age = sorted[i + 1];
+                                let nfrac = 1.0 - (next_age / window_secs);
+                                if (0.0..=1.0).contains(&nfrac) {
+                                    rect.left() + nfrac * rect.width()
+                                } else {
+                                    rect.right()
+                                }
+                            } else {
+                                rect.right()
+                            };
+                            let line_start_x = x + dot_radius + 1.5;
+                            let line_end_x = (next_x - dot_radius - 1.5).max(line_start_x);
+                            if line_end_x > line_start_x {
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(line_start_x, line_y),
+                                        egui::pos2(line_end_x, line_y),
+                                    ],
+                                    egui::Stroke::new(1.5, stroke_color),
+                                );
+                            }
+                        }
+                    }
+                    HeartbeatStyle::Off => {}
                 }
-                ui.painter().add(egui::Shape::line(
-                    points,
-                    egui::Stroke::new(1.5, stroke_color),
-                ));
 
                 ui.ctx().request_repaint_after(
                     std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS),
