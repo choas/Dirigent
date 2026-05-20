@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use claude_pty::{Event, PollEvent, Session};
+use claude_pty::{Event, ExitStatus, PollEvent, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const IDLE_EXIT_SECS: u64 = 10;
@@ -105,6 +105,8 @@ pub(super) fn consume_pty_events(
         }
     }
 
+    report_exit_status(session, prompt_sent, &state.response, on_log);
+
     state
 }
 
@@ -126,6 +128,32 @@ fn graceful_exit(session: &mut Session) {
         }
     }
     let _ = session.kill();
+}
+
+fn report_exit_status(
+    session: &Session,
+    prompt_sent: bool,
+    response: &str,
+    on_log: &mut dyn FnMut(&str),
+) {
+    let status: Option<ExitStatus> = session.try_wait();
+    let has_response = !response.trim().is_empty();
+
+    match status {
+        Some(s) if s.success() => {
+            if prompt_sent && !has_response {
+                on_log("\n⚠ Claude exited successfully but produced no output.\n");
+            }
+        }
+        Some(s) => {
+            on_log(&format!("\n⚠ Claude exited with status: {}\n", s));
+        }
+        None => {
+            if prompt_sent && !has_response {
+                on_log("\n⚠ Claude process ended without producing output.\n");
+            }
+        }
+    }
 }
 
 // ── OpenCode log filtering (used by the opencode provider) ─────────

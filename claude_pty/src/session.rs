@@ -102,6 +102,15 @@ impl Session {
         Ok(())
     }
 
+    /// Non-blocking check for whether the child has exited.
+    /// Returns `Some(status)` if exited, `None` if still running.
+    pub fn try_wait(&self) -> Option<portable_pty::ExitStatus> {
+        self.child
+            .lock()
+            .ok()
+            .and_then(|mut c| c.try_wait().ok().flatten())
+    }
+
     /// Non-blocking event poll. Returns [`PollEvent::Ready`] with the
     /// next event if one is buffered, [`PollEvent::Pending`] if the
     /// channel is open but empty, or [`PollEvent::Closed`] when the

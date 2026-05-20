@@ -50,6 +50,7 @@ pub mod session;
 
 pub use builder::{ClaudeCode, ClaudeCodeBuilder, PermissionMode};
 pub use event::{Event, PollEvent};
+pub use portable_pty::ExitStatus;
 pub use session::Session;
 
 #[derive(Debug, thiserror::Error)]
