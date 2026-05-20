@@ -11,8 +11,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let mut last_event = std::time::Instant::now();
 
-    while let Some(evt) = stream.next().await {
+    loop {
         let elapsed = start.elapsed().as_secs_f32();
+        if elapsed > 30.0 {
+            eprintln!("Timeout — giving up after 30s");
+            return Err("timeout after 30s".into());
+        }
+
+        let next = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.next(),
+        )
+        .await;
+
+        let evt = match next {
+            Ok(Some(evt)) => evt,
+            Ok(None) => break,
+            Err(_) => continue,
+        };
+
         let gap = last_event.elapsed().as_secs_f32();
         last_event = std::time::Instant::now();
         match &evt {
@@ -56,11 +73,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             _ => {}
-        }
-
-        if elapsed > 30.0 {
-            eprintln!("Timeout — giving up after 30s");
-            break;
         }
     }
     Ok(())
