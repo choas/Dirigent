@@ -316,20 +316,30 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     /// RAII guard that sets a process env var on creation and restores the
     /// previous value (or removes it) on drop — even if the test panics.
+    /// Holds a process-wide lock to serialize env mutations across parallel tests.
     struct EnvVarGuard {
         key: &'static str,
         prev: Option<OsString>,
+        _lock: MutexGuard<'static, ()>,
     }
 
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
+            let lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::var_os(key);
             // SAFETY: test-only; the guard ensures restore-on-drop.
             unsafe { std::env::set_var(key, value) };
-            Self { key, prev }
+            Self {
+                key,
+                prev,
+                _lock: lock,
+            }
         }
     }
 
@@ -340,6 +350,7 @@ mod tests {
                 Some(v) => unsafe { std::env::set_var(self.key, v) },
                 None => unsafe { std::env::remove_var(self.key) },
             }
+            // _lock is dropped after this, releasing the mutex
         }
     }
 
