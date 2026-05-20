@@ -46,11 +46,17 @@ pub(crate) fn invoke_claude_streaming(
     if skip_permissions {
         builder = builder.permission_mode(claude_pty::PermissionMode::BypassPermissions);
     }
-    let mut envs = resolve_env_pairs(env_vars);
+    // Pin Claude's TUI to basic 16-color ANSI so diff lines emit standard
+    // 31/32 (and 91/92) codes that `ansi::DiffAnsiOverrides` can remap to
+    // the user's Settings-page diff colors. Without this, chalk/Ink detects
+    // the PTY as truecolor-capable and emits 24-bit RGB for diffs, which
+    // the override doesn't intercept. User env (CLI/.Dirigent/.env) is
+    // appended after, so an explicit `FORCE_COLOR=…` still wins.
+    let mut envs: Vec<(String, String)> =
+        vec![("FORCE_COLOR".to_string(), "1".to_string())];
+    envs.extend(resolve_env_pairs(env_vars));
     envs.extend(load_dirigent_env_pairs(project_root));
-    if !envs.is_empty() {
-        builder = builder.envs(envs);
-    }
+    builder = builder.envs(envs);
 
     let mut session = builder.open().map_err(|e| match e {
         claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
