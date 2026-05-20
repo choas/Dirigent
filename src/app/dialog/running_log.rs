@@ -239,7 +239,7 @@ impl DirigentApp {
                         ));
                     }
                     HeartbeatStyle::GabbaPeak => {
-                        // One filled rectangle per beat: hard edges, flat top.
+                        // One outlined rectangle per beat: hard edges, flat top.
                         let rect_half_width = 3.0;
                         let rect_top = baseline_y - peak_height;
                         for &age in &beats {
@@ -252,7 +252,12 @@ impl DirigentApp {
                                 egui::pos2(x - rect_half_width, rect_top),
                                 egui::pos2(x + rect_half_width, baseline_y),
                             );
-                            ui.painter().rect_filled(bar, 0.0, stroke_color);
+                            ui.painter().rect_stroke(
+                                bar,
+                                0.0,
+                                egui::Stroke::new(1.5, stroke_color),
+                                egui::StrokeKind::Inside,
+                            );
                         }
                     }
                     HeartbeatStyle::MorseCode => {
