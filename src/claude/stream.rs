@@ -27,6 +27,7 @@ pub(super) fn consume_pty_events(
         response: String::new(),
     };
     let mut prompt_sent = false;
+    let start_time = Instant::now();
     let mut last_event_time = Instant::now();
 
     loop {
@@ -106,6 +107,15 @@ pub(super) fn consume_pty_events(
                 break;
             }
         }
+    }
+
+    let elapsed = start_time.elapsed();
+    let secs = elapsed.as_secs();
+    let response_lines = state.response.lines().count();
+    if response_lines > 0 {
+        on_log(&format!("\nDone {secs}s ({response_lines} lines)\n"));
+    } else {
+        on_log(&format!("\nDone {secs}s\n"));
     }
 
     report_exit_status(session, prompt_sent, &state.response, on_log);
