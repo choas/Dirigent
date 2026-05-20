@@ -15,7 +15,7 @@ const HEARTBEAT_PULSE_SECS: f32 = 0.18;
 const HEARTBEAT_REPAINT_MS: u64 = 40;
 
 use crate::db::{CueStatus, Execution};
-use crate::settings::CliProvider;
+use crate::settings::{CliProvider, HeartbeatStyle};
 
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
@@ -71,7 +71,7 @@ impl DirigentApp {
         // Heartbeat strip sits above the reply panel (when present) and at
         // the bottom of the conversation otherwise.  It only renders for the
         // local in-flight run; finished runs collapse it away.
-        if is_running {
+        if is_running && self.settings.heartbeat_style != HeartbeatStyle::Off {
             self.render_heartbeat_panel(ui, cue_id);
         }
 
@@ -212,6 +212,7 @@ impl DirigentApp {
                     egui::Stroke::new(1.0, baseline_color),
                 );
 
+                let style = self.settings.heartbeat_style.clone();
                 let n = (rect.width() as usize).clamp(32, 600);
                 let mut points = Vec::with_capacity(n);
                 for i in 0..n {
@@ -222,8 +223,18 @@ impl DirigentApp {
                     let mut intensity = 0.0_f32;
                     for &age in &beats {
                         let dt = t_from_now - age;
-                        let norm = dt / HEARTBEAT_PULSE_SECS;
-                        let pulse = (-(norm * norm)).exp();
+                        let pulse = match style {
+                            HeartbeatStyle::GabbaPeak => {
+                                // Sharp triangular peak: narrow, hard edges.
+                                let norm = (dt / (HEARTBEAT_PULSE_SECS * 0.4)).abs();
+                                (1.0 - norm).max(0.0)
+                            }
+                            _ => {
+                                // Smooth Gaussian curve.
+                                let norm = dt / HEARTBEAT_PULSE_SECS;
+                                (-(norm * norm)).exp()
+                            }
+                        };
                         if pulse > intensity {
                             intensity = pulse;
                         }

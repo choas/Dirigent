@@ -35,6 +35,32 @@ impl DiffColorScheme {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum HeartbeatStyle {
+    #[default]
+    Curve,
+    GabbaPeak,
+    Off,
+}
+
+impl HeartbeatStyle {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            HeartbeatStyle::Curve => "Curve",
+            HeartbeatStyle::GabbaPeak => "Gabba Peak",
+            HeartbeatStyle::Off => "Off",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [HeartbeatStyle] {
+        &[
+            HeartbeatStyle::Curve,
+            HeartbeatStyle::GabbaPeak,
+            HeartbeatStyle::Off,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum RunningAnimation {
     Off,
     #[default]
@@ -167,6 +193,8 @@ pub(crate) struct Settings {
     pub notify_popup: bool,
     #[serde(default)]
     pub running_animation: RunningAnimation,
+    #[serde(default)]
+    pub heartbeat_style: HeartbeatStyle,
     #[serde(default)]
     pub claude_code_display_name: String,
     #[serde(default)]
@@ -310,6 +338,7 @@ impl Default for Settings {
             notify_sound: true,
             notify_popup: true,
             running_animation: RunningAnimation::LavaLamp,
+            heartbeat_style: HeartbeatStyle::default(),
             claude_code_display_name: String::new(),
             diff_color_scheme: DiffColorScheme::default(),
             font_family: default_font_family(),

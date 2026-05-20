@@ -1,7 +1,9 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, DiffColorScheme, FontWeight, RunningAnimation, ThemeChoice};
+use crate::settings::{
+    CliProvider, DiffColorScheme, FontWeight, HeartbeatStyle, RunningAnimation, ThemeChoice,
+};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -456,6 +458,20 @@ impl DirigentApp {
             );
             ui.end_row();
         }
+
+        ui.label("Heart Beat:");
+        egui::ComboBox::from_id_salt("heartbeat_style_combo")
+            .selected_text(self.settings.heartbeat_style.display_name())
+            .show_ui(ui, |ui| {
+                for style in HeartbeatStyle::all() {
+                    ui.selectable_value(
+                        &mut self.settings.heartbeat_style,
+                        style.clone(),
+                        style.display_name(),
+                    );
+                }
+            });
+        ui.end_row();
 
         ui.label("Diff Colors:");
         egui::ComboBox::from_id_salt("diff_color_combo")
