@@ -1,7 +1,7 @@
 //! Desert-running pixel dino overlay (homage to the Chrome offline T-Rex).
 //!
-//! A tiny pixel dinosaur trots across a sand line, randomly jumping over
-//! invisible obstacles. Used as one of the "running" animations.
+//! A tiny pixel dinosaur trots across a sand line, jumping to clear stones
+//! that scroll past underneath it. Used as one of the "running" animations.
 
 use eframe::egui;
 
@@ -53,11 +53,18 @@ struct DinoColors {
     eye: egui::Color32,
     sand: egui::Color32,
     pebble: egui::Color32,
+    stone: egui::Color32,
 }
 
 fn compute_colors(accent: egui::Color32, is_dark: bool) -> DinoColors {
     let [ar, ag, ab, _] = accent.to_array();
-    let body = accent;
+    // Classic Chrome T-Rex tone — neutral gray so the dino doesn't end up
+    // tinted like whatever the theme's accent happens to be.
+    let body = if is_dark {
+        egui::Color32::from_rgb(205, 200, 190)
+    } else {
+        egui::Color32::from_rgb(83, 83, 83)
+    };
     let eye = if is_dark {
         egui::Color32::from_rgb(20, 18, 18)
     } else {
@@ -78,11 +85,17 @@ fn compute_colors(accent: egui::Color32, is_dark: bool) -> DinoColors {
     } else {
         egui::Color32::from_rgb(135, 110, 80)
     };
+    let stone = if is_dark {
+        egui::Color32::from_rgb(160, 140, 110)
+    } else {
+        egui::Color32::from_rgb(105, 85, 65)
+    };
     DinoColors {
         body,
         eye,
         sand,
         pebble,
+        stone,
     }
 }
 
@@ -95,27 +108,67 @@ fn hash_u32(seed: u32) -> u32 {
     x
 }
 
+// Stones spawn at the right edge and scroll left across the ground at this
+// speed. Spacing is staggered with per-spawn jitter so the rhythm doesn't
+// feel metronomic.
+const STONE_SPEED: f32 = 18.0;
+const STONE_SPACING: f32 = 1.7;
+const STONE_SPAWN_COL: f32 = W as f32;
+// Column at which a stone is "under" the dino's feet — used both to time the
+// jump apex and as the horizontal centre of the collision window.
+const DINO_FRONT_COL: f32 = 5.5;
+
+const JUMP_DURATION: f32 = 0.55;
+const JUMP_HEIGHT: f32 = 5.0;
+
+#[derive(Clone, Copy)]
+struct Stone {
+    /// Current column (fractional) of the stone's left edge.
+    col_f: f32,
+    /// Height in grid cells (1 or 2).
+    height: u8,
+    /// Wall-clock time at which this stone reaches `DINO_FRONT_COL`.
+    collide_t: f32,
+}
+
+/// Stones currently on-screen, newest first.
+fn active_stones(t: f32) -> Vec<Stone> {
+    let mut stones = Vec::new();
+    // The +1 catches the next stone that hasn't quite spawned yet so we can
+    // still pre-trigger the jump for it.
+    let current_bucket = (t / STONE_SPACING).floor() as i32 + 1;
+    for back in 0..4 {
+        let bucket = current_bucket - back;
+        if bucket < 0 {
+            continue;
+        }
+        let h = hash_u32(bucket as u32);
+        // Up to ±0.3s of jitter on the spawn time within the bucket.
+        let jitter = ((h & 0xFF) as f32 / 255.0 - 0.5) * 0.6;
+        let spawn_t = bucket as f32 * STONE_SPACING + jitter;
+        let age = t - spawn_t;
+        let col_f = STONE_SPAWN_COL - age * STONE_SPEED;
+        if col_f < -3.0 || col_f > STONE_SPAWN_COL + 0.5 {
+            continue;
+        }
+        let height = if (h >> 8) & 0b11 == 0 { 2 } else { 1 };
+        let collide_t = spawn_t + (STONE_SPAWN_COL - DINO_FRONT_COL) / STONE_SPEED;
+        stones.push(Stone {
+            col_f,
+            height,
+            collide_t,
+        });
+    }
+    stones
+}
+
 /// Vertical jump offset in pixel-grid units (0 = on ground, positive = airborne).
 ///
-/// Jumps fire pseudo-randomly so the dino never lands in a perfect rhythm.
-fn jump_offset(t: f32) -> f32 {
-    const JUMP_DURATION: f32 = 0.55;
-    const JUMP_HEIGHT: f32 = 5.0;
-
-    let now_sec = t.floor() as i32;
-    // Look at the current and previous second to catch an in-flight jump.
-    for back in 0..2 {
-        let s = now_sec - back;
-        if s < 0 {
-            continue;
-        }
-        let h = hash_u32(s as u32);
-        // ~33% chance to start a jump within this second.
-        if h % 3 != 0 {
-            continue;
-        }
-        let frac = ((h >> 8) & 0xFFFF) as f32 / 65536.0;
-        let jump_start = s as f32 + frac * 0.6;
+/// Jumps are anchored to upcoming stones — the apex lines up with the moment a
+/// stone passes under the dino's feet.
+fn jump_offset(t: f32, stones: &[Stone]) -> f32 {
+    for stone in stones {
+        let jump_start = stone.collide_t - JUMP_DURATION * 0.5;
         let elapsed = t - jump_start;
         if elapsed >= 0.0 && elapsed < JUMP_DURATION {
             let p = elapsed / JUMP_DURATION;
@@ -144,7 +197,8 @@ pub fn paint_at(
     let t = ctx.input(|i| i.time) as f32;
     let colors = compute_colors(accent, is_dark);
 
-    let jump_px = jump_offset(t);
+    let stones = active_stones(t);
+    let jump_px = jump_offset(t, &stones);
     let airborne = jump_px > 0.01;
 
     // Two-frame run cycle at ~8 Hz.
@@ -198,6 +252,21 @@ pub fn paint_at(
             egui::vec2(px, px),
         );
         painter.rect_filled(rect, 0.0, colors.sand);
+    }
+
+    // Stones sitting on top of the sand — these are the obstacles the dino
+    // jumps over. Drawn at sub-cell precision so they scroll smoothly.
+    for stone in &stones {
+        let stone_w_px = 2.0 * px;
+        let stone_h_px = stone.height as f32 * px;
+        let top_row = GROUND_ROW - stone.height as usize;
+        let x = origin.x + stone.col_f * px;
+        let y = origin.y + top_row as f32 * px;
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(x, y),
+            egui::vec2(stone_w_px, stone_h_px),
+        );
+        painter.rect_filled(rect, 0.0, colors.stone);
     }
 
     // Scrolling pebbles below the ground line.

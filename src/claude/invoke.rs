@@ -106,16 +106,13 @@ fn invoke_pty(
     if skip_permissions {
         builder = builder.permission_mode(claude_pty::PermissionMode::BypassPermissions);
     }
-    // Pin Claude's TUI to basic 16-color ANSI so diff lines emit standard
-    // 31/32 (and 91/92) codes that `ansi::DiffAnsiOverrides` can remap to
-    // the user's Settings-page diff colors. Without this, chalk/Ink detects
-    // the PTY as truecolor-capable and emits 24-bit RGB for diffs, which
-    // the override doesn't intercept. User env (CLI/.Dirigent/.env) is
-    // appended after, so an explicit `FORCE_COLOR=…` still wins.
-    let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
-    envs.extend(resolve_env_pairs(env_vars, on_log));
-    envs.extend(load_dirigent_env_pairs(project_root));
-    builder = builder.envs(envs);
+    // Compose envs in precedence order — see `compose_pty_envs` for the full
+    // contract. The vec is consumed by `builder.envs(...)`, which forwards
+    // every entry to `portable_pty::CommandBuilder::env`; that call inserts
+    // into a BTreeMap keyed by name, so later entries OVERWRITE earlier ones.
+    // The headless path achieves the same precedence via `cmd.env(...)` on
+    // `std::process::Command`, which also overwrites — see `invoke_headless`.
+    builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
 
     let mut session = builder.open().map_err(|e| match e {
         claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
@@ -170,6 +167,10 @@ fn invoke_headless(
             }
         }
     }
+    // Env precedence (must match `compose_pty_envs` for the PTY path so a
+    // secret rotated in `.Dirigent/.env` cannot silently behave differently
+    // between modes): Settings `env_vars` first, then `.Dirigent/.env`.
+    // `Command::env` overwrites on duplicate keys, so `.Dirigent/.env` wins.
     apply_env_vars(&mut cmd, env_vars, on_log);
     apply_dirigent_env(&mut cmd, project_root);
 
@@ -279,5 +280,156 @@ fn reap_child(child: &Arc<Mutex<std::process::Child>>) {
         Err(poisoned) => {
             let _ = poisoned.into_inner().wait();
         }
+    }
+}
+
+/// Build the env list passed to the PTY-launched Claude TUI.
+///
+/// Order matters — `portable_pty::CommandBuilder::env` (used by `claude_pty`
+/// when consuming this vec) inserts into a map keyed by variable name, so
+/// later entries OVERWRITE earlier ones. The effective precedence is:
+///
+///   1. `FORCE_COLOR=1` — base default (pins Claude's chalk/Ink to 16-color
+///      ANSI so diff lines emit 31/32/91/92 that `ansi::DiffAnsiOverrides`
+///      can remap to the Settings-page diff colors).
+///   2. Settings `env_vars` (resolved from the parent process environment)
+///      — may override `FORCE_COLOR` if the user explicitly forwards it.
+///   3. `.Dirigent/.env` — wins over everything above.
+///
+/// The headless path (`invoke_headless`) applies the same two user-supplied
+/// sources in the same order via `std::process::Command::env`, which has the
+/// same last-write-wins semantics, so a secret rotated in `.Dirigent/.env`
+/// behaves identically on both paths.
+fn compose_pty_envs(
+    env_vars: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+) -> Vec<(String, String)> {
+    let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
+    envs.extend(resolve_env_pairs(env_vars, on_log));
+    envs.extend(load_dirigent_env_pairs(project_root));
+    envs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::ffi::{OsStr, OsString};
+
+    /// Collapse a list of `(key, value)` env pairs the same way the underlying
+    /// command builders do: insert in order, last-write wins.
+    fn effective_envs(pairs: &[(String, String)]) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for (k, v) in pairs {
+            map.insert(k.clone(), v.clone());
+        }
+        map
+    }
+
+    /// Snapshot the env vars set on a `std::process::Command` so we can
+    /// compare against the PTY composition.
+    fn cmd_envs(cmd: &Command) -> HashMap<OsString, OsString> {
+        cmd.get_envs()
+            .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.to_owned())))
+            .collect()
+    }
+
+    /// Regression: a secret rotated in `.Dirigent/.env` MUST win on both the
+    /// headless and PTY paths. If precedence diverges, the same prompt could
+    /// behave with a stale token under one transport and a fresh token under
+    /// the other — a security and ops footgun.
+    #[test]
+    fn dirigent_env_overrides_settings_env_vars_on_both_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join(".Dirigent")).unwrap();
+        std::fs::write(
+            project_root.join(".Dirigent").join(".env"),
+            "DIRIGENT_PRECEDENCE_KEY=from_dirigent_env\n",
+        )
+        .unwrap();
+
+        std::env::set_var("DIRIGENT_PRECEDENCE_KEY", "from_process_env");
+        let settings_env_vars = "DIRIGENT_PRECEDENCE_KEY\n";
+
+        let mut headless_cmd = Command::new("true");
+        apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
+        apply_dirigent_env(&mut headless_cmd, project_root);
+        let headless = cmd_envs(&headless_cmd);
+
+        let pty_pairs = compose_pty_envs(settings_env_vars, project_root, &mut |_| {});
+        let pty = effective_envs(&pty_pairs);
+
+        std::env::remove_var("DIRIGENT_PRECEDENCE_KEY");
+
+        assert_eq!(
+            headless.get(OsStr::new("DIRIGENT_PRECEDENCE_KEY")),
+            Some(&OsString::from("from_dirigent_env")),
+            "headless path: .Dirigent/.env must win over Settings env_vars",
+        );
+        assert_eq!(
+            pty.get("DIRIGENT_PRECEDENCE_KEY"),
+            Some(&"from_dirigent_env".to_string()),
+            "PTY path: .Dirigent/.env must win over Settings env_vars",
+        );
+        assert_eq!(
+            headless.get(OsStr::new("DIRIGENT_PRECEDENCE_KEY")).cloned(),
+            pty.get("DIRIGENT_PRECEDENCE_KEY").cloned().map(OsString::from),
+            "headless and PTY paths must agree on the resolved value",
+        );
+    }
+
+    /// A var that is ONLY in Settings `env_vars` (not in `.Dirigent/.env`)
+    /// should be forwarded by both paths with the same value.
+    #[test]
+    fn settings_only_env_var_forwarded_on_both_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path();
+        // No .Dirigent/.env on purpose — Settings should be the only source.
+
+        std::env::set_var("DIRIGENT_SETTINGS_ONLY_KEY", "settings_value");
+        let settings_env_vars = "DIRIGENT_SETTINGS_ONLY_KEY\n";
+
+        let mut headless_cmd = Command::new("true");
+        apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
+        apply_dirigent_env(&mut headless_cmd, project_root);
+        let headless = cmd_envs(&headless_cmd);
+
+        let pty = effective_envs(&compose_pty_envs(
+            settings_env_vars,
+            project_root,
+            &mut |_| {},
+        ));
+
+        std::env::remove_var("DIRIGENT_SETTINGS_ONLY_KEY");
+
+        assert_eq!(
+            headless.get(OsStr::new("DIRIGENT_SETTINGS_ONLY_KEY")),
+            Some(&OsString::from("settings_value")),
+        );
+        assert_eq!(
+            pty.get("DIRIGENT_SETTINGS_ONLY_KEY"),
+            Some(&"settings_value".to_string()),
+        );
+    }
+
+    /// PTY path seeds `FORCE_COLOR=1` so chalk emits 16-color ANSI, but a
+    /// user-supplied `FORCE_COLOR` (via Settings env_vars or `.Dirigent/.env`)
+    /// MUST be able to override it. This documents the order in
+    /// `compose_pty_envs` and pins it against accidental reordering.
+    #[test]
+    fn user_force_color_overrides_pty_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join(".Dirigent")).unwrap();
+        std::fs::write(
+            project_root.join(".Dirigent").join(".env"),
+            "FORCE_COLOR=3\n",
+        )
+        .unwrap();
+
+        let pty = effective_envs(&compose_pty_envs("", project_root, &mut |_| {}));
+        assert_eq!(pty.get("FORCE_COLOR"), Some(&"3".to_string()));
     }
 }
