@@ -403,10 +403,11 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                 let raw = String::from_utf8_lossy(&chunk).to_string();
                 accumulated.push_str(&raw);
                 if accumulated.len() > 30_000 {
-                    let cut = accumulated[20_000..]
+                    let start = accumulated.ceil_char_boundary(20_000);
+                    let cut = accumulated[start..]
                         .find('\n')
-                        .map(|i| 20_000 + i + 1)
-                        .unwrap_or(20_000);
+                        .map(|i| start + i + 1)
+                        .unwrap_or(start);
                     let cut = accumulated.ceil_char_boundary(cut);
                     accumulated = accumulated[cut..].to_string();
                 }
