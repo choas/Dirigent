@@ -6,6 +6,7 @@ mod claude_run;
 mod code_viewer;
 mod cue_pool;
 mod dialog;
+mod dino;
 mod file_navigation;
 mod git_operations;
 mod lava_lamp;

@@ -450,6 +450,19 @@ impl DirigentApp {
                     name,
                 );
             }
+            RunningAnimation::Dino => {
+                let (w, h) = super::dino::size(scale);
+                let origin = egui::pos2(
+                    panel_rect.right() - w - margin,
+                    panel_rect.bottom() - h - margin,
+                );
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(w, h));
+                let resp = ui.allocate_rect(rect, egui::Sense::click());
+                if resp.clicked() {
+                    self.lava_lamp_big = !self.lava_lamp_big;
+                }
+                super::dino::paint_at(ui.painter(), ui.ctx(), origin, accent, is_dark, scale);
+            }
             RunningAnimation::Off => {}
         }
     }
