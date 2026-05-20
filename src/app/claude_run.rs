@@ -200,10 +200,21 @@ struct ProviderRunOutcome {
     parse_diff: fn(&str) -> Option<String>,
 }
 
-/// Resolve the run diff using a consistent source order across providers:
-/// `git diff` over files the provider claims it edited, then `git diff`
-/// over files whose content actually changed vs. the pre-run baseline,
-/// then a diff parsed out of the provider's response text.
+/// Resolve the run diff using a single canonical source order shared by all
+/// providers. The order is, from most to least trustworthy:
+///
+///   1. `git diff` over files the provider explicitly reports it edited.
+///   2. `git diff` over files whose content actually changed vs. the pre-run
+///      baseline (`scoped_working_diff`).
+///   3. A diff parsed out of the provider's response text
+///      (`outcome.parse_diff`).
+///
+/// Filesystem reality (1 and 2) always wins over text-parsed diffs (3): the
+/// working tree is the ground truth, while parsing a diff out of free-form
+/// model output depends on provider-specific formatting and is easily fooled
+/// by truncation, fenced examples, or multiple embedded hunks. Putting the
+/// text-parsed diff last is what keeps the same model output from being
+/// interpreted differently across Claude, Gemini, and OpenCode.
 fn resolve_run_diff(
     project_root: &Path,
     baseline: &HashMap<String, Option<u64>>,
