@@ -203,6 +203,7 @@ impl DirigentApp {
         self.claude.running_logs.remove(&id);
         self.claude.exec_ids.remove(&id);
         self.claude.start_times.remove(&id);
+        self.claude.log_heartbeats.remove(&id);
         self.notion_done_cache.remove(&id);
         self.conversation_replies.remove(&id);
         self.conversation_reply_images.remove(&id);

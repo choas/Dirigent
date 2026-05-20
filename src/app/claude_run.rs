@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::agents::AgentTrigger;
 use crate::claude;
@@ -48,6 +48,9 @@ pub(crate) struct ClaudeRunState {
     pub(super) expand_running: bool,
     /// Cached past executions for the conversation view (loaded on open).
     pub(super) conversation_history: Vec<Execution>,
+    /// Per-cue timeline of recent log-arrival instants, used to draw the
+    /// heartbeat strip beneath the running conversation view.
+    pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
 }
 
 impl ClaudeRunState {
@@ -66,6 +69,7 @@ impl ClaudeRunState {
             last_log_flush: Instant::now(),
             expand_running: false,
             conversation_history: Vec::new(),
+            log_heartbeats: HashMap::new(),
         }
     }
 }
@@ -468,6 +472,7 @@ impl DirigentApp {
                 log::error!("Failed to create execution record for cue {cue_id}: {e}");
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
+                self.claude.log_heartbeats.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
                 return false;
             }
@@ -517,6 +522,7 @@ impl DirigentApp {
                 // doesn't stay stuck in "Running" forever.
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
+                self.claude.log_heartbeats.remove(&cue_id);
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
@@ -681,6 +687,7 @@ impl DirigentApp {
         self.claude.running_logs.remove(&result.cue_id);
         self.claude.exec_ids.remove(&result.cue_id);
         self.claude.start_times.remove(&result.cue_id);
+        self.claude.log_heartbeats.remove(&result.cue_id);
     }
 
     /// Detect usage-limit messages in the response or log.
@@ -1028,10 +1035,11 @@ impl DirigentApp {
     /// Drain the log channel, appending text to the per-cue log buffers.
     pub(super) fn drain_log_channel(&mut self) {
         for update in self.claude.log_rx.try_iter() {
+            let cue_id = update.cue_id;
             let buf = &mut self
                 .claude
                 .running_logs
-                .entry(update.cue_id)
+                .entry(cue_id)
                 .or_insert_with(|| (String::new(), update.provider.clone()))
                 .0;
             buf.push_str(&update.text);
@@ -1042,8 +1050,23 @@ impl DirigentApp {
                 let trimmed = buf[start..].to_string();
                 *buf = format!("… (log truncated) …\n{}", trimmed);
             }
+
+            // Record a heartbeat tick for every non-empty arrival so the
+            // strip in the running-log view can show a peak per line.
+            if !update.text.is_empty() {
+                let now = Instant::now();
+                let beats = self.claude.log_heartbeats.entry(cue_id).or_default();
+                beats.push_back(now);
+                let cutoff = now - Self::HEARTBEAT_WINDOW;
+                while beats.front().is_some_and(|t| *t < cutoff) {
+                    beats.pop_front();
+                }
+            }
         }
     }
+
+    /// Sliding window of activity shown by the heartbeat strip.
+    pub(super) const HEARTBEAT_WINDOW: Duration = Duration::from_secs(10);
 
     /// Periodically flush local running logs to DB (for cross-instance visibility)
     /// and reload remote running logs from DB (for viewing another instance's run).

@@ -1,9 +1,19 @@
+use std::time::Instant;
+
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 
 /// Width reserved for the send button and its surrounding padding.
 const SEND_BUTTON_RESERVED_WIDTH: f32 = 44.0;
+
+/// Height of the heartbeat strip drawn below the running conversation.
+const HEARTBEAT_HEIGHT: f32 = 22.0;
+/// Half-width of a single line-arrival pulse, in seconds.
+const HEARTBEAT_PULSE_SECS: f32 = 0.18;
+/// Repaint cadence while a run is active so the heartbeat scrolls smoothly.
+const HEARTBEAT_REPAINT_MS: u64 = 40;
+
 use crate::db::{CueStatus, Execution};
 use crate::settings::CliProvider;
 
@@ -56,6 +66,13 @@ impl DirigentApp {
         // Reply field at the bottom – rendered as a bottom panel so it stays visible
         if can_reply {
             reply_send = self.render_reply_panel(ui, fs);
+        }
+
+        // Heartbeat strip sits above the reply panel (when present) and at
+        // the bottom of the conversation otherwise.  It only renders for the
+        // local in-flight run; finished runs collapse it away.
+        if is_running {
+            self.render_heartbeat_panel(ui, cue_id);
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -141,6 +158,88 @@ impl DirigentApp {
                 current_running_log,
             );
         }
+    }
+
+    /// Render a heartbeat strip at the bottom of the running conversation
+    /// view.  A short peak is drawn each time a new chunk of output arrives
+    /// from the CLI provider, with a flat baseline in between so the user can
+    /// see at a glance that the run is still alive.
+    fn render_heartbeat_panel(&self, ui: &mut egui::Ui, cue_id: i64) {
+        let window_secs = DirigentApp::HEARTBEAT_WINDOW.as_secs_f32();
+        let beats: Vec<f32> = self
+            .claude
+            .log_heartbeats
+            .get(&cue_id)
+            .map(|q| {
+                let now = Instant::now();
+                q.iter()
+                    .map(|t| now.duration_since(*t).as_secs_f32())
+                    .filter(|s| *s <= window_secs)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let stroke_color = self.semantic.accent;
+        let baseline_color = stroke_color.gamma_multiply(0.35);
+        let frame = egui::Frame::NONE
+            .fill(self.semantic.prompt_surface())
+            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8));
+
+        egui::Panel::bottom("conversation_heartbeat_panel")
+            .resizable(false)
+            .frame(frame)
+            .show_inside(ui, |ui| {
+                let top_border = ui.available_rect_before_wrap();
+                ui.painter().hline(
+                    top_border.x_range(),
+                    top_border.top(),
+                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                );
+
+                let (rect, _) =
+                    ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), HEARTBEAT_HEIGHT),
+                        egui::Sense::hover(),
+                    );
+
+                let baseline_y = rect.center().y + HEARTBEAT_HEIGHT * 0.25;
+                let peak_height = (baseline_y - rect.top() - 2.0).max(4.0);
+
+                // Faint baseline so the strip is visible even when idle.
+                ui.painter().hline(
+                    rect.x_range(),
+                    baseline_y,
+                    egui::Stroke::new(1.0, baseline_color),
+                );
+
+                let n = (rect.width() as usize).clamp(32, 600);
+                let mut points = Vec::with_capacity(n);
+                for i in 0..n {
+                    let frac = i as f32 / (n as f32 - 1.0);
+                    let x = rect.left() + frac * rect.width();
+                    // Newest sample is on the right edge (frac == 1.0).
+                    let t_from_now = (1.0 - frac) * window_secs;
+                    let mut intensity = 0.0_f32;
+                    for &age in &beats {
+                        let dt = t_from_now - age;
+                        let norm = dt / HEARTBEAT_PULSE_SECS;
+                        let pulse = (-(norm * norm)).exp();
+                        if pulse > intensity {
+                            intensity = pulse;
+                        }
+                    }
+                    let y = baseline_y - intensity * peak_height;
+                    points.push(egui::pos2(x, y));
+                }
+                ui.painter().add(egui::Shape::line(
+                    points,
+                    egui::Stroke::new(1.5, stroke_color),
+                ));
+
+                ui.ctx().request_repaint_after(
+                    std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS),
+                );
+            });
     }
 
     /// Render the reply input panel at the bottom of the conversation view.
