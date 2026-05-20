@@ -89,12 +89,19 @@ pub(super) fn consume_pty_events(
             }
             PollEvent::Pending => {
                 if prompt_sent && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS) {
+                    on_log(&format!(
+                        "\n⚠ No output for {}s — session timed out.\n",
+                        IDLE_EXIT_SECS,
+                    ));
                     graceful_exit(session);
                     break;
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
-            PollEvent::Closed => break,
+            PollEvent::Closed => {
+                on_log("\n⚠ PTY session closed unexpectedly.\n");
+                break;
+            }
         }
     }
 
