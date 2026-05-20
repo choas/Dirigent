@@ -530,11 +530,24 @@ impl DirigentApp {
     /// Render log text that may contain ANSI SGR sequences from Claude Code's
     /// TUI. The Claude PTY emits `lines_ansi` with embedded color escapes; the
     /// streaming callback now passes them through unstripped so colors survive.
+    /// Red/green ANSI codes are remapped to the user's diff color scheme so
+    /// Claude's inline diff output matches the rest of the app.
     fn render_ansi_log(&self, ui: &mut egui::Ui, text: &str) {
         let size = ui.text_style_height(&egui::TextStyle::Small);
         let font_id = egui::FontId::new(size, egui::FontFamily::Monospace);
         let default_color = ui.visuals().text_color();
-        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color);
+        let overrides = crate::app::ansi::DiffAnsiOverrides {
+            addition_fg: Some(self.semantic.addition_text()),
+            deletion_fg: Some(self.semantic.deletion_text()),
+            addition_bg: Some(self.semantic.addition_bg()),
+            deletion_bg: Some(self.semantic.deletion_bg()),
+        };
+        let job = crate::app::ansi::ansi_to_layout_job(
+            text,
+            font_id,
+            default_color,
+            &overrides,
+        );
         ui.label(job);
     }
 

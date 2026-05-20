@@ -63,6 +63,12 @@ pub(super) fn consume_pty_events(
                         for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
                             let is_empty = plain.trim().is_empty();
                             if is_empty && prev_empty {
+                                // Still emit a heartbeat sentinel so the
+                                // strip shows a peak for every PTY line,
+                                // including ones we collapse out of the
+                                // visible log. `\0` is stripped on the
+                                // receiver side before display.
+                                on_log("\0");
                                 continue;
                             }
                             prev_empty = is_empty;

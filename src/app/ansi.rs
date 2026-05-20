@@ -1,5 +1,18 @@
 use eframe::egui;
 
+/// Overrides for the ANSI red/green colors that Claude Code's TUI uses for
+/// diff lines. When present, foreground / background red and green
+/// (standard `31/32/41/42` and bright `91/92/101/102`) are remapped to the
+/// user's selected diff color scheme so the inline PTY diff matches the
+/// rest of the app.
+#[derive(Clone, Default)]
+pub struct DiffAnsiOverrides {
+    pub addition_fg: Option<egui::Color32>,
+    pub deletion_fg: Option<egui::Color32>,
+    pub addition_bg: Option<egui::Color32>,
+    pub deletion_bg: Option<egui::Color32>,
+}
+
 /// Parse a string with ANSI SGR escape sequences into an egui `LayoutJob`.
 ///
 /// Recognises the SGR subset that Claude Code's TUI emits via
@@ -12,10 +25,14 @@ use eframe::egui;
 ///
 /// Non-SGR CSI sequences (e.g. cursor movement) and OSC sequences are
 /// stripped so the rendered text doesn't contain escape garbage.
+///
+/// `overrides` remaps ANSI red/green to the user's diff color scheme so
+/// Claude's inline PTY diff output matches the Settings page.
 pub fn ansi_to_layout_job(
     text: &str,
     font_id: egui::FontId,
     default_color: egui::Color32,
+    overrides: &DiffAnsiOverrides,
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let base = egui::TextFormat {
@@ -51,7 +68,7 @@ pub fn ansi_to_layout_job(
                     job.append(&buf, 0.0, current.clone());
                     buf.clear();
                 }
-                apply_sgr(&params, &mut current, &base);
+                apply_sgr(&params, &mut current, &base, overrides);
             }
         } else if next == ']' {
             chars.next();
@@ -74,7 +91,12 @@ pub fn ansi_to_layout_job(
     job
 }
 
-fn apply_sgr(params: &str, current: &mut egui::TextFormat, base: &egui::TextFormat) {
+fn apply_sgr(
+    params: &str,
+    current: &mut egui::TextFormat,
+    base: &egui::TextFormat,
+    overrides: &DiffAnsiOverrides,
+) {
     let nums: Vec<u32> = if params.is_empty() {
         vec![0]
     } else {
@@ -92,6 +114,8 @@ fn apply_sgr(params: &str, current: &mut egui::TextFormat, base: &egui::TextForm
             23 => current.italics = false,
             24 => current.underline = egui::Stroke::NONE,
             27 => std::mem::swap(&mut current.color, &mut current.background),
+            31 => current.color = overrides.deletion_fg.unwrap_or_else(|| ansi_standard(1)),
+            32 => current.color = overrides.addition_fg.unwrap_or_else(|| ansi_standard(2)),
             n @ 30..=37 => current.color = ansi_standard(n - 30),
             38 => {
                 if let Some(color) = parse_ext_color(&nums, &mut i) {
@@ -99,6 +123,8 @@ fn apply_sgr(params: &str, current: &mut egui::TextFormat, base: &egui::TextForm
                 }
             }
             39 => current.color = base.color,
+            41 => current.background = overrides.deletion_bg.unwrap_or_else(|| ansi_standard(1)),
+            42 => current.background = overrides.addition_bg.unwrap_or_else(|| ansi_standard(2)),
             n @ 40..=47 => current.background = ansi_standard(n - 40),
             48 => {
                 if let Some(color) = parse_ext_color(&nums, &mut i) {
@@ -106,7 +132,11 @@ fn apply_sgr(params: &str, current: &mut egui::TextFormat, base: &egui::TextForm
                 }
             }
             49 => current.background = base.background,
+            91 => current.color = overrides.deletion_fg.unwrap_or_else(|| ansi_bright(1)),
+            92 => current.color = overrides.addition_fg.unwrap_or_else(|| ansi_bright(2)),
             n @ 90..=97 => current.color = ansi_bright(n - 90),
+            101 => current.background = overrides.deletion_bg.unwrap_or_else(|| ansi_bright(1)),
+            102 => current.background = overrides.addition_bg.unwrap_or_else(|| ansi_bright(2)),
             n @ 100..=107 => current.background = ansi_bright(n - 100),
             _ => {}
         }
@@ -190,12 +220,17 @@ mod tests {
         job.text.clone()
     }
 
+    fn no_overrides() -> DiffAnsiOverrides {
+        DiffAnsiOverrides::default()
+    }
+
     #[test]
     fn plain_text_passes_through() {
         let job = ansi_to_layout_job(
             "hello world",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "hello world");
         assert_eq!(job.sections.len(), 1);
@@ -207,6 +242,7 @@ mod tests {
             "\x1b[31mred\x1b[0m plain",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "red plain");
         assert!(job.sections.len() >= 2);
@@ -220,6 +256,7 @@ mod tests {
             "\x1b[38;2;10;20;30mhi\x1b[0m",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "hi");
         assert_eq!(job.sections[0].format.color, egui::Color32::from_rgb(10, 20, 30));
@@ -231,6 +268,7 @@ mod tests {
             "\x1b[38;5;208morange\x1b[0m",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "orange");
         assert_eq!(job.sections[0].format.color, ansi_256(208));
@@ -242,6 +280,7 @@ mod tests {
             "before\x1b[2Kafter",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "beforeafter");
     }
@@ -252,6 +291,7 @@ mod tests {
             "x\x1b]0;title\x07y",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         assert_eq!(job_text(&job), "xy");
     }
@@ -262,8 +302,26 @@ mod tests {
             "\x1b[31mred\x1b[0mplain",
             egui::FontId::monospace(12.0),
             egui::Color32::WHITE,
+            &no_overrides(),
         );
         let last = job.sections.last().unwrap();
         assert_eq!(last.format.color, egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn diff_overrides_remap_red_green() {
+        let overrides = DiffAnsiOverrides {
+            addition_fg: Some(egui::Color32::from_rgb(0, 0, 200)),
+            deletion_fg: Some(egui::Color32::from_rgb(200, 200, 0)),
+            ..Default::default()
+        };
+        let job = ansi_to_layout_job(
+            "\x1b[31mdel\x1b[0m\x1b[32madd\x1b[0m",
+            egui::FontId::monospace(12.0),
+            egui::Color32::WHITE,
+            &overrides,
+        );
+        assert_eq!(job.sections[0].format.color, egui::Color32::from_rgb(200, 200, 0));
+        assert_eq!(job.sections[1].format.color, egui::Color32::from_rgb(0, 0, 200));
     }
 }

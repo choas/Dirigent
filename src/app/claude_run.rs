@@ -1036,13 +1036,29 @@ impl DirigentApp {
     pub(super) fn drain_log_channel(&mut self) {
         for update in self.claude.log_rx.try_iter() {
             let cue_id = update.cue_id;
+
+            // Heartbeat accounting: each `\0` is a tick-only sentinel
+            // (emitted by the PTY consumer for filtered empty lines) and
+            // every `\n` in the visible text marks one PTY/provider line.
+            // Count both, then strip sentinels before storing the text.
+            let sentinel_beats = update.text.matches('\0').count();
+            let line_beats = update.text.matches('\n').count();
+            let total_beats = sentinel_beats + line_beats;
+            let cleaned_owned: Option<String> = if sentinel_beats > 0 {
+                Some(update.text.replace('\0', ""))
+            } else {
+                None
+            };
+            let visible_text: &str =
+                cleaned_owned.as_deref().unwrap_or(update.text.as_str());
+
             let buf = &mut self
                 .claude
                 .running_logs
                 .entry(cue_id)
                 .or_insert_with(|| (String::new(), update.provider.clone()))
                 .0;
-            buf.push_str(&update.text);
+            buf.push_str(visible_text);
             // Trim to cap: keep the most recent half when the limit is exceeded.
             if buf.len() > Self::RUNNING_LOG_CAP {
                 let keep_from = buf.len() - Self::RUNNING_LOG_CAP / 2;
@@ -1051,12 +1067,15 @@ impl DirigentApp {
                 *buf = format!("… (log truncated) …\n{}", trimmed);
             }
 
-            // Record a heartbeat tick for every non-empty arrival so the
-            // strip in the running-log view can show a peak per line.
-            if !update.text.is_empty() {
+            // Record a heartbeat tick per PTY/provider line so the strip
+            // pulses for each line — including the empty ones we filter
+            // from the visible output.
+            if total_beats > 0 {
                 let now = Instant::now();
                 let beats = self.claude.log_heartbeats.entry(cue_id).or_default();
-                beats.push_back(now);
+                for _ in 0..total_beats {
+                    beats.push_back(now);
+                }
                 let cutoff = now - Self::HEARTBEAT_WINDOW;
                 while beats.front().is_some_and(|t| *t < cutoff) {
                     beats.pop_front();
