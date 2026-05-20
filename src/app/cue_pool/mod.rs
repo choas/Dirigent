@@ -82,6 +82,21 @@ impl DirigentApp {
 
                     self.claude.expand_running = false;
 
+                    // If ShowRunningLog is present for a cue, drop any
+                    // ShowDiff for the same cue so the log viewer wins.
+                    let log_cue_ids: std::collections::HashSet<i64> = actions
+                        .iter()
+                        .filter_map(|(_, a)| match a {
+                            CueAction::ShowRunningLog(id) => Some(*id),
+                            _ => None,
+                        })
+                        .collect();
+                    if !log_cue_ids.is_empty() {
+                        actions.retain(|(_, a)| {
+                            !matches!(a, CueAction::ShowDiff(id) if log_cue_ids.contains(id))
+                        });
+                    }
+
                     for (id, action) in actions {
                         self.process_cue_action(id, action);
                     }
