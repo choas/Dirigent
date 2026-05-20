@@ -98,9 +98,9 @@ pub(crate) fn build_prompt_with_auto_context(
              wrapped in <commit-message> tags. This will be used as the git commit \
              message body. Keep it concise and descriptive (what was the problem, \
              what was changed, and why). Example:\n\n\
-             <commit-message>\nRefactored the auth middleware to validate tokens \
+             <commit-message>Refactored the auth middleware to validate tokens \
              before checking permissions, fixing a bug where expired tokens could \
-             bypass access controls.\n</commit-message>\n{}",
+             bypass access controls.</commit-message>\n{}",
             USER_TEXT_BEGIN,
             cue_text,
             USER_TEXT_END,
@@ -125,9 +125,9 @@ pub(crate) fn build_prompt_with_auto_context(
              wrapped in <commit-message> tags. This will be used as the git commit \
              message body. Keep it concise and descriptive (what was the problem, \
              what was changed, and why). Example:\n\n\
-             <commit-message>\nRefactored the auth middleware to validate tokens \
+             <commit-message>Refactored the auth middleware to validate tokens \
              before checking permissions, fixing a bug where expired tokens could \
-             bypass access controls.\n</commit-message>\n{}",
+             bypass access controls.</commit-message>\n{}",
             USER_TEXT_BEGIN,
             cue_text,
             USER_TEXT_END,
@@ -354,9 +354,9 @@ pub(crate) fn build_reply_prompt(
          wrapped in <commit-message> tags. This will be used as the git commit \
          message body. Keep it concise and descriptive (what was the problem, \
          what was changed, and why). Example:\n\n\
-         <commit-message>\nRefactored the auth middleware to validate tokens \
+         <commit-message>Refactored the auth middleware to validate tokens \
          before checking permissions, fixing a bug where expired tokens could \
-         bypass access controls.\n</commit-message>\n{}",
+         bypass access controls.</commit-message>\n{}",
         original_cue,
         images_section,
         context,
@@ -396,6 +396,11 @@ pub(crate) fn extract_user_text_from_prompt(prompt: &str) -> String {
 /// example, `rfind` would otherwise pick that example up whenever Claude
 /// didn't emit its own tag. To avoid this, we skip past the last
 /// `COMMIT_EXAMPLE_END` marker before searching.
+///
+/// The Claude TUI also tends to render real newlines as the literal two
+/// characters `\` + `n` (because its input is single-line), and Claude
+/// mirrors that style in replies. We convert any such literal `\n` back
+/// to real newlines so the commit subject doesn't end up with `\n`s.
 pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let start_tag = "<commit-message>";
     let end_tag = "</commit-message>";
@@ -407,7 +412,8 @@ pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let content_start = begin + start_tag.len();
     let rest = &search_region[content_start..];
     let end = rest.find(end_tag)?;
-    let msg = rest[..end].trim();
+    let msg = rest[..end].replace("\\n", "\n");
+    let msg = msg.trim();
     if msg.is_empty() {
         None
     } else {
@@ -636,5 +642,18 @@ mod tests {
         // with real tags), extraction must NOT fall back to the example.
         let prompt = build_prompt("Fix the bug", "", 0, None, &[], None);
         assert!(extract_commit_message(&prompt).is_none());
+    }
+
+    #[test]
+    fn extract_commit_message_converts_literal_backslash_n() {
+        // Claude TUI renders real newlines as the literal characters `\` + `n`
+        // and Claude mirrors that in replies. The extractor must convert them
+        // back to real newlines so the commit subject is clean.
+        let response =
+            "<commit-message>\\nFixed the actual bug.\\n</commit-message>";
+        assert_eq!(
+            extract_commit_message(response).unwrap(),
+            "Fixed the actual bug.",
+        );
     }
 }
