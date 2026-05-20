@@ -58,13 +58,7 @@ struct DinoColors {
 
 fn compute_colors(accent: egui::Color32, is_dark: bool) -> DinoColors {
     let [ar, ag, ab, _] = accent.to_array();
-    // Classic Chrome T-Rex tone — neutral gray so the dino doesn't end up
-    // tinted like whatever the theme's accent happens to be.
-    let body = if is_dark {
-        egui::Color32::from_rgb(205, 200, 190)
-    } else {
-        egui::Color32::from_rgb(83, 83, 83)
-    };
+    let body = accent;
     let eye = if is_dark {
         egui::Color32::from_rgb(20, 18, 18)
     } else {
