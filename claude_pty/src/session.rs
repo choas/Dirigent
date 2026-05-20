@@ -509,6 +509,11 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     });
                 }
                 prev_chat_lines = chat_plain;
+                emitted_lines = prev_chat_lines
+                    .iter()
+                    .filter(|l| !l.trim().is_empty())
+                    .cloned()
+                    .collect();
 
                 if !cleaned_chunk.is_empty()
                     && tx
