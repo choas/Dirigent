@@ -32,7 +32,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Tabs & navigation** — Open multiple files in tabs; breadcrumb path bar; back/forward navigation history
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items; bulk actions on Review and Done columns
-- **Claude Code integration** — Sends prompts to Claude Code CLI and streams progress in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments
+- **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
 - **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
@@ -174,6 +174,15 @@ Detailed documentation is organized following the [Diataxis](https://diataxis.fr
 ## Architecture
 
 ```
+claude_pty/                       — Standalone crate: PTY wrapper for interactive Claude Code
+├── src/
+│   ├── lib.rs                    — Public API (ClaudeCode, Event, Session re-exports)
+│   ├── builder.rs                — ClaudeCodeBuilder with fluent API (model, cwd, permissions, pty_size, …)
+│   ├── event.rs                  — Typed event enum (TuiScreen, TuiPrompt, TuiToolConfirmation, …)
+│   └── session.rs                — PTY spawning, vt100 parsing, screen-delta extraction, prompt detection
+└── examples/
+    └── diag.rs                   — Diagnostic example showing PTY event flow
+
 src/
 ├── main.rs                   — Entry point, window setup, macOS integration
 ├── agents/                   — Post-run agents (Format, Lint, Build, Test)
@@ -243,12 +252,12 @@ src/
 │       ├── file_tree.rs      — File tree panel
 │       ├── prompt_field.rs   — Prompt input field
 │       └── status_bar.rs     — Status bar
-├── claude/                   — Claude Code CLI invocation and stream parsing
-│   ├── cli.rs                — CLI detection and invocation
+├── claude/                   — Claude Code CLI invocation via PTY
+│   ├── cli.rs                — Env-var resolution, lifecycle scripts, .Dirigent/.env loading
 │   ├── diff_parser.rs        — Diff extraction from Claude output
-│   ├── invoke.rs             — Prompt building and execution
+│   ├── invoke.rs             — PTY session builder, prompt submission, response collection
 │   ├── prompt.rs             — Prompt construction
-│   ├── stream.rs             — Streaming output parser
+│   ├── stream.rs             — PTY event loop, auto-accept, idle timeout, graceful shutdown
 │   └── types.rs              — Claude-specific data types
 ├── db/                       — SQLite persistence
 │   ├── activity.rs           — Activity/history queries
@@ -313,6 +322,8 @@ src/
 | [rusqlite](https://crates.io/crates/rusqlite) 0.39 | SQLite (bundled) |
 | [git2](https://crates.io/crates/git2) 0.20 | Git operations via libgit2 |
 | [lsp-types](https://crates.io/crates/lsp-types) 0.97 | Language Server Protocol types |
+| [portable-pty](https://crates.io/crates/portable-pty) 0.8 | Cross-platform PTY for interactive Claude Code sessions |
+| [vt100](https://crates.io/crates/vt100) 0.16 | VT100 terminal parser for PTY screen-delta extraction |
 | [notify](https://crates.io/crates/notify) | Cross-platform filesystem watching |
 | [pulldown-cmark](https://crates.io/crates/pulldown-cmark) | Markdown parsing for conversation and import rendering |
 | [reqwest](https://crates.io/crates/reqwest) | HTTP client for source integrations |
