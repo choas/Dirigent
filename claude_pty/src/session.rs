@@ -118,12 +118,12 @@ impl Drop for Session {
 }
 
 fn spawn_reader(
-    mut reader: Box<dyn Read + Send>,
+    reader: Box<dyn Read + Send>,
     tx: mpsc::Sender<Event>,
     rows: u16,
     cols: u16,
 ) {
-    thread::spawn(move || read_tui(&mut reader, tx, rows, cols));
+    thread::spawn(move || read_tui(reader, tx, rows, cols));
 }
 
 #[derive(Default, PartialEq, Eq, Clone)]
@@ -339,8 +339,7 @@ fn is_spinner_or_status(line: &str) -> bool {
     false
 }
 
-fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16) {
-    let mut buf = [0u8; 8192];
+fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, cols: u16) {
     let ansi_regex = Regex::new(
         r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[0-?@-Z\\^-~]",
     )
@@ -356,17 +355,45 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
     let mut emitted_lines: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => {
-                let _ = tx.blocking_send(Event::LibDone);
-                break;
+    let idle_timeout = std::time::Duration::from_secs(5);
+    let poll_interval = std::time::Duration::from_millis(100);
+    let mut last_activity = std::time::Instant::now();
+    let mut pending_prompt = false;
+    let mut pending_response_count: usize = 0;
+    let mut reader_error: Option<String> = None;
+
+    // Decouple blocking reads from timeout-based prompt detection:
+    // a reader thread sends raw chunks through a channel, and the
+    // processing loop uses recv_timeout to check idle timers.
+    let (data_tx, data_rx) =
+        std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(64);
+    thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if data_tx.send(Ok(buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = data_tx.send(Err(e.to_string()));
+                    break;
+                }
             }
-            Ok(n) => {
-                vt.process(&buf[..n]);
+        }
+    });
+
+    loop {
+        match data_rx.recv_timeout(poll_interval) {
+            Ok(Ok(chunk)) => {
+                last_activity = std::time::Instant::now();
+                vt.process(&chunk);
                 let (cursor_row, cursor_col) = vt.screen().cursor_position();
 
-                let raw = String::from_utf8_lossy(&buf[..n]).to_string();
+                let raw = String::from_utf8_lossy(&chunk).to_string();
                 accumulated.push_str(&raw);
                 if accumulated.len() > 30_000 {
                     let mut cut = 20_000;
@@ -428,10 +455,18 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
                 let should_fire = prompt_visible
                     && (prompt_count == 0 || response_count > last_response_count);
                 if should_fire {
-                    let _ = tx.blocking_send(Event::TuiPrompt);
-                    prompt_count += 1;
-                    last_response_count = response_count;
+                    if prompt_count == 0 {
+                        let _ = tx.blocking_send(Event::TuiPrompt);
+                        prompt_count += 1;
+                        last_response_count = response_count;
+                    } else if !pending_prompt {
+                        pending_prompt = true;
+                        pending_response_count = response_count;
+                    }
+                } else {
+                    pending_prompt = false;
                 }
+
                 let mut chat_plain: Vec<String> =
                     plain_rows[start..end].to_vec();
                 let mut chat_ansi: Vec<String> =
@@ -487,8 +522,32 @@ fn read_tui(reader: &mut dyn Read, tx: mpsc::Sender<Event>, rows: u16, cols: u16
                     break;
                 }
             }
-            Err(e) => {
-                let _ = tx.blocking_send(Event::LibError { message: e.to_string() });
+            Ok(Err(err_msg)) => {
+                reader_error = Some(err_msg);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if pending_prompt && last_activity.elapsed() >= idle_timeout {
+                    let _ = tx.blocking_send(Event::TuiPrompt);
+                    prompt_count += 1;
+                    last_response_count = pending_response_count;
+                    pending_prompt = false;
+                }
+                if reader_error.is_some() && last_activity.elapsed() >= idle_timeout {
+                    let _ = tx.blocking_send(Event::LibError {
+                        message: reader_error.take().unwrap(),
+                    });
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if pending_prompt {
+                    let _ = tx.blocking_send(Event::TuiPrompt);
+                }
+                if let Some(msg) = reader_error {
+                    let _ = tx.blocking_send(Event::LibError { message: msg });
+                } else {
+                    let _ = tx.blocking_send(Event::LibDone);
+                }
                 break;
             }
         }
@@ -589,8 +648,8 @@ mod tests {
         let _g = rt.enter();
         let (tx, mut rx) = mpsc::channel::<Event>(16);
         let handle = std::thread::spawn(move || {
-            let mut reader: Box<dyn Read + Send> = Box::new(cursor);
-            read_tui(&mut reader, tx, 24, 80);
+            let reader: Box<dyn Read + Send> = Box::new(cursor);
+            read_tui(reader, tx, 24, 80);
         });
         let mut last_row = 0;
         let mut last_col = 0;
@@ -657,8 +716,8 @@ mod tests {
         let _g = rt.enter();
         let (tx, mut rx) = mpsc::channel::<Event>(64);
         let handle = std::thread::spawn(move || {
-            let mut reader: Box<dyn Read + Send> = Box::new(reader);
-            read_tui(&mut reader, tx, 24, 80);
+            let reader: Box<dyn Read + Send> = Box::new(reader);
+            read_tui(reader, tx, 24, 80);
         });
         let mut screens: Vec<Vec<String>> = Vec::new();
         rt.block_on(async {
@@ -692,8 +751,8 @@ mod tests {
         let _g = rt.enter();
         let (tx, mut rx) = mpsc::channel::<Event>(64);
         let handle = std::thread::spawn(move || {
-            let mut reader: Box<dyn Read + Send> = Box::new(reader);
-            read_tui(&mut reader, tx, 24, 80);
+            let reader: Box<dyn Read + Send> = Box::new(reader);
+            read_tui(reader, tx, 24, 80);
         });
         let mut screens: Vec<Vec<String>> = Vec::new();
         rt.block_on(async {
@@ -726,8 +785,8 @@ mod tests {
         let _g = rt.enter();
         let (tx, mut rx) = mpsc::channel::<Event>(8192);
         let handle = std::thread::spawn(move || {
-            let mut reader: Box<dyn Read + Send> = Box::new(cursor);
-            read_tui(&mut reader, tx, 40, 120);
+            let reader: Box<dyn Read + Send> = Box::new(cursor);
+            read_tui(reader, tx, 40, 120);
         });
         rt.block_on(async {
             while rx.recv().await.is_some() {}
