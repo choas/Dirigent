@@ -130,37 +130,46 @@ impl DirigentApp {
             "claude-haiku-4-5-20251001",
         ];
 
-        egui::ComboBox::from_id_salt("claude_model_combo")
-            .selected_text(&self.settings.claude_model)
-            .show_ui(ui, |ui| {
-                for model in DEFAULT_CLAUDE_MODELS {
-                    ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
-                }
-                if !self.settings.claude_custom_models.is_empty() {
-                    ui.separator();
-                    for model in &self.settings.claude_custom_models {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("claude_model_combo")
+                .selected_text(&self.settings.claude_model)
+                .show_ui(ui, |ui| {
+                    for model in DEFAULT_CLAUDE_MODELS {
                         ui.selectable_value(
                             &mut self.settings.claude_model,
-                            model.clone(),
-                            model.as_str(),
+                            model.to_string(),
+                            *model,
                         );
                     }
-                }
-                // Show the current model even if it's not in either list
-                // (e.g. manually edited in settings JSON).
-                let current = self.settings.claude_model.clone();
-                if !current.is_empty()
-                    && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
-                    && !self.settings.claude_custom_models.contains(&current)
-                {
-                    ui.separator();
-                    ui.selectable_value(
-                        &mut self.settings.claude_model,
-                        current.clone(),
-                        current.as_str(),
-                    );
-                }
-            });
+                    if !self.settings.claude_custom_models.is_empty() {
+                        ui.separator();
+                        for model in &self.settings.claude_custom_models {
+                            ui.selectable_value(
+                                &mut self.settings.claude_model,
+                                model.clone(),
+                                model.as_str(),
+                            );
+                        }
+                    }
+                    let current = self.settings.claude_model.clone();
+                    if !current.is_empty()
+                        && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
+                        && !self.settings.claude_custom_models.contains(&current)
+                    {
+                        ui.separator();
+                        ui.selectable_value(
+                            &mut self.settings.claude_model,
+                            current.clone(),
+                            current.as_str(),
+                        );
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.claude_model)
+                    .desired_width(200.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
     }
 
     fn render_opencode_model_combo(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
