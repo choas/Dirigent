@@ -256,6 +256,11 @@ pub(crate) struct Settings {
     /// instead of actually editing files.
     #[serde(default = "default_true")]
     pub allow_dangerous_skip_permissions: bool,
+    /// Run Claude Code under a PTY (default) so the interactive TUI is used.
+    /// When disabled, Claude is invoked in headless `-p <prompt>` mode with
+    /// stdout/stderr piped directly — no TUI, no auto-accepted dialogs.
+    #[serde(default = "default_true")]
+    pub claude_use_pty: bool,
     /// Show frame timing breakdown and memory usage in the status bar.
     #[serde(default)]
     pub show_frame_timing: bool,
@@ -364,6 +369,7 @@ impl Default for Settings {
             auto_context_git_diff: false,
             auto_commit: false,
             allow_dangerous_skip_permissions: true,
+            claude_use_pty: true,
             show_frame_timing: false,
         }
     }

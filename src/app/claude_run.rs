@@ -83,6 +83,7 @@ struct ProviderConfig {
     pre_run_script: String,
     post_run_script: String,
     skip_permissions: bool,
+    use_pty: bool,
 }
 
 /// Resolve a `[command]` prefix from cue text, returning the effective prompt text
@@ -161,6 +162,7 @@ fn build_provider_config(
         pre_run_script,
         post_run_script,
         skip_permissions: settings.allow_dangerous_skip_permissions,
+        use_pty: settings.claude_use_pty,
     }
 }
 
@@ -207,6 +209,7 @@ fn run_claude_provider(
         &req.config.pre_run_script,
         &req.config.post_run_script,
         req.config.skip_permissions,
+        req.config.use_pty,
         on_log,
         cancel,
     );

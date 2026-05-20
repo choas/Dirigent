@@ -242,12 +242,28 @@ impl DirigentApp {
         );
 
         ui.label("Default Flags:");
-        let flags = if self.settings.allow_dangerous_skip_permissions {
-            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
-        } else {
-            "-p <prompt> --verbose --output-format stream-json"
+        let flags = match (
+            self.settings.claude_use_pty,
+            self.settings.allow_dangerous_skip_permissions,
+        ) {
+            (true, true) => "(interactive TUI under PTY) --dangerously-skip-permissions",
+            (true, false) => "(interactive TUI under PTY)",
+            (false, true) => "-p <prompt> --dangerously-skip-permissions",
+            (false, false) => "-p <prompt>",
         };
         ui.label(egui::RichText::new(flags).monospace().weak());
+        ui.end_row();
+
+        ui.label("PTY:");
+        ui.checkbox(
+            &mut self.settings.claude_use_pty,
+            "Run Claude Code under a PTY (default)",
+        )
+        .on_hover_text(
+            "When enabled, Claude's interactive TUI is launched under a pseudo-terminal \
+             and confirmation dialogs are auto-accepted. When disabled, Claude is invoked \
+             in headless `-p <prompt>` mode with stdout/stderr piped directly.",
+        );
         ui.end_row();
 
         ui.label("Yolo:");
