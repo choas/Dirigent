@@ -157,8 +157,8 @@ fn warn_if_loose_dirigent_env_permissions(path: &Path, on_log: &mut dyn FnMut(&s
     };
     WARNED.call_once(|| {
         log::warn!("{}", msg.trim_end());
-        on_log(&msg);
     });
+    on_log(&msg);
 }
 
 #[cfg(not(unix))]
