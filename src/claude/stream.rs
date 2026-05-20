@@ -163,9 +163,9 @@ fn report_exit_status(
         }
         None => {
             if !prompt_sent {
-                on_log("\n⚠ Claude process ended before prompt could be sent.\n");
+                on_log("\n⚠ Claude process still running — prompt was never sent.\n");
             } else if !has_response {
-                on_log("\n⚠ Claude process ended without producing output.\n");
+                on_log("\n⚠ Claude process still running — no output received yet.\n");
             }
         }
     }
