@@ -8,27 +8,8 @@ use super::types::ClaudeError;
 /// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
 /// for backward compatibility with old KEY=VALUE config entries.
 pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
-    for line in env_vars.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Accept bare names; strip any =value suffix left over from old config.
-        let name = match line.split_once('=') {
-            Some((key, _)) => key.trim(),
-            None => line,
-        };
-        if name.is_empty() {
-            continue;
-        }
-        match std::env::var(name) {
-            Ok(value) => {
-                cmd.env(name, value);
-            }
-            Err(_) => {
-                log::warn!("env var '{}' not found in environment, skipping", name);
-            }
-        }
+    for (name, value) in resolve_env_pairs(env_vars) {
+        cmd.env(name, value);
     }
 }
 
@@ -40,29 +21,7 @@ pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str) {
 /// Lines that are empty, start with `#`, or lack an `=` sign are skipped.
 /// Values may be optionally quoted with `"` or `'`.
 pub(crate) fn apply_dirigent_env(cmd: &mut Command, project_root: &Path) {
-    let env_path = project_root.join(".Dirigent").join(".env");
-    let content = match std::fs::read_to_string(&env_path) {
-        Ok(c) => c,
-        Err(e) => {
-            if env_path.exists() {
-                log::warn!(".Dirigent/.env exists but is unreadable: {e}");
-            }
-            return;
-        }
-    };
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = match line.split_once('=') {
-            Some((k, v)) => (k.trim(), v.trim()),
-            None => continue,
-        };
-        if key.is_empty() {
-            continue;
-        }
-        let value = strip_surrounding_quotes(value);
+    for (key, value) in load_dirigent_env_pairs(project_root) {
         cmd.env(key, value);
     }
 }
@@ -147,6 +106,14 @@ pub(super) fn load_dirigent_env_pairs(project_root: &Path) -> Vec<(String, Strin
             return Vec::new();
         }
     };
+    parse_dotenv_lines(&content)
+}
+
+/// Parse dotenv-style KEY=VALUE lines into pairs.
+///
+/// Lines that are empty, start with `#`, or lack an `=` sign are skipped.
+/// Keys and values are trimmed; values may be optionally quoted with `"` or `'`.
+fn parse_dotenv_lines(content: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     for line in content.lines() {
         let line = line.trim();
