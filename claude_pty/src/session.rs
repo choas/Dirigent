@@ -352,8 +352,15 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
     let mut prompt_count: usize = 0;
     let mut last_response_count: usize = 0;
     let mut prev_chat_lines: Vec<String> = Vec::new();
+    // Dedup window for emitted chat lines. Bounded with FIFO eviction so
+    // long sessions cannot grow it without limit, while still preventing
+    // re-emission on transient screen clears (e.g. `\x1b[2J`) where the
+    // viewport briefly empties before the same content reappears.
+    const EMITTED_LINES_CAP: usize = 4096;
     let mut emitted_lines: std::collections::HashSet<String> =
         std::collections::HashSet::new();
+    let mut emitted_order: std::collections::VecDeque<String> =
+        std::collections::VecDeque::new();
 
     let idle_timeout = std::time::Duration::from_secs(5);
     let poll_interval = std::time::Duration::from_millis(100);
@@ -497,8 +504,13 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     let (lines, lines_ansi): (Vec<String>, Vec<String>) =
                         meaningful.into_iter().unzip();
                     for l in &lines {
-                        if !l.trim().is_empty() {
-                            emitted_lines.insert(l.clone());
+                        if !l.trim().is_empty() && emitted_lines.insert(l.clone()) {
+                            emitted_order.push_back(l.clone());
+                            while emitted_order.len() > EMITTED_LINES_CAP {
+                                if let Some(oldest) = emitted_order.pop_front() {
+                                    emitted_lines.remove(&oldest);
+                                }
+                            }
                         }
                     }
                     let _ = tx.blocking_send(Event::TuiScreen {
@@ -509,11 +521,6 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     });
                 }
                 prev_chat_lines = chat_plain;
-                emitted_lines = prev_chat_lines
-                    .iter()
-                    .filter(|l| !l.trim().is_empty())
-                    .cloned()
-                    .collect();
 
                 if !cleaned_chunk.is_empty()
                     && tx

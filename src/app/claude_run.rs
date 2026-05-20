@@ -234,13 +234,35 @@ fn run_claude_provider(
     }
 }
 
-/// Hash the bytes of a file. Returns `None` when the file cannot be read
-/// (e.g. it has been deleted in the working tree).
+/// Fingerprint a file for change detection. Returns `None` when the file
+/// cannot be stat'd (e.g. it has been deleted in the working tree).
+///
+/// Files at or below `HASH_CONTENT_CAP_BYTES` are hashed by content for
+/// exact comparison. Larger files (large logs, binaries, datasets that
+/// happen to be in the dirty set) fall back to a `(size, mtime)`
+/// fingerprint — reading them on every run would otherwise burn memory
+/// and stall the pre-run snapshot.
 fn hash_file_bytes(path: &Path) -> Option<u64> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    let bytes = std::fs::read(path).ok()?;
+    const HASH_CONTENT_CAP_BYTES: u64 = 4 * 1024 * 1024;
+
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let size = meta.len();
     let mut hasher = DefaultHasher::new();
+    if size > HASH_CONTENT_CAP_BYTES {
+        size.hash(&mut hasher);
+        if let Ok(mt) = meta.modified() {
+            if let Ok(d) = mt.duration_since(std::time::UNIX_EPOCH) {
+                d.as_nanos().hash(&mut hasher);
+            }
+        }
+        return Some(hasher.finish());
+    }
+    let bytes = std::fs::read(path).ok()?;
     bytes.hash(&mut hasher);
     Some(hasher.finish())
 }

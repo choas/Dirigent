@@ -241,4 +241,62 @@ mod tests {
             r#"it's a \"test\""#
         );
     }
+
+    #[test]
+    fn parse_dotenv_skips_blanks_comments_and_keyless_lines() {
+        let content = "\n# comment\nFOO=bar\n   \n=novalue\nBAZ=qux\n";
+        let pairs = parse_dotenv_lines(content);
+        assert_eq!(
+            pairs,
+            vec![
+                ("FOO".to_string(), "bar".to_string()),
+                ("BAZ".to_string(), "qux".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_strips_surrounding_quotes_and_trims() {
+        let content = "  FOO = \"bar\"  \nBAZ='qux'\nKEY=value with spaces\n";
+        let pairs = parse_dotenv_lines(content);
+        assert_eq!(
+            pairs,
+            vec![
+                ("FOO".to_string(), "bar".to_string()),
+                ("BAZ".to_string(), "qux".to_string()),
+                ("KEY".to_string(), "value with spaces".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_env_pairs_resolves_names_from_process_env() {
+        // Use a name that is overwhelmingly likely to be set on dev machines.
+        // We assert only that the helper round-trips known-present names and
+        // silently drops unknown ones (the warn! is fire-and-forget).
+        std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123");
+        let pairs = resolve_env_pairs("DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n");
+        std::env::remove_var("DIRIGENT_TEST_ENV_VAR");
+        assert_eq!(
+            pairs,
+            vec![(
+                "DIRIGENT_TEST_ENV_VAR".to_string(),
+                "test_value_123".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn resolve_env_pairs_strips_legacy_key_equals_value_suffix() {
+        std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value");
+        let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n");
+        std::env::remove_var("DIRIGENT_LEGACY_VAR");
+        assert_eq!(
+            pairs,
+            vec![(
+                "DIRIGENT_LEGACY_VAR".to_string(),
+                "real_value".to_string()
+            )]
+        );
+    }
 }
