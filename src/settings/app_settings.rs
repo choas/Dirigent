@@ -37,7 +37,9 @@ impl DiffColorScheme {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum HeartbeatStyle {
     #[default]
-    Curve,
+    Heartbeat,
+    #[serde(alias = "Curve")]
+    Wave,
     GabbaPeak,
     MorseCode,
     Off,
@@ -46,7 +48,8 @@ pub(crate) enum HeartbeatStyle {
 impl HeartbeatStyle {
     pub(crate) fn display_name(&self) -> &str {
         match self {
-            HeartbeatStyle::Curve => "Curve",
+            HeartbeatStyle::Heartbeat => "Heartbeat",
+            HeartbeatStyle::Wave => "Wave",
             HeartbeatStyle::GabbaPeak => "Gabba Peak",
             HeartbeatStyle::MorseCode => "Morse Code",
             HeartbeatStyle::Off => "Off",
@@ -55,7 +58,8 @@ impl HeartbeatStyle {
 
     pub(crate) fn all() -> &'static [HeartbeatStyle] {
         &[
-            HeartbeatStyle::Curve,
+            HeartbeatStyle::Heartbeat,
+            HeartbeatStyle::Wave,
             HeartbeatStyle::GabbaPeak,
             HeartbeatStyle::MorseCode,
             HeartbeatStyle::Off,

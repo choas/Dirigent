@@ -213,7 +213,27 @@ impl DirigentApp {
 
                 let style = self.settings.heartbeat_style.clone();
                 match style {
-                    HeartbeatStyle::Curve => {
+                    HeartbeatStyle::Heartbeat => {
+                        let n = (rect.width() as usize).clamp(32, 600);
+                        let mut points = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let frac = i as f32 / (n as f32 - 1.0);
+                            let x = rect.left() + frac * rect.width();
+                            let t_from_now = (1.0 - frac) * window_secs;
+                            let mut deflection = 0.0_f32;
+                            for &age in &beats {
+                                deflection += ecg_waveform(t_from_now - age);
+                            }
+                            deflection = deflection.clamp(-0.3, 1.0);
+                            let y = baseline_y - deflection * peak_height;
+                            points.push(egui::pos2(x, y));
+                        }
+                        ui.painter().add(egui::Shape::line(
+                            points,
+                            egui::Stroke::new(1.5, stroke_color),
+                        ));
+                    }
+                    HeartbeatStyle::Wave => {
                         let n = (rect.width() as usize).clamp(32, 600);
                         let mut points = Vec::with_capacity(n);
                         for i in 0..n {
@@ -651,4 +671,21 @@ impl DirigentApp {
                 add_contents(ui);
             });
     }
+}
+
+/// ECG-style waveform: maps a time offset `dt` (seconds from beat centre) to a
+/// vertical deflection in [-0.25, 1.0].  The shape approximates P–QRS–T.
+fn ecg_waveform(dt: f32) -> f32 {
+    let t = dt;
+    // P wave – gentle bump before the QRS
+    let p = 0.12 * (-(((t + 0.11) / 0.035).powi(2))).exp();
+    // Q dip – small downward notch
+    let q = -0.15 * (-(((t + 0.025) / 0.012).powi(2))).exp();
+    // R peak – tall sharp spike
+    let r = 1.0 * (-(((t) / 0.014).powi(2))).exp();
+    // S dip – small downward notch after R
+    let s = -0.25 * (-(((t - 0.028) / 0.012).powi(2))).exp();
+    // T wave – broad recovery bump
+    let tw = 0.18 * (-(((t - 0.11) / 0.045).powi(2))).exp();
+    p + q + r + s + tw
 }
