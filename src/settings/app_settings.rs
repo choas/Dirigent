@@ -39,6 +39,7 @@ pub(crate) enum HeartbeatStyle {
     #[default]
     Curve,
     GabbaPeak,
+    MorseCode,
     Off,
 }
 
@@ -47,6 +48,7 @@ impl HeartbeatStyle {
         match self {
             HeartbeatStyle::Curve => "Curve",
             HeartbeatStyle::GabbaPeak => "Gabba Peak",
+            HeartbeatStyle::MorseCode => "Morse Code",
             HeartbeatStyle::Off => "Off",
         }
     }
@@ -55,6 +57,7 @@ impl HeartbeatStyle {
         &[
             HeartbeatStyle::Curve,
             HeartbeatStyle::GabbaPeak,
+            HeartbeatStyle::MorseCode,
             HeartbeatStyle::Off,
         ]
     }
