@@ -21,9 +21,6 @@ impl std::fmt::Display for ClaudeError {
 #[derive(Debug, Clone)]
 pub(crate) struct ClaudeResponse {
     pub stdout: String,
-    /// File paths that Claude edited (from Edit/Write tool_use events).
-    pub edited_files: Vec<String>,
-    /// Run metrics extracted from the stream-json "result" event.
     pub metrics: RunMetrics,
 }
 

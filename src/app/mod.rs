@@ -1,10 +1,12 @@
 mod agents_poll;
+mod ansi;
 mod background;
 mod claude_code_name;
 mod claude_run;
 mod code_viewer;
 mod cue_pool;
 mod dialog;
+mod dino;
 mod file_navigation;
 mod git_operations;
 mod lava_lamp;

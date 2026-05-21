@@ -21,9 +21,16 @@ impl DirigentApp {
                 .any(|s| *s == AgentStatus::Running);
             if !any_running {
                 let cue_ids = std::mem::take(&mut self.pending_auto_commits);
+                let mut deferred = Vec::new();
                 for cue_id in cue_ids {
-                    self.process_commit_review(cue_id);
+                    if self.claude.show_log == Some(cue_id) {
+                        // User is viewing the log — keep deferring.
+                        deferred.push(cue_id);
+                    } else {
+                        self.process_commit_review(cue_id);
+                    }
                 }
+                self.pending_auto_commits = deferred;
             }
         }
     }

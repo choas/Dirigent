@@ -280,6 +280,7 @@ fn run_split_analysis(
                 pf.pre_run_script,
                 pf.post_run_script,
                 settings.allow_dangerous_skip_permissions,
+                settings.claude_use_pty,
                 |_| {},
                 cancel,
             )

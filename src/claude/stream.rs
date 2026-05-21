@@ -1,142 +1,212 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::types::RunMetrics;
+use claude_pty::{Event, ExitStatus, PollEvent, Session};
 
-const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const IDLE_EXIT_SECS: u64 = 10;
 
-/// Spawn a watchdog thread that kills the child process when `cancel` is set.
-/// Returns `(done_flag, join_handle)`.
-pub(super) fn spawn_watchdog(
-    child: &Arc<Mutex<std::process::Child>>,
-    cancel: &Arc<AtomicBool>,
-) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
-    let done = Arc::new(AtomicBool::new(false));
-    let handle = {
-        let child = Arc::clone(child);
-        let cancel = Arc::clone(cancel);
-        let done = Arc::clone(&done);
-        std::thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
-                if cancel.load(Ordering::Relaxed) {
-                    if let Ok(mut c) = child.lock() {
-                        let _ = c.kill();
-                    }
-                    return;
-                }
-                std::thread::sleep(WATCHDOG_POLL_INTERVAL);
-            }
-        })
-    };
-    (done, handle)
+/// State accumulated while consuming PTY events.
+pub(super) struct PtyResult {
+    pub response: String,
 }
 
-/// Spawn a thread that collects stderr into a String.
-pub(super) fn spawn_stderr_reader(
-    stderr_handle: std::process::ChildStderr,
-) -> std::thread::JoinHandle<String> {
-    use std::io::Read;
-    std::thread::spawn(move || {
-        let mut s = String::new();
-        std::io::BufReader::new(stderr_handle)
-            .read_to_string(&mut s)
-            .ok();
-        s
-    })
-}
-
-/// State accumulated while reading the stream-json stdout.
-pub(super) struct StreamState {
-    pub final_result: String,
-    pub edited_files: Vec<String>,
-    pub metrics: RunMetrics,
-}
-
-/// Read stream-json events from stdout, dispatching each to the appropriate handler.
-pub(super) fn read_stream_events(
-    stdout_handle: std::process::ChildStdout,
+/// Consume events from a PTY session, forwarding screen output to `on_log`.
+///
+/// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
+/// and sends `prompt` on the first `TuiPrompt`. When a second prompt appears
+/// (Claude finished and is waiting for new input), the idle-exit timer fires,
+/// or the session ends (`LibDone`), the loop exits gracefully.
+pub(super) fn consume_pty_events(
+    session: &mut Session,
+    prompt: &str,
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
-) -> StreamState {
-    use std::io::BufRead;
-    let reader = std::io::BufReader::new(stdout_handle);
-    let mut state = StreamState {
-        final_result: String::new(),
-        edited_files: Vec::new(),
-        metrics: RunMetrics::default(),
+) -> PtyResult {
+    let mut state = PtyResult {
+        response: String::new(),
     };
+    let mut prompt_sent = false;
+    let start_time = Instant::now();
+    let mut last_event_time = Instant::now();
 
-    for line_result in reader.lines() {
+    loop {
         if cancel.load(Ordering::Relaxed) {
+            on_log("\n⚠ Run cancelled.\n");
+            let _ = session.kill();
             break;
         }
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        let event: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => {
-                handle_non_json_line(&line, on_log);
-                continue;
+
+        match session.poll_event() {
+            PollEvent::Ready(event) => {
+                last_event_time = Instant::now();
+                match event {
+                    Event::TuiToolConfirmation { .. } => {
+                        let _ = session.write_raw(b"\r");
+                    }
+                    Event::TuiPrompt => {
+                        if !prompt_sent {
+                            std::thread::sleep(Duration::from_millis(300));
+                            if let Err(e) = session.write_raw(prompt.as_bytes()) {
+                                on_log(&format!("\n⚠ Failed to send prompt: {e}\n"));
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(200));
+                            if let Err(e) = session.write_raw(b"\r") {
+                                on_log(&format!("\n⚠ Failed to submit prompt: {e}\n"));
+                                break;
+                            }
+                            prompt_sent = true;
+                        } else {
+                            graceful_exit(session);
+                            break;
+                        }
+                    }
+                    Event::TuiScreen {
+                        ref lines,
+                        ref lines_ansi,
+                        ..
+                    } => {
+                        for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
+                            if plain.trim().is_empty() {
+                                // Drop the empty line from the visible log
+                                // but emit a heartbeat sentinel so the
+                                // activity strip still ticks for every PTY
+                                // line. `\0` is stripped on the receiver
+                                // side before display.
+                                on_log("\0");
+                                continue;
+                            }
+                            on_log(ansi);
+                            on_log("\n");
+                            state.response.push_str(plain);
+                            state.response.push('\n');
+                        }
+                    }
+                    Event::LibDone => break,
+                    Event::LibError { ref message } => {
+                        on_log(&format!("error: {}\n", message));
+                        break;
+                    }
+                    _ => {}
+                }
             }
-        };
-        dispatch_stream_event(&event, &mut state, on_log);
+            PollEvent::Pending => {
+                if prompt_sent && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS) {
+                    on_log(&format!(
+                        "\n⚠ No output for {}s — session timed out.\n",
+                        IDLE_EXIT_SECS,
+                    ));
+                    graceful_exit(session);
+                    break;
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            PollEvent::Closed => {
+                on_log("\n⚠ PTY session closed unexpectedly.\n");
+                break;
+            }
+        }
     }
+
+    let elapsed = start_time.elapsed();
+    let secs = elapsed.as_secs();
+    let response_lines = state.response.lines().count();
+    if response_lines > 0 {
+        on_log(&format!("\nDone {secs}s ({response_lines} lines)\n"));
+    } else {
+        on_log(&format!("\nDone {secs}s\n"));
+    }
+
+    report_exit_status(session, prompt_sent, &state.response, on_log);
+
     state
 }
 
-/// Public wrapper so `invoke.rs` can filter stderr through the same logic.
-pub(super) fn handle_non_json_line_for_claude(line: &str, on_log: &mut dyn FnMut(&str)) {
-    handle_non_json_line(line, on_log);
+/// End the Claude TUI cleanly: Ctrl-C twice (first interrupts the current
+/// operation, second requests exit), drain events for up to 5 s waiting for
+/// `LibDone`, then fall back to a hard kill.
+fn graceful_exit(session: &mut Session) {
+    let _ = session.write_raw(b"\x03");
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = session.write_raw(b"\x03");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match session.poll_event() {
+            PollEvent::Ready(Event::LibDone) => return,
+            PollEvent::Ready(_) => {}
+            PollEvent::Pending => std::thread::sleep(POLL_INTERVAL),
+            PollEvent::Closed => return,
+        }
+    }
+    let _ = session.kill();
 }
+
+fn report_exit_status(
+    session: &Session,
+    prompt_sent: bool,
+    response: &str,
+    on_log: &mut dyn FnMut(&str),
+) {
+    let status: Option<ExitStatus> = session.try_wait();
+    let has_response = !response.trim().is_empty();
+
+    match status {
+        Some(s) if s.success() => {
+            if prompt_sent && !has_response {
+                on_log("\n⚠ Claude exited successfully but produced no output.\n");
+            }
+        }
+        Some(s) => {
+            on_log(&format!("\n⚠ Claude process exited: {}\n", s));
+        }
+        None => {
+            if !prompt_sent {
+                on_log("\n⚠ Claude process still running — prompt was never sent.\n");
+            } else if !has_response {
+                on_log("\n⚠ Claude process still running — no output received yet.\n");
+            }
+        }
+    }
+}
+
+// ── OpenCode log filtering (used by the opencode provider) ─────────
 
 /// Filter OpenCode stderr: drop DEBUG noise, keep WARN/ERROR, delegate INFO
 /// and non-structured lines to `handle_non_json_line` for consistent formatting.
 pub(crate) fn filter_opencode_log_line(line: &str, on_log: &mut dyn FnMut(&str)) {
     if !is_opencode_log_line(line) {
-        // Not a structured log line — delegate for consistent formatting.
         handle_non_json_line(line, on_log);
         return;
     }
-    // Drop DEBUG lines — too noisy.
     if line.starts_with("DEBUG") {
         return;
     }
-    // INFO lines: delegate so service=llm gets "→ model (provider)" formatting.
     if line.starts_with("INFO") {
         handle_non_json_line(line, on_log);
         return;
     }
-    // Pass through WARN, ERROR lines.
     on_log(line);
     on_log("\n");
 }
 
-/// Handle a line that isn't valid JSON — either an OpenCode structured log line
-/// or plain text from another CLI.
 fn handle_non_json_line(line: &str, on_log: &mut dyn FnMut(&str)) {
-    // Not a structured log line — pass through as plain text.
     if !is_opencode_log_line(line) {
         on_log(line);
         on_log("\n");
         return;
     }
-    // Always pass WARN/ERROR through — these are important.
     if line.starts_with("WARN") || line.starts_with("ERROR") {
         on_log(line);
         on_log("\n");
         return;
     }
-    // Extract useful bits from specific services; drop everything else (INFO/DEBUG noise).
     if let Some(formatted) = format_opencode_service(line) {
         on_log(&formatted);
     }
 }
 
-/// Format an OpenCode INFO log line by extracting the relevant detail from known services.
-/// Returns `None` for unrecognised services (the caller drops those).
 fn format_opencode_service(line: &str) -> Option<String> {
     if line.contains("service=llm") {
         let model = extract_kv(line, "modelID").unwrap_or("?");
@@ -169,8 +239,6 @@ fn format_opencode_service(line: &str) -> Option<String> {
     None
 }
 
-/// Returns true if `line` looks like an OpenCode structured log line
-/// (INFO/DEBUG/WARN/ERROR followed by whitespace and an ISO-8601 timestamp).
 fn is_opencode_log_line(line: &str) -> bool {
     let rest = if let Some(r) = line.strip_prefix("INFO") {
         r
@@ -183,7 +251,6 @@ fn is_opencode_log_line(line: &str) -> bool {
     } else {
         return false;
     };
-    // After the level keyword there must be whitespace then a timestamp (YYYY-MM-DD).
     let bytes = rest.trim_start().as_bytes();
     bytes.len() >= 10
         && bytes[4] == b'-'
@@ -191,7 +258,6 @@ fn is_opencode_log_line(line: &str) -> bool {
         && bytes[0..4].iter().all(|b| b.is_ascii_digit())
 }
 
-/// Extract the value for a `key=value` token in a space-separated log line.
 fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     for token in line.split_whitespace() {
         if let Some(val) = token
@@ -204,6 +270,8 @@ fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+// ── Plan path extraction ────────────────────────────────────────────
+
 /// Extract a Claude Code plan file path from a log that contains "ExitPlanMode".
 /// Looks for a "→ Write ~/.claude/plans/..." line preceding "ExitPlanMode".
 /// Returns the expanded absolute path (~ replaced with the home directory).
@@ -211,21 +279,17 @@ pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
     if !log.contains("ExitPlanMode") {
         return None;
     }
-    // Scan lines in reverse from ExitPlanMode to find the Write line with the plan path.
     let lines: Vec<&str> = log.lines().collect();
     let exit_idx = lines.iter().rposition(|l| l.contains("ExitPlanMode"))?;
-    // Look up to 10 lines before ExitPlanMode for the Write line.
     let start = exit_idx.saturating_sub(10);
     for i in (start..exit_idx).rev() {
         let line = lines[i].trim();
-        // Match "→ Write ~/.claude/plans/..." pattern
         let rest = match line.strip_prefix("\u{2192} Write ") {
             Some(r) => r,
             None => continue,
         };
         if rest.contains(".claude/plans/") {
             let path = rest.trim();
-            // Expand ~ to home directory
             if let Some(suffix) = path.strip_prefix("~/") {
                 if let Some(home) = dirs::home_dir() {
                     return Some(home.join(suffix).to_string_lossy().to_string());
@@ -237,152 +301,11 @@ pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
     None
 }
 
-/// Route a single parsed JSON event to the correct handler.
-fn dispatch_stream_event(
-    event: &serde_json::Value,
-    state: &mut StreamState,
-    on_log: &mut dyn FnMut(&str),
-) {
-    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    match event_type {
-        "assistant" => handle_assistant_event(event, &mut state.edited_files, on_log),
-        "result" => handle_result_event(event, &mut state.final_result, &mut state.metrics, on_log),
-        "system" | "user" | "tool" => {}
-        "rate_limit_event" => handle_rate_limit_event(event, on_log),
-        _ => {
-            if !event_type.is_empty() {
-                on_log(&format!("[{}]\n", event_type));
-            }
-        }
-    }
-}
-
-/// Handle an "assistant" stream event: log text blocks, track tool_use edits.
-fn handle_assistant_event(
-    event: &serde_json::Value,
-    edited_files: &mut Vec<String>,
-    on_log: &mut dyn FnMut(&str),
-) {
-    let content = match event
-        .get("message")
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_array())
-    {
-        Some(c) => c,
-        None => return,
-    };
-    for block in content {
-        process_content_block(block, edited_files, on_log);
-    }
-}
-
-/// Process a single content block inside an assistant message.
-fn process_content_block(
-    block: &serde_json::Value,
-    edited_files: &mut Vec<String>,
-    on_log: &mut dyn FnMut(&str),
-) {
-    let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    match block_type {
-        "text" => {
-            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                on_log(text);
-                on_log("\n");
-            }
-        }
-        "tool_use" => process_tool_use_block(block, edited_files, on_log),
-        _ => {}
-    }
-}
-
-/// Process a tool_use content block: track edited files and log the action.
-fn process_tool_use_block(
-    block: &serde_json::Value,
-    edited_files: &mut Vec<String>,
-    on_log: &mut dyn FnMut(&str),
-) {
-    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-    let input = block.get("input").cloned().unwrap_or_default();
-    track_edited_file(name, &input, edited_files);
-    let detail = extract_tool_detail(&input);
-    on_log(&format!("\u{2192} {}{}\n", name, detail));
-}
-
-/// If the tool is an edit/write tool, record the file path.
-fn track_edited_file(name: &str, input: &serde_json::Value, edited_files: &mut Vec<String>) {
-    if !matches!(name, "Edit" | "Write" | "NotebookEdit") {
-        return;
-    }
-    if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
-        if !edited_files.contains(&path.to_string()) {
-            edited_files.push(path.to_string());
-        }
-    }
-}
-
-/// Build a human-readable detail string from a tool_use input.
-fn extract_tool_detail(input: &serde_json::Value) -> String {
-    if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
-        return format!(" $ {}", cmd.lines().next().unwrap_or(""));
-    }
-    if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
-        return format!(" {}", path);
-    }
-    if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
-        return format!(" \"{}\"", pattern);
-    }
-    String::new()
-}
-
-/// Handle a "result" stream event: capture final text and metrics.
-fn handle_result_event(
-    event: &serde_json::Value,
-    final_result: &mut String,
-    metrics: &mut RunMetrics,
-    on_log: &mut dyn FnMut(&str),
-) {
-    if let Some(result) = event.get("result").and_then(|r| r.as_str()) {
-        *final_result = result.to_string();
-    }
-    *metrics = extract_metrics(event);
-    on_log(&format!(
-        "\n\u{2713} Done ({} turns, {:.1}s, ${:.4})\n",
-        metrics.num_turns,
-        metrics.duration_ms as f64 / 1000.0,
-        metrics.cost_usd
-    ));
-}
-
-/// Extract run metrics from a result event.
-fn extract_metrics(event: &serde_json::Value) -> RunMetrics {
-    RunMetrics {
-        cost_usd: event
-            .get("cost_usd")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0),
-        duration_ms: event
-            .get("duration_ms")
-            .and_then(|d| d.as_u64())
-            .unwrap_or(0),
-        num_turns: event.get("num_turns").and_then(|t| t.as_u64()).unwrap_or(0),
-        input_tokens: event
-            .get("total_input_tokens")
-            .and_then(|t| t.as_u64())
-            .or_else(|| event.get("input_tokens").and_then(|t| t.as_u64()))
-            .unwrap_or(0),
-        output_tokens: event
-            .get("total_output_tokens")
-            .and_then(|t| t.as_u64())
-            .or_else(|| event.get("output_tokens").and_then(|t| t.as_u64()))
-            .unwrap_or(0),
-    }
-}
+// ── Usage limit & question detection ────────────────────────────────
 
 /// Detect a usage-limit / hard rate-limit message in Claude output.
 /// Returns the first matching line (trimmed) if found.
 pub(crate) fn detect_usage_limit(text: &str) -> Option<&str> {
-    // Patterns that indicate the user's quota or extra-usage budget is exhausted.
-    // These are *final* errors — not the transient "rate_limit_event" retries.
     const PATTERNS: &[&str] = &[
         "out of extra usage",
         "out of usage",
@@ -399,8 +322,6 @@ pub(crate) fn detect_usage_limit(text: &str) -> Option<&str> {
 }
 
 /// Check whether the CLI response text contains a question directed at the user.
-/// Looks for question marks at the end of substantive sentences and common
-/// question-asking patterns (e.g. "Could you…?", "Should I…?").
 pub(crate) fn response_has_question(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -413,20 +334,6 @@ pub(crate) fn response_has_question(text: &str) -> bool {
         }
     }
     false
-}
-
-/// Handle a "rate_limit_event": log the retry delay if present.
-fn handle_rate_limit_event(event: &serde_json::Value, on_log: &mut dyn FnMut(&str)) {
-    if let Some(seconds) = event
-        .get("retry_after_seconds")
-        .and_then(|v| v.as_f64())
-        .filter(|&s| s > 0.0)
-    {
-        on_log(&format!(
-            "\u{23f3} Rate limited, retrying in {:.0}s\n",
-            seconds
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -443,7 +350,6 @@ mod tests {
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.ends_with(".claude/plans/binary-tinkering-gray.md"));
-        // Should be expanded (not start with ~)
         assert!(!path.starts_with('~'));
     }
 
@@ -461,7 +367,6 @@ mod tests {
 
     #[test]
     fn extract_plan_path_write_too_far_above() {
-        // Write line more than 10 lines above ExitPlanMode
         let mut log = "\u{2192} Write ~/.claude/plans/old.md\n".to_string();
         for _ in 0..12 {
             log.push_str("some other line\n");
@@ -487,7 +392,6 @@ mod tests {
         assert!(!response_has_question("The code looks correct as written."));
         assert!(!response_has_question(""));
         assert!(!response_has_question("   "));
-        // Very short fragments with ? should not trigger (len <= 5)
         assert!(!response_has_question("ok?"));
     }
 
@@ -504,16 +408,12 @@ mod tests {
                 Some("Your usage limit has been reached"),
             ),
             ("Token limit reached.", Some("Token limit reached.")),
-            // Leading/trailing whitespace should be trimmed
             ("  Out of usage  ", Some("Out of usage")),
-            // Sentence containing a known pattern
             (
                 "You are out of usage for today",
                 Some("You are out of usage for today"),
             ),
-            // Multiline input where no line matches
             ("all good\nretrying in 5s\n", None),
-            // Non-matching input
             ("Everything is fine", None),
             ("rate_limit_event retry", None),
             ("", None),

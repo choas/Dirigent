@@ -82,6 +82,21 @@ impl DirigentApp {
 
                     self.claude.expand_running = false;
 
+                    // If ShowRunningLog is present for a cue, drop any
+                    // ShowDiff for the same cue so the log viewer wins.
+                    let log_cue_ids: std::collections::HashSet<i64> = actions
+                        .iter()
+                        .filter_map(|(_, a)| match a {
+                            CueAction::ShowRunningLog(id) => Some(*id),
+                            _ => None,
+                        })
+                        .collect();
+                    if !log_cue_ids.is_empty() {
+                        actions.retain(|(_, a)| {
+                            !matches!(a, CueAction::ShowDiff(id) if log_cue_ids.contains(id))
+                        });
+                    }
+
                     for (id, action) in actions {
                         self.process_cue_action(id, action);
                     }
@@ -449,6 +464,19 @@ impl DirigentApp {
                     scale,
                     name,
                 );
+            }
+            RunningAnimation::Dino => {
+                let (w, h) = super::dino::size(scale);
+                let origin = egui::pos2(
+                    panel_rect.right() - w - margin,
+                    panel_rect.bottom() - h - margin,
+                );
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(w, h));
+                let resp = ui.allocate_rect(rect, egui::Sense::click());
+                if resp.clicked() {
+                    self.lava_lamp_big = !self.lava_lamp_big;
+                }
+                super::dino::paint_at(ui.painter(), ui.ctx(), origin, accent, is_dark, scale);
             }
             RunningAnimation::Off => {}
         }

@@ -1,9 +1,13 @@
+[workspace]
+members = [".", "claude_pty"]
+
 [package]
 name = "Dirigent"
 version = "0.5.1"
 edition = "2021"
 
 [dependencies]
+claude_pty = { path = "claude_pty" }
 dirs = "=6.0.0"
 eframe = "=0.34.1"
 egui_extras = { version = "=0.34.1", features = ["syntect"] }
