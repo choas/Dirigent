@@ -26,40 +26,74 @@ const CHARACTER: [[u8; W]; H] = [
     [0, 1, 1, 0, 0, 0, 1, 1, 0], // feet
 ];
 
-/// Discrete brightness levels for the pixelated breath effect.
-const BREATH_LEVELS: [f32; 3] = [0.7, 0.85, 1.0];
-
 struct BodyColors {
-    body: egui::Color32,
+    body_core: egui::Color32,
+    body_mid: egui::Color32,
+    body_dim: egui::Color32,
     eye: egui::Color32,
     eye_closed: egui::Color32,
     text: egui::Color32,
 }
 
-fn compute_colors(accent: egui::Color32, is_dark: bool, breath_step: usize) -> BodyColors {
+fn compute_colors(accent: egui::Color32, is_dark: bool) -> BodyColors {
     let [ar, ag, ab, _] = accent.to_array();
-    let b = BREATH_LEVELS[breath_step % BREATH_LEVELS.len()];
-    let body = egui::Color32::from_rgb(
-        (ar as f32 * b).min(255.0) as u8,
-        (ag as f32 * b).min(255.0) as u8,
-        (ab as f32 * b).min(255.0) as u8,
+    let body_core = egui::Color32::from_rgb(
+        ar.saturating_add(60),
+        ag.saturating_add(40),
+        ab.saturating_add(30),
+    );
+    let body_mid = accent;
+    let body_dim = egui::Color32::from_rgb(
+        (ar as u16 * 2 / 3) as u8,
+        (ag as u16 * 2 / 3) as u8,
+        (ab as u16 * 2 / 3) as u8,
     );
     let eye = if is_dark {
         egui::Color32::from_rgb(30, 25, 25)
     } else {
         egui::Color32::from_rgb(40, 35, 35)
     };
-    let eye_closed = body;
+    let eye_closed = body_mid;
     let text = egui::Color32::from_rgb(
         (ar as f32 * 0.85).min(255.0) as u8,
         (ag as f32 * 0.85).min(255.0) as u8,
         (ab as f32 * 0.85).min(255.0) as u8,
     );
     BodyColors {
-        body,
+        body_core,
+        body_mid,
+        body_dim,
         eye,
         eye_closed,
         text,
+    }
+}
+
+/// Glow center y-positions that cycle through the body on discrete ticks.
+const GLOW1_Y: [f32; 6] = [3.0, 5.0, 7.0, 9.0, 7.0, 5.0];
+const GLOW2_Y: [f32; 6] = [8.0, 6.0, 4.0, 3.0, 4.0, 6.0];
+
+fn body_pixel_color(
+    row: usize,
+    col: usize,
+    glows: &[(f32, f32, f32)],
+    colors: &BodyColors,
+) -> egui::Color32 {
+    let cy = row as f32 + 0.5;
+    let cx = col as f32 + 0.5;
+    let mut intensity: f32 = 0.0;
+    for &(gx, gy, gr) in glows {
+        let dx = cx - gx;
+        let dy = cy - gy;
+        let dist = (dx * dx + dy * dy).sqrt();
+        intensity = intensity.max((1.0 - dist / gr).clamp(0.0, 1.0));
+    }
+    if intensity > 0.6 {
+        colors.body_core
+    } else if intensity > 0.3 {
+        colors.body_mid
+    } else {
+        colors.body_dim
     }
 }
 
@@ -93,9 +127,16 @@ pub fn paint_at(
     let px = PX * scale;
     let t = ctx.input(|i| i.time) as f32;
 
-    // Breath cycles through discrete brightness levels (~1.5s per step)
-    let breath_step = (tick(t, 1.5).rem_euclid(BREATH_LEVELS.len() as i32)) as usize;
-    let colors = compute_colors(accent, is_dark, breath_step);
+    let colors = compute_colors(accent, is_dark);
+
+    // Two glow centers move up and down through the body on discrete ticks
+    let glow_step = tick(t, 0.8);
+    let g1_idx = (glow_step.rem_euclid(GLOW1_Y.len() as i32)) as usize;
+    let g2_idx = (glow_step.rem_euclid(GLOW2_Y.len() as i32)) as usize;
+    let glows = [
+        (4.5_f32, GLOW1_Y[g1_idx], 3.0_f32),
+        (4.5, GLOW2_Y[g2_idx], 2.5),
+    ];
 
     // Blink: eyes close for one full tick every ~8 ticks (4s)
     let blink_tick = tick(t, 0.5).rem_euclid(8);
@@ -142,7 +183,7 @@ pub fn paint_at(
                     colors.eye
                 }
             } else {
-                colors.body
+                body_pixel_color(row, col, &glows, &colors)
             };
             let px_rect = egui::Rect::from_min_size(
                 char_origin + egui::vec2(col as f32 * px, row as f32 * px),
@@ -169,7 +210,7 @@ pub fn paint_at(
                 egui::vec2(px, px),
             ),
             0.0,
-            colors.body,
+            colors.body_mid,
         );
 
         let right_off = arm_pattern[(right_idx + seg) % 4] as f32 * px;
@@ -182,7 +223,7 @@ pub fn paint_at(
                 egui::vec2(px, px),
             ),
             0.0,
-            colors.body,
+            colors.body_mid,
         );
     }
 

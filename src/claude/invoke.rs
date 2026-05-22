@@ -32,6 +32,7 @@ pub(crate) fn invoke_claude_streaming(
     model: &str,
     cli_path: &str,
     extra_args: &str,
+    extra_args_vec: &[String],
     env_vars: &str,
     pre_run_script: &str,
     post_run_script: &str,
@@ -47,6 +48,7 @@ pub(crate) fn invoke_claude_streaming(
         prompt,
         model,
         extra_args,
+        extra_args_vec,
         env_vars,
         skip_permissions,
     );

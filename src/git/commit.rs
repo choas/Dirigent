@@ -391,10 +391,17 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = match (stderr.is_empty(), stdout.is_empty()) {
+            (false, false) => format!("{}\n{}", stderr, stdout),
+            (false, true) => stderr,
+            (true, false) => stdout,
+            (true, true) => "unknown error (no output)".to_string(),
+        };
         return Err(DirigentError::GitCommand(format!(
-            "git push failed: {}",
-            stderr.trim()
+            "git push failed:\n{}",
+            detail
         )));
     }
 
