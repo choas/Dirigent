@@ -83,8 +83,9 @@ server.tool(
       .number()
       .int()
       .positive()
+      .max(1000)
       .default(50)
-      .describe("Max results to return"),
+      .describe("Max results to return (up to 1000)"),
   },
   async ({ status, tag, limit }) => {
     let sql =
@@ -315,8 +316,9 @@ server.tool(
       .number()
       .int()
       .positive()
+      .max(1000)
       .default(20)
-      .describe("Max entries to return"),
+      .describe("Max entries to return (up to 1000)"),
   },
   async ({ limit }) => {
     const rows = db
