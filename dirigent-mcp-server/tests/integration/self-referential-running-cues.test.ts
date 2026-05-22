@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
 function isClaudeAvailable(): boolean {
   try {
-    execSync((process.env.CLAUDE_CLI_PATH ?? "claude") + " --version", {
+    execFileSync(process.env.CLAUDE_CLI_PATH ?? "claude", ["--version"], {
       stdio: "ignore",
       timeout: 5_000,
     });
@@ -121,14 +121,16 @@ describe.skipIf(!claudeAvailable)("Dirigent MCP Integration", { timeout: 60_000 
     ].join(" ");
 
     const mcpServerCmd = `npx tsx ${path.resolve(__dirname, "../../src/index.ts")} ${dbPath}`;
-    const result = execSync(
-      `claude -p "${prompt}" --mcp-server "${mcpServerCmd}" --output-format json`,
-      {
-        encoding: "utf-8",
-        timeout: 55_000,
-        env: { ...process.env },
-      }
-    );
+    const claudeCli = process.env.CLAUDE_CLI_PATH ?? "claude";
+    const result = execFileSync(claudeCli, [
+      "-p", prompt,
+      "--mcp-server", mcpServerCmd,
+      "--output-format", "json",
+    ], {
+      encoding: "utf-8",
+      timeout: 55_000,
+      env: { ...process.env },
+    });
 
     const response = JSON.parse(result);
     const responseText: string = response.result ?? response.text ?? result;
@@ -167,14 +169,16 @@ describe.skipIf(!claudeAvailable)("Dirigent MCP Integration", { timeout: 60_000 
       "What Dirigent cues are currently running? Give me their IDs, text, and tags as JSON.";
 
     const mcpServerCmd = `npx tsx ${path.resolve(__dirname, "../../src/index.ts")} ${dbPath}`;
-    const result = execSync(
-      `claude -p "${prompt}" --mcp-server "${mcpServerCmd}" --output-format json`,
-      {
-        encoding: "utf-8",
-        timeout: 55_000,
-        env: { ...process.env },
-      }
-    );
+    const claudeCli = process.env.CLAUDE_CLI_PATH ?? "claude";
+    const result = execFileSync(claudeCli, [
+      "-p", prompt,
+      "--mcp-server", mcpServerCmd,
+      "--output-format", "json",
+    ], {
+      encoding: "utf-8",
+      timeout: 55_000,
+      env: { ...process.env },
+    });
 
     const response = JSON.parse(result);
     const responseText: string = response.result ?? response.text ?? result;
