@@ -257,9 +257,12 @@ server.tool(
         content: [{ type: "text", text: `Cue #${cue_id} not found` }],
         isError: true,
       };
-    db.prepare("DELETE FROM cue_activity_log WHERE cue_id = ?").run(cue_id);
-    db.prepare("DELETE FROM executions WHERE cue_id = ?").run(cue_id);
-    db.prepare("DELETE FROM cues WHERE id = ?").run(cue_id);
+    const deleteCue = db.transaction((id: number) => {
+      db.prepare("DELETE FROM cue_activity_log WHERE cue_id = ?").run(id);
+      db.prepare("DELETE FROM executions WHERE cue_id = ?").run(id);
+      db.prepare("DELETE FROM cues WHERE id = ?").run(id);
+    });
+    deleteCue(cue_id);
     return {
       content: [{ type: "text", text: `Deleted cue #${cue_id}` }],
     };
@@ -278,11 +281,14 @@ server.tool(
       return {
         content: [{ type: "text", text: "No cues in Done to archive" }],
       };
-    const stmt = db.prepare("UPDATE cues SET status = 'archived' WHERE id = ?");
-    for (const { id } of doneCues) {
-      stmt.run(id);
-      logActivity(id, "Archived via MCP");
-    }
+    const archiveAll = db.transaction((cues: { id: number }[]) => {
+      const stmt = db.prepare("UPDATE cues SET status = 'archived' WHERE id = ?");
+      for (const { id } of cues) {
+        stmt.run(id);
+        logActivity(id, "Archived via MCP");
+      }
+    });
+    archiveAll(doneCues);
     return {
       content: [
         {
