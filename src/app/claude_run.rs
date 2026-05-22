@@ -118,11 +118,36 @@ fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String {
     text.to_string()
 }
 
+fn should_inject_dirigent_mcp(prompt: &str) -> bool {
+    prompt.to_lowercase().contains("dirigent")
+}
+
+fn resolve_dirigent_db(
+    project_root: &std::path::Path,
+    settings: &settings::Settings,
+) -> Option<std::path::PathBuf> {
+    let local_db = project_root.join(".Dirigent").join("Dirigent.db");
+    if local_db.exists() {
+        return Some(local_db);
+    }
+    if !settings.dirigent_mcp_db_path.is_empty() {
+        let path = std::path::PathBuf::from(&settings.dirigent_mcp_db_path);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Build provider-specific configuration from settings, with optional command overrides.
+/// When the prompt mentions "Dirigent" and the provider is Claude, the Dirigent MCP
+/// server is conditionally injected via `--mcp-server` so Claude gains cue-management tools.
 fn build_provider_config(
     settings: &settings::Settings,
     provider: &CliProvider,
     matched_command: &Option<CueCommand>,
+    prompt: &str,
+    project_root: &std::path::Path,
 ) -> ProviderConfig {
     let pf = settings.provider_fields(provider);
     let model = pf.model.to_string();
@@ -148,6 +173,32 @@ fn build_provider_config(
             } else {
                 extra_args = format!("{} {}", extra_args, cmd_args);
             }
+        }
+    }
+    // Conditionally inject the Dirigent MCP server when the prompt references
+    // "Dirigent" — gives Claude tools to manage cues directly.
+    if *provider == CliProvider::Claude && should_inject_dirigent_mcp(prompt) {
+        if let Some(db_path) = resolve_dirigent_db(project_root, settings) {
+            let mcp_bin = if settings.dirigent_mcp_server_path.is_empty() {
+                "dirigent-mcp".to_string()
+            } else {
+                settings.dirigent_mcp_server_path.clone()
+            };
+            let mcp_arg = format!(
+                "--mcp-server \"{} {}\"",
+                mcp_bin,
+                db_path.display()
+            );
+            if extra_args.is_empty() {
+                extra_args = mcp_arg;
+            } else {
+                extra_args = format!("{} {}", extra_args, mcp_arg);
+            }
+            log::info!(
+                "Dirigent MCP server injected: {} {}",
+                mcp_bin,
+                db_path.display()
+            );
         }
     }
     ProviderConfig {
@@ -477,7 +528,13 @@ impl DirigentApp {
             self.claude.conversation_history = execs;
         }
 
-        let config = build_provider_config(&self.settings, &provider, matched_command);
+        let config = build_provider_config(
+            &self.settings,
+            &provider,
+            matched_command,
+            &prompt,
+            &self.project_root,
+        );
 
         telemetry::emit_execution_started(
             &self.project_name(),

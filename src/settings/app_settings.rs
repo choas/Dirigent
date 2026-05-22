@@ -225,6 +225,15 @@ pub(crate) struct Settings {
     /// Show frame timing breakdown and memory usage in the status bar.
     #[serde(default)]
     pub show_frame_timing: bool,
+    /// Path to the Dirigent MCP server binary (e.g. `dirigent-mcp` or full path).
+    /// When empty, defaults to `dirigent-mcp` on $PATH.
+    #[serde(default)]
+    pub dirigent_mcp_server_path: String,
+    /// Fallback database path for cross-project MCP use.
+    /// When a prompt mentions "Dirigent" but the current project has no
+    /// `.Dirigent/Dirigent.db`, this path is used instead.
+    #[serde(default)]
+    pub dirigent_mcp_db_path: String,
 }
 
 /// Common per-provider fields extracted from [`Settings`].
@@ -330,6 +339,8 @@ impl Default for Settings {
             auto_commit: false,
             allow_dangerous_skip_permissions: true,
             show_frame_timing: false,
+            dirigent_mcp_server_path: String::new(),
+            dirigent_mcp_db_path: String::new(),
         }
     }
 }
