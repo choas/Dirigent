@@ -1,5 +1,6 @@
 mod cli;
 mod diff_parser;
+mod done_hook;
 mod import_cues;
 mod invoke;
 mod prompt;

@@ -12,6 +12,7 @@ use super::cli::{
     apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs,
     run_lifecycle_script,
 };
+use super::done_hook::DoneHook;
 use super::stream::consume_pty_events;
 use super::types::{ClaudeError, ClaudeResponse};
 
@@ -114,6 +115,8 @@ fn invoke_pty(
     // `std::process::Command`, which also overwrites — see `invoke_headless`.
     builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
 
+    let done_hook = DoneHook::install(project_root);
+
     let mut session = builder.open().map_err(|e| match e {
         claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
         claude_pty::Error::Spawn(msg) | claude_pty::Error::Io(msg) => {
@@ -121,7 +124,9 @@ fn invoke_pty(
         }
     })?;
 
-    let state = consume_pty_events(&mut session, prompt, &cancel, on_log);
+    let sentinel = done_hook.as_ref().map(|h| h.sentinel_path());
+    let state = consume_pty_events(&mut session, prompt, &cancel, on_log, sentinel);
+    drop(done_hook);
 
     Ok(ClaudeResponse {
         stdout: state.response,

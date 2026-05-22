@@ -14,14 +14,16 @@ pub(super) struct PtyResult {
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
 ///
 /// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
-/// and sends `prompt` on the first `TuiPrompt`. When a second prompt appears
-/// (Claude finished and is waiting for new input), the idle-exit timer fires,
-/// or the session ends (`LibDone`), the loop exits gracefully.
+/// and sends `prompt` on the first `TuiPrompt`. The loop exits when the
+/// `done_sentinel` file appears (Claude Code `Stop` hook fired), when a
+/// second prompt appears (fallback heuristic), when the idle-exit timer fires,
+/// or when the session ends (`LibDone`).
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
+    done_sentinel: Option<&std::path::Path>,
 ) -> PtyResult {
     let mut state = PtyResult {
         response: String::new(),
@@ -92,6 +94,14 @@ pub(super) fn consume_pty_events(
                 }
             }
             PollEvent::Pending => {
+                if prompt_sent {
+                    if let Some(sentinel) = done_sentinel {
+                        if sentinel.exists() {
+                            graceful_exit(session);
+                            break;
+                        }
+                    }
+                }
                 if prompt_sent && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS) {
                     on_log(&format!(
                         "\n⚠ No output for {}s — session timed out.\n",
