@@ -5,10 +5,24 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
+function isClaudeAvailable(): boolean {
+  try {
+    execSync((process.env.CLAUDE_CLI_PATH ?? "claude") + " --version", {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const claudeAvailable = isClaudeAvailable();
+
 const TEST_CUE_TEXT =
   "[integration-test] MCP self-referential running cues query";
 
-describe("Dirigent MCP Integration", { timeout: 60_000 }, () => {
+describe.skipIf(!claudeAvailable)("Dirigent MCP Integration", { timeout: 60_000 }, () => {
   let dbPath: string;
   let tmpDir: string;
   let testCueId: number;
