@@ -143,6 +143,10 @@ describe("Cue CRUD operations", () => {
       .prepare("SELECT id FROM executions WHERE cue_id = ?")
       .all(id);
     expect(execs).toHaveLength(0);
+    const activityLogs = db
+      .prepare("SELECT id FROM cue_activity_log WHERE cue_id = ?")
+      .all(id);
+    expect(activityLogs).toHaveLength(0);
   });
 });
 
