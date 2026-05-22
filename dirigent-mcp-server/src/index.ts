@@ -13,10 +13,32 @@ if (!DB_PATH) {
   process.exit(1);
 }
 
-const db = new Database(DB_PATH, { readonly: false });
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-db.pragma("busy_timeout = 5000");
+let db: InstanceType<typeof Database>;
+try {
+  db = new Database(DB_PATH, { readonly: false });
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`Failed to open database "${DB_PATH}": ${msg}\n`);
+  process.exit(1);
+}
+
+const REQUIRED_TABLES = ["cues", "executions", "cue_activity_log"] as const;
+const existing = db
+  .prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)"
+  )
+  .all(...REQUIRED_TABLES)
+  .map((r) => (r as { name: string }).name);
+const missing = REQUIRED_TABLES.filter((t) => !existing.includes(t));
+if (missing.length > 0) {
+  process.stderr.write(
+    `Database "${DB_PATH}" is missing required tables: ${missing.join(", ")}\n`
+  );
+  process.exit(1);
+}
 
 const VALID_STATUSES = [
   "inbox",
