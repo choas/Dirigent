@@ -276,6 +276,7 @@ fn run_split_analysis(
                 pf.model,
                 pf.cli_path,
                 pf.extra_args,
+                &[],
                 pf.env_vars,
                 pf.pre_run_script,
                 pf.post_run_script,

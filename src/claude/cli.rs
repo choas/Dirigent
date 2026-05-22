@@ -20,6 +20,7 @@ pub(super) fn build_claude_command(
     prompt: &str,
     model: &str,
     extra_args: &str,
+    extra_args_vec: &[String],
     env_vars: &str,
     skip_permissions: bool,
 ) -> Command {
@@ -36,6 +37,11 @@ pub(super) fn build_claude_command(
         cmd.arg("--model").arg(model);
     }
     append_extra_args(&mut cmd, extra_args);
+    for arg in extra_args_vec {
+        if !arg.is_empty() {
+            cmd.arg(arg);
+        }
+    }
     apply_env_vars(&mut cmd, env_vars);
     cmd
 }

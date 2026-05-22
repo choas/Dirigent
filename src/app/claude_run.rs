@@ -76,6 +76,9 @@ struct ProviderConfig {
     model: String,
     cli_path: String,
     extra_args: String,
+    /// Structured args that must not go through shlex::split (e.g. --mcp-server
+    /// values containing spaces). Passed directly as individual Command::arg entries.
+    extra_args_vec: Vec<String>,
     env_vars: String,
     pre_run_script: String,
     post_run_script: String,
@@ -177,6 +180,7 @@ fn build_provider_config(
     }
     // Conditionally inject the Dirigent MCP server when the prompt references
     // "Dirigent" — gives Claude tools to manage cues directly.
+    let mut extra_args_vec = Vec::new();
     if *provider == CliProvider::Claude && should_inject_dirigent_mcp(prompt) {
         if let Some(db_path) = resolve_dirigent_db(project_root, settings) {
             let mcp_bin = if settings.dirigent_mcp_server_path.is_empty() {
@@ -184,18 +188,9 @@ fn build_provider_config(
             } else {
                 settings.dirigent_mcp_server_path.clone()
             };
-            let db_path_str = db_path.display().to_string();
-            let quoted_bin = shlex::try_quote(&mcp_bin).unwrap_or(mcp_bin.clone().into());
-            let quoted_db = shlex::try_quote(&db_path_str).unwrap_or(db_path_str.clone().into());
-            let server_cmd = format!("{} {}", quoted_bin, quoted_db);
-            let quoted_server_cmd =
-                shlex::try_quote(&server_cmd).unwrap_or(server_cmd.clone().into());
-            let mcp_arg = format!("--mcp-server {}", quoted_server_cmd);
-            if extra_args.is_empty() {
-                extra_args = mcp_arg;
-            } else {
-                extra_args = format!("{} {}", extra_args, mcp_arg);
-            }
+            let server_value = format!("{} {}", mcp_bin, db_path.display());
+            extra_args_vec.push("--mcp-server".to_string());
+            extra_args_vec.push(server_value);
             log::info!(
                 "Dirigent MCP server injected: {} {}",
                 mcp_bin,
@@ -207,6 +202,7 @@ fn build_provider_config(
         model,
         cli_path,
         extra_args,
+        extra_args_vec,
         env_vars,
         pre_run_script,
         post_run_script,
@@ -248,6 +244,7 @@ fn run_claude_provider(
         &req.config.model,
         &req.config.cli_path,
         &req.config.extra_args,
+        &req.config.extra_args_vec,
         &req.config.env_vars,
         &req.config.pre_run_script,
         &req.config.post_run_script,
