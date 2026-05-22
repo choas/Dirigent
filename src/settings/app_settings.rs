@@ -35,11 +35,45 @@ impl DiffColorScheme {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum HeartbeatStyle {
+    #[default]
+    Heartbeat,
+    #[serde(alias = "Curve")]
+    Wave,
+    GabbaPeak,
+    MorseCode,
+    Off,
+}
+
+impl HeartbeatStyle {
+    pub(crate) fn display_name(&self) -> &str {
+        match self {
+            HeartbeatStyle::Heartbeat => "Heartbeat",
+            HeartbeatStyle::Wave => "Wave",
+            HeartbeatStyle::GabbaPeak => "Gabba Peak",
+            HeartbeatStyle::MorseCode => "Morse Code",
+            HeartbeatStyle::Off => "Off",
+        }
+    }
+
+    pub(crate) fn all() -> &'static [HeartbeatStyle] {
+        &[
+            HeartbeatStyle::Heartbeat,
+            HeartbeatStyle::Wave,
+            HeartbeatStyle::GabbaPeak,
+            HeartbeatStyle::MorseCode,
+            HeartbeatStyle::Off,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum RunningAnimation {
     Off,
     #[default]
     LavaLamp,
     ClaudeCodeName,
+    Dino,
 }
 
 impl RunningAnimation {
@@ -48,6 +82,7 @@ impl RunningAnimation {
             RunningAnimation::Off => "Off",
             RunningAnimation::LavaLamp => "Lava Lamp",
             RunningAnimation::ClaudeCodeName => "Claude Code",
+            RunningAnimation::Dino => "Desert Dino",
         }
     }
 
@@ -56,6 +91,7 @@ impl RunningAnimation {
             RunningAnimation::Off,
             RunningAnimation::LavaLamp,
             RunningAnimation::ClaudeCodeName,
+            RunningAnimation::Dino,
         ]
     }
 }
@@ -168,6 +204,8 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub running_animation: RunningAnimation,
     #[serde(default)]
+    pub heartbeat_style: HeartbeatStyle,
+    #[serde(default)]
     pub claude_code_display_name: String,
     #[serde(default)]
     pub diff_color_scheme: DiffColorScheme,
@@ -222,6 +260,11 @@ pub(crate) struct Settings {
     /// instead of actually editing files.
     #[serde(default = "default_true")]
     pub allow_dangerous_skip_permissions: bool,
+    /// Run Claude Code under a PTY (default) so the interactive TUI is used.
+    /// When disabled, Claude is invoked in headless `-p <prompt>` mode with
+    /// stdout/stderr piped directly — no TUI, no auto-accepted dialogs.
+    #[serde(default = "default_true")]
+    pub claude_use_pty: bool,
     /// Show frame timing breakdown and memory usage in the status bar.
     #[serde(default)]
     pub show_frame_timing: bool,
@@ -319,6 +362,7 @@ impl Default for Settings {
             notify_sound: true,
             notify_popup: true,
             running_animation: RunningAnimation::LavaLamp,
+            heartbeat_style: HeartbeatStyle::default(),
             claude_code_display_name: String::new(),
             diff_color_scheme: DiffColorScheme::default(),
             font_family: default_font_family(),
@@ -338,6 +382,7 @@ impl Default for Settings {
             auto_context_git_diff: false,
             auto_commit: false,
             allow_dangerous_skip_permissions: true,
+            claude_use_pty: true,
             show_frame_timing: false,
             dirigent_mcp_server_path: String::new(),
             dirigent_mcp_db_path: String::new(),

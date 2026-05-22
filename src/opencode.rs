@@ -302,6 +302,7 @@ fn build_opencode_command(
     prompt: &str,
     project_root: &Path,
     config: &OpenCodeRunConfig<'_>,
+    on_log: &mut dyn FnMut(&str),
 ) -> Result<Command, OpenCodeError> {
     use std::process::Stdio;
 
@@ -321,9 +322,9 @@ fn build_opencode_command(
             cmd.arg(arg);
         }
     }
-    claude::apply_env_vars(&mut cmd, config.env_vars);
+    claude::apply_env_vars(&mut cmd, config.env_vars, on_log);
     // Inject .Dirigent/.env overrides so AI runs use dev credentials.
-    crate::claude::apply_dirigent_env(&mut cmd, project_root);
+    crate::claude::apply_dirigent_env(&mut cmd, project_root, on_log);
     cmd.current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -520,9 +521,18 @@ pub(crate) fn invoke_opencode_streaming(
     }
 
     let run_start = Instant::now();
-    let mut child = build_opencode_command(&opencode_bin, prompt, project_root, config)?
-        .spawn()
-        .map_err(OpenCodeError::SpawnFailed)?;
+    let mut child = {
+        let mut log = on_log.lock().unwrap_or_else(|e| {
+            log::error!(
+                "Mutex poisoned while acquiring on_log for command build: {:?}",
+                e
+            );
+            e.into_inner()
+        });
+        build_opencode_command(&opencode_bin, prompt, project_root, config, &mut *log)?
+            .spawn()
+            .map_err(OpenCodeError::SpawnFailed)?
+    };
 
     let stderr_handle = child.stderr.take().expect("stderr must be piped");
     let stdout_handle = child.stdout.take().expect("stdout must be piped");

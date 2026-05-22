@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use super::notifications::send_macos_notification;
+use super::tasks::TaskHandle;
+use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
@@ -12,10 +15,6 @@ use crate::git;
 use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand};
 use crate::telemetry;
-
-use super::notifications::send_macos_notification;
-use super::tasks::TaskHandle;
-use super::DirigentApp;
 
 /// Result of a background Claude invocation.
 struct ClaudeResult {
@@ -49,6 +48,9 @@ pub(crate) struct ClaudeRunState {
     pub(super) expand_running: bool,
     /// Cached past executions for the conversation view (loaded on open).
     pub(super) conversation_history: Vec<Execution>,
+    /// Per-cue timeline of recent log-arrival instants, used to draw the
+    /// heartbeat strip beneath the running conversation view.
+    pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
 }
 
 impl ClaudeRunState {
@@ -67,6 +69,7 @@ impl ClaudeRunState {
             last_log_flush: Instant::now(),
             expand_running: false,
             conversation_history: Vec::new(),
+            log_heartbeats: HashMap::new(),
         }
     }
 }
@@ -83,6 +86,7 @@ struct ProviderConfig {
     pre_run_script: String,
     post_run_script: String,
     skip_permissions: bool,
+    use_pty: bool,
 }
 
 /// Resolve a `[command]` prefix from cue text, returning the effective prompt text
@@ -207,6 +211,7 @@ fn build_provider_config(
         pre_run_script,
         post_run_script,
         skip_permissions: settings.allow_dangerous_skip_permissions,
+        use_pty: settings.claude_use_pty,
     }
 }
 
@@ -233,39 +238,63 @@ fn run_provider(
     }
 }
 
-fn run_claude_provider(
+/// Normalized outcome from any CLI provider's streaming invocation. Each
+/// provider adapts its specific response into this common shape so the
+/// post-run diff resolution and `ClaudeResult` mapping can be shared via
+/// `finalize_run` — keeping provider-specific drift out of the result path.
+struct ProviderRunOutcome {
+    stdout: String,
+    edited_files: Vec<String>,
+    metrics: claude::RunMetrics,
+    parse_diff: fn(&str) -> Option<String>,
+}
+
+/// Resolve the run diff using a single canonical source order shared by all
+/// providers. The order is, from most to least trustworthy:
+///
+///   1. `git diff` over files the provider explicitly reports it edited.
+///   2. `git diff` over files whose content actually changed vs. the pre-run
+///      baseline (`scoped_working_diff`).
+///   3. A diff parsed out of the provider's response text
+///      (`outcome.parse_diff`).
+///
+/// Filesystem reality (1 and 2) always wins over text-parsed diffs (3): the
+/// working tree is the ground truth, while parsing a diff out of free-form
+/// model output depends on provider-specific formatting and is easily fooled
+/// by truncation, fenced examples, or multiple embedded hunks. Putting the
+/// text-parsed diff last is what keeps the same model output from being
+/// interpreted differently across Claude, Gemini, and OpenCode.
+fn resolve_run_diff(
+    project_root: &Path,
+    baseline: &HashMap<String, Option<u64>>,
+    outcome: &ProviderRunOutcome,
+) -> Option<String> {
+    if !outcome.edited_files.is_empty() {
+        if let Some(d) = git::get_working_diff(project_root, &outcome.edited_files) {
+            return Some(d);
+        }
+    }
+    scoped_working_diff(project_root, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
+}
+
+/// Build a `ClaudeResult` from a provider's outcome (or error). Centralizing
+/// this here prevents the three providers from drifting in how they map
+/// success/failure into the result type.
+fn finalize_run<E: std::fmt::Display>(
     req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
+    baseline: &HashMap<String, Option<u64>>,
+    res: Result<ProviderRunOutcome, E>,
 ) -> ClaudeResult {
-    let res = claude::invoke_claude_streaming(
-        req.prompt,
-        req.project_root,
-        &req.config.model,
-        &req.config.cli_path,
-        &req.config.extra_args,
-        &req.config.extra_args_vec,
-        &req.config.env_vars,
-        &req.config.pre_run_script,
-        &req.config.post_run_script,
-        req.config.skip_permissions,
-        on_log,
-        cancel,
-    );
     match res {
-        Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                claude::parse_diff_from_response(&response.stdout)
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-            };
+        Ok(outcome) => {
+            let diff = resolve_run_diff(req.project_root, baseline, &outcome);
             ClaudeResult {
                 cue_id: req.cue_id,
                 exec_id: req.exec_id,
                 diff,
-                response: response.stdout,
+                response: outcome.stdout,
                 error: None,
-                metrics: response.metrics,
+                metrics: outcome.metrics,
             }
         }
         Err(e) => ClaudeResult {
@@ -279,23 +308,109 @@ fn run_claude_provider(
     }
 }
 
-/// Compute a working-tree diff scoped to only files that were *newly* changed
-/// since a pre-run baseline snapshot. This avoids capturing pre-existing local
-/// modifications in the fallback diff path.
-fn scoped_working_diff(
-    project_root: &Path,
-    baseline_dirty: &std::collections::HashSet<String>,
-) -> Option<String> {
-    let current_dirty = git::get_dirty_files(project_root);
-    let new_files: Vec<String> = current_dirty
-        .keys()
-        .filter(|f| !baseline_dirty.contains(f.as_str()))
-        .cloned()
-        .collect();
-    if new_files.is_empty() {
+fn run_claude_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send + 'static,
+    cancel: Arc<AtomicBool>,
+) -> ClaudeResult {
+    let baseline = snapshot_dirty_state(req.project_root);
+
+    let res = claude::invoke_claude_streaming(
+        req.prompt,
+        req.project_root,
+        &req.config.model,
+        &req.config.cli_path,
+        &req.config.extra_args,
+        &req.config.extra_args_vec,
+        &req.config.env_vars,
+        &req.config.pre_run_script,
+        &req.config.post_run_script,
+        req.config.skip_permissions,
+        req.config.use_pty,
+        on_log,
+        cancel,
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: Vec::new(),
+        metrics: response.metrics,
+        parse_diff: claude::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
+}
+
+/// Fingerprint a file for change detection. Returns `None` when the file
+/// cannot be stat'd (e.g. it has been deleted in the working tree).
+///
+/// Files at or below `HASH_CONTENT_CAP_BYTES` are hashed by content for
+/// exact comparison. Larger files (large logs, binaries, datasets that
+/// happen to be in the dirty set) fall back to a `(size, mtime)`
+/// fingerprint — reading them on every run would otherwise burn memory
+/// and stall the pre-run snapshot.
+fn hash_file_bytes(path: &Path) -> Option<u64> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    const HASH_CONTENT_CAP_BYTES: u64 = 4 * 1024 * 1024;
+
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
         return None;
     }
-    git::get_working_diff(project_root, &new_files)
+    let size = meta.len();
+    let mut hasher = DefaultHasher::new();
+    if size > HASH_CONTENT_CAP_BYTES {
+        size.hash(&mut hasher);
+        if let Ok(mt) = meta.modified() {
+            if let Ok(d) = mt.duration_since(std::time::UNIX_EPOCH) {
+                d.as_nanos().hash(&mut hasher);
+            }
+        }
+        return Some(hasher.finish());
+    }
+    let bytes = std::fs::read(path).ok()?;
+    bytes.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// Snapshot every currently-dirty file's content hash before a run starts.
+/// `scoped_working_diff` consults this to decide whether an already-dirty
+/// file was further modified by the run.
+fn snapshot_dirty_state(project_root: &Path) -> HashMap<String, Option<u64>> {
+    git::get_dirty_files(project_root)
+        .into_keys()
+        .map(|f| {
+            let hash = hash_file_bytes(&project_root.join(&f));
+            (f, hash)
+        })
+        .collect()
+}
+
+/// Compute a working-tree diff scoped to files actually changed by the run.
+///
+/// A file is included when it became dirty during the run (absent from the
+/// baseline) or when its content hash differs from the pre-run snapshot
+/// (the run further edited an already-dirty file). This avoids the prior
+/// failure mode where edits to an already-dirty file produced `None` and
+/// caused the run to be falsely marked "no changes".
+fn scoped_working_diff(
+    project_root: &Path,
+    baseline: &HashMap<String, Option<u64>>,
+) -> Option<String> {
+    let current_dirty = git::get_dirty_files(project_root);
+    let changed: Vec<String> = current_dirty
+        .into_keys()
+        .filter(|f| {
+            let current = hash_file_bytes(&project_root.join(f));
+            match baseline.get(f) {
+                None => true,
+                Some(prev) => prev != &current,
+            }
+        })
+        .collect();
+    if changed.is_empty() {
+        return None;
+    }
+    git::get_working_diff(project_root, &changed)
 }
 
 fn run_gemini_provider(
@@ -303,10 +418,7 @@ fn run_gemini_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    let baseline = snapshot_dirty_state(req.project_root);
 
     let gemini_config = gemini::GeminiRunConfig {
         model: &req.config.model,
@@ -322,40 +434,19 @@ fn run_gemini_provider(
         &gemini_config,
         on_log,
         cancel,
-    );
-    match res {
-        Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                gemini::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-                    .or_else(|| gemini::parse_diff_from_response(&response.stdout))
-            };
-            let metrics = claude::RunMetrics {
-                cost_usd: response.cost_usd.unwrap_or(0.0),
-                duration_ms: response.duration_ms.unwrap_or(0),
-                num_turns: response.num_turns.unwrap_or(0),
-                ..claude::RunMetrics::default()
-            };
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: response.stdout,
-                error: None,
-                metrics,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: response.edited_files,
+        metrics: claude::RunMetrics {
+            cost_usd: response.cost_usd.unwrap_or(0.0),
+            duration_ms: response.duration_ms.unwrap_or(0),
+            num_turns: response.num_turns.unwrap_or(0),
+            ..claude::RunMetrics::default()
         },
-    }
+        parse_diff: gemini::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
 }
 
 fn run_opencode_provider(
@@ -363,13 +454,10 @@ fn run_opencode_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    // Snapshot dirty files before the run so we can scope the fallback diff
-    // to only files newly changed by this run, avoiding the risk of
-    // committing pre-existing local modifications.
-    let baseline_dirty: std::collections::HashSet<String> = git::get_dirty_files(req.project_root)
-        .keys()
-        .cloned()
-        .collect();
+    // Snapshot dirty files before the run so the fallback diff can detect
+    // which files were actually modified — including ones that were already
+    // dirty at baseline — by comparing post-run content to pre-run hashes.
+    let baseline = snapshot_dirty_state(req.project_root);
 
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
@@ -385,40 +473,19 @@ fn run_opencode_provider(
         &opencode_config,
         on_log,
         cancel,
-    );
-    match res {
-        Ok(response) => {
-            let diff = if response.edited_files.is_empty() {
-                opencode::parse_diff_from_response(&response.stdout)
-                    .or_else(|| scoped_working_diff(req.project_root, &baseline_dirty))
-            } else {
-                git::get_working_diff(req.project_root, &response.edited_files)
-                    .or_else(|| opencode::parse_diff_from_response(&response.stdout))
-            };
-            let metrics = claude::RunMetrics {
-                cost_usd: response.cost_usd.unwrap_or(0.0),
-                duration_ms: response.duration_ms.unwrap_or(0),
-                num_turns: response.num_turns.unwrap_or(0),
-                ..claude::RunMetrics::default()
-            };
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: response.stdout,
-                error: None,
-                metrics,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
+    )
+    .map(|response| ProviderRunOutcome {
+        stdout: response.stdout,
+        edited_files: response.edited_files,
+        metrics: claude::RunMetrics {
+            cost_usd: response.cost_usd.unwrap_or(0.0),
+            duration_ms: response.duration_ms.unwrap_or(0),
+            num_turns: response.num_turns.unwrap_or(0),
+            ..claude::RunMetrics::default()
         },
-    }
+        parse_diff: opencode::parse_diff_from_response,
+    });
+    finalize_run(req, &baseline, res)
 }
 
 impl DirigentApp {
@@ -476,7 +543,7 @@ impl DirigentApp {
             let on_log = move |text: &str| {
                 let _ = log_tx.send(LogUpdate {
                     cue_id,
-                    text: super::util::strip_ansi(text),
+                    text: text.to_string(),
                     provider: provider_for_log.clone(),
                 });
             };
@@ -517,6 +584,7 @@ impl DirigentApp {
                 log::error!("Failed to create execution record for cue {cue_id}: {e}");
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
+                self.claude.log_heartbeats.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
                 return false;
             }
@@ -572,6 +640,7 @@ impl DirigentApp {
                 // doesn't stay stuck in "Running" forever.
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
+                self.claude.log_heartbeats.remove(&cue_id);
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
@@ -736,6 +805,7 @@ impl DirigentApp {
         self.claude.running_logs.remove(&result.cue_id);
         self.claude.exec_ids.remove(&result.cue_id);
         self.claude.start_times.remove(&result.cue_id);
+        self.claude.log_heartbeats.remove(&result.cue_id);
     }
 
     /// Detect usage-limit messages in the response or log.
@@ -960,7 +1030,10 @@ impl DirigentApp {
             self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
 
         if self.settings.auto_commit {
-            if agents_started > 0 {
+            if self.claude.show_log == Some(result.cue_id) {
+                // User is watching the log — defer commit so they can review.
+                self.pending_auto_commits.push(result.cue_id);
+            } else if agents_started > 0 {
                 self.pending_auto_commits.push(result.cue_id);
             } else {
                 self.process_commit_review(result.cue_id);
@@ -1083,13 +1156,29 @@ impl DirigentApp {
     /// Drain the log channel, appending text to the per-cue log buffers.
     pub(super) fn drain_log_channel(&mut self) {
         for update in self.claude.log_rx.try_iter() {
+            let cue_id = update.cue_id;
+
+            // Heartbeat accounting: each `\0` is a tick-only sentinel
+            // (emitted by the PTY consumer for filtered empty lines) and
+            // every `\n` in the visible text marks one PTY/provider line.
+            // Count both, then strip sentinels before storing the text.
+            let sentinel_beats = update.text.matches('\0').count();
+            let line_beats = update.text.matches('\n').count();
+            let total_beats = sentinel_beats + line_beats;
+            let cleaned_owned: Option<String> = if sentinel_beats > 0 {
+                Some(update.text.replace('\0', ""))
+            } else {
+                None
+            };
+            let visible_text: &str = cleaned_owned.as_deref().unwrap_or(update.text.as_str());
+
             let buf = &mut self
                 .claude
                 .running_logs
-                .entry(update.cue_id)
+                .entry(cue_id)
                 .or_insert_with(|| (String::new(), update.provider.clone()))
                 .0;
-            buf.push_str(&update.text);
+            buf.push_str(visible_text);
             // Trim to cap: keep the most recent half when the limit is exceeded.
             if buf.len() > Self::RUNNING_LOG_CAP {
                 let keep_from = buf.len() - Self::RUNNING_LOG_CAP / 2;
@@ -1097,8 +1186,26 @@ impl DirigentApp {
                 let trimmed = buf[start..].to_string();
                 *buf = format!("… (log truncated) …\n{}", trimmed);
             }
+
+            // Record a heartbeat tick per PTY/provider line so the strip
+            // pulses for each line — including the empty ones we filter
+            // from the visible output.
+            if total_beats > 0 {
+                let now = Instant::now();
+                let beats = self.claude.log_heartbeats.entry(cue_id).or_default();
+                for _ in 0..total_beats {
+                    beats.push_back(now);
+                }
+                let cutoff = now - Self::HEARTBEAT_WINDOW;
+                while beats.front().is_some_and(|t| *t < cutoff) {
+                    beats.pop_front();
+                }
+            }
         }
     }
+
+    /// Sliding window of activity shown by the heartbeat strip.
+    pub(super) const HEARTBEAT_WINDOW: Duration = Duration::from_secs(10);
 
     /// Periodically flush local running logs to DB (for cross-instance visibility)
     /// and reload remote running logs from DB (for viewing another instance's run).

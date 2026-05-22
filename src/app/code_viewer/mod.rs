@@ -37,12 +37,14 @@ impl DirigentApp {
             self.render_settings_panel(ui);
             return true;
         }
-        if self.diff_review.is_some() {
-            self.render_diff_review_central(ui);
-            return true;
-        }
+        // Log viewer takes priority over diff review so clicking "Log"
+        // always shows the conversation, even if ShowDiff was also triggered.
         if self.claude.show_log.is_some() {
             self.render_running_log_central(ui);
+            return true;
+        }
+        if self.diff_review.is_some() {
+            self.render_diff_review_central(ui);
             return true;
         }
         if self.agent_state.show_output.is_some() {

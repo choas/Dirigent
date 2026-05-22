@@ -8,7 +8,9 @@ mod recent;
 mod semantic_colors;
 mod theme;
 
-pub(crate) use app_settings::{DiffColorScheme, FontWeight, RunningAnimation, Settings};
+pub(crate) use app_settings::{
+    DiffColorScheme, FontWeight, HeartbeatStyle, RunningAnimation, Settings,
+};
 pub(crate) use commands::{default_commands, CueCommand};
 pub(crate) use home_guard::sync_home_guard_hook;
 pub(crate) use io::{load_settings, save_settings};

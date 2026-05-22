@@ -1,0 +1,20 @@
+[package]
+name = "claude_pty"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Rust library that wraps the interactive Claude Code TUI under a PTY and streams its output as typed events."
+
+[dependencies]
+portable-pty = "0.8"
+tokio = { version = "1", features = ["sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio-stream = "0.1"
+regex = "1"
+which = "8"
+vt100 = "0.16"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

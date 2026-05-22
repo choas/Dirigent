@@ -67,7 +67,9 @@ pub(crate) fn run_agent(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // Inject .Dirigent/.env overrides so agent commands use dev credentials.
-    crate::claude::apply_dirigent_env(&mut cmd, project_root);
+    // Agent runs have no live log channel, so any `.Dirigent/.env` permission
+    // warning falls back to `log::warn!` only.
+    crate::claude::apply_dirigent_env(&mut cmd, project_root, &mut |_| {});
 
     // On Unix, create a new process group so we can kill the entire tree on timeout
     #[cfg(unix)]

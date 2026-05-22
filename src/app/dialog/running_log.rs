@@ -1,11 +1,21 @@
+use std::time::Instant;
+
 use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 
 /// Width reserved for the send button and its surrounding padding.
 const SEND_BUTTON_RESERVED_WIDTH: f32 = 44.0;
+
+/// Height of the heartbeat strip drawn below the running conversation.
+const HEARTBEAT_HEIGHT: f32 = 22.0;
+/// Half-width of a single line-arrival pulse, in seconds.
+const HEARTBEAT_PULSE_SECS: f32 = 0.18;
+/// Repaint cadence while a run is active so the heartbeat scrolls smoothly.
+const HEARTBEAT_REPAINT_MS: u64 = 40;
+
 use crate::db::{CueStatus, Execution};
-use crate::settings::CliProvider;
+use crate::settings::{CliProvider, HeartbeatStyle};
 
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
@@ -56,6 +66,13 @@ impl DirigentApp {
         // Reply field at the bottom – rendered as a bottom panel so it stays visible
         if can_reply {
             reply_send = self.render_reply_panel(ui, fs);
+        }
+
+        // Heartbeat strip sits above the reply panel (when present) and at
+        // the bottom of the conversation otherwise.  It only renders for the
+        // local in-flight run; finished runs collapse it away.
+        if is_running && self.settings.heartbeat_style != HeartbeatStyle::Off {
+            self.render_heartbeat_panel(ui, cue_id);
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -141,6 +158,176 @@ impl DirigentApp {
                 current_running_log,
             );
         }
+    }
+
+    /// Render a heartbeat strip at the bottom of the running conversation
+    /// view.  A short peak is drawn each time a new chunk of output arrives
+    /// from the CLI provider, with a flat baseline in between so the user can
+    /// see at a glance that the run is still alive.
+    fn render_heartbeat_panel(&self, ui: &mut egui::Ui, cue_id: i64) {
+        let window_secs = DirigentApp::HEARTBEAT_WINDOW.as_secs_f32();
+        let beats: Vec<f32> = self
+            .claude
+            .log_heartbeats
+            .get(&cue_id)
+            .map(|q| {
+                let now = Instant::now();
+                q.iter()
+                    .map(|t| now.duration_since(*t).as_secs_f32())
+                    .filter(|s| *s <= window_secs)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let stroke_color = self.semantic.accent;
+        let baseline_color = stroke_color.gamma_multiply(0.35);
+        let frame = egui::Frame::NONE
+            .fill(self.semantic.prompt_surface())
+            .inner_margin(egui::Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8));
+
+        egui::Panel::bottom("conversation_heartbeat_panel")
+            .resizable(false)
+            .frame(frame)
+            .show_inside(ui, |ui| {
+                let top_border = ui.available_rect_before_wrap();
+                ui.painter().hline(
+                    top_border.x_range(),
+                    top_border.top(),
+                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                );
+
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), HEARTBEAT_HEIGHT),
+                    egui::Sense::hover(),
+                );
+
+                let baseline_y = rect.center().y + HEARTBEAT_HEIGHT * 0.25;
+                let peak_height = (baseline_y - rect.top() - 2.0).max(4.0);
+
+                // Faint baseline so the strip is visible even when idle.
+                ui.painter().hline(
+                    rect.x_range(),
+                    baseline_y,
+                    egui::Stroke::new(1.0, baseline_color),
+                );
+
+                let style = self.settings.heartbeat_style.clone();
+                match style {
+                    HeartbeatStyle::Heartbeat => {
+                        let n = (rect.width() as usize).clamp(32, 600);
+                        let mut points = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let frac = i as f32 / (n as f32 - 1.0);
+                            let x = rect.left() + frac * rect.width();
+                            let t_from_now = (1.0 - frac) * window_secs;
+                            let mut deflection = 0.0_f32;
+                            for &age in &beats {
+                                deflection += ecg_waveform(t_from_now - age);
+                            }
+                            deflection = deflection.clamp(-0.3, 1.0);
+                            let y = baseline_y - deflection * peak_height;
+                            points.push(egui::pos2(x, y));
+                        }
+                        ui.painter().add(egui::Shape::line(
+                            points,
+                            egui::Stroke::new(1.5, stroke_color),
+                        ));
+                    }
+                    HeartbeatStyle::Wave => {
+                        let n = (rect.width() as usize).clamp(32, 600);
+                        let mut points = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let frac = i as f32 / (n as f32 - 1.0);
+                            let x = rect.left() + frac * rect.width();
+                            let t_from_now = (1.0 - frac) * window_secs;
+                            let mut intensity = 0.0_f32;
+                            for &age in &beats {
+                                let dt = t_from_now - age;
+                                let norm = dt / HEARTBEAT_PULSE_SECS;
+                                let pulse = (-(norm * norm)).exp();
+                                if pulse > intensity {
+                                    intensity = pulse;
+                                }
+                            }
+                            let y = baseline_y - intensity * peak_height;
+                            points.push(egui::pos2(x, y));
+                        }
+                        ui.painter().add(egui::Shape::line(
+                            points,
+                            egui::Stroke::new(1.5, stroke_color),
+                        ));
+                    }
+                    HeartbeatStyle::GabbaPeak => {
+                        // One outlined rectangle per beat: hard edges, flat top.
+                        let rect_half_width = 3.0;
+                        let rect_top = baseline_y - peak_height;
+                        for &age in &beats {
+                            let frac = 1.0 - (age / window_secs);
+                            if !(0.0..=1.0).contains(&frac) {
+                                continue;
+                            }
+                            let x = rect.left() + frac * rect.width();
+                            let bar = egui::Rect::from_min_max(
+                                egui::pos2(x - rect_half_width, rect_top),
+                                egui::pos2(x + rect_half_width, baseline_y),
+                            );
+                            ui.painter().rect_stroke(
+                                bar,
+                                0.0,
+                                egui::Stroke::new(1.5, stroke_color),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                    HeartbeatStyle::MorseCode => {
+                        // Dot at each beat, line connecting to the next beat.
+                        let dot_radius = 2.5;
+                        let line_y = baseline_y - peak_height * 0.5;
+                        let mut sorted: Vec<f32> = beats.clone();
+                        // Oldest first → drawn left-to-right.
+                        sorted
+                            .sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                        for (i, &age) in sorted.iter().enumerate() {
+                            let frac = 1.0 - (age / window_secs);
+                            if !(0.0..=1.0).contains(&frac) {
+                                continue;
+                            }
+                            let x = rect.left() + frac * rect.width();
+                            ui.painter().circle_filled(
+                                egui::pos2(x, line_y),
+                                dot_radius,
+                                stroke_color,
+                            );
+                            let next_x = if i + 1 < sorted.len() {
+                                let next_age = sorted[i + 1];
+                                let nfrac = 1.0 - (next_age / window_secs);
+                                if (0.0..=1.0).contains(&nfrac) {
+                                    rect.left() + nfrac * rect.width()
+                                } else {
+                                    rect.right()
+                                }
+                            } else {
+                                rect.right()
+                            };
+                            let line_start_x = x + dot_radius + 1.5;
+                            let line_end_x = (next_x - dot_radius - 1.5).max(line_start_x);
+                            if line_end_x > line_start_x {
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(line_start_x, line_y),
+                                        egui::pos2(line_end_x, line_y),
+                                    ],
+                                    egui::Stroke::new(1.5, stroke_color),
+                                );
+                            }
+                        }
+                    }
+                    HeartbeatStyle::Off => {}
+                }
+
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS));
+            });
     }
 
     /// Render the reply input panel at the bottom of the conversation view.
@@ -407,15 +594,11 @@ impl DirigentApp {
                         .color(self.semantic.tertiary_text),
                 );
             } else {
-                // ANSI already stripped upstream: streaming callback (claude_run.rs)
-                // and build_completed_result (execution.rs) both strip before persistence.
-                ui.label(egui::RichText::new(current_running_log).monospace().small());
+                self.render_ansi_log(ui, current_running_log);
             }
-        // Completed execution log is already ANSI-stripped upstream
-        // (build_completed_result in execution.rs), no further stripping needed.
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
-                ui.label(egui::RichText::new(log_text.as_str()).monospace().small());
+                self.render_ansi_log(ui, log_text);
             } else {
                 ui.label(
                     egui::RichText::new("(no output)")
@@ -430,6 +613,25 @@ impl DirigentApp {
                     .color(self.semantic.tertiary_text),
             );
         }
+    }
+
+    /// Render log text that may contain ANSI SGR sequences from Claude Code's
+    /// TUI. The Claude PTY emits `lines_ansi` with embedded color escapes; the
+    /// streaming callback now passes them through unstripped so colors survive.
+    /// Red/green ANSI codes are remapped to the user's diff color scheme so
+    /// Claude's inline diff output matches the rest of the app.
+    fn render_ansi_log(&self, ui: &mut egui::Ui, text: &str) {
+        let size = ui.text_style_height(&egui::TextStyle::Small);
+        let font_id = egui::FontId::new(size, egui::FontFamily::Monospace);
+        let default_color = ui.visuals().text_color();
+        let overrides = crate::app::ansi::DiffAnsiOverrides {
+            addition_fg: Some(self.semantic.addition_text()),
+            deletion_fg: Some(self.semantic.deletion_text()),
+            addition_bg: Some(self.semantic.addition_bg()),
+            deletion_bg: Some(self.semantic.deletion_bg()),
+        };
+        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
+        ui.label(job);
     }
 
     /// Open a file picker dialog and add selected files to the reply attachments.
@@ -469,4 +671,21 @@ impl DirigentApp {
                 add_contents(ui);
             });
     }
+}
+
+/// ECG-style waveform: maps a time offset `dt` (seconds from beat centre) to a
+/// vertical deflection in [-0.25, 1.0].  The shape approximates P–QRS–T.
+fn ecg_waveform(dt: f32) -> f32 {
+    let t = dt;
+    // P wave – gentle bump before the QRS
+    let p = 0.12 * (-(((t + 0.11) / 0.035).powi(2))).exp();
+    // Q dip – small downward notch
+    let q = -0.15 * (-(((t + 0.025) / 0.012).powi(2))).exp();
+    // R peak – tall sharp spike
+    let r = 1.0 * (-(((t) / 0.014).powi(2))).exp();
+    // S dip – small downward notch after R
+    let s = -0.25 * (-(((t - 0.028) / 0.012).powi(2))).exp();
+    // T wave – broad recovery bump
+    let tw = 0.18 * (-(((t - 0.11) / 0.045).powi(2))).exp();
+    p + q + r + s + tw
 }

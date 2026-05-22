@@ -1,7 +1,9 @@
 use eframe::egui;
 
 use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM};
-use crate::settings::{CliProvider, DiffColorScheme, FontWeight, RunningAnimation, ThemeChoice};
+use crate::settings::{
+    CliProvider, DiffColorScheme, FontWeight, HeartbeatStyle, RunningAnimation, ThemeChoice,
+};
 
 /// Render a labeled monospace text field row in a settings grid.
 fn cli_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
@@ -130,37 +132,46 @@ impl DirigentApp {
             "claude-haiku-4-5-20251001",
         ];
 
-        egui::ComboBox::from_id_salt("claude_model_combo")
-            .selected_text(&self.settings.claude_model)
-            .show_ui(ui, |ui| {
-                for model in DEFAULT_CLAUDE_MODELS {
-                    ui.selectable_value(&mut self.settings.claude_model, model.to_string(), *model);
-                }
-                if !self.settings.claude_custom_models.is_empty() {
-                    ui.separator();
-                    for model in &self.settings.claude_custom_models {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("claude_model_combo")
+                .selected_text(&self.settings.claude_model)
+                .show_ui(ui, |ui| {
+                    for model in DEFAULT_CLAUDE_MODELS {
                         ui.selectable_value(
                             &mut self.settings.claude_model,
-                            model.clone(),
-                            model.as_str(),
+                            model.to_string(),
+                            *model,
                         );
                     }
-                }
-                // Show the current model even if it's not in either list
-                // (e.g. manually edited in settings JSON).
-                let current = self.settings.claude_model.clone();
-                if !current.is_empty()
-                    && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
-                    && !self.settings.claude_custom_models.contains(&current)
-                {
-                    ui.separator();
-                    ui.selectable_value(
-                        &mut self.settings.claude_model,
-                        current.clone(),
-                        current.as_str(),
-                    );
-                }
-            });
+                    if !self.settings.claude_custom_models.is_empty() {
+                        ui.separator();
+                        for model in &self.settings.claude_custom_models {
+                            ui.selectable_value(
+                                &mut self.settings.claude_model,
+                                model.clone(),
+                                model.as_str(),
+                            );
+                        }
+                    }
+                    let current = self.settings.claude_model.clone();
+                    if !current.is_empty()
+                        && !DEFAULT_CLAUDE_MODELS.contains(&current.as_str())
+                        && !self.settings.claude_custom_models.contains(&current)
+                    {
+                        ui.separator();
+                        ui.selectable_value(
+                            &mut self.settings.claude_model,
+                            current.clone(),
+                            current.as_str(),
+                        );
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.claude_model)
+                    .desired_width(200.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
     }
 
     fn render_opencode_model_combo(&mut self, ui: &mut egui::Ui, refresh_models: &mut bool) {
@@ -231,12 +242,29 @@ impl DirigentApp {
         );
 
         ui.label("Default Flags:");
-        let flags = if self.settings.allow_dangerous_skip_permissions {
-            "-p <prompt> --verbose --output-format stream-json --dangerously-skip-permissions"
-        } else {
-            "-p <prompt> --verbose --output-format stream-json"
+        let flags = match (
+            self.settings.claude_use_pty,
+            self.settings.allow_dangerous_skip_permissions,
+        ) {
+            (true, true) => "(interactive TUI under PTY) --dangerously-skip-permissions",
+            (true, false) => "(interactive TUI under PTY)",
+            (false, true) => "-p <prompt> --dangerously-skip-permissions",
+            (false, false) => "-p <prompt>",
         };
         ui.label(egui::RichText::new(flags).monospace().weak());
+        ui.end_row();
+
+        ui.label("PTY:");
+        ui.checkbox(
+            &mut self.settings.claude_use_pty,
+            "Run Claude Code under a PTY (default)",
+        )
+        .on_hover_text(
+            "When enabled, Claude's interactive TUI is launched under a pseudo-terminal, \
+             confirmation dialogs are auto-accepted, and a Stop hook is installed to \
+             detect run completion reliably. When disabled, Claude is invoked \
+             in headless `-p <prompt>` mode with stdout/stderr piped directly.",
+        );
         ui.end_row();
 
         ui.label("Yolo:");
@@ -447,6 +475,20 @@ impl DirigentApp {
             );
             ui.end_row();
         }
+
+        ui.label("Heart Beat:");
+        egui::ComboBox::from_id_salt("heartbeat_style_combo")
+            .selected_text(self.settings.heartbeat_style.display_name())
+            .show_ui(ui, |ui| {
+                for style in HeartbeatStyle::all() {
+                    ui.selectable_value(
+                        &mut self.settings.heartbeat_style,
+                        style.clone(),
+                        style.display_name(),
+                    );
+                }
+            });
+        ui.end_row();
 
         ui.label("Diff Colors:");
         egui::ComboBox::from_id_salt("diff_color_combo")

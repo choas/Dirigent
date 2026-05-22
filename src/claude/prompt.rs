@@ -10,6 +10,13 @@ const AUTO_CONTEXT_MAX_BYTES: usize = 100_000;
 const USER_TEXT_BEGIN: &str = "<!-- BEGIN_USER_TEXT -->";
 const USER_TEXT_END: &str = "<!-- END_USER_TEXT -->";
 
+/// Sentinel placed immediately after the `<commit-message>` example in
+/// the prompt. The PTY captures the rendered prompt as part of the
+/// response, so without this marker `extract_commit_message` would find
+/// the example's tags via `rfind` whenever Claude didn't emit its own.
+/// Extraction skips everything up to (and including) the last occurrence.
+const COMMIT_EXAMPLE_END: &str = "<!-- END_COMMIT_EXAMPLE -->";
+
 /// Parse a `[command]` prefix from cue text.
 ///
 /// Returns `Some((command_name, remaining_text))` if the text starts with
@@ -91,10 +98,15 @@ pub(crate) fn build_prompt_with_auto_context(
              wrapped in <commit-message> tags. This will be used as the git commit \
              message body. Keep it concise and descriptive (what was the problem, \
              what was changed, and why). Example:\n\n\
-             <commit-message>\nRefactored the auth middleware to validate tokens \
+             <commit-message>Refactored the auth middleware to validate tokens \
              before checking permissions, fixing a bug where expired tokens could \
-             bypass access controls.\n</commit-message>",
-            USER_TEXT_BEGIN, cue_text, USER_TEXT_END, images_section, auto_ctx_section,
+             bypass access controls.</commit-message>\n{}",
+            USER_TEXT_BEGIN,
+            cue_text,
+            USER_TEXT_END,
+            images_section,
+            auto_ctx_section,
+            COMMIT_EXAMPLE_END,
         )
     } else {
         let line_ref = match line_number_end {
@@ -113,9 +125,9 @@ pub(crate) fn build_prompt_with_auto_context(
              wrapped in <commit-message> tags. This will be used as the git commit \
              message body. Keep it concise and descriptive (what was the problem, \
              what was changed, and why). Example:\n\n\
-             <commit-message>\nRefactored the auth middleware to validate tokens \
+             <commit-message>Refactored the auth middleware to validate tokens \
              before checking permissions, fixing a bug where expired tokens could \
-             bypass access controls.\n</commit-message>",
+             bypass access controls.</commit-message>\n{}",
             USER_TEXT_BEGIN,
             cue_text,
             USER_TEXT_END,
@@ -123,6 +135,7 @@ pub(crate) fn build_prompt_with_auto_context(
             line_ref,
             file_path,
             auto_ctx_section,
+            COMMIT_EXAMPLE_END,
         )
     }
 }
@@ -341,10 +354,17 @@ pub(crate) fn build_reply_prompt(
          wrapped in <commit-message> tags. This will be used as the git commit \
          message body. Keep it concise and descriptive (what was the problem, \
          what was changed, and why). Example:\n\n\
-         <commit-message>\nRefactored the auth middleware to validate tokens \
+         <commit-message>Refactored the auth middleware to validate tokens \
          before checking permissions, fixing a bug where expired tokens could \
-         bypass access controls.\n</commit-message>",
-        original_cue, images_section, context, previous_diff, USER_TEXT_BEGIN, reply, USER_TEXT_END,
+         bypass access controls.</commit-message>\n{}",
+        original_cue,
+        images_section,
+        context,
+        previous_diff,
+        USER_TEXT_BEGIN,
+        reply,
+        USER_TEXT_END,
+        COMMIT_EXAMPLE_END,
     )
 }
 
@@ -370,14 +390,30 @@ pub(crate) fn extract_user_text_from_prompt(prompt: &str) -> String {
 ///
 /// Looks for `<commit-message>…</commit-message>` tags in the response text.
 /// Returns the inner text trimmed, or `None` if no tags are found.
+///
+/// The PTY pipeline echoes the user's prompt back into the response. Since
+/// the prompt itself contains a literal `<commit-message>…</commit-message>`
+/// example, `rfind` would otherwise pick that example up whenever Claude
+/// didn't emit its own tag. To avoid this, we skip past the last
+/// `COMMIT_EXAMPLE_END` marker before searching.
+///
+/// The Claude TUI also tends to render real newlines as the literal two
+/// characters `\` + `n` (because its input is single-line), and Claude
+/// mirrors that style in replies. We convert any such literal `\n` back
+/// to real newlines so the commit subject doesn't end up with `\n`s.
 pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let start_tag = "<commit-message>";
     let end_tag = "</commit-message>";
-    let begin = response.rfind(start_tag)?;
+    let search_region = match response.rfind(COMMIT_EXAMPLE_END) {
+        Some(idx) => &response[idx + COMMIT_EXAMPLE_END.len()..],
+        None => response,
+    };
+    let begin = search_region.rfind(start_tag)?;
     let content_start = begin + start_tag.len();
-    let rest = &response[content_start..];
+    let rest = &search_region[content_start..];
     let end = rest.find(end_tag)?;
-    let msg = rest[..end].trim();
+    let msg = rest[..end].replace("\\n", "\n");
+    let msg = msg.trim();
     if msg.is_empty() {
         None
     } else {
@@ -582,5 +618,41 @@ mod tests {
     fn extract_commit_message_uses_last_occurrence() {
         let response = "Previously: <commit-message>\nold message\n</commit-message>\n\nUpdated: <commit-message>\nnew message\n</commit-message>";
         assert_eq!(extract_commit_message(response).unwrap(), "new message");
+    }
+
+    #[test]
+    fn extract_commit_message_skips_prompt_example() {
+        // The PTY captures the prompt as part of the response. When Claude
+        // emits a real commit-message after the example block, extraction
+        // must pick Claude's tag, not the example.
+        let prompt = build_prompt("Fix the bug", "", 0, None, &[], None);
+        let response = format!(
+            "{}\n\nClaude's reply:\n<commit-message>\nFixed the actual bug.\n</commit-message>",
+            prompt,
+        );
+        assert_eq!(
+            extract_commit_message(&response).unwrap(),
+            "Fixed the actual bug.",
+        );
+    }
+
+    #[test]
+    fn extract_commit_message_returns_none_when_only_prompt_example_present() {
+        // When the response contains only the echoed prompt (no Claude reply
+        // with real tags), extraction must NOT fall back to the example.
+        let prompt = build_prompt("Fix the bug", "", 0, None, &[], None);
+        assert!(extract_commit_message(&prompt).is_none());
+    }
+
+    #[test]
+    fn extract_commit_message_converts_literal_backslash_n() {
+        // Claude TUI renders real newlines as the literal characters `\` + `n`
+        // and Claude mirrors that in replies. The extractor must convert them
+        // back to real newlines so the commit subject is clean.
+        let response = "<commit-message>\\nFixed the actual bug.\\n</commit-message>";
+        assert_eq!(
+            extract_commit_message(response).unwrap(),
+            "Fixed the actual bug.",
+        );
     }
 }
