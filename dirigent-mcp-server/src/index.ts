@@ -149,12 +149,16 @@ server.tool(
     tag: z.string().optional().describe("Grouping tag"),
   },
   async ({ text, file_path, line_number, line_number_end, tag }) => {
+    const validEnd =
+      line_number_end != null && line_number_end >= line_number
+        ? line_number_end
+        : null;
     const result = db
       .prepare(
         `INSERT INTO cues (text, file_path, line_number, line_number_end, status, tag)
        VALUES (?, ?, ?, ?, 'inbox', ?)`
       )
-      .run(text, file_path, line_number, line_number_end ?? null, tag ?? null);
+      .run(text, file_path, line_number, validEnd, tag ?? null);
     const id = result.lastInsertRowid;
     logActivity(id, "Created via MCP");
     return {
