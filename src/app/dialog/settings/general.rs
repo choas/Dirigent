@@ -260,8 +260,9 @@ impl DirigentApp {
             "Run Claude Code under a PTY (default)",
         )
         .on_hover_text(
-            "When enabled, Claude's interactive TUI is launched under a pseudo-terminal \
-             and confirmation dialogs are auto-accepted. When disabled, Claude is invoked \
+            "When enabled, Claude's interactive TUI is launched under a pseudo-terminal, \
+             confirmation dialogs are auto-accepted, and a Stop hook is installed to \
+             detect run completion reliably. When disabled, Claude is invoked \
              in headless `-p <prompt>` mode with stdout/stderr piped directly.",
         );
         ui.end_row();

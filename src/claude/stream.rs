@@ -97,6 +97,7 @@ pub(super) fn consume_pty_events(
                 if prompt_sent {
                     if let Some(sentinel) = done_sentinel {
                         if sentinel.exists() {
+                            on_log("\n⏎ Stop hook fired — exiting.\n");
                             graceful_exit(session);
                             break;
                         }

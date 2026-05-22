@@ -116,6 +116,9 @@ fn invoke_pty(
     builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
 
     let done_hook = DoneHook::install(project_root);
+    if done_hook.is_some() {
+        on_log("⏎ Stop hook installed\n");
+    }
 
     let mut session = builder.open().map_err(|e| match e {
         claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
