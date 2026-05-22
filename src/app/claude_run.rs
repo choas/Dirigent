@@ -184,11 +184,13 @@ fn build_provider_config(
             } else {
                 settings.dirigent_mcp_server_path.clone()
             };
-            let mcp_arg = format!(
-                "--mcp-server \"{} {}\"",
-                mcp_bin,
-                db_path.display()
-            );
+            let db_path_str = db_path.display().to_string();
+            let quoted_bin = shlex::try_quote(&mcp_bin).unwrap_or(mcp_bin.clone().into());
+            let quoted_db = shlex::try_quote(&db_path_str).unwrap_or(db_path_str.clone().into());
+            let server_cmd = format!("{} {}", quoted_bin, quoted_db);
+            let quoted_server_cmd =
+                shlex::try_quote(&server_cmd).unwrap_or(server_cmd.clone().into());
+            let mcp_arg = format!("--mcp-server {}", quoted_server_cmd);
             if extra_args.is_empty() {
                 extra_args = mcp_arg;
             } else {
