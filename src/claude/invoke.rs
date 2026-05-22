@@ -28,6 +28,7 @@ pub(crate) fn invoke_claude_streaming(
     model: &str,
     cli_path: &str,
     extra_args: &str,
+    extra_args_vec: &[String],
     env_vars: &str,
     pre_run_script: &str,
     post_run_script: &str,
@@ -36,6 +37,20 @@ pub(crate) fn invoke_claude_streaming(
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
+    use std::process::Stdio;
+
+    let claude_bin = resolve_claude_binary(cli_path)?;
+    let mut cmd = build_claude_command(
+        claude_bin,
+        prompt,
+        model,
+        extra_args,
+        extra_args_vec,
+        env_vars,
+        skip_permissions,
+    );
+
+    // Run pre-run script first so it can modify .Dirigent/.env before we read it.
     run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
 
     let result = if use_pty {

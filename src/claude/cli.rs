@@ -3,6 +3,65 @@ use std::process::Command;
 
 use super::types::ClaudeError;
 
+/// Resolve the Claude binary path and verify it exists on PATH.
+pub(super) fn resolve_claude_binary(cli_path: &str) -> Result<&str, ClaudeError> {
+    let claude_bin = if cli_path.is_empty() {
+        "claude"
+    } else {
+        cli_path
+    };
+    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
+    Ok(claude_bin)
+}
+
+/// Build the `Command` with prompt, flags, extra args, and env vars.
+pub(super) fn build_claude_command(
+    claude_bin: &str,
+    prompt: &str,
+    model: &str,
+    extra_args: &str,
+    extra_args_vec: &[String],
+    env_vars: &str,
+    skip_permissions: bool,
+) -> Command {
+    let mut cmd = Command::new(claude_bin);
+    cmd.arg("-p")
+        .arg(prompt)
+        .arg("--verbose")
+        .arg("--output-format")
+        .arg("stream-json");
+    if skip_permissions {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+    if !model.is_empty() {
+        cmd.arg("--model").arg(model);
+    }
+    append_extra_args(&mut cmd, extra_args);
+    for arg in extra_args_vec {
+        if !arg.is_empty() {
+            cmd.arg(arg);
+        }
+    }
+    apply_env_vars(&mut cmd, env_vars);
+    cmd
+}
+
+/// Append extra arguments to the command, respecting shell quoting.
+/// Falls back to whitespace splitting if quotes are malformed.
+fn append_extra_args(cmd: &mut Command, extra_args: &str) {
+    let args = shlex::split(extra_args).unwrap_or_else(|| {
+        log::warn!(
+            "extra args contain malformed quotes, falling back to whitespace splitting: {extra_args}"
+        );
+        extra_args.split_whitespace().map(String::from).collect()
+    });
+    for arg in args {
+        if !arg.is_empty() {
+            cmd.arg(arg);
+        }
+    }
+}
+
 /// Resolve environment variable **names** (one per line, # comments allowed)
 /// from the current process environment and apply them to the command.
 /// Lines containing `=` are treated as bare names (the `=…` suffix is stripped)
