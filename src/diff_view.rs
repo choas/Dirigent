@@ -180,6 +180,20 @@ pub(crate) struct DiffSearchHighlight<'a> {
     pub current: Option<(usize, usize, usize)>,
 }
 
+/// Return the line number of the first non-context change in the file (new side).
+fn first_change_line(file: &FileDiff) -> usize {
+    for hunk in &file.hunks {
+        for line in &hunk.lines {
+            if line.kind == DiffLineKind::Addition {
+                if let Some(n) = line.new_lineno {
+                    return n;
+                }
+            }
+        }
+    }
+    file.hunks.first().map(|h| h.new_start).unwrap_or(1)
+}
+
 /// Count additions and deletions in a file.
 fn count_file_changes(file: &FileDiff) -> (usize, usize) {
     file.hunks
@@ -192,26 +206,45 @@ fn count_file_changes(file: &FileDiff) -> (usize, usize) {
         })
 }
 
-/// Render the collapsible file header. Returns true if clicked.
+/// Render the collapsible file header.
+/// Returns `(collapse_toggled, open_clicked)`.
 fn render_file_header(
     ui: &mut egui::Ui,
     file: &FileDiff,
     is_collapsed: bool,
     colors: &SemanticColors,
-) -> bool {
+) -> (bool, bool) {
     let arrow = if is_collapsed { "\u{25B6}" } else { "\u{25BC}" };
     let (additions, deletions) = count_file_changes(file);
     let stats = format!(" +{} -{}", additions, deletions);
 
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
-                .strong()
-                .color(colors.diff_header()),
-        )
-        .sense(egui::Sense::click()),
-    )
-    .clicked()
+    let mut toggled = false;
+    let mut open = false;
+
+    ui.horizontal(|ui| {
+        if ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
+                        .strong()
+                        .color(colors.diff_header()),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            toggled = true;
+        }
+        if ui
+            .small_button("\u{2197}")
+            .on_hover_text("Open file at first change")
+            .clicked()
+        {
+            open = true;
+        }
+    });
+
+    (toggled, open)
 }
 
 /// Toggle file collapsed state.
@@ -225,17 +258,24 @@ fn toggle_collapsed(collapsed_files: &mut HashSet<usize>, file_idx: usize) {
 
 /// Iterate over files, rendering collapsible headers and calling `render_hunks`
 /// for each expanded file. Shared by inline and side-by-side modes.
+/// Returns `Some((path, line))` if the user clicked the open button on a file.
 fn render_diff_files(
     ui: &mut egui::Ui,
     diff: &ParsedDiff,
     collapsed_files: &mut HashSet<usize>,
     colors: &SemanticColors,
     mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize),
-) {
+) -> Option<(String, usize)> {
+    let mut open_request = None;
+
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
-        if render_file_header(ui, file, is_collapsed, colors) {
+        let (toggled, open) = render_file_header(ui, file, is_collapsed, colors);
+        if toggled {
             toggle_collapsed(collapsed_files, file_idx);
+        }
+        if open {
+            open_request = Some((file.new_path.clone(), first_change_line(file)));
         }
 
         if collapsed_files.contains(&file_idx) {
@@ -247,6 +287,8 @@ fn render_diff_files(
         render_hunks(ui, file, file_idx);
         ui.separator();
     }
+
+    open_request
 }
 
 /// Compute effective background for a diff line considering search state.
@@ -321,10 +363,10 @@ pub(crate) fn render_inline_diff(
     collapsed_files: &mut HashSet<usize>,
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
-) {
+) -> Option<(String, usize)> {
     render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
         render_inline_file_hunks(ui, file, file_idx, search, colors);
-    });
+    })
 }
 
 /// Render all hunks for a single file in inline mode.
@@ -465,13 +507,13 @@ pub(crate) fn render_side_by_side_diff(
     collapsed_files: &mut HashSet<usize>,
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
-) {
+) -> Option<(String, usize)> {
     let dc = DiffColors::from_semantic(colors);
     let sep_color = colors.separator;
 
     render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
         render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color);
-    });
+    })
 }
 
 /// Render all hunks for a single file in side-by-side mode.
