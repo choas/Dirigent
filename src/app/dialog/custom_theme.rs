@@ -552,6 +552,23 @@ Return ONLY the JSON object."#,
             .map_err(|e| format!("Gemini invocation failed: {e}"))?;
             result.stdout
         }
+        CliProvider::Acp => {
+            let config = crate::acp::AcpRunConfig {
+                binary: pf.cli_path,
+                args: pf.extra_args,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
+            };
+            let result = crate::acp::invoke_acp_agent(
+                &prompt,
+                project_root,
+                &config,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("ACP agent invocation failed: {e}"))?;
+            result.response_text
+        }
     };
 
     parse_theme_json(&response_text, is_dark)

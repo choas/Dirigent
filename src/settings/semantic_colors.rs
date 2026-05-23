@@ -180,6 +180,15 @@ impl SemanticColors {
             CliProvider::Claude => self.claude_color(),
             CliProvider::OpenCode => self.opencode_color(),
             CliProvider::Gemini => self.gemini_color(),
+            CliProvider::Acp => self.acp_color(),
+        }
+    }
+
+    pub fn acp_color(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(0, 200, 180)
+        } else {
+            egui::Color32::from_rgb(0, 150, 136)
         }
     }
 

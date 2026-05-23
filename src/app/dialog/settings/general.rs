@@ -117,6 +117,9 @@ impl DirigentApp {
             CliProvider::Claude => self.render_claude_model_combo(ui),
             CliProvider::OpenCode => self.render_opencode_model_combo(ui, refresh_models),
             CliProvider::Gemini => self.render_gemini_model_combo(ui, refresh_models),
+            CliProvider::Acp => {
+                ui.label("(configured via ACP agent binary)");
+            }
         }
         ui.end_row();
     }
@@ -212,6 +215,9 @@ impl DirigentApp {
             }
             CliProvider::Gemini => {
                 self.render_settings_gemini_cli_fields(ui);
+            }
+            CliProvider::Acp => {
+                self.render_settings_acp_cli_fields(ui);
             }
         }
     }
@@ -333,6 +339,42 @@ impl DirigentApp {
             ui,
             "Post-run Script:",
             &mut self.settings.gemini_post_run_script,
+            "shell command after run",
+        );
+    }
+
+    fn render_settings_acp_cli_fields(&mut self, ui: &mut egui::Ui) {
+        cli_field(
+            ui,
+            "Agent Binary:",
+            &mut self.settings.acp_agent_binary,
+            "e.g. claude-agent-acp, goose",
+        );
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.acp_agent_args,
+            "additional args for the agent",
+        );
+
+        ui.label("Protocol:");
+        ui.label(
+            egui::RichText::new("ACP v1 (JSON-RPC 2.0 over stdio)")
+                .monospace()
+                .weak(),
+        );
+        ui.end_row();
+
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.acp_pre_run_script,
+            "shell command before run",
+        );
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.acp_post_run_script,
             "shell command after run",
         );
     }

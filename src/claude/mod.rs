@@ -6,7 +6,9 @@ mod prompt;
 mod stream;
 mod types;
 
-pub(crate) use cli::{apply_dirigent_env, apply_env_vars, load_env_var_with_dirigent_fallback};
+pub(crate) use cli::{
+    apply_dirigent_env, apply_env_vars, load_env_var_with_dirigent_fallback, run_lifecycle_script,
+};
 pub(crate) use diff_parser::{parse_diff_from_response, parse_hunk_header};
 pub(crate) use import_cues::{
     build_import_prompt, extract_pr_label, is_import_request, parse_import_cues, ImportedCue,

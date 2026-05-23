@@ -429,6 +429,23 @@ fn run_workflow_analysis(
             .map_err(|e| format!("Gemini invocation failed: {}", e))?;
             result.stdout
         }
+        CliProvider::Acp => {
+            let config = crate::acp::AcpRunConfig {
+                binary: pf.cli_path,
+                args: pf.extra_args,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
+            };
+            let result = crate::acp::invoke_acp_agent(
+                prompt,
+                project_root,
+                &config,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("ACP agent invocation failed: {}", e))?;
+            result.response_text
+        }
     };
 
     let (plan, warning) = workflow::parse_workflow_response(&response_text, expected_ids);

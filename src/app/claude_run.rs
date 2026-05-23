@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
+use crate::acp;
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
@@ -181,6 +182,7 @@ fn run_provider(
         CliProvider::Claude => run_claude_provider(req, on_log, cancel),
         CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
         CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
+        CliProvider::Acp => run_acp_provider(req, on_log, cancel),
     }
 }
 
@@ -358,6 +360,49 @@ fn run_opencode_provider(
                 response: response.stdout,
                 error: None,
                 metrics,
+            }
+        }
+        Err(e) => ClaudeResult {
+            cue_id: req.cue_id,
+            exec_id: req.exec_id,
+            diff: None,
+            response: String::new(),
+            error: Some(e.to_string()),
+            metrics: claude::RunMetrics::default(),
+        },
+    }
+}
+
+fn run_acp_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send + 'static,
+    cancel: Arc<AtomicBool>,
+) -> ClaudeResult {
+    let acp_config = acp::AcpRunConfig {
+        binary: &req.config.cli_path,
+        args: &req.config.extra_args,
+        pre_run_script: &req.config.pre_run_script,
+        post_run_script: &req.config.post_run_script,
+    };
+    let res = acp::invoke_acp_agent(req.prompt, req.project_root, &acp_config, on_log, cancel);
+    match res {
+        Ok(result) => {
+            let diff = if result.diffs.is_empty() {
+                if result.edited_files.is_empty() {
+                    None
+                } else {
+                    git::get_working_diff(req.project_root, &result.edited_files)
+                }
+            } else {
+                acp::diffs_to_unified(&result.diffs)
+            };
+            ClaudeResult {
+                cue_id: req.cue_id,
+                exec_id: req.exec_id,
+                diff,
+                response: result.response_text,
+                error: None,
+                metrics: result.metrics,
             }
         }
         Err(e) => ClaudeResult {

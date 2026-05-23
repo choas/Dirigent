@@ -169,7 +169,7 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
 ///
 /// Returns `Err` for pre-run failures (abort the run), logs but ignores
 /// post-run failures when `fail_on_error` is false.
-pub(super) fn run_lifecycle_script(
+pub(crate) fn run_lifecycle_script(
     script: &str,
     label: &str,
     project_root: &Path,

@@ -160,6 +160,16 @@ pub(crate) struct Settings {
     pub gemini_pre_run_script: String,
     #[serde(default)]
     pub gemini_post_run_script: String,
+    /// Path to the ACP agent binary (e.g. `claude-agent-acp`, `goose`, or a custom path).
+    #[serde(default)]
+    pub acp_agent_binary: String,
+    /// Extra arguments passed to the ACP agent binary on spawn.
+    #[serde(default)]
+    pub acp_agent_args: String,
+    #[serde(default)]
+    pub acp_pre_run_script: String,
+    #[serde(default)]
+    pub acp_post_run_script: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -265,6 +275,14 @@ impl Settings {
                 pre_run_script: &self.gemini_pre_run_script,
                 post_run_script: &self.gemini_post_run_script,
             },
+            CliProvider::Acp => ProviderFields {
+                model: "",
+                cli_path: &self.acp_agent_binary,
+                extra_args: &self.acp_agent_args,
+                env_vars: "",
+                pre_run_script: &self.acp_pre_run_script,
+                post_run_script: &self.acp_post_run_script,
+            },
         }
     }
 }
@@ -306,6 +324,10 @@ impl Default for Settings {
             gemini_env_vars: String::new(),
             gemini_pre_run_script: String::new(),
             gemini_post_run_script: String::new(),
+            acp_agent_binary: String::new(),
+            acp_agent_args: String::new(),
+            acp_pre_run_script: String::new(),
+            acp_post_run_script: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,
