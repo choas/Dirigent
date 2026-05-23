@@ -107,7 +107,15 @@ impl DirigentApp {
         self.needs_theme_apply = true;
         self.logo_texture = None;
         #[cfg(target_os = "macos")]
-        crate::app::update_macos_dock_icon(&self.settings.custom_dock_icon_path);
+        {
+            crate::app::update_macos_dock_icon(&self.settings.custom_dock_icon_path);
+            let folder = self
+                .project_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| self.project_root.to_string_lossy().to_string());
+            crate::app::set_macos_dock_name(&folder);
+        }
 
         // Update window title to show the new folder name
         if let Some(ctx) = self.egui_ctx.get() {

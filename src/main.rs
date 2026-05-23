@@ -428,6 +428,9 @@ fn main() -> eframe::Result {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
+
+            #[cfg(target_os = "macos")]
+            app::set_macos_dock_name(&project_name);
             let mut app = app::DirigentApp::new(project_root, show_repo_picker);
             if show_repo_picker {
                 app.show_repo_picker = true;

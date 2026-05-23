@@ -104,6 +104,41 @@ use types::{
     GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
 };
 
+/// Set the macOS Dock label and menu bar title to the given project name.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_macos_dock_name(name: &str) {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+    use std::ffi::CString;
+
+    let c_name = match CString::new(name) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    unsafe {
+        let ns_string = Class::get("NSString").unwrap();
+        let ns_name: *mut Object = msg_send![ns_string, stringWithUTF8String: c_name.as_ptr()];
+
+        let ns_process_info = Class::get("NSProcessInfo").unwrap();
+        let process_info: *mut Object = msg_send![ns_process_info, processInfo];
+        let _: () = msg_send![process_info, setProcessName: ns_name];
+
+        let ns_app = Class::get("NSApplication").unwrap();
+        let app: *mut Object = msg_send![ns_app, sharedApplication];
+        let main_menu: *mut Object = msg_send![app, mainMenu];
+        if !main_menu.is_null() {
+            let first_item: *mut Object = msg_send![main_menu, itemAtIndex: 0isize];
+            if !first_item.is_null() {
+                let sub_menu: *mut Object = msg_send![first_item, submenu];
+                if !sub_menu.is_null() {
+                    let _: () = msg_send![sub_menu, setTitle: ns_name];
+                }
+            }
+        }
+    }
+}
+
 /// Update the macOS Dock icon at runtime from a custom PNG path.
 /// Falls back to the built-in logo when the path is empty or unreadable.
 #[cfg(target_os = "macos")]
