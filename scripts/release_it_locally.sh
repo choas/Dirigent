@@ -8,6 +8,9 @@ APP_PATH="${INSTALL_DIR}/${APP_NAME}.app"
 echo "Building release..."
 cargo build --release
 
+echo "Installing CLI to ~/.cargo/bin..."
+cargo install --path . --offline
+
 echo "Bundling .app..."
 ./scripts/bundle_macos.sh --skip-build
 
