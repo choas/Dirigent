@@ -268,6 +268,10 @@ pub(crate) struct Settings {
     /// Show frame timing breakdown and memory usage in the status bar.
     #[serde(default)]
     pub show_frame_timing: bool,
+    /// Path to a custom PNG icon used for the macOS Dock and in-app logo.
+    /// When empty, the built-in logo.png is used.
+    #[serde(default)]
+    pub custom_dock_icon_path: String,
     /// Path to the Dirigent MCP server binary (e.g. `dirigent-mcp` or full path).
     /// When empty, defaults to `dirigent-mcp` on $PATH.
     #[serde(default)]
@@ -384,6 +388,7 @@ impl Default for Settings {
             allow_dangerous_skip_permissions: true,
             claude_use_pty: true,
             show_frame_timing: false,
+            custom_dock_icon_path: String::new(),
             dirigent_mcp_server_path: String::new(),
             dirigent_mcp_db_path: String::new(),
         }

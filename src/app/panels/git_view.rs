@@ -150,6 +150,7 @@ impl DirigentApp {
                     &tree,
                     0,
                     &mut self.git.git_view_expanded_dirs,
+                    &self.git.selected_files,
                     &self.semantic,
                     self.settings.font_size,
                     "",
@@ -173,6 +174,24 @@ impl DirigentApp {
                 self.handle_add_to_gitignore(&abs_path);
                 self.reload_git_info();
             }
+            Some(GitViewAction::Restore(rel_path)) => {
+                match git::restore_file(&self.project_root, &rel_path) {
+                    Ok(()) => {
+                        self.git.selected_files.remove(&rel_path);
+                        self.set_status_message(format!("Restored {rel_path}"));
+                        self.reload_open_tabs();
+                        self.reload_git_info();
+                    }
+                    Err(e) => {
+                        self.set_status_message(format!("Restore failed: {e}"));
+                    }
+                }
+            }
+            Some(GitViewAction::ToggleSelect(rel_path)) => {
+                if !self.git.selected_files.remove(&rel_path) {
+                    self.git.selected_files.insert(rel_path);
+                }
+            }
             None => {}
         }
     }
@@ -181,12 +200,17 @@ impl DirigentApp {
         if self.git.dirty_files.is_empty() {
             return;
         }
+        let has_selection = !self.git.selected_files.is_empty();
         egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
             ui.add_space(SPACE_SM);
-            let btn = egui::Button::new(
-                egui::RichText::new("\u{2714} Commit Changes").color(self.semantic.accent_text()),
-            )
-            .fill(self.semantic.accent);
+            let label = if has_selection {
+                "\u{2714} Commit Selected"
+            } else {
+                "\u{2714} Commit Changes"
+            };
+            let btn =
+                egui::Button::new(egui::RichText::new(label).color(self.semantic.accent_text()))
+                    .fill(self.semantic.accent);
             if ui
                 .add_sized([ui.available_width(), 0.0], btn)
                 .on_hover_text("Create a Cue to commit with an AI-generated message")
@@ -252,9 +276,17 @@ impl DirigentApp {
     }
 
     fn create_commit_cue(&mut self) {
-        let text =
-            "Commit all uncommitted changes with a useful commit message describing the changes";
-        match self.db.insert_global_cue(text) {
+        let text = if self.git.selected_files.is_empty() {
+            "Commit all uncommitted changes with a useful commit message describing the changes"
+                .to_string()
+        } else {
+            let files: Vec<&str> = self.git.selected_files.iter().map(|s| s.as_str()).collect();
+            format!(
+                "Commit only the following files with a useful commit message describing the changes: {}",
+                files.join(", ")
+            )
+        };
+        match self.db.insert_global_cue(&text) {
             Ok(id) => {
                 self.reload_cues();
                 self.activate_inbox_cue(id, "Created from Git View");
@@ -270,6 +302,8 @@ enum GitViewAction {
     ClickFile(String),
     Delete(String),
     AddToGitignore(String),
+    Restore(String),
+    ToggleSelect(String),
 }
 
 fn render_dirty_tree_children(
@@ -277,6 +311,7 @@ fn render_dirty_tree_children(
     node: &DirtyTreeNode,
     depth: usize,
     expanded: &mut HashSet<String>,
+    selected_files: &HashSet<String>,
     semantic: &SemanticColors,
     font_size: f32,
     parent_path: &str,
@@ -328,6 +363,7 @@ fn render_dirty_tree_children(
                     child,
                     depth + 1,
                     expanded,
+                    selected_files,
                     semantic,
                     font_size,
                     &node_path,
@@ -338,14 +374,27 @@ fn render_dirty_tree_children(
             let (row_rect, response) = allocate_tree_row(ui);
             paint_hover_highlight(ui, &response, row_rect);
 
+            let is_selected = selected_files.contains(rel_path.as_str());
             let status_color = match status {
                 'D' => semantic.danger,
                 'A' | '?' => semantic.success,
                 _ => semantic.warning,
             };
             let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
+            let name_offset = if is_selected {
+                ui.painter().text(
+                    text_pos,
+                    egui::Align2::LEFT_CENTER,
+                    "\u{2714} ",
+                    egui::FontId::proportional(font_size),
+                    semantic.accent,
+                );
+                14.0
+            } else {
+                0.0
+            };
             ui.painter().text(
-                text_pos,
+                text_pos + egui::vec2(name_offset, 0.0),
                 egui::Align2::LEFT_CENTER,
                 name,
                 egui::FontId::proportional(font_size),
@@ -359,6 +408,17 @@ fn render_dirty_tree_children(
             }
 
             response.context_menu(|ui| {
+                let is_selected = selected_files.contains(rel_path.as_str());
+                let select_label = if is_selected { "Deselect" } else { "Select" };
+                if ui.button(select_label).clicked() {
+                    *action = Some(GitViewAction::ToggleSelect(rel_path.clone()));
+                    ui.close();
+                }
+                if ui.button("Restore").clicked() {
+                    *action = Some(GitViewAction::Restore(rel_path.clone()));
+                    ui.close();
+                }
+                ui.separator();
                 if ui
                     .button(egui::RichText::new("Delete File").color(semantic.danger))
                     .clicked()

@@ -595,6 +595,8 @@ pub(crate) struct GitState {
     pub(super) editing_pattern: Option<(i64, String, String)>,
     /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
     pub(super) hovered_graph_row: Option<usize>,
+    /// Files selected for the next commit (relative paths).
+    pub(super) selected_files: HashSet<String>,
     /// Whether the Move to Branch dialog is open.
     pub(super) show_move_to_branch: bool,
     /// Whether the text field should receive initial focus on the next frame.

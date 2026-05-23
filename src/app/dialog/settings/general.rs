@@ -516,5 +516,32 @@ impl DirigentApp {
         )
         .on_hover_text("Display per-frame timing breakdown and memory usage in the status bar.");
         ui.end_row();
+
+        ui.label("Dock Icon:");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.custom_dock_icon_path)
+                    .desired_width(200.0)
+                    .hint_text("default logo")
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.small_button("Browse\u{2026}").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Images", &["png", "jpg", "jpeg", "ico", "icns"])
+                    .pick_file()
+                {
+                    self.settings.custom_dock_icon_path = path.to_string_lossy().to_string();
+                }
+            }
+            if !self.settings.custom_dock_icon_path.is_empty()
+                && ui
+                    .small_button("\u{2715}")
+                    .on_hover_text("Reset to default logo")
+                    .clicked()
+            {
+                self.settings.custom_dock_icon_path.clear();
+            }
+        });
+        ui.end_row();
     }
 }
