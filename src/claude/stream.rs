@@ -5,6 +5,7 @@ use claude_pty::{Event, ExitStatus, PollEvent, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const IDLE_EXIT_SECS: u64 = 10;
+const SENTINEL_GRACE: Duration = Duration::from_secs(3);
 
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
@@ -31,6 +32,7 @@ pub(super) fn consume_pty_events(
     let mut prompt_sent = false;
     let start_time = Instant::now();
     let mut last_event_time = Instant::now();
+    let mut sentinel_seen: Option<Instant> = None;
 
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -96,14 +98,26 @@ pub(super) fn consume_pty_events(
             PollEvent::Pending => {
                 if prompt_sent {
                     if let Some(sentinel) = done_sentinel {
-                        if sentinel.exists() {
-                            on_log("\n⏎ Stop hook fired — exiting.\n");
+                        if sentinel_seen.is_none() && sentinel.exists() {
+                            sentinel_seen = Some(Instant::now());
+                            on_log("\n⏎ Stop hook fired — draining remaining output…\n");
+                        }
+                    }
+                    if let Some(seen_at) = sentinel_seen {
+                        let since_sentinel = seen_at.elapsed();
+                        let since_event = last_event_time.elapsed();
+                        if since_sentinel >= SENTINEL_GRACE || since_event >= Duration::from_secs(1)
+                        {
+                            on_log("\n⏎ Grace period done — exiting.\n");
                             graceful_exit(session);
                             break;
                         }
                     }
                 }
-                if prompt_sent && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS) {
+                if prompt_sent
+                    && sentinel_seen.is_none()
+                    && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS)
+                {
                     on_log(&format!(
                         "\n⚠ No output for {}s — session timed out.\n",
                         IDLE_EXIT_SECS,
