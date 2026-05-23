@@ -296,6 +296,47 @@ pub(crate) fn jj_squash_bookmark(
     Ok(squashed)
 }
 
+/// Create a new bookmark at the current working-copy commit's parent (`@-`).
+pub(crate) fn jj_create_bookmark(
+    repo_path: &Path,
+    name: &str,
+    jj_path: &str,
+) -> crate::error::Result<()> {
+    let output = super::jj_cmd(jj_path)
+        .args(["bookmark", "create", name, "-r", "@-"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj bookmark create failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Undo the last jj operation via `jj op restore @-`.
+pub(crate) fn jj_undo(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
+    let output = super::jj_cmd(jj_path)
+        .args(["op", "restore", "@-"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj op restore failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary = stdout.lines().next().unwrap_or("ok").trim();
+    Ok(format!("Undo: {}", summary))
+}
+
 /// Revert specific files by restoring them from the parent commit.
 pub(crate) fn jj_revert_files(
     repo_path: &Path,

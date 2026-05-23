@@ -37,16 +37,14 @@ be found automatically.
 ## Your day-to-day workflow in Dirigent
 
 This section walks through the full cycle: starting work, making changes,
-committing, pushing, and creating a PR. Everything described here is what you
-see and do inside Dirigent -- jj commands are shown in parentheses for context.
+committing, pushing, and creating a PR. Everything described here happens
+entirely inside Dirigent -- no terminal or external jj commands needed.
 
 ### 1. Start from a bookmark
 
 Use the **branch/bookmark picker** in the repo bar and select where you want to
 start (e.g. `main`). Dirigent creates a new working-copy commit on top of that
 bookmark. You're ready to edit.
-
-> Under the hood: `jj new main`
 
 ### 2. Create a cue and let Claude work
 
@@ -153,37 +151,24 @@ in jj, but the whole sequence is really one logical change. Squashing collapses
 that chain into one commit so the history reads as "what was done", not "how many
 tries it took".
 
-### Squash everything into one commit
+### Squash from the jj menu
 
-If your bookmark `my-feature` has 3 commits stacked on `main`, you can fold
-them all into one:
+Open the **jj** menu and click **Squash Commits**. Dirigent takes all commits
+between `trunk()` and your current bookmark and folds them into a single
+commit. The bookmark stays in place, the history compresses, and you're left
+with one clean commit to push.
 
-```
-jj squash --from main..my-feature --into <first-commit>
-```
+The status bar confirms how many commits were squashed: e.g.,
+"Squashed 3 commits on 'my-feature' into one".
 
-Or more commonly, squash each commit into its parent one at a time:
+### Squash from a cue card
 
-```
-jj squash -r <commit-to-fold>
-```
+Each cue card in the cue pool has a **Squash** action (available when the cue
+has a bookmark with multiple commits). This squashes all commits on that cue's
+bookmark, which is useful when follow-up prompts produced extra commits during
+a single cue's lifecycle.
 
-This takes the changes from that commit and merges them into its parent, then
-removes the now-empty commit. The bookmark stays where it was -- pointing at
-your combined work.
-
-### The simple case: squash the current commit into its parent
-
-If you're sitting on a commit and want to fold it into the one below:
-
-```
-jj squash
-```
-
-That's it. No arguments needed. The working-copy commit's changes move into the
-parent, and you get a fresh empty working-copy commit on top.
-
-### Squash workflow in Dirigent
+### Squash workflow example
 
 A typical example: you create a cue "add user authentication". Claude produces
 the initial implementation. You review the diff, spot a missing edge case, and
@@ -204,26 +189,13 @@ After the cue and two follow-ups:
     |
   (empty working copy)              <- @ you are here
 
-After squashing:
+After clicking Squash Commits:
   main
     |
     v
   "add user authentication"         <- single commit, ◉ my-feature
     |
   (empty working copy)              <- @ you are here
-```
-
-In the terminal:
-
-```
-jj squash -r e4f5g6h    # fold follow-up 1 into the initial commit
-jj squash -r i7j8k9l    # fold follow-up 2 into the initial commit
-```
-
-Or use the revision set to squash all at once:
-
-```
-jj squash --from 'main..@-' --into <first-commit>
 ```
 
 After squashing, the bookmark still points at your feature work. Push as
@@ -239,22 +211,13 @@ not the back-and-forth that produced it.
 - **You want full traceability** -- keeping each cue as its own commit gives
   you a 1:1 map between cues and commits in the history
 
-### Quick reference
-
-| What you want                     | Command                                        |
-|-----------------------------------|------------------------------------------------|
-| Squash current into parent        | `jj squash`                                    |
-| Squash a specific commit          | `jj squash -r <commit>`                        |
-| Squash a range into one           | `jj squash --from 'main..@-' --into <target>`  |
-| Interactive squash (pick changes) | `jj squash -i`                                 |
-
 ---
 
 ## Why push?
 
 Commits in jj are local until you push. They are safe (jj records every
-operation and you can undo anything with `jj op restore`), but they only exist
-on your machine.
+operation and you can undo anything via the **Undo** button), but they only
+exist on your machine.
 
 Push when you want to:
 - **Share your work** -- make it visible to collaborators
@@ -265,8 +228,8 @@ Push when you want to:
 You need a **bookmark** pointing at your commits for push to work. Dirigent
 handles this automatically: when you commit, it advances the bookmark to your
 latest commit. If you started from `main` without creating a bookmark first,
-you'll need to create one before pushing (via `jj bookmark create my-feature`
-in the terminal).
+open the **jj** menu and click **Create Bookmark** to name your work before
+pushing.
 
 ---
 
@@ -322,10 +285,10 @@ familiar git-branch-follows-commits behavior without manual bookmark management.
 
 ### You can't lose work
 
-jj's operation log records every repo mutation. If something goes wrong, you
-can undo any operation with `jj op restore`. Conflicts can be stored in commits
-too -- you can commit conflicted code, keep working, and resolve later. There
-is no "detached HEAD" anxiety.
+jj's operation log records every repo mutation. If something goes wrong, click
+**Undo Last Operation** in the **jj** menu to roll back the most recent change.
+Conflicts can be stored in commits too -- you can commit conflicted code, keep
+working, and resolve later. There is no "detached HEAD" anxiety.
 
 ---
 
@@ -357,15 +320,6 @@ have to remember to commit -- it just happens. The bookmark is named after the
 cue (e.g., `cue/42-add-authentication`), so every cue's result is easy to find
 in the log.
 
-> Under the hood:
-> ```
-> jj workspace add ../repo-workspace-add-auth   # Dirigent creates workspace
-> # ... Claude runs the cue ...
-> jj commit -m "add authentication"             # Dirigent auto-commits
-> jj bookmark set cue/add-auth                  # Dirigent sets bookmark
-> jj workspace forget add-auth                  # Dirigent cleans up workspace
-> ```
-
 After both cues are committed, the user can review them independently. If they
 look good, stack them (rebase one on top of the other) or merge them.
 
@@ -377,21 +331,11 @@ workspace. In jj, bookmarks are just pointers -- the commit still exists in the
 log but is no longer referenced. Nothing is destroyed, and the operation is
 instant.
 
-```
-jj bookmark delete cue/add-auth     # drop the bookmark, changes become hidden
-```
-
-If the user changes their mind later, the commit is still in `jj log --revisions
-'hidden()'` and can be restored. Compare this to git, where reverting means
-creating a new revert commit (which clutters history) or using `git reset --hard`
-(which can lose work if you're not careful). jj's approach is non-destructive by
-default.
-
-Even for partial reverts, jj makes it easy:
-
-```
-jj backout -r <cue-commit>         # create an inverse commit, keeping history clean
-```
+If the user changes their mind later, the commit can still be restored via
+**Undo Last Operation** in the **jj** menu. Compare this to git, where reverting
+means creating a new revert commit (which clutters history) or using
+`git reset --hard` (which can lose work if you're not careful). jj's approach is
+non-destructive by default.
 
 ### Why not git worktrees?
 
@@ -411,44 +355,51 @@ worktrees -- with jj workspaces it's natural.
 In the file tree, use the **Revert** action on individual files. This restores
 the file from the parent commit, undoing changes in the working copy.
 
-> Under the hood: `jj restore --from @- path/to/file.rs`
-
 ### Switch to a different bookmark
 
 Use the **branch/bookmark picker** in the repo bar. Selecting a bookmark
 creates a new working-copy commit at that bookmark's position.
 
-> Under the hood: `jj new <bookmark>`
+### Create a bookmark
+
+Open the **jj** menu and click **Create Bookmark**. Enter a name for the
+bookmark -- it will point at your latest commit so you can push and create a PR.
 
 ### Fetch from the remote
 
-Click **Pull/Fetch** in the toolbar to get the latest changes from the remote.
+Click **Fetch** in the **jj** menu to get the latest changes from the remote.
 
-> Under the hood: `jj git fetch`
+### Squash commits
+
+Open the **jj** menu and click **Squash Commits** to fold all commits on the
+current bookmark into a single commit. You can also squash from a cue card's
+action menu when the cue has its own bookmark.
+
+### Undo last operation
+
+Open the **jj** menu and click **Undo Last Operation** to roll back the most
+recent repo mutation (commit, squash, bookmark change, etc.).
 
 ### Work on multiple things at once (workspaces)
 
 Use the **Worktree Manager** to create and manage jj workspaces. Each workspace
-is a separate working directory sharing the same repo -- like git worktrees.
-
-> Under the hood: `jj workspace add`, `jj workspace forget`
+is a separate working directory sharing the same repo.
 
 ---
 
 ## Quick reference
 
-| What you want to do          | Dirigent action                | jj command (FYI)                   |
-|------------------------------|--------------------------------|------------------------------------|
-| Start new work from main     | Branch picker > main           | `jj new main`                      |
-| See what changed             | File tree + status bar         | `jj diff`, `jj status`            |
-| Commit current work          | Commit button + message        | `jj commit -m "msg"`              |
-| View history                 | History panel                  | `jj log`                           |
-| Push to remote               | Push button                    | `jj git push`                      |
-| Fetch from remote            | Pull/Fetch button              | `jj git fetch`                     |
-| Revert a file                | Revert action on file          | `jj restore --from @- file`       |
-| Switch bookmark              | Branch picker                  | `jj new <bookmark>`               |
-| Manage workspaces            | Worktree Manager               | `jj workspace add/forget`          |
-| Squash current into parent   | *(terminal)*                   | `jj squash`                        |
-| Squash a specific commit     | *(terminal)*                   | `jj squash -r <commit>`           |
-| Create a bookmark            | *(terminal)*                   | `jj bookmark create name`         |
-| Undo last operation          | *(terminal)*                   | `jj op restore @-`                |
+| What you want to do          | Dirigent action                        |
+|------------------------------|----------------------------------------|
+| Start new work from main     | Branch picker > main                   |
+| See what changed             | File tree + status bar                 |
+| Commit current work          | Commit button + message                |
+| View history                 | History panel                          |
+| Push to remote               | jj menu > Push                         |
+| Fetch from remote            | jj menu > Fetch                        |
+| Revert a file                | File tree > Revert action              |
+| Switch bookmark              | Branch picker                          |
+| Create a bookmark            | jj menu > Create Bookmark              |
+| Squash commits               | jj menu > Squash Commits               |
+| Undo last operation          | jj menu > Undo Last Operation          |
+| Manage workspaces            | Worktree Manager                       |

@@ -655,6 +655,11 @@ impl DirigentApp {
                 move_to_branch_name: String::new(),
                 moving_to_branch: false,
                 move_to_branch_rx: None,
+                show_create_bookmark: false,
+                create_bookmark_name: String::new(),
+                create_bookmark_needs_focus: false,
+                squashing: false,
+                squash_rx: None,
             },
             settings,
             semantic,
@@ -1021,6 +1026,7 @@ impl eframe::App for DirigentApp {
         self.process_import_pr_result();
         self.process_pr_notify_result();
         self.process_move_to_branch_result();
+        self.process_squash_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

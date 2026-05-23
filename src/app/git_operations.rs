@@ -823,6 +823,119 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
+    /// Open the Create Bookmark dialog (jj only).
+    pub(super) fn open_create_bookmark_dialog(&mut self) {
+        self.git.create_bookmark_name.clear();
+        self.git.create_bookmark_needs_focus = true;
+        self.git.show_create_bookmark = true;
+    }
+
+    /// Create a jj bookmark at the current commit.
+    pub(super) fn start_create_bookmark(&mut self) {
+        let name = self.git.create_bookmark_name.trim().to_string();
+        if name.is_empty() {
+            self.set_status_message("Bookmark name cannot be empty".into());
+            return;
+        }
+        self.git.show_create_bookmark = false;
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        match jj::jj_create_bookmark(&root, &name, &jj_path) {
+            Ok(()) => {
+                self.set_status_message(format!("Created bookmark '{}'", name));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Create bookmark failed: {}", e));
+            }
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    /// Squash all commits on the current bookmark into a single commit (jj only).
+    pub(super) fn start_squash_current_bookmark(&mut self) {
+        if self.git.squashing {
+            return;
+        }
+        let bookmark = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch.clone())
+            .unwrap_or_default();
+        if bookmark.is_empty() {
+            self.set_status_message("No bookmark to squash".into());
+            return;
+        }
+        self.git.squashing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.squash_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let bm = bookmark.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_squash_bookmark(&root, &bm, &jj_path)
+                .map(|n| {
+                    if n == 0 {
+                        format!(
+                            "Nothing to squash \u{2014} '{}' has 0 or 1 commits",
+                            bm
+                        )
+                    } else {
+                        let plural = if n == 1 { "" } else { "s" };
+                        format!("Squashed {} commit{} on '{}' into one", n, plural, bm)
+                    }
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Squashing commits on '{}'...", bookmark));
+    }
+
+    /// Check for completed squash operation.
+    pub(super) fn process_squash_result(&mut self) {
+        let rx = match self.git.squash_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.squashing = false;
+                self.git.squash_rx = None;
+                self.set_status_message("Squash failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.squashing = false;
+        self.git.squash_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(format!("Squash failed: {}", e)),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    /// Undo the last jj operation.
+    pub(super) fn start_jj_undo(&mut self) {
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        match jj::jj_undo(&root, &jj_path) {
+            Ok(msg) => {
+                self.set_status_message(msg);
+            }
+            Err(e) => {
+                self.set_status_message(format!("Undo failed: {}", e));
+            }
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
     pub(super) fn reload_git_info(&mut self) {
         match self.settings.vcs_backend {
             VcsBackend::Jj => {

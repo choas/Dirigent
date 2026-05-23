@@ -13,6 +13,9 @@ struct MenuBarActions {
     switch_branch_clicked: bool,
     create_pr_clicked: bool,
     import_pr_clicked: bool,
+    create_bookmark_clicked: bool,
+    squash_clicked: bool,
+    undo_clicked: bool,
     run_all_agents: bool,
     agent_to_trigger: Option<AgentKind>,
     agent_to_cancel: Option<AgentKind>,
@@ -111,6 +114,11 @@ impl DirigentApp {
                 ui.close();
             }
 
+            if self.settings.vcs_backend == VcsBackend::Jj {
+                ui.separator();
+                self.render_git_menu_jj_actions(ui, actions);
+            }
+
             ui.separator();
 
             self.render_git_menu_pr(ui, actions);
@@ -187,6 +195,36 @@ impl DirigentApp {
             .clicked()
         {
             actions.import_pr_clicked = true;
+            ui.close();
+        }
+    }
+
+    fn render_git_menu_jj_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        if ui.button("Create Bookmark").clicked() {
+            actions.create_bookmark_clicked = true;
+            ui.close();
+        }
+
+        let squash_label = if self.git.squashing {
+            "Squashing..."
+        } else {
+            "Squash Commits"
+        };
+        if ui
+            .add_enabled(!self.git.squashing, egui::Button::new(squash_label))
+            .on_hover_text("Squash all commits on the current bookmark into one")
+            .clicked()
+        {
+            actions.squash_clicked = true;
+            ui.close();
+        }
+
+        if ui
+            .button("Undo Last Operation")
+            .on_hover_text("Undo the last jj operation (jj op restore)")
+            .clicked()
+        {
+            actions.undo_clicked = true;
             ui.close();
         }
     }
@@ -388,6 +426,15 @@ impl DirigentApp {
         }
         if actions.import_pr_clicked {
             self.open_import_pr_dialog();
+        }
+        if actions.create_bookmark_clicked {
+            self.open_create_bookmark_dialog();
+        }
+        if actions.squash_clicked {
+            self.start_squash_current_bookmark();
+        }
+        if actions.undo_clicked {
+            self.start_jj_undo();
         }
         if let Some(kind) = actions.agent_to_cancel {
             self.cancel_agent(kind);
