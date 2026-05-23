@@ -160,14 +160,9 @@ pub(crate) fn parse_workflow_response(
     response: &str,
     expected_cue_ids: &[i64],
 ) -> (WorkflowPlan, Option<String>) {
-    // Try to extract JSON from the response (handle markdown fences, leading text, etc.)
-    let json_str = crate::util::json_extract::extract_json(response);
-
-    let llm_steps = serde_json::from_str::<LlmWorkflowResponse>(&json_str)
-        .map(|r| r.steps)
-        .or_else(|_| serde_json::from_str::<Vec<LlmWorkflowStep>>(&json_str));
-    match llm_steps {
-        Ok(resp_steps) => {
+    let resp_steps = try_parse_workflow_json(response);
+    match resp_steps {
+        Some(resp_steps) => {
             let mut steps: Vec<WorkflowStep> = resp_steps
                 .into_iter()
                 .enumerate()
@@ -232,12 +227,45 @@ pub(crate) fn parse_workflow_response(
 
             (WorkflowPlan::from_steps(steps), warning)
         }
-        Err(e) => (
+        None => (
             WorkflowPlan::sequential_fallback(expected_cue_ids),
-            Some(format!(
-                "Failed to parse LLM workflow JSON: {} — using sequential fallback",
-                e
-            )),
+            Some("Failed to parse LLM workflow JSON — using sequential fallback".to_string()),
         ),
     }
+}
+
+/// Try multiple strategies to parse workflow JSON from the LLM response.
+fn try_parse_workflow_json(response: &str) -> Option<Vec<LlmWorkflowStep>> {
+    fn try_parse(json: &str) -> Option<Vec<LlmWorkflowStep>> {
+        serde_json::from_str::<LlmWorkflowResponse>(json)
+            .map(|r| r.steps)
+            .or_else(|_| serde_json::from_str::<Vec<LlmWorkflowStep>>(json))
+            .ok()
+    }
+
+    // Strategy 1: extract via balanced-brace heuristic
+    let extracted = crate::util::json_extract::extract_json(response);
+    if let Some(steps) = try_parse(&extracted) {
+        return Some(steps);
+    }
+
+    // Strategy 2: find the last `{"steps"` occurrence and extract from there
+    if let Some(pos) = response.rfind("{\"steps\"") {
+        let candidate = &response[pos..];
+        let balanced = crate::util::json_extract::extract_json(candidate);
+        if let Some(steps) = try_parse(&balanced) {
+            return Some(steps);
+        }
+    }
+
+    // Strategy 3: find the last `[{"cue_ids"` occurrence (bare array format)
+    if let Some(pos) = response.rfind("[{\"cue_ids\"") {
+        let candidate = &response[pos..];
+        let balanced = crate::util::json_extract::extract_json(candidate);
+        if let Some(steps) = try_parse(&balanced) {
+            return Some(steps);
+        }
+    }
+
+    None
 }
