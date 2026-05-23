@@ -5,53 +5,98 @@
 
 use eframe::egui;
 
-const PX: f32 = 3.0;
+const PX: f32 = 2.0;
 
 // Total grid dimensions (dino + ground + pebbles).
-const W: usize = 20;
-const H: usize = 16;
+const W: usize = 30;
+const H: usize = 22;
 
 // Dino sprite footprint within the grid.
-const DINO_W: usize = 16;
-const DINO_BASE_ROWS: usize = 11;
+const DINO_W: usize = 22;
+const DINO_BASE_ROWS: usize = 14;
 
 /// Dino body without the legs. 1 = body, 2 = eye.
 const DINO_BASE: [[u8; DINO_W]; DINO_BASE_ROWS] = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0], //  0  head bump
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0], //  1  head
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 1, 1, 1, 0], //  2  eye
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1], //  3  upper jaw
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0], //  4  mouth gap + lower jaw
-    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0], //  5  neck
-    [1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0], //  6  tail + body + arm
-    [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0], //  7  body + arm
-    [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0], //  8  belly
-    [0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0], //  9  belly
-    [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0], // 10  lower belly
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+    ], //  0  head bump
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
+    ], //  1  head top
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
+    ], //  2  head
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 1, 1, 1, 1, 0, 0, 0, 0,
+    ], //  3  eye
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
+    ], //  4  head
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+    ], //  5  jaw
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0,
+    ], //  6  mouth + lower jaw
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
+    ], //  7  neck
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
+    ], //  8  neck wider
+    [
+        1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+    ], //  9  tail + body
+    [
+        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0,
+    ], // 10  body + arm
+    [
+        0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0,
+    ], // 11  body + arm
+    [
+        0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    ], // 12  belly
+    [
+        0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ], // 13  hip
 ];
 
 /// Running leg frame A (back foot forward).
 const LEGS_A: [[u8; DINO_W]; 2] = [
-    [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [
+        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    [
+        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
 ];
 
 /// Running leg frame B (front foot forward).
 const LEGS_B: [[u8; DINO_W]; 2] = [
-    [0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0],
+    [
+        0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
 ];
 
 /// Legs tucked up while airborne.
 const LEGS_JUMP: [[u8; DINO_W]; 2] = [
-    [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [
+        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
 ];
 
-const GROUND_ROW: usize = 13;
+const GROUND_ROW: usize = 17;
 
 struct DinoColors {
     body: egui::Color32,
+    highlight: egui::Color32,
+    shadow: egui::Color32,
     eye: egui::Color32,
     sand: egui::Color32,
     pebble: egui::Color32,
@@ -61,12 +106,21 @@ struct DinoColors {
 fn compute_colors(accent: egui::Color32, is_dark: bool) -> DinoColors {
     let [ar, ag, ab, _] = accent.to_array();
     let body = accent;
+    let highlight = egui::Color32::from_rgb(
+        ar.saturating_add(35),
+        ag.saturating_add(35),
+        ab.saturating_add(35),
+    );
+    let shadow = egui::Color32::from_rgb(
+        ar.saturating_sub(40),
+        ag.saturating_sub(40),
+        ab.saturating_sub(40),
+    );
     let eye = if is_dark {
         egui::Color32::from_rgb(20, 18, 18)
     } else {
         egui::Color32::from_rgb(245, 240, 235)
     };
-    // Warm sand tone, biased away from the accent so the ground reads as desert.
     let sand = if is_dark {
         egui::Color32::from_rgb(
             ar.saturating_add(20).max(150),
@@ -88,6 +142,8 @@ fn compute_colors(accent: egui::Color32, is_dark: bool) -> DinoColors {
     };
     DinoColors {
         body,
+        highlight,
+        shadow,
         eye,
         sand,
         pebble,
@@ -104,24 +160,19 @@ fn hash_u32(seed: u32) -> u32 {
     x
 }
 
-// Stones spawn at the right edge and scroll left across the ground at this
-// speed. Spacing is staggered with per-spawn jitter so the rhythm doesn't
-// feel metronomic.
-const STONE_SPEED: f32 = 18.0;
+const STONE_SPEED: f32 = 27.0;
 const STONE_SPACING: f32 = 1.7;
 const STONE_SPAWN_COL: f32 = W as f32;
-// Column at which a stone is "under" the dino's feet — used both to time the
-// jump apex and as the horizontal centre of the collision window.
-const DINO_FRONT_COL: f32 = 7.5;
+const DINO_FRONT_COL: f32 = 8.5;
 
 const JUMP_DURATION: f32 = 0.55;
-const JUMP_HEIGHT: f32 = 5.0;
+const JUMP_HEIGHT: f32 = 7.5;
 
 #[derive(Clone, Copy)]
 struct Stone {
     /// Current column (fractional) of the stone's left edge.
     col_f: f32,
-    /// Height in grid cells (1 or 2).
+    /// Height in grid cells (2 or 3).
     height: u8,
     /// Wall-clock time at which this stone reaches `DINO_FRONT_COL`.
     collide_t: f32,
@@ -130,8 +181,6 @@ struct Stone {
 /// Stones currently on-screen, newest first.
 fn active_stones(t: f32) -> Vec<Stone> {
     let mut stones = Vec::new();
-    // The +1 catches the next stone that hasn't quite spawned yet so we can
-    // still pre-trigger the jump for it.
     let current_bucket = (t / STONE_SPACING).floor() as i32 + 1;
     for back in 0..4 {
         let bucket = current_bucket - back;
@@ -139,15 +188,14 @@ fn active_stones(t: f32) -> Vec<Stone> {
             continue;
         }
         let h = hash_u32(bucket as u32);
-        // Up to ±0.3s of jitter on the spawn time within the bucket.
         let jitter = ((h & 0xFF) as f32 / 255.0 - 0.5) * 0.6;
         let spawn_t = bucket as f32 * STONE_SPACING + jitter;
         let age = t - spawn_t;
         let col_f = STONE_SPAWN_COL - age * STONE_SPEED;
-        if col_f < -3.0 || col_f > STONE_SPAWN_COL + 0.5 {
+        if col_f < -4.0 || col_f > STONE_SPAWN_COL + 0.5 {
             continue;
         }
-        let height = if (h >> 8) & 0b11 == 0 { 2 } else { 1 };
+        let height = if (h >> 8) & 0b11 == 0 { 3 } else { 2 };
         let collide_t = spawn_t + (STONE_SPAWN_COL - DINO_FRONT_COL) / STONE_SPEED;
         stones.push(Stone {
             col_f,
@@ -159,9 +207,6 @@ fn active_stones(t: f32) -> Vec<Stone> {
 }
 
 /// Vertical jump offset in pixel-grid units (0 = on ground, positive = airborne).
-///
-/// Jumps are anchored to upcoming stones — the apex lines up with the moment a
-/// stone passes under the dino's feet.
 fn jump_offset(t: f32, stones: &[Stone]) -> f32 {
     for stone in stones {
         let jump_start = stone.collide_t - JUMP_DURATION * 0.5;
@@ -197,7 +242,6 @@ pub fn paint_at(
     let jump_px = jump_offset(t, &stones);
     let airborne = jump_px > 0.01;
 
-    // Two-frame run cycle at ~8 Hz.
     let run_phase = (t * 8.0).sin() > 0.0;
     let legs: &[[u8; DINO_W]; 2] = if airborne {
         &LEGS_JUMP
@@ -207,17 +251,40 @@ pub fn paint_at(
         &LEGS_B
     };
 
-    // Dino sits with its feet on GROUND_ROW. Subtract the jump offset to lift it.
     let dino_origin = origin + egui::vec2(0.0, -jump_px * px);
 
-    // Body
-    for row in 0..DINO_BASE_ROWS {
+    // Build combined body+legs grid for edge-detection shading.
+    const TOTAL_ROWS: usize = DINO_BASE_ROWS + 2;
+    let mut grid = [[0u8; DINO_W]; TOTAL_ROWS];
+    let mut r = 0;
+    while r < DINO_BASE_ROWS {
+        grid[r] = DINO_BASE[r];
+        r += 1;
+    }
+    grid[DINO_BASE_ROWS] = legs[0];
+    grid[DINO_BASE_ROWS + 1] = legs[1];
+
+    for row in 0..TOTAL_ROWS {
         for col in 0..DINO_W {
-            let cell = DINO_BASE[row][col];
+            let cell = grid[row][col];
             if cell == 0 {
                 continue;
             }
-            let color = if cell == 2 { colors.eye } else { colors.body };
+            let above = if row > 0 { grid[row - 1][col] } else { 0 };
+            let below = if row + 1 < TOTAL_ROWS {
+                grid[row + 1][col]
+            } else {
+                0
+            };
+            let color = if cell == 2 {
+                colors.eye
+            } else if above == 0 {
+                colors.highlight
+            } else if below == 0 {
+                colors.shadow
+            } else {
+                colors.body
+            };
             let rect = egui::Rect::from_min_size(
                 dino_origin + egui::vec2(col as f32 * px, row as f32 * px),
                 egui::vec2(px, px),
@@ -226,22 +293,7 @@ pub fn paint_at(
         }
     }
 
-    // Legs (two rows under the body)
-    for (i, leg_row) in legs.iter().enumerate() {
-        let row_idx = DINO_BASE_ROWS + i;
-        for col in 0..DINO_W {
-            if leg_row[col] == 0 {
-                continue;
-            }
-            let rect = egui::Rect::from_min_size(
-                dino_origin + egui::vec2(col as f32 * px, row_idx as f32 * px),
-                egui::vec2(px, px),
-            );
-            painter.rect_filled(rect, 0.0, colors.body);
-        }
-    }
-
-    // Ground line (always drawn at fixed origin — the dino is what moves)
+    // Ground line
     for col in 0..W {
         let rect = egui::Rect::from_min_size(
             origin + egui::vec2(col as f32 * px, GROUND_ROW as f32 * px),
@@ -250,10 +302,9 @@ pub fn paint_at(
         painter.rect_filled(rect, 0.0, colors.sand);
     }
 
-    // Stones sitting on top of the sand — these are the obstacles the dino
-    // jumps over. Drawn at sub-cell precision so they scroll smoothly.
+    // Stones (obstacles)
     for stone in &stones {
-        let stone_w_px = 2.0 * px;
+        let stone_w_px = 3.0 * px;
         let stone_h_px = stone.height as f32 * px;
         let top_row = GROUND_ROW - stone.height as usize;
         let x = origin.x + stone.col_f * px;
@@ -263,19 +314,21 @@ pub fn paint_at(
     }
 
     // Scrolling pebbles below the ground line.
-    let scroll = (t * 18.0) as i32;
-    for row_off in 0..2 {
+    let scroll = (t * 27.0) as i32;
+    for row_off in 0..3 {
         let row_idx = GROUND_ROW + 1 + row_off;
         if row_idx >= H {
             break;
         }
         for col in 0..W {
-            // Pseudo-random pebble pattern that scrolls left over time.
             let key = ((col as i32 + scroll) as u32).wrapping_mul(73)
                 ^ (row_off as u32).wrapping_mul(919);
             let h = hash_u32(key);
-            // Sparser on the lower row.
-            let threshold = if row_off == 0 { 0x16 } else { 0x09 };
+            let threshold = match row_off {
+                0 => 0x16,
+                1 => 0x09,
+                _ => 0x05,
+            };
             if h & 0xFF < threshold {
                 let rect = egui::Rect::from_min_size(
                     origin + egui::vec2(col as f32 * px, row_idx as f32 * px),
