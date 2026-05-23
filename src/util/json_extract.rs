@@ -1,7 +1,8 @@
-/// Extract a JSON object from text that may contain markdown code fences or surrounding prose.
+/// Extract a JSON value (object or array) from text that may contain markdown code fences
+/// or surrounding prose.
 ///
-/// Tries, in order: ````json` fence, bare ``` fence whose content starts with `{`,
-/// then the outermost `{`…`}` span.  Returns the trimmed input when nothing matches.
+/// Tries, in order: ````json` fence, bare ``` fence whose content starts with `{` or `[`,
+/// then the outermost `{`…`}` or `[`…`]` span.  Returns the trimmed input when nothing matches.
 pub fn extract_json(s: &str) -> String {
     if let Some(start) = s.find("```json") {
         let after = &s[start + 7..];
@@ -13,13 +14,20 @@ pub fn extract_json(s: &str) -> String {
         let after = &s[start + 3..];
         if let Some(end) = after.find("```") {
             let inner = after[..end].trim();
-            if inner.starts_with('{') {
+            if inner.starts_with('{') || inner.starts_with('[') {
                 return inner.to_string();
             }
         }
     }
     if let Some(start) = s.find('{') {
         if let Some(end) = s.rfind('}') {
+            if end > start {
+                return s[start..=end].to_string();
+            }
+        }
+    }
+    if let Some(start) = s.find('[') {
+        if let Some(end) = s.rfind(']') {
             if end > start {
                 return s[start..=end].to_string();
             }

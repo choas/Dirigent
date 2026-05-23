@@ -163,11 +163,12 @@ pub(crate) fn parse_workflow_response(
     // Try to extract JSON from the response (handle markdown fences, leading text, etc.)
     let json_str = crate::util::json_extract::extract_json(response);
 
-    let parsed: Result<LlmWorkflowResponse, _> = serde_json::from_str(&json_str);
-    match parsed {
-        Ok(resp) => {
-            let mut steps: Vec<WorkflowStep> = resp
-                .steps
+    let llm_steps = serde_json::from_str::<LlmWorkflowResponse>(&json_str)
+        .map(|r| r.steps)
+        .or_else(|_| serde_json::from_str::<Vec<LlmWorkflowStep>>(&json_str));
+    match llm_steps {
+        Ok(resp_steps) => {
+            let mut steps: Vec<WorkflowStep> = resp_steps
                 .into_iter()
                 .enumerate()
                 .map(|(i, s)| WorkflowStep {
