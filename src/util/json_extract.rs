@@ -29,31 +29,47 @@ pub fn extract_json(s: &str) -> String {
     s.trim().to_string()
 }
 
-/// Find the last balanced `open`…`close` span in `s`.
-///
-/// Scans backwards to find the last `close` character, then walks forward from
-/// each `open` to find a balanced match that ends at that position. This picks
-/// the innermost (last) top-level JSON value when the text contains multiple
-/// objects — e.g. an echoed prompt example followed by the actual response.
+/// Find the last balanced `open`…`close` span in `s`, skipping over JSON
+/// string literals so that braces inside `"..."` don't affect depth counting.
 fn extract_last_balanced(s: &str, open: char, close: char) -> Option<String> {
     let bytes = s.as_bytes();
     let end = s.rfind(close)?;
     let open_b = open as u8;
     let close_b = close as u8;
 
-    // Walk backwards from `end` to find the matching `open`.
     let mut depth: i32 = 0;
     let mut start = None;
-    for i in (0..=end).rev() {
-        if bytes[i] == close_b {
+    let mut i = end;
+    loop {
+        let b = bytes[i];
+        if b == b'"' {
+            // Walk backwards past the string literal, handling escaped quotes.
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+            while i > 0 {
+                if bytes[i] == b'"' {
+                    let backslashes = bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
+                    if backslashes % 2 == 0 {
+                        break;
+                    }
+                }
+                i -= 1;
+            }
+        } else if b == close_b {
             depth += 1;
-        } else if bytes[i] == open_b {
+        } else if b == open_b {
             depth -= 1;
             if depth == 0 {
                 start = Some(i);
                 break;
             }
         }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
     }
 
     let start = start?;
@@ -131,5 +147,21 @@ Some text in between.
     fn nested_braces() {
         let input = r#"{"outer": {"inner": "value"}}"#;
         assert_eq!(extract_json(input), input);
+    }
+
+    #[test]
+    fn braces_inside_strings_skipped() {
+        let input = r#"{"label": "Fix {the bug}", "id": 1}"#;
+        assert_eq!(extract_json(input), input);
+    }
+
+    #[test]
+    fn braces_in_string_with_multiple_objects() {
+        let input = r#"Example: {"a": "x{y}z"}
+Real: {"steps": [{"cue_ids": [1], "label": "Fix {it}", "rationale": "ok"}]}"#;
+        assert_eq!(
+            extract_json(input),
+            r#"{"steps": [{"cue_ids": [1], "label": "Fix {it}", "rationale": "ok"}]}"#
+        );
     }
 }
