@@ -9,44 +9,46 @@ const PX: f32 = 3.0;
 
 // Total grid dimensions (dino + ground + pebbles).
 const W: usize = 20;
-const H: usize = 14;
+const H: usize = 16;
 
 // Dino sprite footprint within the grid.
-const DINO_W: usize = 14;
-const DINO_BASE_ROWS: usize = 9;
+const DINO_W: usize = 16;
+const DINO_BASE_ROWS: usize = 11;
 
 /// Dino body without the legs. 1 = body, 2 = eye.
 const DINO_BASE: [[u8; DINO_W]; DINO_BASE_ROWS] = [
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], //  0  head top
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], //  1
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 1, 1], //  2  eye
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], //  3
-    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1], //  4  neck
-    [1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0], //  5  tail tip + back
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0], //  6  body
-    [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0], //  7  belly
-    [0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0], //  8  lower belly
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0], //  0  head bump
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0], //  1  head
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 1, 1, 1, 0], //  2  eye
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1], //  3  upper jaw
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0], //  4  mouth gap + lower jaw
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0], //  5  neck
+    [1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0], //  6  tail + body + arm
+    [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0], //  7  body + arm
+    [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0], //  8  belly
+    [0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0], //  9  belly
+    [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0], // 10  lower belly
 ];
 
-/// Running leg frame A (left foot forward).
+/// Running leg frame A (back foot forward).
 const LEGS_A: [[u8; DINO_W]; 2] = [
-    [0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
-/// Running leg frame B (right foot forward).
+/// Running leg frame B (front foot forward).
 const LEGS_B: [[u8; DINO_W]; 2] = [
-    [0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0],
 ];
 
 /// Legs tucked up while airborne.
 const LEGS_JUMP: [[u8; DINO_W]; 2] = [
-    [0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
-const GROUND_ROW: usize = 11;
+const GROUND_ROW: usize = 13;
 
 struct DinoColors {
     body: egui::Color32,
@@ -110,7 +112,7 @@ const STONE_SPACING: f32 = 1.7;
 const STONE_SPAWN_COL: f32 = W as f32;
 // Column at which a stone is "under" the dino's feet — used both to time the
 // jump apex and as the horizontal centre of the collision window.
-const DINO_FRONT_COL: f32 = 5.5;
+const DINO_FRONT_COL: f32 = 7.5;
 
 const JUMP_DURATION: f32 = 0.55;
 const JUMP_HEIGHT: f32 = 5.0;
