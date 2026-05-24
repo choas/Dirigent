@@ -219,8 +219,13 @@ impl DirigentApp {
             ui.close();
         }
 
+        let undo_label = if self.git.undoing {
+            "Undoing..."
+        } else {
+            "Undo Last Operation"
+        };
         if ui
-            .button("Undo Last Operation")
+            .add_enabled(!self.git.undoing, egui::Button::new(undo_label))
             .on_hover_text("Undo the last jj operation (jj op restore)")
             .clicked()
         {
