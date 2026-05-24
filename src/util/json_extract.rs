@@ -173,15 +173,21 @@ Some text in between.
     }
 
     #[test]
-    fn close_bracket_in_trailing_prose() {
-        let input = r#"{"key": "value"} see section [overview]"#;
+    fn stray_close_bracket_in_trailing_prose() {
+        let input = r#"{"key": "value"} see section] more"#;
         assert_eq!(extract_json(input), r#"{"key": "value"}"#);
     }
 
     #[test]
-    fn close_brace_in_trailing_prose() {
-        let input = r#"[1, 2, 3] refer to {docs}"#;
+    fn stray_close_brace_in_trailing_prose() {
+        let input = r#"[1, 2, 3] refer to docs} end"#;
         assert_eq!(extract_json(input), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn multiple_stray_closes_after_json() {
+        let input = r#"{"steps": [1]} blah ] blah } done"#;
+        assert_eq!(extract_json(input), r#"{"steps": [1]}"#);
     }
 
     #[test]
