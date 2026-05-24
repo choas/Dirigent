@@ -631,10 +631,17 @@ impl DirigentApp {
 
         let remove_result = match self.settings.vcs_backend {
             VcsBackend::Jj => {
-                let ws_name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
+                let ws_name = self
+                    .git
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.path == path)
+                    .map(|wt| wt.name.clone())
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    });
                 jj::jj_remove_workspace(&self.project_root, &ws_name, &self.settings.jj_cli_path)
             }
             VcsBackend::Git => git::remove_worktree(&self.project_root, &path, force),
