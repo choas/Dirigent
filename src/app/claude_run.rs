@@ -603,16 +603,20 @@ impl DirigentApp {
         }
     }
 
-    /// Insert a new execution record, emit telemetry, and spawn the provider thread.
     /// Insert a new execution record and spawn the provider thread.
     /// Returns `true` on success, `false` if the execution record could not be
     /// created (the caller should skip any post-spawn cleanup in that case).
+    ///
+    /// When `resume_session_id` is `Some`, `--resume <id>` is passed to continue
+    /// the Claude conversation. Otherwise a new session UUID is generated and
+    /// passed via `--session-id` so it can be resumed on subsequent replies.
     fn insert_exec_and_spawn(
         &mut self,
         cue_id: i64,
         prompt: String,
         provider: CliProvider,
         matched_command: &Option<CueCommand>,
+        resume_session_id: Option<String>,
     ) -> bool {
         let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
             Ok(id) => id,
@@ -631,13 +635,28 @@ impl DirigentApp {
             self.claude.conversation_history = execs;
         }
 
-        let config = build_provider_config(
+        let mut config = build_provider_config(
             &self.settings,
             &provider,
             matched_command,
             &prompt,
             &self.project_root,
         );
+
+        // For Claude provider, inject session continuity args.
+        if provider == CliProvider::Claude {
+            let session_id = if let Some(ref id) = resume_session_id {
+                config.extra_args_vec.push("--resume".to_string());
+                config.extra_args_vec.push(id.clone());
+                id.clone()
+            } else {
+                let id = uuid::Uuid::new_v4().to_string();
+                config.extra_args_vec.push("--session-id".to_string());
+                config.extra_args_vec.push(id.clone());
+                id
+            };
+            let _ = self.db.update_execution_session_id(exec_id, &session_id);
+        }
 
         telemetry::emit_execution_started(
             &self.project_name(),
@@ -688,7 +707,7 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command) {
+        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command, None) {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             self.reload_cues();
         }
@@ -755,7 +774,14 @@ impl DirigentApp {
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
 
-        let started = self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
+        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
+        let started = self.insert_exec_and_spawn(
+            cue_id,
+            prompt,
+            provider,
+            &matched_command,
+            resume_session_id,
+        );
 
         if started {
             if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
