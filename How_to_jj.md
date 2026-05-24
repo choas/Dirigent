@@ -100,7 +100,7 @@ creation, the PR URL appears in the status bar.
 
 A typical session looks like this:
 
-```
+```text
 You start from main
   |
   v
@@ -176,7 +176,7 @@ send a follow-up prompt: "handle expired tokens gracefully". Claude commits
 again. Then one more follow-up: "add tests for the auth module". Three commits,
 one logical feature -- a natural candidate for squashing.
 
-```
+```text
 After the cue and two follow-ups:
   main
     |
@@ -301,7 +301,7 @@ is running. This keeps the design simple and consistent: the default workspace
 stays clean (it's where you browse code), and each cue's changes are fully
 isolated from the start. There's no special "single cue" vs "parallel cues" mode.
 
-```
+```text
 repo/                          <- default workspace (browsing, no cue runs here)
 repo-workspace-add-auth/       <- workspace for cue "add authentication"
 repo-workspace-add-logging/    <- workspace for cue "add logging"

@@ -165,7 +165,7 @@ pub(crate) fn jj_get_ahead_of_remote(path: &Path, jj_path: &str) -> usize {
         .args([
             "log",
             "-r",
-            "remote_bookmarks()..@",
+            "remote_bookmarks()..@-",
             "--no-graph",
             "-T",
             r#"change_id ++ "\n""#,
