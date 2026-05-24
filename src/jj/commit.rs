@@ -349,7 +349,7 @@ pub(crate) fn jj_revert_files(
 
     for path in file_paths {
         let output = super::jj_cmd(jj_path)
-            .args(["restore", "--from", "@-", path])
+            .args(["restore", "--from", "@-", "--", path])
             .current_dir(repo_path)
             .output()?;
 

@@ -17,7 +17,7 @@ pub(crate) use worktree::{
 };
 
 fn jj_cmd(jj_path: &str) -> std::process::Command {
-    if jj_path.is_empty() {
+    if jj_path.is_empty() || jj_path.contains('/') || jj_path.contains('\\') {
         std::process::Command::new("jj")
     } else {
         std::process::Command::new(jj_path)
