@@ -83,7 +83,7 @@ You have two choices:
 again. Each commit stacks on top of the previous one. The history panel shows
 the growing chain. You can make as many commits as you like before pushing.
 
-**Push to the remote:** Click **Push** in the toolbar. Dirigent pushes all
+**Push to the remote:** Open the **jj** menu and click **Push**. Dirigent pushes all
 bookmarks that track a remote. The status bar shows "Pushing..." during the
 operation, then confirms with "Pushed (updated 1 bookmark)". The history panel
 refreshes to show the remote tracking state.

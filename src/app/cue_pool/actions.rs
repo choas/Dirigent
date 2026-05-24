@@ -409,11 +409,25 @@ impl DirigentApp {
                     self.reload_git_info();
                 }
                 Err(e) => {
-                    let _ = self.db.log_activity(
-                        cue_id,
-                        &format!("Revert failed: jj bookmark delete error: {e}"),
-                    );
-                    self.set_status_message(format!("Revert failed: {e}"));
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("no such bookmark") || msg.contains("not found") {
+                        self.cleanup_jj_workspace(cue_id);
+                        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                        let _ = self.db.log_activity(
+                            cue_id,
+                            "Reverted (bookmark not found, cleaned workspace)",
+                        );
+                        self.set_status_message(
+                            "Reverted — bookmark already gone, workspace removed".to_string(),
+                        );
+                        self.reload_git_info();
+                    } else {
+                        let _ = self.db.log_activity(
+                            cue_id,
+                            &format!("Revert failed: jj bookmark delete error: {e}"),
+                        );
+                        self.set_status_message(format!("Revert failed: {e}"));
+                    }
                 }
             }
             return;
