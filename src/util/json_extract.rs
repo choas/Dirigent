@@ -20,18 +20,25 @@ pub fn extract_json(s: &str) -> String {
             }
         }
     }
-    if let Some(result) = extract_last_balanced(s, '{', '}') {
-        return result;
+    let obj = extract_last_balanced_with_pos(s, '{', '}');
+    let arr = extract_last_balanced_with_pos(s, '[', ']');
+    match (obj, arr) {
+        (Some((_, obj_end, obj_str)), Some((_, arr_end, arr_str))) => {
+            if arr_end > obj_end {
+                arr_str
+            } else {
+                obj_str
+            }
+        }
+        (Some((_, _, obj_str)), None) => obj_str,
+        (None, Some((_, _, arr_str))) => arr_str,
+        (None, None) => s.trim().to_string(),
     }
-    if let Some(result) = extract_last_balanced(s, '[', ']') {
-        return result;
-    }
-    s.trim().to_string()
 }
 
 /// Find the last balanced `open`…`close` span in `s`, skipping over JSON
 /// string literals so that braces inside `"..."` don't affect depth counting.
-fn extract_last_balanced(s: &str, open: char, close: char) -> Option<String> {
+fn extract_last_balanced_with_pos(s: &str, open: char, close: char) -> Option<(usize, usize, String)> {
     let bytes = s.as_bytes();
     let end = s.rfind(close)?;
     let open_b = open as u8;
@@ -74,7 +81,7 @@ fn extract_last_balanced(s: &str, open: char, close: char) -> Option<String> {
 
     let start = start?;
     if end > start {
-        Some(s[start..=end].to_string())
+        Some((start, end, s[start..=end].to_string()))
     } else {
         None
     }
@@ -153,6 +160,12 @@ Some text in between.
     fn braces_inside_strings_skipped() {
         let input = r#"{"label": "Fix {the bug}", "id": 1}"#;
         assert_eq!(extract_json(input), input);
+    }
+
+    #[test]
+    fn array_after_object_picks_array() {
+        let input = r#"{"ignored": true} and then [1, 2, 3]"#;
+        assert_eq!(extract_json(input), "[1, 2, 3]");
     }
 
     #[test]
