@@ -51,6 +51,8 @@ pub(crate) struct ClaudeRunState {
     /// Per-cue timeline of recent log-arrival instants, used to draw the
     /// heartbeat strip beneath the running conversation view.
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
+    /// Consecutive auto-continue count per cue (reset on normal completion).
+    pub(super) auto_continue_count: HashMap<i64, u32>,
 }
 
 impl ClaudeRunState {
@@ -70,6 +72,7 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             log_heartbeats: HashMap::new(),
+            auto_continue_count: HashMap::new(),
         }
     }
 }
@@ -856,6 +859,13 @@ impl DirigentApp {
 
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
+
+        // Dispatch pending auto-continues now that tracking state is cleared.
+        let auto_continues = std::mem::take(&mut self.pending_auto_continues);
+        for cue_id in auto_continues {
+            self.trigger_claude_reply(cue_id, "continue", &[]);
+        }
+
         self.on_workflow_cue_completed(result.cue_id);
     }
 
@@ -1057,6 +1067,7 @@ impl DirigentApp {
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {
+        self.claude.auto_continue_count.remove(&result.cue_id);
         let Some(diff) = result.diff.as_ref() else {
             return;
         };
@@ -1198,7 +1209,27 @@ impl DirigentApp {
             self.reply_inputs
                 .entry(result.cue_id)
                 .or_insert_with(String::new);
+        } else if self.should_auto_continue(result.cue_id) {
+            let count = self
+                .claude
+                .auto_continue_count
+                .entry(result.cue_id)
+                .or_insert(0);
+            *count += 1;
+            let n = *count;
+            let max = self.settings.auto_continue_max;
+            self.set_status_message(format!(
+                "Auto-continuing \"{}\" ({}/{})",
+                preview, n, max,
+            ));
+            let _ = self.db.update_cue_has_question(result.cue_id, false);
+            let _ = self.db.log_activity(
+                result.cue_id,
+                &format!("Stopped early — auto-continue {}/{}", n, max),
+            );
+            self.pending_auto_continues.push(result.cue_id);
         } else {
+            self.claude.auto_continue_count.remove(&result.cue_id);
             self.set_status_message(format!(
                 "Claude completed but no file changes detected for \"{}\"",
                 preview
@@ -1209,6 +1240,24 @@ impl DirigentApp {
                 .db
                 .log_activity(result.cue_id, "Run completed — no changes");
         }
+    }
+
+    /// Check whether a stopped-early run should be auto-continued.
+    fn should_auto_continue(&self, cue_id: i64) -> bool {
+        if !self.settings.auto_continue {
+            return false;
+        }
+        let count = self.claude.auto_continue_count.get(&cue_id).copied().unwrap_or(0);
+        if count >= self.settings.auto_continue_max {
+            return false;
+        }
+        let log = self
+            .claude
+            .running_logs
+            .get(&cue_id)
+            .map(|(l, _)| l.as_str())
+            .unwrap_or("");
+        claude::detect_stopped_early(log)
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.

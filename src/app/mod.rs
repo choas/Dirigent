@@ -422,6 +422,8 @@ pub struct DirigentApp {
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
+    // Cues that need an auto-continue reply after tracking state is flushed
+    pending_auto_continues: Vec<i64>,
 
     // SSH remote connections (dedicated worker thread)
     ssh_worker: Option<ssh::SshWorkerHandle>,
@@ -860,6 +862,7 @@ impl DirigentApp {
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
+            pending_auto_continues: Vec::new(),
 
             ssh_worker: None,
             ssh_remote_entries: Vec::new(),
