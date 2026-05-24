@@ -53,6 +53,8 @@ pub(crate) struct ClaudeRunState {
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
     /// Consecutive auto-continue count per cue (reset on normal completion).
     pub(super) auto_continue_count: HashMap<i64, u32>,
+    /// Spawn-failure retry count per cue for auto-continues.
+    pub(super) auto_continue_spawn_retries: HashMap<i64, u32>,
 }
 
 impl ClaudeRunState {
@@ -73,6 +75,7 @@ impl ClaudeRunState {
             conversation_history: Vec::new(),
             log_heartbeats: HashMap::new(),
             auto_continue_count: HashMap::new(),
+            auto_continue_spawn_retries: HashMap::new(),
         }
     }
 }
@@ -808,16 +811,16 @@ impl DirigentApp {
     }
 
     /// Dispatch an auto-continue with rollback appropriate for auto-continues.
-    /// Unlike trigger_claude_reply (which rolls back to Review), on failure this
-    /// keeps the cue in Done (where it was when the auto-continue was enqueued)
-    /// and clears the auto-continue budget so the cue doesn't get re-enqueued.
+    /// On failure the cue is restored to Done (its state before the auto-continue
+    /// was enqueued) and re-enqueued into `pending_auto_continues` for one retry.
+    /// After a second failure the auto-continue budget is cleared.
     fn dispatch_auto_continue(&mut self, cue_id: i64) {
         if let Err(e) = settings::sync_home_guard_hook(
             &self.project_root,
             self.settings.allow_home_folder_access,
         ) {
             log::error!("Auto-continue sync_home_guard_hook failed for cue {cue_id}: {e:#}");
-            self.claude.auto_continue_count.remove(&cue_id);
+            self.rollback_auto_continue(cue_id);
             return;
         }
 
@@ -827,6 +830,7 @@ impl DirigentApp {
             Some(c) => c.clone(),
             None => {
                 self.claude.auto_continue_count.remove(&cue_id);
+                self.claude.auto_continue_spawn_retries.remove(&cue_id);
                 return;
             }
         };
@@ -869,17 +873,39 @@ impl DirigentApp {
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
 
-        if !self.insert_exec_and_spawn(
+        if self.insert_exec_and_spawn(
             cue_id,
             prompt,
             provider,
             &matched_command,
             resume_session_id,
         ) {
-            self.claude.auto_continue_count.remove(&cue_id);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            self.reload_cues();
+            self.claude.auto_continue_spawn_retries.remove(&cue_id);
+        } else {
+            self.claude.running_logs.remove(&cue_id);
+            self.claude.start_times.remove(&cue_id);
+            self.rollback_auto_continue(cue_id);
         }
+    }
+
+    /// Roll back a failed auto-continue dispatch: restore the cue to Done and
+    /// re-enqueue for one retry.  After a second failure, give up entirely.
+    fn rollback_auto_continue(&mut self, cue_id: i64) {
+        let retries = self
+            .claude
+            .auto_continue_spawn_retries
+            .entry(cue_id)
+            .or_insert(0);
+        *retries += 1;
+        if *retries > 1 {
+            log::warn!("Auto-continue spawn failed twice for cue {cue_id}, giving up");
+            self.claude.auto_continue_count.remove(&cue_id);
+            self.claude.auto_continue_spawn_retries.remove(&cue_id);
+        } else {
+            self.pending_auto_continues.push(cue_id);
+        }
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+        self.reload_cues();
     }
 
     pub(super) fn process_claude_results(&mut self) {
@@ -894,6 +920,15 @@ impl DirigentApp {
 
         if had_results {
             self.cached_total_cost = self.db.total_cost().unwrap_or(self.cached_total_cost);
+        }
+
+        // Drain any pending auto-continues that were re-enqueued due to spawn
+        // failure (process_single_result only drains after a result arrives).
+        if !self.pending_auto_continues.is_empty() && !had_results {
+            let auto_continues = std::mem::take(&mut self.pending_auto_continues);
+            for cue_id in auto_continues {
+                self.dispatch_auto_continue(cue_id);
+            }
         }
     }
 

@@ -15,6 +15,7 @@ impl DirigentApp {
         self.follow_up_queue.clear();
         self.pending_auto_continues.clear();
         self.claude.auto_continue_count.clear();
+        self.claude.auto_continue_spawn_retries.clear();
         self.scheduled_runs.clear();
         self.schedule_inputs.clear();
 
