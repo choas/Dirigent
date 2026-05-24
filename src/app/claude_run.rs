@@ -752,7 +752,11 @@ impl DirigentApp {
         // When resuming a Claude session the previous context is already in the
         // conversation, so we only need to send the user's reply. For a fresh
         // session (or non-Claude provider) we build the full structured prompt.
-        let prompt = if resume_session_id.is_some() {
+        // We also need the full prompt when there are new images to attach.
+        let prompt = if resume_session_id.is_some()
+            && all_images.is_empty()
+            && provider == CliProvider::Claude
+        {
             reply.to_string()
         } else {
             let previous_diff = self
@@ -799,6 +803,81 @@ impl DirigentApp {
         } else {
             // Restore the cue to Review (its state before we attempted the reply).
             let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
+            self.reload_cues();
+        }
+    }
+
+    /// Dispatch an auto-continue with rollback appropriate for auto-continues.
+    /// Unlike trigger_claude_reply (which rolls back to Review), on failure this
+    /// keeps the cue in Done (where it was when the auto-continue was enqueued)
+    /// and clears the auto-continue budget so the cue doesn't get re-enqueued.
+    fn dispatch_auto_continue(&mut self, cue_id: i64) {
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            log::error!("Auto-continue sync_home_guard_hook failed for cue {cue_id}: {e:#}");
+            self.claude.auto_continue_count.remove(&cue_id);
+            return;
+        }
+
+        let provider = self.settings.cli_provider.clone();
+
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
+            Some(c) => c.clone(),
+            None => {
+                self.claude.auto_continue_count.remove(&cue_id);
+                return;
+            }
+        };
+
+        let (raw_text, matched_command) =
+            resolve_command_prefix(&cue.text, &self.settings.commands);
+
+        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
+
+        let prompt = if resume_session_id.is_some() && provider == CliProvider::Claude {
+            "continue".to_string()
+        } else {
+            let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
+            let previous_diff = self
+                .db
+                .get_latest_execution(cue_id)
+                .ok()
+                .flatten()
+                .and_then(|e| e.diff)
+                .unwrap_or_default();
+
+            claude::build_reply_prompt(
+                &original_text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                "continue",
+                &[],
+                Some(&self.project_root),
+            )
+        };
+
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.claude.expand_running = true;
+        self.reload_cues();
+
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
+        self.claude.start_times.insert(cue_id, Instant::now());
+
+        if !self.insert_exec_and_spawn(
+            cue_id,
+            prompt,
+            provider,
+            &matched_command,
+            resume_session_id,
+        ) {
+            self.claude.auto_continue_count.remove(&cue_id);
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
             self.reload_cues();
         }
     }
@@ -869,7 +948,7 @@ impl DirigentApp {
         // Dispatch pending auto-continues now that tracking state is cleared.
         let auto_continues = std::mem::take(&mut self.pending_auto_continues);
         for cue_id in auto_continues {
-            self.trigger_claude_reply(cue_id, "continue", &[]);
+            self.dispatch_auto_continue(cue_id);
         }
 
         self.on_workflow_cue_completed(result.cue_id);
@@ -1206,6 +1285,7 @@ impl DirigentApp {
         let has_question = claude::response_has_question(&result.response);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
+            self.claude.auto_continue_count.remove(&result.cue_id);
             self.set_status_message(format!("Claude is asking a question about \"{}\"", preview));
             let _ = self.db.update_cue_has_question(result.cue_id, true);
             let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
