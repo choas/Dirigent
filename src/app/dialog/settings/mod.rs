@@ -150,6 +150,17 @@ impl DirigentApp {
                 ui.checkbox(&mut self.settings.auto_context_git_diff, "Include git diff in prompt")
                     .on_hover_text("Appends the current unstaged diff so the AI sees recent changes without an extra tool call.");
                 ui.end_row();
+
+                ui.label("Auto-Continue:");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.settings.auto_continue, "Send \"continue\" when a run stops mid-task")
+                        .on_hover_text("Detects when the AI stopped while still working (e.g. mid-tool-use) and automatically resumes the session.");
+                    if self.settings.auto_continue {
+                        ui.label("max:");
+                        ui.add(egui::DragValue::new(&mut self.settings.auto_continue_max).range(1..=10));
+                    }
+                });
+                ui.end_row();
             });
     }
 

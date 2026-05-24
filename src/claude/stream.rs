@@ -326,6 +326,32 @@ pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
     None
 }
 
+// ── Stopped-early detection ─────────────────────────────────────────
+
+/// Detect whether a run was stopped before the AI finished its task.
+///
+/// Looks at the log for the "Stop hook fired" sentinel exit, then checks
+/// whether the last substantive output was mid-tool-use (e.g. tool output
+/// lines starting with `⎿` or tool headers `⏺`) rather than a natural
+/// language conclusion. Returns `true` when the run appears truncated.
+pub(crate) fn detect_stopped_early(log: &str) -> bool {
+    if !log.contains("Stop hook fired") {
+        return false;
+    }
+    let last_substantive = log.lines().rev().map(|l| l.trim()).find(|l| {
+        !l.is_empty() && !l.starts_with("Done ") && !l.starts_with("⏎") && !l.starts_with("⚠")
+    });
+    match last_substantive {
+        Some(line) => {
+            line.starts_with('⎿')
+                || line.starts_with('⏺')
+                || line.starts_with("Running")
+                || line.starts_with("  ")
+        }
+        None => false,
+    }
+}
+
 // ── Usage limit & question detection ────────────────────────────────
 
 /// Detect a usage-limit / hard rate-limit message in Claude output.
@@ -446,5 +472,37 @@ mod tests {
         for &(input, expected) in cases {
             assert_eq!(detect_usage_limit(input), expected, "input: {input:?}");
         }
+    }
+
+    #[test]
+    fn detect_stopped_early_mid_tool_use() {
+        let log = "⏺ Bash(sed -n '384,470p' file.mjs)\n\
+                   ⎿  function useKeyPress(\n\
+                   ⎿  Running…\n\
+                   \n\
+                   ⏎ Stop hook fired — draining remaining output…\n\
+                   \n\
+                   ⏎ Grace period done — exiting.\n\
+                   \n\
+                   Done 324s (122 lines)\n";
+        assert!(detect_stopped_early(log));
+    }
+
+    #[test]
+    fn detect_stopped_early_normal_completion() {
+        let log = "⏺ Read file.rs\n\
+                   ⎿  contents…\n\
+                   I've reviewed the file and everything looks good.\n\
+                   \n\
+                   ⏎ Stop hook fired — draining remaining output…\n\
+                   ⏎ Grace period done — exiting.\n\
+                   Done 60s (10 lines)\n";
+        assert!(!detect_stopped_early(log));
+    }
+
+    #[test]
+    fn detect_stopped_early_no_stop_hook() {
+        let log = "Some output\nDone 30s (5 lines)\n";
+        assert!(!detect_stopped_early(log));
     }
 }

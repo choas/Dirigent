@@ -18,6 +18,7 @@ pub(crate) use prompt::{
     extract_user_text_from_prompt, gather_auto_context, parse_command_prefix,
 };
 pub(crate) use stream::{
-    detect_usage_limit, extract_plan_path, filter_opencode_log_line, response_has_question,
+    detect_stopped_early, detect_usage_limit, extract_plan_path, filter_opencode_log_line,
+    response_has_question,
 };
 pub(crate) use types::{ClaudeError, RunMetrics};

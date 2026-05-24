@@ -87,5 +87,6 @@ pub(super) fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Executio
         cost_usd: row.get(8)?,
         duration_ms: duration_raw.map(try_i64_to_u64).transpose()?,
         num_turns: turns_raw.map(try_i64_to_u64).transpose()?,
+        session_id: row.get(11)?,
     })
 }
