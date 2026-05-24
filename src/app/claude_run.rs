@@ -52,6 +52,8 @@ pub(crate) struct ClaudeRunState {
     pub(super) conversation_history: Vec<Execution>,
     /// jj workspace paths for per-cue isolation (cue_id -> workspace directory).
     pub(super) workspace_paths: HashMap<i64, PathBuf>,
+    /// jj workspace names for per-cue isolation (cue_id -> jj workspace name).
+    pub(super) workspace_names: HashMap<i64, String>,
     /// Cue IDs whose jj workspace commit+bookmark failed (prevents false Done transitions).
     pub(super) workspace_commit_failed: HashSet<i64>,
 }
@@ -73,6 +75,7 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             workspace_paths: HashMap::new(),
+            workspace_names: HashMap::new(),
             workspace_commit_failed: HashSet::new(),
         }
     }
@@ -564,6 +567,7 @@ impl DirigentApp {
             ) {
                 Ok(ws_path) => {
                     self.claude.workspace_paths.insert(cue_id, ws_path);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
                 }
                 Err(e) => {
                     eprintln!("Failed to create jj workspace for cue {cue_id}: {e}");
@@ -617,15 +621,18 @@ impl DirigentApp {
         {
             let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
             if let Some(parent) = self.project_root.parent() {
-                let expected = parent.join(&ws_name);
+                let dir_name = ws_name.rsplit('/').next().unwrap_or(&ws_name);
+                let expected = parent.join(dir_name);
                 if expected.is_dir() {
                     self.claude.workspace_paths.insert(cue_id, expected);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
                 } else if let Ok(ws_path) = jj::jj_create_workspace(
                     &self.project_root,
                     &ws_name,
                     &self.settings.jj_cli_path,
                 ) {
                     self.claude.workspace_paths.insert(cue_id, ws_path);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
                 }
             }
         }
@@ -1210,14 +1217,11 @@ impl DirigentApp {
     pub(super) fn cleanup_jj_workspace(&mut self, cue_id: i64) {
         self.claude.workspace_commit_failed.remove(&cue_id);
         if let Some(ws_path) = self.claude.workspace_paths.remove(&cue_id) {
-            let ws_name = ws_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if !ws_name.is_empty() {
+            let ws_name = self.claude.workspace_names.remove(&cue_id);
+            if let Some(name) = &ws_name {
                 let _ = jj::jj_remove_workspace(
                     &self.project_root,
-                    &ws_name,
+                    name,
                     &self.settings.jj_cli_path,
                 );
             }
