@@ -357,13 +357,21 @@ impl DirigentApp {
     /// Open a diff review for the given commit.
     fn open_commit_diff_review(&mut self, full_hash: &str, message: &str, body: String) {
         let short_hash = &full_hash[..7.min(full_hash.len())];
-        let diff_text = vcs_dispatch::get_commit_diff(
+        let diff_text = match vcs_dispatch::get_commit_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,
             full_hash,
-        )
-        .unwrap_or_default();
+        ) {
+            Some(d) => d,
+            None => {
+                self.set_status_message(format!(
+                    "Failed to load diff for commit {}",
+                    short_hash
+                ));
+                return;
+            }
+        };
         let parsed = diff_view::parse_unified_diff(&diff_text);
         let cue_text = if body.len() > message.len() {
             body
