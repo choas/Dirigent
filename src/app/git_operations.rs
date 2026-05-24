@@ -830,23 +830,53 @@ impl DirigentApp {
         self.git.show_create_bookmark = true;
     }
 
-    /// Create a jj bookmark at the current commit.
+    /// Create a jj bookmark at the current commit (runs off the UI thread).
     pub(super) fn start_create_bookmark(&mut self) {
         let name = self.git.create_bookmark_name.trim().to_string();
         if name.is_empty() {
             self.set_status_message("Bookmark name cannot be empty".into());
             return;
         }
+        if self.git.creating_bookmark {
+            return;
+        }
         self.git.show_create_bookmark = false;
+        self.git.creating_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.create_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        match jj::jj_create_bookmark(&root, &name, &jj_path) {
-            Ok(()) => {
-                self.set_status_message(format!("Created bookmark '{}'", name));
+        let bm = name.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_create_bookmark(&root, &bm, &jj_path)
+                .map(|()| format!("Created bookmark '{}'", bm))
+                .map_err(|e| format!("Create bookmark failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Creating bookmark '{}'...", name));
+    }
+
+    /// Check for completed bookmark creation.
+    pub(super) fn process_create_bookmark_result(&mut self) {
+        let rx = match self.git.create_bookmark_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.creating_bookmark = false;
+                self.git.create_bookmark_rx = None;
+                self.set_status_message("Create bookmark failed unexpectedly".into());
+                return;
             }
-            Err(e) => {
-                self.set_status_message(format!("Create bookmark failed: {}", e));
-            }
+            Ok(r) => r,
+        };
+        self.git.creating_bookmark = false;
+        self.git.create_bookmark_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
         }
         self.reload_git_info();
         self.reload_commit_history();
@@ -919,17 +949,44 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
-    /// Undo the last jj operation.
+    /// Undo the last jj operation (runs off the UI thread).
     pub(super) fn start_jj_undo(&mut self) {
+        if self.git.undoing {
+            return;
+        }
+        self.git.undoing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.undo_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        match jj::jj_undo(&root, &jj_path) {
-            Ok(msg) => {
-                self.set_status_message(msg);
+        std::thread::spawn(move || {
+            let result = jj::jj_undo(&root, &jj_path).map_err(|e| format!("Undo failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Undoing last operation...".into());
+    }
+
+    /// Check for completed undo operation.
+    pub(super) fn process_undo_result(&mut self) {
+        let rx = match self.git.undo_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.undoing = false;
+                self.git.undo_rx = None;
+                self.set_status_message("Undo failed unexpectedly".into());
+                return;
             }
-            Err(e) => {
-                self.set_status_message(format!("Undo failed: {}", e));
-            }
+            Ok(r) => r,
+        };
+        self.git.undoing = false;
+        self.git.undo_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
         }
         self.git.history_cache_key = (String::new(), 0);
         self.reload_git_info();

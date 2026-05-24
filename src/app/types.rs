@@ -580,9 +580,15 @@ pub(crate) struct GitState {
     pub(super) create_bookmark_name: String,
     /// Whether the text field should receive initial focus on the next frame.
     pub(super) create_bookmark_needs_focus: bool,
+    /// Whether a bookmark creation is in progress (jj only).
+    pub(super) creating_bookmark: bool,
+    pub(super) create_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether a squash operation is in progress (jj only).
     pub(super) squashing: bool,
     pub(super) squash_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether an undo operation is in progress (jj only).
+    pub(super) undoing: bool,
+    pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 impl GitState {

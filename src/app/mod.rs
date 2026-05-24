@@ -658,8 +658,12 @@ impl DirigentApp {
                 show_create_bookmark: false,
                 create_bookmark_name: String::new(),
                 create_bookmark_needs_focus: false,
+                creating_bookmark: false,
+                create_bookmark_rx: None,
                 squashing: false,
                 squash_rx: None,
+                undoing: false,
+                undo_rx: None,
             },
             settings,
             semantic,
@@ -1026,7 +1030,9 @@ impl eframe::App for DirigentApp {
         self.process_import_pr_result();
         self.process_pr_notify_result();
         self.process_move_to_branch_result();
+        self.process_create_bookmark_result();
         self.process_squash_result();
+        self.process_undo_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

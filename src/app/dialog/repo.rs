@@ -613,8 +613,8 @@ impl DirigentApp {
                     Ok(None) => None,
                     Err(e) => {
                         self.set_status_message(format!(
-                            "Cannot remove worktree: failed to archive DB: {}",
-                            e
+                            "Cannot remove {}: failed to archive DB: {}",
+                            label, e
                         ));
                         return;
                     }
@@ -622,8 +622,8 @@ impl DirigentApp {
             }
             Err(e) => {
                 self.set_status_message(format!(
-                    "Cannot remove worktree: could not determine main worktree path: {}",
-                    e
+                    "Cannot remove {}: could not determine main worktree path: {}",
+                    label, e
                 ));
                 return;
             }
@@ -645,11 +645,15 @@ impl DirigentApp {
                 self.git.pending_archive_msg = None;
                 self.reload_worktrees();
                 if let Some(msg) = archive_msg {
-                    self.set_status_message(format!("Worktree removed. {}", msg));
+                    self.set_status_message(format!(
+                        "{} removed. {}",
+                        if label == "workspace" { "Workspace" } else { "Worktree" },
+                        msg
+                    ));
                 }
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to remove worktree: {}", e));
+                self.set_status_message(format!("Failed to remove {}: {}", label, e));
             }
         }
     }
