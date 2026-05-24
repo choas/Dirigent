@@ -31,14 +31,16 @@ pub(crate) fn jj_list_workspaces(
             continue;
         }
 
-        // For the default workspace, use the repo_path; for others, try sibling
+        // For the default workspace, use the repo_path; for others, derive the
+        // sibling directory the same way jj_create_workspace builds it.
         let ws_path = if name == "default" {
             repo_path.to_path_buf()
         } else {
+            let dir_name = name.rsplit('/').next().unwrap_or(&name);
             repo_path
                 .parent()
-                .map(|p| p.join(&name))
-                .unwrap_or_else(|| repo_path.join(&name))
+                .map(|p| p.join(dir_name))
+                .unwrap_or_else(|| repo_path.join(dir_name))
         };
 
         let canon_ws = std::fs::canonicalize(&ws_path).unwrap_or_else(|_| ws_path.clone());
