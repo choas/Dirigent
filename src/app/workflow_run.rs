@@ -375,6 +375,9 @@ fn run_workflow_analysis(
 
     let response_text = match provider {
         CliProvider::Claude => {
+            // Always use headless mode for workflow analysis: the PTY's
+            // line-deduplication drops repeated JSON structural lines (e.g.
+            // `    {`, `    },`) which corrupts the multi-line JSON response.
             let result = crate::claude::invoke_claude_streaming(
                 prompt,
                 project_root,
@@ -386,7 +389,7 @@ fn run_workflow_analysis(
                 pf.pre_run_script,
                 pf.post_run_script,
                 settings.allow_dangerous_skip_permissions,
-                settings.claude_use_pty,
+                false,
                 |_| {},
                 cancel,
             )

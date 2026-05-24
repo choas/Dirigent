@@ -270,6 +270,7 @@ fn run_split_analysis(
 
     let response_text = match provider {
         CliProvider::Claude => {
+            // Force headless: PTY line-deduplication corrupts multi-line JSON.
             let result = crate::claude::invoke_claude_streaming(
                 prompt,
                 project_root,
@@ -281,7 +282,7 @@ fn run_split_analysis(
                 pf.pre_run_script,
                 pf.post_run_script,
                 settings.allow_dangerous_skip_permissions,
-                settings.claude_use_pty,
+                false,
                 |_| {},
                 cancel,
             )
