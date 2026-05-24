@@ -40,51 +40,55 @@ pub fn extract_json(s: &str) -> String {
 /// string literals so that braces inside `"..."` don't affect depth counting.
 fn extract_last_balanced_with_pos(s: &str, open: char, close: char) -> Option<(usize, usize, String)> {
     let bytes = s.as_bytes();
-    let end = s.rfind(close)?;
     let open_b = open as u8;
     let close_b = close as u8;
 
-    let mut depth: i32 = 0;
-    let mut start = None;
-    let mut i = end;
-    loop {
-        let b = bytes[i];
-        if b == b'"' {
-            // Walk backwards past the string literal, handling escaped quotes.
+    let mut search_from = bytes.len();
+    while let Some(rel) = bytes[..search_from].iter().rposition(|&b| b == close_b) {
+        let end = rel;
+        let mut depth: i32 = 0;
+        let mut start = None;
+        let mut i = end;
+        loop {
+            let b = bytes[i];
+            if b == b'"' {
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
+                while i > 0 {
+                    if bytes[i] == b'"' {
+                        let backslashes =
+                            bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
+                        if backslashes % 2 == 0 {
+                            break;
+                        }
+                    }
+                    i -= 1;
+                }
+            } else if b == close_b {
+                depth += 1;
+            } else if b == open_b {
+                depth -= 1;
+                if depth == 0 {
+                    start = Some(i);
+                    break;
+                }
+            }
             if i == 0 {
                 break;
             }
             i -= 1;
-            while i > 0 {
-                if bytes[i] == b'"' {
-                    let backslashes = bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
-                    if backslashes % 2 == 0 {
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-        } else if b == close_b {
-            depth += 1;
-        } else if b == open_b {
-            depth -= 1;
-            if depth == 0 {
-                start = Some(i);
-                break;
-            }
         }
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
 
-    let start = start?;
-    if end > start {
-        Some((start, end, s[start..=end].to_string()))
-    } else {
-        None
+        if let Some(s_pos) = start {
+            if end > s_pos {
+                return Some((s_pos, end, s[s_pos..=end].to_string()));
+            }
+        }
+        search_from = end;
     }
+    None
 }
 
 #[cfg(test)]
