@@ -104,6 +104,81 @@ use types::{
     GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
 };
 
+/// Set the macOS Dock label and menu bar title to the given project name.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_macos_dock_name(name: &str) {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+    use std::ffi::CString;
+
+    let c_name = match CString::new(name) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    unsafe {
+        let ns_string = Class::get("NSString").unwrap();
+        let ns_name: *mut Object = msg_send![ns_string, stringWithUTF8String: c_name.as_ptr()];
+
+        let ns_process_info = Class::get("NSProcessInfo").unwrap();
+        let process_info: *mut Object = msg_send![ns_process_info, processInfo];
+        let _: () = msg_send![process_info, setProcessName: ns_name];
+
+        let ns_app = Class::get("NSApplication").unwrap();
+        let app: *mut Object = msg_send![ns_app, sharedApplication];
+        let main_menu: *mut Object = msg_send![app, mainMenu];
+        if !main_menu.is_null() {
+            let first_item: *mut Object = msg_send![main_menu, itemAtIndex: 0isize];
+            if !first_item.is_null() {
+                let sub_menu: *mut Object = msg_send![first_item, submenu];
+                if !sub_menu.is_null() {
+                    let _: () = msg_send![sub_menu, setTitle: ns_name];
+                }
+            }
+        }
+    }
+}
+
+/// Update the macOS Dock icon at runtime from a custom PNG path.
+/// Falls back to the built-in logo when the path is empty or unreadable.
+#[cfg(target_os = "macos")]
+pub(crate) fn update_macos_dock_icon(custom_path: &str) {
+    let png_bytes: Vec<u8> = if custom_path.is_empty() {
+        include_bytes!("../../assets/logo.png").to_vec()
+    } else {
+        match std::fs::read(custom_path) {
+            Ok(b) => b,
+            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
+        }
+    };
+    unsafe {
+        use objc::runtime::{Class, Object};
+        use objc::{msg_send, sel, sel_impl};
+
+        let ns_data = Class::get("NSData").unwrap();
+        let ns_image_class = Class::get("NSImage").unwrap();
+
+        let data: *mut Object =
+            msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
+        let image: *mut Object = msg_send![ns_image_class, alloc];
+        let image: *mut Object = msg_send![image, initWithData:data];
+
+        let image: *mut Object = if image.is_null() {
+            let fallback = include_bytes!("../../assets/logo.png");
+            let fb_data: *mut Object =
+                msg_send![ns_data, dataWithBytes:fallback.as_ptr() length:fallback.len()];
+            let fb_image: *mut Object = msg_send![ns_image_class, alloc];
+            msg_send![fb_image, initWithData:fb_data]
+        } else {
+            image
+        };
+
+        let ns_app = Class::get("NSApplication").unwrap();
+        let app: *mut Object = msg_send![ns_app, sharedApplication];
+        let _: () = msg_send![app, setApplicationIconImage:image];
+    }
+}
+
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
@@ -652,6 +727,7 @@ impl DirigentApp {
                 new_pattern_field: "text".to_string(),
                 editing_pattern: None,
                 hovered_graph_row: None,
+                selected_files: HashSet::new(),
                 show_move_to_branch: false,
                 move_to_branch_needs_focus: false,
                 move_to_branch_name: String::new(),
@@ -803,6 +879,8 @@ impl DirigentApp {
             last_render_code_viewer_time: Duration::ZERO,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        #[cfg(target_os = "macos")]
+        update_macos_dock_icon(&app.settings.custom_dock_icon_path);
         app
     }
 
@@ -833,10 +911,19 @@ impl DirigentApp {
     /// Ensure the logo texture is loaded (lazy, called once).
     fn ensure_logo_texture(&mut self, ctx: &egui::Context) {
         if self.logo_texture.is_none() {
-            let png_bytes = include_bytes!("../../assets/logo.png");
-            let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
-                .expect("failed to decode logo.png")
-                .into_rgba8();
+            let img = if !self.settings.custom_dock_icon_path.is_empty() {
+                image::open(&self.settings.custom_dock_icon_path)
+                    .ok()
+                    .map(|i| i.into_rgba8())
+            } else {
+                None
+            }
+            .unwrap_or_else(|| {
+                let png_bytes = include_bytes!("../../assets/logo.png");
+                image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
+                    .expect("failed to decode logo.png")
+                    .into_rgba8()
+            });
             let size = [img.width() as usize, img.height() as usize];
             let pixels = img.into_raw();
             let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);

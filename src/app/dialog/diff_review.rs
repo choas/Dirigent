@@ -35,6 +35,7 @@ struct DiffReviewActions {
     search_next: bool,
     search_prev: bool,
     search_close: bool,
+    open_file: Option<(String, usize)>,
 }
 
 impl DiffReviewActions {
@@ -50,6 +51,7 @@ impl DiffReviewActions {
             search_next: false,
             search_prev: false,
             search_close: false,
+            open_file: None,
         }
     }
 }
@@ -113,7 +115,7 @@ impl DirigentApp {
             Self::render_diff_search_bar(ui, fs, &sem, search_query, &search, &mut actions);
             ui.separator();
 
-            Self::render_diff_content(
+            actions.open_file = Self::render_diff_content(
                 ui,
                 &sem,
                 &parsed,
@@ -409,7 +411,7 @@ impl DirigentApp {
         search_query: &str,
         search: &SearchState<'_>,
         collapsed_files: &mut std::collections::HashSet<usize>,
-    ) {
+    ) -> Option<(String, usize)> {
         let query_lower_owned = search_query.to_lowercase();
         let search_highlight = if search.active && !search_query.is_empty() {
             let current = search
@@ -423,6 +425,8 @@ impl DirigentApp {
             None
         };
 
+        let mut open_request = None;
+
         egui::ScrollArea::both()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
@@ -434,28 +438,26 @@ impl DirigentApp {
                             .color(sem.secondary_text),
                     );
                 } else {
-                    match view_mode {
-                        DiffViewMode::Inline => {
-                            diff_view::render_inline_diff(
-                                ui,
-                                parsed,
-                                collapsed_files,
-                                search_highlight.as_ref(),
-                                sem,
-                            );
-                        }
-                        DiffViewMode::SideBySide => {
-                            diff_view::render_side_by_side_diff(
-                                ui,
-                                parsed,
-                                collapsed_files,
-                                search_highlight.as_ref(),
-                                sem,
-                            );
-                        }
-                    }
+                    open_request = match view_mode {
+                        DiffViewMode::Inline => diff_view::render_inline_diff(
+                            ui,
+                            parsed,
+                            collapsed_files,
+                            search_highlight.as_ref(),
+                            sem,
+                        ),
+                        DiffViewMode::SideBySide => diff_view::render_side_by_side_diff(
+                            ui,
+                            parsed,
+                            collapsed_files,
+                            search_highlight.as_ref(),
+                            sem,
+                        ),
+                    };
                 }
             });
+
+        open_request
     }
 
     fn apply_diff_review_state_updates(&mut self, actions: &DiffReviewActions) {
@@ -540,6 +542,16 @@ impl DirigentApp {
             self.handle_diff_reject(cue_id, diff_text);
         } else if let Some(reply) = actions.reply_send {
             self.trigger_claude_reply(cue_id, &reply, &[]);
+        } else if let Some((path, line)) = actions.open_file {
+            let path_obj = std::path::Path::new(&path);
+            if !path.is_empty() && path != "/dev/null" && !path_obj.is_absolute() {
+                let full_path = self.project_root.join(&path);
+                if self.is_within_project_root(&full_path) {
+                    self.diff_review = None;
+                    self.load_file(full_path);
+                    self.viewer.scroll_to_line = Some(line.max(1));
+                }
+            }
         } else if actions.close {
             self.diff_review = None;
         }

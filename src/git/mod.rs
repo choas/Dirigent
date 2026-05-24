@@ -25,7 +25,7 @@ fn collect_statuses(repo: &Repository) -> Option<Statuses<'_>> {
 pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};
 pub(crate) use commit::{
     commit_all, commit_diff, detect_commit_type, generate_commit_message, git_pull, git_push,
-    move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
+    move_to_new_branch, restore_file, revert_files, PullStrategy, DIRIGENT_FOOTER,
 };
 pub(crate) use diff::{get_working_diff, parse_diff_file_paths_for_repo};
 pub(crate) use history::{count_commits, get_commit_diff, read_commit_history, CommitInfo};

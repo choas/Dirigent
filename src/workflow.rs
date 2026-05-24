@@ -160,14 +160,10 @@ pub(crate) fn parse_workflow_response(
     response: &str,
     expected_cue_ids: &[i64],
 ) -> (WorkflowPlan, Option<String>) {
-    // Try to extract JSON from the response (handle markdown fences, leading text, etc.)
-    let json_str = crate::util::json_extract::extract_json(response);
-
-    let parsed: Result<LlmWorkflowResponse, _> = serde_json::from_str(&json_str);
-    match parsed {
-        Ok(resp) => {
-            let mut steps: Vec<WorkflowStep> = resp
-                .steps
+    let resp_steps = try_parse_workflow_json(response);
+    match resp_steps {
+        Some(resp_steps) => {
+            let mut steps: Vec<WorkflowStep> = resp_steps
                 .into_iter()
                 .enumerate()
                 .map(|(i, s)| WorkflowStep {
@@ -231,12 +227,221 @@ pub(crate) fn parse_workflow_response(
 
             (WorkflowPlan::from_steps(steps), warning)
         }
-        Err(e) => (
+        None => (
             WorkflowPlan::sequential_fallback(expected_cue_ids),
-            Some(format!(
-                "Failed to parse LLM workflow JSON: {} — using sequential fallback",
-                e
-            )),
+            Some("Failed to parse LLM workflow JSON — using sequential fallback".to_string()),
         ),
+    }
+}
+
+/// Try multiple strategies to parse workflow JSON from the LLM response.
+fn try_parse_workflow_json(response: &str) -> Option<Vec<LlmWorkflowStep>> {
+    if let Some(steps) = try_extract_strategies(response) {
+        return Some(steps);
+    }
+
+    // Repair PTY word-wrap damage — collapse line breaks / carriage returns
+    // inside JSON string values, then retry all strategies on the repaired text.
+    let repaired = repair_pty_line_breaks(response);
+    if repaired != response {
+        if let Some(steps) = try_extract_strategies(&repaired) {
+            return Some(steps);
+        }
+    }
+
+    let hash = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        response.hash(&mut h);
+        h.finish()
+    };
+    log::warn!(
+        "[workflow] all parse strategies failed; response length={}, hash={:016x}",
+        response.len(),
+        hash,
+    );
+
+    None
+}
+
+fn try_parse_steps(json: &str) -> Option<Vec<LlmWorkflowStep>> {
+    serde_json::from_str::<LlmWorkflowResponse>(json)
+        .map(|r| r.steps)
+        .or_else(|_| serde_json::from_str::<Vec<LlmWorkflowStep>>(json))
+        .ok()
+}
+
+/// Run extraction strategies 1–5 on the given text.
+fn try_extract_strategies(response: &str) -> Option<Vec<LlmWorkflowStep>> {
+    // Strategy 1: extract via balanced-brace heuristic
+    let extracted = crate::util::json_extract::extract_json(response);
+    if let Some(steps) = try_parse_steps(&extracted) {
+        return Some(steps);
+    }
+
+    // Strategy 2: find the last `{"steps"` occurrence (compact JSON)
+    if let Some(pos) = response.rfind("{\"steps\"") {
+        let candidate = &response[pos..];
+        let balanced = crate::util::json_extract::extract_json(candidate);
+        if let Some(steps) = try_parse_steps(&balanced) {
+            return Some(steps);
+        }
+    }
+
+    // Strategy 3: find the last `"steps"` key with flexible whitespace
+    for (i, _) in response.rmatch_indices("\"steps\"") {
+        let before = response[..i].trim_end();
+        if before.ends_with('{') {
+            let start = before.len() - 1;
+            let candidate = &response[start..];
+            let balanced = crate::util::json_extract::extract_json(candidate);
+            if let Some(steps) = try_parse_steps(&balanced) {
+                return Some(steps);
+            }
+        }
+    }
+
+    // Strategy 4: find the last `[{"cue_ids"` occurrence (bare array format)
+    if let Some(pos) = response.rfind("[{\"cue_ids\"") {
+        let candidate = &response[pos..];
+        let balanced = crate::util::json_extract::extract_json(candidate);
+        if let Some(steps) = try_parse_steps(&balanced) {
+            return Some(steps);
+        }
+    }
+
+    // Strategy 5: find the last `"cue_ids"` with flexible whitespace (bare array)
+    for (i, _) in response.rmatch_indices("\"cue_ids\"") {
+        let before = response[..i].trim_end();
+        if before.ends_with("[{") || before.ends_with("[ {") {
+            let start = before.rfind('[').unwrap();
+            let candidate = &response[start..];
+            let balanced = crate::util::json_extract::extract_json(candidate);
+            if let Some(steps) = try_parse_steps(&balanced) {
+                return Some(steps);
+            }
+        }
+    }
+
+    None
+}
+
+/// Repair PTY word-wrap damage: collapse newlines that appear inside JSON
+/// string values. Walks the text tracking quote state (respecting backslash
+/// escapes) and replaces `\n` inside strings with a space.
+fn repair_pty_line_breaks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_string = false;
+    let mut prev_backslash = false;
+    for ch in s.chars() {
+        if in_string {
+            if ch == '\n' || ch == '\r' {
+                out.push(' ');
+                continue;
+            }
+            if ch == '"' && !prev_backslash {
+                in_string = false;
+            }
+            prev_backslash = ch == '\\' && !prev_backslash;
+        } else if ch == '"' {
+            in_string = true;
+            prev_backslash = false;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_clean_json() {
+        let response =
+            r#"{"steps": [{"cue_ids": [1, 2], "label": "Fix bugs", "rationale": "Independent"}]}"#;
+        let (plan, warning) = parse_workflow_response(response, &[1, 2]);
+        assert!(warning.is_none());
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].cue_ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn parse_multiline_json() {
+        let response = "{\n  \"steps\": [\n    {\n      \"cue_ids\": [10],\n      \"label\": \"Step one\",\n      \"rationale\": \"First\"\n    }\n  ]\n}";
+        let (plan, warning) = parse_workflow_response(response, &[10]);
+        assert!(warning.is_none());
+        assert_eq!(plan.steps.len(), 1);
+    }
+
+    #[test]
+    fn parse_with_markdown_fence() {
+        let response = "Here is the plan:\n```json\n{\"steps\": [{\"cue_ids\": [5], \"label\": \"Do it\", \"rationale\": \"Why not\"}]}\n```\n";
+        let (plan, warning) = parse_workflow_response(response, &[5]);
+        assert!(warning.is_none());
+        assert_eq!(plan.steps[0].cue_ids, vec![5]);
+    }
+
+    #[test]
+    fn parse_with_echoed_prompt() {
+        let response = "Output JSON: {\"steps\": [{\"cue_ids\": [3, 7]}]}\n\
+                         Rules: ...\n\n\
+                         {\"steps\": [{\"cue_ids\": [1], \"label\": \"Fix\", \"rationale\": \"Real answer\"}]}";
+        let (plan, warning) = parse_workflow_response(response, &[1]);
+        assert!(warning.is_none());
+        assert_eq!(plan.steps[0].label, "Fix");
+    }
+
+    #[test]
+    fn parse_pty_wrapped_json() {
+        // Simulate PTY wrapping a long label across lines
+        let response = "{\"steps\": [{\"cue_ids\": [1], \"label\": \"Fix the authenticati\non bug in the login handler\", \"rationale\": \"Needs fixing\"}]}";
+        let (plan, warning) = parse_workflow_response(response, &[1]);
+        assert!(warning.is_none(), "got warning: {:?}", warning);
+        assert!(plan.steps[0].label.contains("authenticati"));
+    }
+
+    #[test]
+    fn fallback_on_garbage() {
+        let response = "Sorry, I can't do that.";
+        let (plan, warning) = parse_workflow_response(response, &[1, 2]);
+        assert!(warning.is_some());
+        assert!(warning.unwrap().contains("Failed to parse"));
+        assert_eq!(plan.steps.len(), 2);
+    }
+
+    #[test]
+    fn missing_cue_ids_appended() {
+        let response = r#"{"steps": [{"cue_ids": [1], "label": "First", "rationale": "R"}]}"#;
+        let (plan, warning) = parse_workflow_response(response, &[1, 2, 3]);
+        assert!(warning.is_some());
+        assert!(warning.unwrap().contains("omitted 2 cue(s)"));
+        let all_ids: Vec<i64> = plan
+            .steps
+            .iter()
+            .flat_map(|s| &s.cue_ids)
+            .copied()
+            .collect();
+        assert!(all_ids.contains(&2));
+        assert!(all_ids.contains(&3));
+    }
+
+    #[test]
+    fn repair_pty_line_breaks_fixes_strings() {
+        let broken = "\"hello\nworld\"";
+        assert_eq!(repair_pty_line_breaks(broken), "\"hello world\"");
+    }
+
+    #[test]
+    fn repair_pty_line_breaks_preserves_outside_strings() {
+        let input = "{\n\"key\": \"val\"\n}";
+        assert_eq!(repair_pty_line_breaks(input), "{\n\"key\": \"val\"\n}");
+    }
+
+    #[test]
+    fn repair_pty_line_breaks_handles_escaped_quotes() {
+        let input = "{\"key\": \"val with \\\" escape\nstill inside\"}";
+        let repaired = repair_pty_line_breaks(input);
+        assert!(repaired.contains("escape still inside"), "got: {repaired}");
     }
 }

@@ -215,6 +215,9 @@ impl DirigentApp {
                 ));
             }
             self.needs_theme_apply = true;
+            self.logo_texture = None;
+            #[cfg(target_os = "macos")]
+            crate::app::update_macos_dock_icon(&self.settings.custom_dock_icon_path);
         }
         if refresh_models {
             self.opencode_models.clear();

@@ -120,11 +120,23 @@ describe.skipIf(!claudeAvailable)("Dirigent MCP Integration", { timeout: 60_000 
       "Only include cues that have a running execution.",
     ].join(" ");
 
-    const mcpServerCmd = `npx tsx ${path.resolve(__dirname, "../../src/index.ts")} ${dbPath}`;
+    const mcpServerSrc = path.resolve(__dirname, "../../src/index.ts");
+    const mcpConfig = {
+      mcpServers: {
+        dirigent: {
+          type: "stdio",
+          command: "npx",
+          args: ["tsx", mcpServerSrc, dbPath],
+        },
+      },
+    };
+    const mcpConfigPath = path.join(tmpDir, "mcp-config.json");
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
+
     const claudeCli = process.env.CLAUDE_CLI_PATH ?? "claude";
     const result = execFileSync(claudeCli, [
       "-p", prompt,
-      "--mcp-server", mcpServerCmd,
+      "--mcp-config", mcpConfigPath,
       "--output-format", "json",
     ], {
       encoding: "utf-8",
@@ -168,11 +180,23 @@ describe.skipIf(!claudeAvailable)("Dirigent MCP Integration", { timeout: 60_000 
     const prompt =
       "What Dirigent cues are currently running? Give me their IDs, text, and tags as JSON.";
 
-    const mcpServerCmd = `npx tsx ${path.resolve(__dirname, "../../src/index.ts")} ${dbPath}`;
+    const mcpServerSrc = path.resolve(__dirname, "../../src/index.ts");
+    const mcpConfig = {
+      mcpServers: {
+        dirigent: {
+          type: "stdio",
+          command: "npx",
+          args: ["tsx", mcpServerSrc, dbPath],
+        },
+      },
+    };
+    const mcpConfigPath = path.join(tmpDir, "mcp-config.json");
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig));
+
     const claudeCli = process.env.CLAUDE_CLI_PATH ?? "claude";
     const result = execFileSync(claudeCli, [
       "-p", prompt,
-      "--mcp-server", mcpServerCmd,
+      "--mcp-config", mcpConfigPath,
       "--output-format", "json",
     ], {
       encoding: "utf-8",

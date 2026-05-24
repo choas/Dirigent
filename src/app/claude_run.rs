@@ -79,8 +79,8 @@ struct ProviderConfig {
     model: String,
     cli_path: String,
     extra_args: String,
-    /// Structured args that must not go through shlex::split (e.g. --mcp-server
-    /// values containing spaces). Passed directly as individual Command::arg entries.
+    /// Structured args that must not go through shlex::split (e.g. --mcp-config
+    /// paths). Passed directly as individual Command::arg entries.
     extra_args_vec: Vec<String>,
     env_vars: String,
     pre_run_script: String,
@@ -129,6 +129,28 @@ fn should_inject_dirigent_mcp(prompt: &str) -> bool {
     prompt.to_lowercase().contains("dirigent")
 }
 
+fn write_dirigent_mcp_config(
+    project_root: &std::path::Path,
+    mcp_bin: &str,
+    db_path: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    let dir = project_root.join(".Dirigent");
+    std::fs::create_dir_all(&dir)?;
+    let config_path = dir.join("mcp-config.json");
+    let escaped_bin = mcp_bin.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped_db = db_path
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let config = format!(
+        r#"{{"mcpServers":{{"dirigent":{{"type":"stdio","command":"{}","args":["{}"]}}}}}}"#,
+        escaped_bin, escaped_db,
+    );
+    std::fs::write(&config_path, config)?;
+    Ok(config_path)
+}
+
 fn resolve_dirigent_db(
     project_root: &std::path::Path,
     settings: &settings::Settings,
@@ -148,7 +170,7 @@ fn resolve_dirigent_db(
 
 /// Build provider-specific configuration from settings, with optional command overrides.
 /// When the prompt mentions "Dirigent" and the provider is Claude, the Dirigent MCP
-/// server is conditionally injected via `--mcp-server` so Claude gains cue-management tools.
+/// server is conditionally injected via `--mcp-config` so Claude gains cue-management tools.
 fn build_provider_config(
     settings: &settings::Settings,
     provider: &CliProvider,
@@ -183,7 +205,7 @@ fn build_provider_config(
         }
     }
     // Conditionally inject the Dirigent MCP server when the prompt references
-    // "Dirigent" — gives Claude tools to manage cues directly.
+    // "Dirigent" — gives Claude tools to manage cues directly via --mcp-config.
     let mut extra_args_vec = Vec::new();
     if *provider == CliProvider::Claude && should_inject_dirigent_mcp(prompt) {
         if let Some(db_path) = resolve_dirigent_db(project_root, settings) {
@@ -192,14 +214,28 @@ fn build_provider_config(
             } else {
                 settings.dirigent_mcp_server_path.clone()
             };
-            let server_value = format!("{} {}", mcp_bin, db_path.display());
-            extra_args_vec.push("--mcp-server".to_string());
-            extra_args_vec.push(server_value);
-            log::info!(
-                "Dirigent MCP server injected: {} {}",
-                mcp_bin,
-                db_path.display()
-            );
+            if which::which(&mcp_bin).is_ok() || std::path::Path::new(&mcp_bin).exists() {
+                match write_dirigent_mcp_config(project_root, &mcp_bin, &db_path) {
+                    Ok(config_path) => {
+                        extra_args_vec.push("--mcp-config".to_string());
+                        extra_args_vec.push(config_path.display().to_string());
+                        log::info!(
+                            "Dirigent MCP server injected: {} {}",
+                            mcp_bin,
+                            db_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to write Dirigent MCP config: {e}");
+                    }
+                }
+            } else {
+                log::warn!(
+                    "Dirigent MCP server binary '{}' not found — \
+                     install with: cd dirigent-mcp-server && npm install && npm run build && npm link",
+                    mcp_bin,
+                );
+            }
         }
     }
     ProviderConfig {

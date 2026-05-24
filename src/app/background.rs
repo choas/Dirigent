@@ -46,6 +46,9 @@ impl DirigentApp {
         if let Ok((root, dirty_files, ahead)) = self.git_status_rx.try_recv() {
             if root == self.project_root {
                 self.git.dirty_files = dirty_files;
+                self.git
+                    .selected_files
+                    .retain(|f| self.git.dirty_files.contains_key(f));
                 self.git.recompute_dirty_dirs(&self.project_root);
                 self.git.ahead_of_remote = ahead;
             }

@@ -37,19 +37,6 @@ pub(crate) fn invoke_claude_streaming(
     mut on_log: impl FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    use std::process::Stdio;
-
-    let claude_bin = resolve_claude_binary(cli_path)?;
-    let mut cmd = build_claude_command(
-        claude_bin,
-        prompt,
-        model,
-        extra_args,
-        extra_args_vec,
-        env_vars,
-        skip_permissions,
-    );
-
     // Run pre-run script first so it can modify .Dirigent/.env before we read it.
     run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
 
@@ -60,6 +47,7 @@ pub(crate) fn invoke_claude_streaming(
             model,
             cli_path,
             extra_args,
+            extra_args_vec,
             env_vars,
             skip_permissions,
             &mut on_log,
@@ -72,6 +60,7 @@ pub(crate) fn invoke_claude_streaming(
             model,
             cli_path,
             extra_args,
+            extra_args_vec,
             env_vars,
             skip_permissions,
             &mut on_log,
@@ -102,6 +91,7 @@ fn invoke_pty(
     model: &str,
     cli_path: &str,
     extra_args: &str,
+    extra_args_vec: &[String],
     env_vars: &str,
     skip_permissions: bool,
     on_log: &mut dyn FnMut(&str),
@@ -114,10 +104,14 @@ fn invoke_pty(
     if !model.is_empty() {
         builder = builder.model(model);
     }
+    let mut all_args: Vec<String> = Vec::new();
     if !extra_args.is_empty() {
-        let args = shlex::split(extra_args)
+        all_args = shlex::split(extra_args)
             .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
-        builder = builder.extra_args(args);
+    }
+    all_args.extend_from_slice(extra_args_vec);
+    if !all_args.is_empty() {
+        builder = builder.extra_args(all_args);
     }
     if skip_permissions {
         builder = builder.permission_mode(claude_pty::PermissionMode::BypassPermissions);
@@ -161,6 +155,7 @@ fn invoke_headless(
     model: &str,
     cli_path: &str,
     extra_args: &str,
+    extra_args_vec: &[String],
     env_vars: &str,
     skip_permissions: bool,
     on_log: &mut dyn FnMut(&str),
@@ -188,6 +183,11 @@ fn invoke_headless(
             if !arg.is_empty() {
                 cmd.arg(arg);
             }
+        }
+    }
+    for arg in extra_args_vec {
+        if !arg.is_empty() {
+            cmd.arg(arg);
         }
     }
     // Env precedence (must match `compose_pty_envs` for the PTY path so a
