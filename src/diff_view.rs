@@ -235,12 +235,14 @@ fn render_file_header(
         {
             toggled = true;
         }
-        if ui
-            .small_button("\u{2197}")
-            .on_hover_text("Open file at first change")
-            .clicked()
-        {
-            open = true;
+        if file.new_path != "/dev/null" {
+            if ui
+                .small_button("\u{2197}")
+                .on_hover_text("Open file at first change")
+                .clicked()
+            {
+                open = true;
+            }
         }
     });
 

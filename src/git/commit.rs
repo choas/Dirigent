@@ -105,7 +105,7 @@ pub(crate) fn restore_file(repo_path: &Path, rel_path: &str) -> crate::error::Re
     use std::process::Command;
 
     let output = Command::new("git")
-        .args(["restore", "--", rel_path])
+        .args(["restore", "--source=HEAD", "--staged", "--worktree", "--", rel_path])
         .current_dir(repo_path)
         .output()?;
 
@@ -113,7 +113,7 @@ pub(crate) fn restore_file(repo_path: &Path, rel_path: &str) -> crate::error::Re
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if stderr.contains("not in the index") || stderr.contains("did not match any file") {
             let abs = repo_path.join(rel_path);
-            let _ = std::fs::remove_file(&abs);
+            std::fs::remove_file(&abs)?;
         } else {
             return Err(DirigentError::GitCommand(stderr));
         }
