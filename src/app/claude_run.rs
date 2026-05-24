@@ -744,28 +744,36 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
 
-        let previous_diff = self
-            .db
-            .get_latest_execution(cue_id)
-            .ok()
-            .flatten()
-            .and_then(|e| e.diff)
-            .unwrap_or_default();
-
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
 
-        // Both providers use the same reply prompt structure.
-        let prompt = claude::build_reply_prompt(
-            &original_text,
-            &cue.file_path,
-            cue.line_number,
-            cue.line_number_end,
-            &previous_diff,
-            reply,
-            &all_images,
-            Some(&self.project_root),
-        );
+        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
+
+        // When resuming a Claude session the previous context is already in the
+        // conversation, so we only need to send the user's reply. For a fresh
+        // session (or non-Claude provider) we build the full structured prompt.
+        let prompt = if resume_session_id.is_some() {
+            reply.to_string()
+        } else {
+            let previous_diff = self
+                .db
+                .get_latest_execution(cue_id)
+                .ok()
+                .flatten()
+                .and_then(|e| e.diff)
+                .unwrap_or_default();
+
+            claude::build_reply_prompt(
+                &original_text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                reply,
+                &all_images,
+                Some(&self.project_root),
+            )
+        };
 
         let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
         self.claude.expand_running = true;
@@ -776,8 +784,6 @@ impl DirigentApp {
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
-
-        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
         let started = self.insert_exec_and_spawn(
             cue_id,
             prompt,
@@ -1218,10 +1224,7 @@ impl DirigentApp {
             *count += 1;
             let n = *count;
             let max = self.settings.auto_continue_max;
-            self.set_status_message(format!(
-                "Auto-continuing \"{}\" ({}/{})",
-                preview, n, max,
-            ));
+            self.set_status_message(format!("Auto-continuing \"{}\" ({}/{})", preview, n, max,));
             let _ = self.db.update_cue_has_question(result.cue_id, false);
             let _ = self.db.log_activity(
                 result.cue_id,
@@ -1247,7 +1250,12 @@ impl DirigentApp {
         if !self.settings.auto_continue {
             return false;
         }
-        let count = self.claude.auto_continue_count.get(&cue_id).copied().unwrap_or(0);
+        let count = self
+            .claude
+            .auto_continue_count
+            .get(&cue_id)
+            .copied()
+            .unwrap_or(0);
         if count >= self.settings.auto_continue_max {
             return false;
         }
