@@ -504,44 +504,78 @@ impl DirigentApp {
             self.set_status_message("No cues in Review".into());
             return;
         }
-        let subject = build_commit_all_subject(&review_cues);
-        let cue_details: Vec<String> = review_cues
-            .iter()
-            .map(|c| format!("- {}", c.text.trim()))
-            .collect();
-        let commit_msg = format!(
-            "{}\n\n{}\n\n{}",
-            subject,
-            cue_details.join("\n\n"),
-            git::DIRIGENT_FOOTER,
-        );
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
-        match vcs_dispatch::commit_all(
-            &self.settings.vcs_backend,
-            &self.settings.jj_cli_path,
-            &self.project_root,
-            &commit_msg,
-        ) {
-            Ok(hash) => {
-                let short = &hash[..7.min(hash.len())];
-                let plural = if review_ids.len() == 1 { "" } else { "s" };
-                self.set_status_message(format!(
-                    "Committed all: {} ({} cue{})",
-                    short,
-                    review_ids.len(),
-                    plural,
-                ));
-                for cue_id in &review_ids {
-                    let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
-                    let _ = self
-                        .db
-                        .log_activity(*cue_id, &format!("Committed ({})", short));
-                }
-            }
-            Err(e) => {
-                self.set_status_message(format!("Commit all failed: {}", e));
+
+        // Handle workspace cues individually via the same path as
+        // process_commit_review so cleanup_jj_workspace is invoked.
+        let mut workspace_accepted = 0usize;
+        let mut non_workspace_ids: Vec<i64> = Vec::new();
+        for &cue_id in &review_ids {
+            if self.claude.workspace_paths.contains_key(&cue_id)
+                && !self.claude.workspace_commit_failed.contains(&cue_id)
+            {
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+                let _ = self
+                    .db
+                    .log_activity(cue_id, "Accepted (workspace commit)");
+                self.cleanup_jj_workspace(cue_id);
+                workspace_accepted += 1;
+            } else {
+                non_workspace_ids.push(cue_id);
             }
         }
+
+        // Commit remaining non-workspace cues in bulk.
+        if !non_workspace_ids.is_empty() {
+            let non_ws_cues: Vec<&Cue> = self
+                .cues
+                .iter()
+                .filter(|c| non_workspace_ids.contains(&c.id))
+                .collect();
+            let subject = build_commit_all_subject(&non_ws_cues);
+            let cue_details: Vec<String> = non_ws_cues
+                .iter()
+                .map(|c| format!("- {}", c.text.trim()))
+                .collect();
+            let commit_msg = format!(
+                "{}\n\n{}\n\n{}",
+                subject,
+                cue_details.join("\n\n"),
+                git::DIRIGENT_FOOTER,
+            );
+            match vcs_dispatch::commit_all(
+                &self.settings.vcs_backend,
+                &self.settings.jj_cli_path,
+                &self.project_root,
+                &commit_msg,
+            ) {
+                Ok(hash) => {
+                    let short = &hash[..7.min(hash.len())];
+                    let total = workspace_accepted + non_workspace_ids.len();
+                    let plural = if total == 1 { "" } else { "s" };
+                    self.set_status_message(format!(
+                        "Committed all: {} ({} cue{})",
+                        short, total, plural,
+                    ));
+                    for cue_id in &non_workspace_ids {
+                        let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
+                        let _ = self
+                            .db
+                            .log_activity(*cue_id, &format!("Committed ({})", short));
+                    }
+                }
+                Err(e) => {
+                    self.set_status_message(format!("Commit all failed: {}", e));
+                }
+            }
+        } else if workspace_accepted > 0 {
+            let plural = if workspace_accepted == 1 { "" } else { "s" };
+            self.set_status_message(format!(
+                "Accepted {} workspace cue{}",
+                workspace_accepted, plural,
+            ));
+        }
+
         self.reload_git_info();
         self.reload_commit_history();
     }
