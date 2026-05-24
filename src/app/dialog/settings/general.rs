@@ -426,9 +426,12 @@ impl DirigentApp {
                         );
                     }
                 });
-            if self.settings.vcs_backend == VcsBackend::Jj && self.settings.jj_cli_path.is_empty() {
+            if self.settings.vcs_backend == VcsBackend::Jj
+                && !self.settings.jj_cli_path.is_empty()
+                && !std::path::Path::new(&self.settings.jj_cli_path).exists()
+            {
                 ui.label(
-                    egui::RichText::new("jj not found on PATH")
+                    egui::RichText::new("binary not found at configured path")
                         .small()
                         .color(self.semantic.danger),
                 );
@@ -441,7 +444,7 @@ impl DirigentApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.settings.jj_cli_path)
                     .desired_width(250.0)
-                    .hint_text("not found \u{2014} enter path to jj")
+                    .hint_text("leave empty to auto-detect")
                     .font(egui::TextStyle::Monospace),
             );
             ui.end_row();

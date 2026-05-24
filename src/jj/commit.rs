@@ -63,19 +63,26 @@ fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> 
 /// Describe the current working-copy commit and create a new empty change.
 /// This is the jj equivalent of `git add -A && git commit -m "..."`.
 ///
-/// After committing, any bookmarks on the parent (`@-` before the commit,
-/// which becomes `@--` after) are advanced to the newly committed change
-/// (`@-` after the commit). This mimics git's branch-advancement behaviour.
+/// When `advance_bookmarks` is true, any bookmarks on the parent (`@-` before
+/// the commit, which becomes `@--` after) are advanced to the newly committed
+/// change (`@-` after the commit). This mimics git's branch-advancement
+/// behaviour. Set to false for per-cue workspace commits where only the
+/// cue-specific bookmark should track the new commit.
 pub(crate) fn jj_commit_all(
     repo_path: &Path,
     commit_message: &str,
     jj_path: &str,
+    advance_bookmarks: bool,
 ) -> crate::error::Result<String> {
-    // Before committing, check whether @ already carries a bookmark.
-    // If not, remember the parent's bookmarks so we can advance them.
-    let wc_bookmarks = bookmarks_for_rev(repo_path, "@", jj_path);
-    let parent_bookmarks = if wc_bookmarks.is_empty() {
-        bookmarks_for_rev(repo_path, "@-", jj_path)
+    let parent_bookmarks = if advance_bookmarks {
+        // Before committing, check whether @ already carries a bookmark.
+        // If not, remember the parent's bookmarks so we can advance them.
+        let wc_bookmarks = bookmarks_for_rev(repo_path, "@", jj_path);
+        if wc_bookmarks.is_empty() {
+            bookmarks_for_rev(repo_path, "@-", jj_path)
+        } else {
+            Vec::new()
+        }
     } else {
         Vec::new()
     };
@@ -138,7 +145,7 @@ pub(crate) fn jj_commit_diff(
 ) -> crate::error::Result<String> {
     // In jj, all changes are already tracked in the working copy commit.
     // We just describe and finalize.
-    jj_commit_all(repo_path, commit_message, jj_path)
+    jj_commit_all(repo_path, commit_message, jj_path, true)
 }
 
 /// Set (or move) a bookmark on a specific revision.

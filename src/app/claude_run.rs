@@ -1201,7 +1201,7 @@ impl DirigentApp {
             .unwrap_or_default();
         let jj_path = self.settings.jj_cli_path.clone();
         let commit_msg = git::generate_commit_message(&cue_text, Some(response));
-        let change_id = jj::jj_commit_all(ws_path, &commit_msg, &jj_path)?;
+        let change_id = jj::jj_commit_all(ws_path, &commit_msg, &jj_path, false)?;
         let bookmark = jj::cue_bookmark_name(cue_id, &cue_text);
         jj::jj_set_bookmark(ws_path, &bookmark, "@-", &jj_path)?;
         let short = &change_id[..7.min(change_id.len())];

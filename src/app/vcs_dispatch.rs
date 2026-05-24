@@ -26,7 +26,7 @@ pub(super) fn commit_all(
     commit_message: &str,
 ) -> crate::error::Result<String> {
     match backend {
-        VcsBackend::Jj => jj::jj_commit_all(repo_path, commit_message, jj_path),
+        VcsBackend::Jj => jj::jj_commit_all(repo_path, commit_message, jj_path, true),
         VcsBackend::Git => git::commit_all(repo_path, commit_message),
     }
 }
