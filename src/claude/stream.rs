@@ -338,16 +338,9 @@ pub(crate) fn detect_stopped_early(log: &str) -> bool {
     if !log.contains("Stop hook fired") {
         return false;
     }
-    let last_substantive = log
-        .lines()
-        .rev()
-        .map(|l| l.trim())
-        .find(|l| {
-            !l.is_empty()
-                && !l.starts_with("Done ")
-                && !l.starts_with("⏎")
-                && !l.starts_with("⚠")
-        });
+    let last_substantive = log.lines().rev().map(|l| l.trim()).find(|l| {
+        !l.is_empty() && !l.starts_with("Done ") && !l.starts_with("⏎") && !l.starts_with("⚠")
+    });
     match last_substantive {
         Some(line) => {
             line.starts_with('⎿')
