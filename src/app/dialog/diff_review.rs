@@ -535,7 +535,10 @@ impl DirigentApp {
     fn handle_diff_accept(&mut self, cue_id: i64, diff_text: &str, cue_text: &str) {
         // For jj workspace cues the commit+bookmark already happened; just
         // transition to Done and clean up the workspace.
-        if self.claude.workspace_paths.contains_key(&cue_id) {
+        // Skip the fast-path if the workspace commit previously failed.
+        if self.claude.workspace_paths.contains_key(&cue_id)
+            && !self.claude.workspace_commit_failed.contains(&cue_id)
+        {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
             let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
             let _ = self
