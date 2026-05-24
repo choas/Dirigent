@@ -391,16 +391,28 @@ impl DirigentApp {
                 .map(|c| c.text.clone())
                 .unwrap_or_default();
             let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
-            let _ = crate::jj::jj_delete_bookmark(
+            match crate::jj::jj_delete_bookmark(
                 &self.project_root,
                 &bookmark,
                 &self.settings.jj_cli_path,
-            );
-            self.cleanup_jj_workspace(cue_id);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
-            self.set_status_message("Reverted — bookmark deleted, workspace removed".to_string());
-            self.reload_git_info();
+            ) {
+                Ok(()) => {
+                    self.cleanup_jj_workspace(cue_id);
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                    let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
+                    self.set_status_message(
+                        "Reverted — bookmark deleted, workspace removed".to_string(),
+                    );
+                    self.reload_git_info();
+                }
+                Err(e) => {
+                    let _ = self.db.log_activity(
+                        cue_id,
+                        &format!("Revert failed: jj bookmark delete error: {e}"),
+                    );
+                    self.set_status_message(format!("Revert failed: {e}"));
+                }
+            }
             return;
         }
 
