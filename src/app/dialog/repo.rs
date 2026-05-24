@@ -583,6 +583,11 @@ impl DirigentApp {
             }
         }
 
+        let label = match self.settings.vcs_backend {
+            VcsBackend::Jj => "workspace",
+            VcsBackend::Git => "worktree",
+        };
+
         // Archive the worktree's DB just before removal.
         let archive_msg = match git::main_worktree_path(&self.project_root) {
             Ok(main_path) => {
