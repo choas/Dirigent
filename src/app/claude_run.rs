@@ -134,7 +134,9 @@ fn write_dirigent_mcp_config(
     mcp_bin: &str,
     db_path: &std::path::Path,
 ) -> std::io::Result<std::path::PathBuf> {
-    let config_path = project_root.join(".Dirigent").join("mcp-config.json");
+    let dir = project_root.join(".Dirigent");
+    std::fs::create_dir_all(&dir)?;
+    let config_path = dir.join("mcp-config.json");
     let escaped_bin = mcp_bin.replace('\\', "\\\\").replace('"', "\\\"");
     let escaped_db = db_path
         .display()
