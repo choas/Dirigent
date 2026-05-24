@@ -280,7 +280,8 @@ impl DirigentApp {
             "Commit all uncommitted changes with a useful commit message describing the changes"
                 .to_string()
         } else {
-            let files: Vec<&str> = self.git.selected_files.iter().map(|s| s.as_str()).collect();
+            let mut files: Vec<&str> = self.git.selected_files.iter().map(|s| s.as_str()).collect();
+            files.sort_unstable();
             format!(
                 "Commit only the following files with a useful commit message describing the changes: {}",
                 files.join(", ")
