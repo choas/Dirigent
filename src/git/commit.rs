@@ -105,7 +105,14 @@ pub(crate) fn restore_file(repo_path: &Path, rel_path: &str) -> crate::error::Re
     use std::process::Command;
 
     let output = Command::new("git")
-        .args(["restore", "--source=HEAD", "--staged", "--worktree", "--", rel_path])
+        .args([
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            rel_path,
+        ])
         .current_dir(repo_path)
         .output()?;
 

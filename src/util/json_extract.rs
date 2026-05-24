@@ -38,7 +38,11 @@ pub fn extract_json(s: &str) -> String {
 
 /// Find the last balanced `open`…`close` span in `s`, skipping over JSON
 /// string literals so that braces inside `"..."` don't affect depth counting.
-fn extract_last_balanced_with_pos(s: &str, open: char, close: char) -> Option<(usize, usize, String)> {
+fn extract_last_balanced_with_pos(
+    s: &str,
+    open: char,
+    close: char,
+) -> Option<(usize, usize, String)> {
     let bytes = s.as_bytes();
     let open_b = open as u8;
     let close_b = close as u8;
