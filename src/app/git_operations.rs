@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::db::CueStatus;
 use crate::git;
+use crate::jj;
 
 use super::{detect_pr_number_from_branch, DirigentApp};
 
@@ -813,5 +814,166 @@ impl DirigentApp {
         self.git.graph_rows = rows;
         self.git.graph_max_lanes = max_lanes;
         self.git.history_cache_key = cache_key;
+    }
+
+    // ── jj bookmark / squash / undo ─────────────────────────────────────
+
+    pub(super) fn open_create_bookmark_dialog(&mut self) {
+        self.git.create_bookmark_name.clear();
+        self.git.create_bookmark_needs_focus = true;
+        self.git.show_create_bookmark = true;
+    }
+
+    pub(super) fn start_create_bookmark(&mut self) {
+        let name = self.git.create_bookmark_name.trim().to_string();
+        if name.is_empty() {
+            self.set_status_message("Bookmark name cannot be empty".into());
+            return;
+        }
+        if self.git.creating_bookmark {
+            return;
+        }
+        self.git.show_create_bookmark = false;
+        self.git.creating_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.create_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let bm = name.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_create_bookmark(&root, &bm, &jj_path)
+                .map(|()| format!("Created bookmark '{}'", bm))
+                .map_err(|e| format!("Create bookmark failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Creating bookmark '{}'...", name));
+    }
+
+    pub(super) fn process_create_bookmark_result(&mut self) {
+        let rx = match self.git.create_bookmark_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.creating_bookmark = false;
+                self.git.create_bookmark_rx = None;
+                self.set_status_message("Create bookmark failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.creating_bookmark = false;
+        self.git.create_bookmark_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    pub(super) fn start_squash_current_bookmark(&mut self) {
+        if self.git.squashing {
+            return;
+        }
+        let branch = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch.clone())
+            .unwrap_or_default();
+        if branch.is_empty() || branch == "(no bookmark)" {
+            self.set_status_message("No bookmark to squash".into());
+            return;
+        }
+        self.git.squashing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.squash_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let bm = branch.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_squash_bookmark(&root, &bm, &jj_path)
+                .map(|n| {
+                    if n == 0 {
+                        format!("Nothing to squash on '{}'", bm)
+                    } else {
+                        format!("Squashed {} commits on '{}' into one", n, bm)
+                    }
+                })
+                .map_err(|e| format!("Squash failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Squashing commits on '{}'...", branch));
+    }
+
+    pub(super) fn process_squash_result(&mut self) {
+        let rx = match self.git.squash_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.squashing = false;
+                self.git.squash_rx = None;
+                self.set_status_message("Squash failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.squashing = false;
+        self.git.squash_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    pub(super) fn start_jj_undo(&mut self) {
+        if self.git.undoing {
+            return;
+        }
+        self.git.undoing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.undo_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_undo(&root, &jj_path).map_err(|e| format!("Undo failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Undoing last operation...".into());
+    }
+
+    pub(super) fn process_jj_undo_result(&mut self) {
+        let rx = match self.git.undo_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.undoing = false;
+                self.git.undo_rx = None;
+                self.set_status_message("Undo failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.undoing = false;
+        self.git.undo_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
     }
 }

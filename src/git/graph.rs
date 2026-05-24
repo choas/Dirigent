@@ -202,6 +202,7 @@ mod tests {
             branch_labels: Vec::new(),
             tag_labels: Vec::new(),
             is_merge: parents.len() > 1,
+            is_working_copy: false,
         }
     }
 

@@ -24,6 +24,33 @@ impl NotionPageType {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) enum VcsBackend {
+    #[default]
+    Git,
+    Jj,
+}
+
+impl VcsBackend {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            VcsBackend::Git => "Git",
+            VcsBackend::Jj => "jj (Jujutsu)",
+        }
+    }
+
+    pub fn menu_label(&self) -> &'static str {
+        match self {
+            VcsBackend::Git => "Git",
+            VcsBackend::Jj => "jj",
+        }
+    }
+
+    pub fn all() -> &'static [VcsBackend] {
+        &[VcsBackend::Git, VcsBackend::Jj]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) enum CliProvider {
     #[default]
     Claude,

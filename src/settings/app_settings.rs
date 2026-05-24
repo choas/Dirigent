@@ -5,7 +5,7 @@ use crate::lsp::{default_lsp_servers, LspServerConfig};
 
 use super::commands::{default_commands, CueCommand};
 use super::playbook::{default_playbook, Play};
-use super::providers::{CliProvider, SourceConfig, SshServer};
+use super::providers::{CliProvider, SourceConfig, SshServer, VcsBackend};
 use super::theme::{CustomTheme, ThemeChoice};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -239,6 +239,12 @@ pub(crate) struct Settings {
     /// SSH remote server configurations.
     #[serde(default)]
     pub ssh_servers: Vec<SshServer>,
+    /// Version control backend: Git (default) or jj (Jujutsu).
+    #[serde(default)]
+    pub vcs_backend: VcsBackend,
+    /// Path to the `jj` CLI binary (auto-detected on first launch).
+    #[serde(default)]
+    pub jj_cli_path: String,
     /// Master toggle for LSP support.
     #[serde(default)]
     pub lsp_enabled: bool,
@@ -379,6 +385,8 @@ impl Default for Settings {
             agents: default_agents(),
             commands: default_commands(),
             ssh_servers: Vec::new(),
+            vcs_backend: VcsBackend::default(),
+            jj_cli_path: String::new(),
             lsp_servers: default_lsp_servers(),
             lsp_enabled: false,
             prompt_suggestions_enabled: false,

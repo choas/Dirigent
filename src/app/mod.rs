@@ -25,6 +25,7 @@ mod tasks;
 mod theme;
 mod types;
 pub(crate) mod util;
+mod vcs_dispatch;
 mod workflow_graph;
 mod workflow_run;
 
@@ -722,6 +723,15 @@ impl DirigentApp {
                 move_to_branch_name: String::new(),
                 moving_to_branch: false,
                 move_to_branch_rx: None,
+                show_create_bookmark: false,
+                create_bookmark_name: String::new(),
+                create_bookmark_needs_focus: false,
+                creating_bookmark: false,
+                create_bookmark_rx: None,
+                squashing: false,
+                squash_rx: None,
+                undoing: false,
+                undo_rx: None,
             },
             settings,
             semantic,

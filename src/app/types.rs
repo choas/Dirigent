@@ -606,6 +606,21 @@ pub(crate) struct GitState {
     /// Whether a move-to-branch operation is in progress.
     pub(super) moving_to_branch: bool,
     pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Create Bookmark dialog is open (jj only).
+    pub(super) show_create_bookmark: bool,
+    /// Bookmark name input for the Create Bookmark dialog.
+    pub(super) create_bookmark_name: String,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) create_bookmark_needs_focus: bool,
+    /// Whether a bookmark creation is in progress (jj only).
+    pub(super) creating_bookmark: bool,
+    pub(super) create_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether a squash operation is in progress (jj only).
+    pub(super) squashing: bool,
+    pub(super) squash_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether an undo operation is in progress (jj only).
+    pub(super) undoing: bool,
+    pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 impl GitState {
@@ -666,6 +681,10 @@ impl GitState {
         }
         if self.show_import_pr {
             self.show_import_pr = false;
+            return true;
+        }
+        if self.show_create_bookmark {
+            self.show_create_bookmark = false;
             return true;
         }
         if self.show_move_to_branch {

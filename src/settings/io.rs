@@ -125,6 +125,9 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     if settings.opencode_cli_path.is_empty() {
         settings.opencode_cli_path = which("opencode").unwrap_or_default();
     }
+    if settings.jj_cli_path.is_empty() {
+        settings.jj_cli_path = which("jj").unwrap_or_default();
+    }
     // Append any new default plays that aren't already in the user's playbook
     for default_play in default_playbook() {
         if !settings

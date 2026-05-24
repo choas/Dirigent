@@ -9,6 +9,7 @@ mod error;
 mod file_tree;
 mod gemini;
 mod git;
+mod jj;
 mod log_collector;
 mod lsp;
 mod opencode;

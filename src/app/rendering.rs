@@ -242,6 +242,7 @@ impl DirigentApp {
         self.render_pr_error_dialog(ctx);
         self.render_pull_diverged_dialog(ctx);
         self.render_pull_unmerged_dialog(ctx);
+        self.render_create_bookmark_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);
