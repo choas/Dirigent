@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
@@ -52,6 +52,8 @@ pub(crate) struct ClaudeRunState {
     pub(super) conversation_history: Vec<Execution>,
     /// jj workspace paths for per-cue isolation (cue_id -> workspace directory).
     pub(super) workspace_paths: HashMap<i64, PathBuf>,
+    /// Cue IDs whose jj workspace commit+bookmark failed (prevents false Done transitions).
+    pub(super) workspace_commit_failed: HashSet<i64>,
 }
 
 impl ClaudeRunState {
@@ -71,6 +73,7 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             workspace_paths: HashMap::new(),
+            workspace_commit_failed: HashSet::new(),
         }
     }
 }
@@ -973,17 +976,29 @@ impl DirigentApp {
 
         // For jj workspace cues, commit in workspace and set a bookmark so
         // the changes are preserved and easy to find in the log.
-        if matches!(self.settings.vcs_backend, VcsBackend::Jj) {
+        let jj_commit_ok = if matches!(self.settings.vcs_backend, VcsBackend::Jj) {
             if let Some(ws_path) = self.claude.workspace_paths.get(&result.cue_id).cloned() {
-                self.jj_workspace_commit_and_bookmark(
+                match self.jj_workspace_commit_and_bookmark(
                     result.cue_id,
                     &ws_path,
                     &result.response,
-                );
+                ) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("jj workspace commit failed for cue {}: {e}", result.cue_id);
+                        self.set_status_message(format!("jj workspace commit failed: {e}"));
+                        self.claude.workspace_commit_failed.insert(result.cue_id);
+                        false
+                    }
+                }
+            } else {
+                true
             }
-        }
+        } else {
+            true
+        };
 
-        if self.settings.auto_commit {
+        if self.settings.auto_commit && jj_commit_ok {
             if agents_started > 0 {
                 self.pending_auto_commits.push(result.cue_id);
             } else {
@@ -1164,12 +1179,13 @@ impl DirigentApp {
     }
 
     /// Commit changes in a jj workspace and set a cue bookmark.
+    /// Returns `Err` if either the commit or the bookmark fails.
     fn jj_workspace_commit_and_bookmark(
         &mut self,
         cue_id: i64,
         ws_path: &Path,
         response: &str,
-    ) {
+    ) -> crate::error::Result<()> {
         let cue_text = self
             .cues
             .iter()
@@ -1178,25 +1194,21 @@ impl DirigentApp {
             .unwrap_or_default();
         let jj_path = self.settings.jj_cli_path.clone();
         let commit_msg = git::generate_commit_message(&cue_text, Some(response));
-        match jj::jj_commit_all(ws_path, &commit_msg, &jj_path) {
-            Ok(change_id) => {
-                let bookmark = jj::cue_bookmark_name(cue_id, &cue_text);
-                let _ = jj::jj_set_bookmark(ws_path, &bookmark, "@-", &jj_path);
-                let short = &change_id[..7.min(change_id.len())];
-                let _ = self.db.log_activity(
-                    cue_id,
-                    &format!("Committed in workspace ({short}), bookmark: {bookmark}"),
-                );
-            }
-            Err(e) => {
-                eprintln!("jj workspace commit failed for cue {cue_id}: {e}");
-            }
-        }
+        let change_id = jj::jj_commit_all(ws_path, &commit_msg, &jj_path)?;
+        let bookmark = jj::cue_bookmark_name(cue_id, &cue_text);
+        jj::jj_set_bookmark(ws_path, &bookmark, "@-", &jj_path)?;
+        let short = &change_id[..7.min(change_id.len())];
+        let _ = self.db.log_activity(
+            cue_id,
+            &format!("Committed in workspace ({short}), bookmark: {bookmark}"),
+        );
+        Ok(())
     }
 
     /// Clean up a jj workspace: forget it in jj and remove the directory.
     /// No-op if the cue has no workspace.
     pub(super) fn cleanup_jj_workspace(&mut self, cue_id: i64) {
+        self.claude.workspace_commit_failed.remove(&cue_id);
         if let Some(ws_path) = self.claude.workspace_paths.remove(&cue_id) {
             let ws_name = ws_path
                 .file_name()

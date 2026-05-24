@@ -296,7 +296,10 @@ impl DirigentApp {
     pub(in crate::app) fn process_commit_review(&mut self, cue_id: i64) {
         // For jj workspace cues the commit+bookmark was already done in
         // handle_run_with_diff. Just transition to Done and clean up.
-        if self.claude.workspace_paths.contains_key(&cue_id) {
+        // Skip the fast-path if the workspace commit previously failed.
+        if self.claude.workspace_paths.contains_key(&cue_id)
+            && !self.claude.workspace_commit_failed.contains(&cue_id)
+        {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
             let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
             let _ = self
