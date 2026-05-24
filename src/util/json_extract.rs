@@ -173,6 +173,18 @@ Some text in between.
     }
 
     #[test]
+    fn close_bracket_in_trailing_prose() {
+        let input = r#"{"key": "value"} see section [overview]"#;
+        assert_eq!(extract_json(input), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn close_brace_in_trailing_prose() {
+        let input = r#"[1, 2, 3] refer to {docs}"#;
+        assert_eq!(extract_json(input), "[1, 2, 3]");
+    }
+
+    #[test]
     fn braces_in_string_with_multiple_objects() {
         let input = r#"Example: {"a": "x{y}z"}
 Real: {"steps": [{"cue_ids": [1], "label": "Fix {it}", "rationale": "ok"}]}"#;
