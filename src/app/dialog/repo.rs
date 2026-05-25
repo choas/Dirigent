@@ -306,6 +306,8 @@ impl DirigentApp {
                 self.set_status_message(format!("Switched to '{}'", branch));
                 self.reload_git_info();
                 self.reload_commit_history();
+                self.reload_open_tabs();
+                self.git.recompute_dirty_dirs(&self.project_root);
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to switch branch: {}", e));
