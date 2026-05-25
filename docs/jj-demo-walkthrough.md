@@ -181,14 +181,19 @@ and added lines with the planets array and random selection.
 
 **Click:** Commit
 
-**Expected:** The **history panel** shows:
+**Expected:** The **history panel** shows entries with jj change IDs
+(short random strings), descriptions, and bookmark labels at the end:
 
 ```
-@  (empty working copy)
-○  feature/random-planet — feat: greet a random planet instead of world
-○  main — feat: initial hello world CLI
-◆  root
+● <id> @ (no description yet) (empty)
+● <id> feat: greet a random planet instead of world  feature/random-planet
+● <id> feat: initial hello world CLI  main
+● zzzzzzz (no description yet) (empty)
 ```
+
+> **Note:** jj identifies commits by change IDs (e.g. `yrwzwnn`), not by
+> bookmark names. Bookmark labels appear at the end of the line. The `@`
+> marker indicates the working copy. `zzzzzzz` is always the root commit.
 
 > **Bug?** If `feature/random-planet` doesn't appear as a label, bookmark
 > auto-advance after commit may not be working.
@@ -245,11 +250,11 @@ of printing "hello <planet>!".
 **Expected:** The **history panel** now shows a chain:
 
 ```
-@  (empty working copy)
-○  feature/personalized — feat: personalized greeting with name argument
-○  feature/random-planet — feat: greet a random planet instead of world
-○  main — feat: initial hello world CLI
-◆  root
+● <id> @ (no description yet) (empty)
+● <id> feat: personalized greeting with name argument  feature/personalized
+● <id> feat: greet a random planet instead of world  feature/random-planet
+● <id> feat: initial hello world CLI  main
+● zzzzzzz (no description yet) (empty)
 ```
 
 ---
@@ -308,13 +313,13 @@ should NOT appear in the diff (it wasn't changed).
 `main`, parallel to the `feature/random-planet` chain:
 
 ```
-@  (empty working copy)
-○  docs — docs: add README with usage instructions
-│ ○  feature/personalized — feat: personalized greeting with name argument
-│ ○  feature/random-planet — feat: greet a random planet instead of world
+● <id> @ (no description yet) (empty)
+● <id> docs: add README with usage instructions  docs
+│ ● <id> feat: personalized greeting with name argument  feature/personalized
+│ ● <id> feat: greet a random planet instead of world  feature/random-planet
 ├─╯
-○  main — feat: initial hello world CLI
-◆  root
+● <id> feat: initial hello world CLI  main
+● zzzzzzz (no description yet) (empty)
 ```
 
 > **Bug?** If `docs` appears on top of `feature/personalized` instead of
@@ -380,15 +385,18 @@ regex matching. `index.js` and `package.json` should NOT be in the diff.
 
 **Click:** The **History** tab
 
-**Expected:** The complete graph should show this topology:
+**Expected:** The complete graph should show this topology (each line
+shows a jj change ID, the commit description, and the bookmark label):
 
 ```
-          ┌── docs ──────────── (README.md)
-          │
-main ─────┤
-          │
-          └── feature/random-planet ── feature/personalized ── test
-                (planets array)          (name argument)       (test.js)
+● <id> @ (no description yet) (empty)
+● <id> test: add CLI output tests  test
+│ ● <id> docs: add README with usage instructions  docs
+├─╯
+● <id> feat: personalized greeting with name argument  feature/personalized
+● <id> feat: greet a random planet instead of world  feature/random-planet
+● <id> feat: initial hello world CLI  main
+● zzzzzzz (no description yet) (empty)
 ```
 
 Five bookmarks, each with a descriptive commit message. The working copy sits
