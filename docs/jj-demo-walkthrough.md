@@ -1,257 +1,66 @@
-# jj Demo Walkthrough — hello-cli
+# jj Demo Walkthrough — hello-cli in Dirigent
 
-This document walks through a Node.js CLI project managed with jj (Jujutsu).
-The demo repo has multiple bookmarks that represent the evolution of a simple
-greeting app. Each section tells you what to type, what to click, and what to
-expect.
+A step-by-step walkthrough using Dirigent to explore a Node.js CLI project
+managed with jj. The demo repo has multiple bookmarks representing the
+evolution of a greeting app from "hello world" to personalized planet greetings.
 
 ---
 
 ## Prerequisites
 
+- Dirigent installed and running
 - Node.js 18+ installed
-- jj 0.35+ installed (`brew install jj` or see https://jj-vcs.github.io/jj/)
-- A terminal
+- jj configured in Dirigent (Settings > VCS Backend > jj)
 
 ## Setup
 
+Run the setup script once in a terminal to create the demo repo:
+
 ```bash
-./scripts/setup_jj_demo.sh          # creates /tmp/jj-hello-demo
-cd /tmp/jj-hello-demo
+./scripts/setup_jj_demo.sh
 ```
 
-**Expected:** The script prints the bookmark list and a log graph showing five
-bookmarks: `main`, `feature/random-planet`, `feature/personalized`, `docs`,
-and `test`.
+This creates a jj repo at `/tmp/jj-hello-demo` with five bookmarks.
 
 ---
 
-## Step 1 — Explore the repo
+## Step 1 — Open the demo project in Dirigent
 
-### 1.1 View the log
+**Click:** File > Open (or drag the folder onto Dirigent)
 
-**Type:**
-```bash
-jj log
-```
+**Navigate to:** `/tmp/jj-hello-demo`
 
-**Expected:** A DAG (graph) with these commits:
+**Click:** Open
 
-| Bookmark                | Description                               |
-|-------------------------|-------------------------------------------|
-| `main`                  | feat: initial hello world CLI             |
-| `feature/random-planet` | feat: greet a random planet instead of world |
-| `feature/personalized`  | feat: personalized greeting with name argument |
-| `docs`                  | docs: add README with usage instructions  |
-| `test`                  | test: add CLI output tests                |
-
-The working copy (`@`) sits on top of `main`.
-
-### 1.2 List bookmarks
-
-**Type:**
-```bash
-jj bookmark list
-```
-
-**Expected:** Five bookmarks listed:
-```
-docs
-feature/personalized
-feature/random-planet
-main
-test
-```
+**Expected:** Dirigent opens the project. The **file tree** on the left shows
+`index.js`, `package.json`, and `.gitignore`. The **repo bar** at the top shows
+the repo name `jj-hello-demo`. The **status bar** at the bottom shows the
+current change ID and `main` as the active bookmark.
 
 ---
 
-## Step 2 — Run the app on each bookmark
+## Step 2 — Explore the bookmarks
 
-### 2.1 Run on `main` (hello world)
+### 2.1 Open the history panel
 
-**Type:**
-```bash
-jj new main
-node index.js
-```
+**Click:** The **History** tab (or the history icon in the sidebar)
 
-**Expected output:**
-```
-hello world!
-```
+**Expected:** A commit graph (DAG) appears showing five bookmarks:
 
-### 2.2 Run on `feature/random-planet`
+| Bookmark label            | Commit message                                    |
+|---------------------------|---------------------------------------------------|
+| `main`                    | feat: initial hello world CLI                     |
+| `feature/random-planet`   | feat: greet a random planet instead of world      |
+| `feature/personalized`    | feat: personalized greeting with name argument    |
+| `docs`                    | docs: add README with usage instructions          |
+| `test`                    | test: add CLI output tests                        |
 
-**Type:**
-```bash
-jj new feature/random-planet
-node index.js
-```
+The graph shows that `docs` branches off `main`, and `feature/random-planet` >
+`feature/personalized` > `test` form a chain also branching from `main`.
 
-**Expected output** (planet varies each run):
-```
-hello Jupiter!
-```
+### 2.2 View the bookmark topology
 
-The planet is randomly chosen from: Mercury, Venus, Mars, Jupiter, Saturn,
-Uranus, Neptune, Pluto.
-
-### 2.3 Run on `feature/personalized`
-
-**Type:**
-```bash
-jj new feature/personalized
-node index.js
-```
-
-**Expected output** (no name provided — falls back to planet-only greeting):
-```
-hello Saturn!
-```
-
-**Type:**
-```bash
-node index.js Alice
-```
-
-**Expected output:**
-```
-hello Alice from Mars!
-```
-
----
-
-## Step 3 — Read the docs bookmark
-
-**Type:**
-```bash
-jj new docs
-cat README.md
-```
-
-**Expected:** The README is printed, showing installation and usage
-instructions. Note that on this bookmark `index.js` is still the original
-"hello world" version because `docs` branches off `main`, not
-`feature/personalized`.
-
----
-
-## Step 4 — Run the tests
-
-**Type:**
-```bash
-jj new test
-npm test
-```
-
-**Expected output:**
-```
-Running tests...
-
-  ✓ no args prints hello <planet>!
-  ✓ with name prints hello <name> from <planet>!
-  ✓ with another name prints hello <name> from <planet>!
-
-3 passed, 0 failed
-```
-
-The `test` bookmark is based on `feature/personalized`, so `index.js` supports
-both the planet-only and the personalized greeting.
-
----
-
-## Step 5 — View diffs between bookmarks
-
-### 5.1 See what `feature/random-planet` changed from `main`
-
-**Type:**
-```bash
-jj diff -r main -r feature/random-planet
-```
-
-**Expected:** A diff showing `index.js` changed from
-`console.log("hello world!")` to the random-planet version with the `planets`
-array and `randomPlanet()` function.
-
-### 5.2 See what `feature/personalized` added on top
-
-**Type:**
-```bash
-jj diff -r feature/random-planet -r feature/personalized
-```
-
-**Expected:** A diff showing the addition of `process.argv[2]` parsing and the
-conditional `if (name)` branch.
-
----
-
-## Step 6 — Merge features into main
-
-### 6.1 Merge personalized greeting
-
-**Type:**
-```bash
-jj new main feature/personalized
-jj commit -m "merge: personalized greeting into main"
-jj bookmark set main -r @-
-```
-
-**Expected:** `jj log` now shows `main` pointing at a merge commit with two
-parents: the old `main` and `feature/personalized`.
-
-### 6.2 Verify the merge
-
-**Type:**
-```bash
-jj new main
-node index.js World
-```
-
-**Expected output:**
-```
-hello World from Venus!
-```
-
----
-
-## Step 7 — Merge docs and tests
-
-**Type:**
-```bash
-jj new main docs
-jj commit -m "merge: add documentation"
-jj bookmark set main -r @-
-
-jj new main test
-jj commit -m "merge: add tests"
-jj bookmark set main -r @-
-```
-
-**Verify everything works together:**
-```bash
-jj new main
-npm test
-```
-
-**Expected:** All 3 tests pass.
-
----
-
-## Step 8 — Clean up merged bookmarks
-
-**Type:**
-```bash
-jj bookmark delete feature/random-planet
-jj bookmark delete feature/personalized
-jj bookmark delete docs
-jj bookmark delete test
-```
-
-**Expected:** `jj bookmark list` shows only `main`.
-
----
-
-## Bookmark Topology
+**Look at** the history panel graph lines:
 
 ```
           ┌── docs ──────────── (README.md)
@@ -262,17 +71,255 @@ main ─────┤
                 (planets array)          (name argument)       (test.js)
 ```
 
+The working copy (`@`) sits on top of `main`, shown as the topmost entry
+marked `(empty)`.
+
+---
+
+## Step 3 — Browse code on `main` (hello world)
+
+The working copy starts on `main`, so you're already looking at the initial
+version.
+
+**Click:** `index.js` in the **file tree**
+
+**Expected:** The **code viewer** shows:
+
+```js
+#!/usr/bin/env node
+
+console.log("hello world!");
+```
+
+This is the simplest version — it just prints `hello world!`.
+
+---
+
+## Step 4 — Switch to `feature/random-planet`
+
+### 4.1 Open the Worktree Manager
+
+**Click:** **Worktrees** in the **repo bar**
+
+**Expected:** The Worktree Manager dialog opens, showing the bookmark picker.
+
+### 4.2 Select the bookmark
+
+**Click:** The **bookmark picker** dropdown
+
+**Select:** `feature/random-planet`
+
+**Expected:** Dirigent creates a new working-copy commit on top of
+`feature/random-planet`. The **status bar** updates to show this bookmark.
+The **file tree** refreshes.
+
+### 4.3 View the changed code
+
+**Click:** `index.js` in the **file tree**
+
+**Expected:** The code viewer now shows the updated version with a `planets`
+array and a `randomPlanet()` function:
+
+```js
+#!/usr/bin/env node
+
+const planets = [
+  "Mercury", "Venus", "Mars", "Jupiter",
+  "Saturn", "Uranus", "Neptune", "Pluto"
+];
+
+function randomPlanet() {
+  return planets[Math.floor(Math.random() * planets.length)];
+}
+
+const planet = randomPlanet();
+console.log(`hello ${planet}!`);
+```
+
+"world" has been replaced with a randomly selected planet.
+
+---
+
+## Step 5 — Switch to `feature/personalized`
+
+### 5.1 Switch bookmark
+
+**Click:** **Worktrees** in the **repo bar**
+
+**Select:** `feature/personalized` in the bookmark picker
+
+### 5.2 View the code
+
+**Click:** `index.js` in the **file tree**
+
+**Expected:** The code now includes `process.argv[2]` parsing. When a name is
+provided as a CLI argument, it prints `hello <name> from <planet>!`. Without a
+name, it falls back to `hello <planet>!`:
+
+```js
+const name = process.argv[2];
+const planet = randomPlanet();
+
+if (name) {
+  console.log(`hello ${name} from ${planet}!`);
+} else {
+  console.log(`hello ${planet}!`);
+}
+```
+
+---
+
+## Step 6 — View the diff between bookmarks
+
+### 6.1 See what changed from `main` to `feature/random-planet`
+
+**Click:** The `feature/random-planet` commit in the **history panel**
+
+**Expected:** The diff view opens, showing `index.js` changed from the
+one-liner `console.log("hello world!")` to the version with the `planets` array
+and `randomPlanet()` function. Added lines are highlighted in green, removed
+lines in red. The diff stats show something like `+12 -1`.
+
+### 6.2 See what changed from `feature/random-planet` to `feature/personalized`
+
+**Click:** The `feature/personalized` commit in the **history panel**
+
+**Expected:** The diff shows the addition of `process.argv[2]` parsing and the
+conditional `if (name)` branch. The `planets` array and `randomPlanet()`
+function are unchanged (not shown in the diff).
+
+---
+
+## Step 7 — Browse the docs bookmark
+
+### 7.1 Switch to docs
+
+**Click:** **Worktrees** in the **repo bar**
+
+**Select:** `docs` in the bookmark picker
+
+### 7.2 Read the README
+
+**Click:** `README.md` in the **file tree** (this file only exists on the
+`docs` bookmark)
+
+**Expected:** The code viewer shows the project README with installation and
+usage instructions. Note that `index.js` on this bookmark is still the original
+"hello world" version, because `docs` branches off `main`, not off
+`feature/personalized`.
+
+**Click:** `index.js` to verify — it should show just `console.log("hello world!")`.
+
+---
+
+## Step 8 — Browse the test bookmark
+
+### 8.1 Switch to test
+
+**Click:** **Worktrees** in the **repo bar**
+
+**Select:** `test` in the bookmark picker
+
+### 8.2 Read the test file
+
+**Click:** `test.js` in the **file tree** (this file only exists on the `test`
+bookmark)
+
+**Expected:** The code viewer shows three test cases:
+
+1. No arguments — expects `hello <planet>!`
+2. With name "Alice" — expects `hello Alice from <planet>!`
+3. With name "Bob" — expects `hello Bob from <planet>!`
+
+Each test uses regex matching to validate the output against the known planet
+list.
+
+### 8.3 Verify index.js has all features
+
+**Click:** `index.js` in the **file tree**
+
+**Expected:** The full personalized version (with `process.argv[2]` and the
+planet array). The `test` bookmark is based on `feature/personalized`, so it
+has all the features needed to make the tests pass.
+
+---
+
+## Step 9 — Create a cue to merge features into main
+
+### 9.1 Switch back to main
+
+**Click:** **Worktrees** in the **repo bar**
+
+**Select:** `main` in the bookmark picker
+
+### 9.2 Create a merge cue
+
+**Type** in the **prompt field** at the bottom:
+
+```
+Merge the feature/personalized bookmark into main using jj. 
+Then merge the docs and test bookmarks as well. 
+Finally run npm test to verify everything works.
+```
+
+**Click:** Send (or press Enter)
+
+**Expected:** The cue appears in the **Inbox** column of the cue pool. Dirigent
+creates a workspace for the cue and Claude executes the merge operations.
+
+### 9.3 Review the result
+
+**Expected:** After Claude finishes, the cue moves to **Review** status. The
+diff preview shows the merged changes. The history panel shows merge commits
+with `main` now containing all features, docs, and tests.
+
+**Click:** Accept to commit the merge.
+
+---
+
+## Step 10 — Verify with tests
+
+### 10.1 Check the history
+
+**Click:** The **History** tab
+
+**Expected:** `main` now sits at the top of the graph, with merge commits
+connecting it to the feature bookmarks. All the code from `feature/personalized`,
+`docs`, and `test` is now part of `main`.
+
+### 10.2 Run tests via a cue
+
+**Type** in the **prompt field:**
+
+```
+Run npm test and show me the output
+```
+
+**Expected:** Claude runs the tests and reports:
+
+```
+Running tests...
+
+  ✓ no args prints hello <planet>!
+  ✓ with name prints hello <name> from <planet>!
+  ✓ with another name prints hello <name> from <planet>!
+
+3 passed, 0 failed
+```
+
+---
+
 ## Summary
 
-| Step | Action                        | Command                                | What you see                        |
-|------|-------------------------------|----------------------------------------|-------------------------------------|
-| 1    | View the log                  | `jj log`                               | DAG with 5 bookmarks                |
-| 2.1  | Run hello world               | `jj new main && node index.js`         | `hello world!`                      |
-| 2.2  | Run random planet             | `jj new feature/random-planet && node index.js` | `hello Jupiter!`          |
-| 2.3  | Run personalized              | `jj new feature/personalized && node index.js Alice` | `hello Alice from Mars!` |
-| 3    | Read docs                     | `jj new docs && cat README.md`         | README content                      |
-| 4    | Run tests                     | `jj new test && npm test`              | 3 passed, 0 failed                  |
-| 5    | View diffs                    | `jj diff -r main -r feature/random-planet` | index.js changes             |
-| 6    | Merge into main               | `jj new main feature/personalized ...` | Merge commit in log                 |
-| 7    | Merge docs & tests            | `jj new main docs ...`                 | All tests pass on main              |
-| 8    | Delete merged bookmarks       | `jj bookmark delete ...`               | Only `main` remains                 |
+| Step | What you do in Dirigent                        | What you see                              |
+|------|------------------------------------------------|-------------------------------------------|
+| 1    | Open `/tmp/jj-hello-demo`                      | File tree with index.js, package.json     |
+| 2    | Open History panel                             | DAG with 5 bookmarks                      |
+| 3    | Click `index.js` on main                       | `hello world!` source code                |
+| 4    | Switch to `feature/random-planet`              | Code with planets array, randomPlanet()   |
+| 5    | Switch to `feature/personalized`               | Code with name argument and planet        |
+| 6    | Click commits in History                       | Diffs showing changes between bookmarks   |
+| 7    | Switch to `docs`, read README.md               | Project documentation, original index.js  |
+| 8    | Switch to `test`, read test.js                 | Three test cases with regex validation    |
+| 9    | Create a cue to merge all into main            | Merge commits in history                  |
+| 10   | Run tests via prompt                           | 3 passed, 0 failed                        |
