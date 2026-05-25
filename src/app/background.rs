@@ -138,6 +138,15 @@ impl DirigentApp {
         problems
     }
 
+    /// Force-reload all open tabs from disk (bypassing mtime cache), closing
+    /// tabs for deleted files. Used after branch switches.
+    pub(super) fn force_reload_open_tabs(&mut self) {
+        for tab in &mut self.viewer.tabs {
+            tab.last_mtime = None;
+        }
+        self.reload_open_tabs();
+    }
+
     /// Reload content of all open tabs from disk, closing tabs for deleted files.
     pub(super) fn reload_open_tabs(&mut self) {
         let result = self.reload_open_tabs_and_notify_lsp();
