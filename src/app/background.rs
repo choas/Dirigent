@@ -58,6 +58,20 @@ impl DirigentApp {
             }
         }
 
+        // Poll for async PR detection result
+        if let Some(ref rx) = self.git.pr_detect_rx {
+            if let Ok(result) = rx.try_recv() {
+                if let Some((number, url)) = result {
+                    self.git.pr_number = Some(number);
+                    self.git.pr_url = Some(url);
+                } else {
+                    self.git.pr_number = None;
+                    self.git.pr_url = None;
+                }
+                self.git.pr_detect_rx = None;
+            }
+        }
+
         let fs_ready = self.fs_changed.load(Ordering::Relaxed)
             && self.last_fs_rescan.elapsed() >= FS_RESCAN_DEBOUNCE;
         if !fs_ready {

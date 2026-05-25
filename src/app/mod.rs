@@ -966,6 +966,9 @@ impl DirigentApp {
             last_render_code_viewer_time: Duration::ZERO,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        if !skip_scan {
+            app.maybe_detect_pr();
+        }
         #[cfg(target_os = "macos")]
         update_macos_dock_icon(&app.settings.custom_dock_icon_path);
         app

@@ -98,6 +98,25 @@ impl DirigentApp {
                 "{} {}",
                 info.last_commit_hash, info.last_commit_message
             ));
+            if let Some(pr_num) = self.git.pr_number {
+                ui.separator();
+                let pr_label = format!("PR #{}", pr_num);
+                let resp = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&pr_label)
+                            .monospace()
+                            .small()
+                            .color(self.semantic.accent),
+                    )
+                    .sense(egui::Sense::click()),
+                );
+                if resp.clicked() {
+                    if let Some(ref url) = self.git.pr_url {
+                        let _ = std::process::Command::new("open").arg(url).spawn();
+                    }
+                }
+                resp.on_hover_text("Open pull request in browser");
+            }
             let summary = git::format_status_summary(info);
             if !summary.is_empty() {
                 ui.separator();
