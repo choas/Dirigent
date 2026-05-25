@@ -85,8 +85,8 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
         branch = "(no bookmark)".to_string();
     }
 
-    // Count status entries via `jj diff --stat`
-    let (modified, added, deleted) = count_status_entries(path, jj_path);
+    // Count status entries via `jj diff --types`
+    let (modified, added, deleted, conflicted) = count_status_entries(path, jj_path);
 
     Some(GitInfo {
         branch,
@@ -95,46 +95,44 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
         modified_count: modified,
         added_count: added,
         deleted_count: deleted,
-        conflicted_count: 0,
+        conflicted_count: conflicted,
     })
 }
 
-fn count_status_entries(path: &Path, jj_path: &str) -> (usize, usize, usize) {
+fn count_status_entries(path: &Path, jj_path: &str) -> (usize, usize, usize, usize) {
     let output = super::jj_cmd(jj_path)
-        .args(["diff", "--stat"])
+        .args(["diff", "--types"])
         .current_dir(path)
         .output();
 
     let output = match output {
         Ok(o) if o.status.success() => o,
-        _ => return (0, 0, 0),
+        _ => return (0, 0, 0, 0),
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut modified = 0;
     let mut added = 0;
     let mut deleted = 0;
+    let mut conflicted = 0;
 
     for line in stdout.lines() {
-        // jj diff --stat output: "file.rs | 5 ++---" (last line is summary)
-        if !line.contains('|') {
+        // Format: "FT path" where F=from-type, T=to-type
+        // Types: F=file, D=directory, L=symlink, C=conflict, -=absent
+        let trimmed = line.trim();
+        if trimmed.len() < 3 {
             continue;
         }
-        let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let stat = parts[1].trim();
-        let has_plus = stat.contains('+');
-        let has_minus = stat.contains('-');
-        match (has_plus, has_minus) {
-            (true, true) => modified += 1,
-            (true, false) => added += 1,
-            (false, true) => deleted += 1,
-            _ => {}
+        let from_type = trimmed.as_bytes()[0];
+        let to_type = trimmed.as_bytes()[1];
+        match (from_type, to_type) {
+            (b'-', _) => added += 1,
+            (_, b'-') => deleted += 1,
+            (b'C', _) | (_, b'C') => conflicted += 1,
+            _ => modified += 1,
         }
     }
-    (modified, added, deleted)
+    (modified, added, deleted, conflicted)
 }
 
 /// Returns relative paths of all files with uncommitted changes in the working copy.

@@ -213,7 +213,12 @@ pub(crate) fn jj_list_bookmarks(
         .output()?;
 
     if !output.status.success() {
-        return Ok(Vec::new());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::GitCommand(format!(
+            "jj bookmark list failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
