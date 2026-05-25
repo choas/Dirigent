@@ -494,6 +494,32 @@ fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -
     }
 }
 
+/// Detect the PR number and URL for the current branch using `gh pr view`.
+fn detect_pr_info(project_root: &std::path::Path) -> Option<(u32, String)> {
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "number,url",
+            "-q",
+            "[.number, .url] | @tsv",
+        ])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let s = s.trim();
+        let mut parts = s.splitn(2, '\t');
+        let number: u32 = parts.next()?.parse().ok()?;
+        let url = parts.next()?.to_string();
+        Some((number, url))
+    } else {
+        None
+    }
+}
+
 fn start_fs_watcher(
     root: &Path,
     changed: &Arc<AtomicBool>,
@@ -666,6 +692,16 @@ impl DirigentApp {
             }
         }
 
+        let initial_diff_lines = if skip_scan {
+            HashMap::new()
+        } else {
+            vcs_dispatch::compute_diff_lines(
+                &settings.vcs_backend,
+                &settings.jj_cli_path,
+                &project_root,
+            )
+        };
+
         let mut app = DirigentApp {
             project_root,
             db,
@@ -700,6 +736,7 @@ impl DirigentApp {
             git_status_rx,
             git: GitState {
                 info: git_info,
+                diff_lines: initial_diff_lines,
                 dirty_files,
                 dirty_dirs: HashSet::new(),
                 show_git_view: false,
@@ -774,6 +811,10 @@ impl DirigentApp {
                 squash_rx: None,
                 undoing: false,
                 undo_rx: None,
+                pr_number: None,
+                pr_url: None,
+                pr_detect_rx: None,
+                pr_detect_branch: String::new(),
             },
             settings,
             semantic,
