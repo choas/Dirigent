@@ -249,17 +249,16 @@ fn try_parse_workflow_json(response: &str) -> Option<Vec<LlmWorkflowStep>> {
         }
     }
 
-    let preview_len = 500;
-    let suffix = if response.len() > preview_len {
-        let start = response.floor_char_boundary(response.len() - preview_len);
-        &response[start..]
-    } else {
-        response
+    let hash = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        response.hash(&mut h);
+        h.finish()
     };
     log::warn!(
-        "[workflow] all parse strategies failed; response tail ({} chars): {:?}",
+        "[workflow] all parse strategies failed; response length={}, hash={:016x}",
         response.len(),
-        suffix,
+        hash,
     );
 
     None

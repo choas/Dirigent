@@ -157,11 +157,22 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str) {
         use objc::{msg_send, sel, sel_impl};
 
         let ns_data = Class::get("NSData").unwrap();
+        let ns_image_class = Class::get("NSImage").unwrap();
+
         let data: *mut Object =
             msg_send![ns_data, dataWithBytes:png_bytes.as_ptr() length:png_bytes.len()];
-        let ns_image = Class::get("NSImage").unwrap();
-        let image: *mut Object = msg_send![ns_image, alloc];
+        let image: *mut Object = msg_send![ns_image_class, alloc];
         let image: *mut Object = msg_send![image, initWithData:data];
+
+        let image: *mut Object = if image.is_null() {
+            let fallback = include_bytes!("../../assets/logo.png");
+            let fb_data: *mut Object =
+                msg_send![ns_data, dataWithBytes:fallback.as_ptr() length:fallback.len()];
+            let fb_image: *mut Object = msg_send![ns_image_class, alloc];
+            msg_send![fb_image, initWithData:fb_data]
+        } else {
+            image
+        };
 
         let ns_app = Class::get("NSApplication").unwrap();
         let app: *mut Object = msg_send![ns_app, sharedApplication];
@@ -412,6 +423,8 @@ pub struct DirigentApp {
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
+    // Cues that need an auto-continue reply after tracking state is flushed
+    pending_auto_continues: Vec<i64>,
 
     // SSH remote connections (dedicated worker thread)
     ssh_worker: Option<ssh::SshWorkerHandle>,
@@ -859,6 +872,7 @@ impl DirigentApp {
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
+            pending_auto_continues: Vec::new(),
 
             ssh_worker: None,
             ssh_remote_entries: Vec::new(),

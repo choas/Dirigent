@@ -51,6 +51,10 @@ pub(crate) struct ClaudeRunState {
     /// Per-cue timeline of recent log-arrival instants, used to draw the
     /// heartbeat strip beneath the running conversation view.
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
+    /// Consecutive auto-continue count per cue (reset on normal completion).
+    pub(super) auto_continue_count: HashMap<i64, u32>,
+    /// Spawn-failure retry count per cue for auto-continues.
+    pub(super) auto_continue_spawn_retries: HashMap<i64, u32>,
 }
 
 impl ClaudeRunState {
@@ -70,6 +74,8 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             log_heartbeats: HashMap::new(),
+            auto_continue_count: HashMap::new(),
+            auto_continue_spawn_retries: HashMap::new(),
         }
     }
 }
@@ -134,10 +140,9 @@ fn write_dirigent_mcp_config(
     mcp_bin: &str,
     db_path: &std::path::Path,
 ) -> std::io::Result<std::path::PathBuf> {
-    let config_path = project_root.join(".Dirigent").join("mcp-config.json");
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let dir = project_root.join(".Dirigent");
+    std::fs::create_dir_all(&dir)?;
+    let config_path = dir.join("mcp-config.json");
     let escaped_bin = mcp_bin.replace('\\', "\\\\").replace('"', "\\\"");
     let escaped_db = db_path
         .display()
@@ -604,16 +609,20 @@ impl DirigentApp {
         }
     }
 
-    /// Insert a new execution record, emit telemetry, and spawn the provider thread.
     /// Insert a new execution record and spawn the provider thread.
     /// Returns `true` on success, `false` if the execution record could not be
     /// created (the caller should skip any post-spawn cleanup in that case).
+    ///
+    /// When `resume_session_id` is `Some`, `--resume <id>` is passed to continue
+    /// the Claude conversation. Otherwise a new session UUID is generated and
+    /// passed via `--session-id` so it can be resumed on subsequent replies.
     fn insert_exec_and_spawn(
         &mut self,
         cue_id: i64,
         prompt: String,
         provider: CliProvider,
         matched_command: &Option<CueCommand>,
+        resume_session_id: Option<String>,
     ) -> bool {
         let exec_id = match self.db.insert_execution(cue_id, &prompt, &provider) {
             Ok(id) => id,
@@ -632,13 +641,28 @@ impl DirigentApp {
             self.claude.conversation_history = execs;
         }
 
-        let config = build_provider_config(
+        let mut config = build_provider_config(
             &self.settings,
             &provider,
             matched_command,
             &prompt,
             &self.project_root,
         );
+
+        // For Claude provider, inject session continuity args.
+        if provider == CliProvider::Claude {
+            let session_id = if let Some(ref id) = resume_session_id {
+                config.extra_args_vec.push("--resume".to_string());
+                config.extra_args_vec.push(id.clone());
+                id.clone()
+            } else {
+                let id = uuid::Uuid::new_v4().to_string();
+                config.extra_args_vec.push("--session-id".to_string());
+                config.extra_args_vec.push(id.clone());
+                id
+            };
+            let _ = self.db.update_execution_session_id(exec_id, &session_id);
+        }
 
         telemetry::emit_execution_started(
             &self.project_name(),
@@ -689,7 +713,7 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
-        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command) {
+        if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command, None) {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             self.reload_cues();
         }
@@ -723,28 +747,40 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
 
-        let previous_diff = self
-            .db
-            .get_latest_execution(cue_id)
-            .ok()
-            .flatten()
-            .and_then(|e| e.diff)
-            .unwrap_or_default();
-
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
 
-        // Both providers use the same reply prompt structure.
-        let prompt = claude::build_reply_prompt(
-            &original_text,
-            &cue.file_path,
-            cue.line_number,
-            cue.line_number_end,
-            &previous_diff,
-            reply,
-            &all_images,
-            Some(&self.project_root),
-        );
+        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
+
+        // When resuming a Claude session the previous context is already in the
+        // conversation, so we only need to send the user's reply. For a fresh
+        // session (or non-Claude provider) we build the full structured prompt.
+        // We also need the full prompt when there are new images to attach.
+        let prompt = if resume_session_id.is_some()
+            && all_images.is_empty()
+            && provider == CliProvider::Claude
+        {
+            reply.to_string()
+        } else {
+            let previous_diff = self
+                .db
+                .get_latest_execution(cue_id)
+                .ok()
+                .flatten()
+                .and_then(|e| e.diff)
+                .unwrap_or_default();
+
+            claude::build_reply_prompt(
+                &original_text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                reply,
+                &all_images,
+                Some(&self.project_root),
+            )
+        };
 
         let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
         self.claude.expand_running = true;
@@ -755,8 +791,13 @@ impl DirigentApp {
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
         self.claude.start_times.insert(cue_id, Instant::now());
-
-        let started = self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command);
+        let started = self.insert_exec_and_spawn(
+            cue_id,
+            prompt,
+            provider,
+            &matched_command,
+            resume_session_id,
+        );
 
         if started {
             if self.diff_review.as_ref().map(|r| r.cue_id) == Some(cue_id) {
@@ -767,6 +808,103 @@ impl DirigentApp {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
             self.reload_cues();
         }
+    }
+
+    /// Dispatch an auto-continue with rollback appropriate for auto-continues.
+    /// On failure the cue is restored to Done (its state before the auto-continue
+    /// was enqueued) and re-enqueued into `pending_auto_continues` for one retry.
+    /// After a second failure the auto-continue budget is cleared.
+    fn dispatch_auto_continue(&mut self, cue_id: i64) {
+        if let Err(e) = settings::sync_home_guard_hook(
+            &self.project_root,
+            self.settings.allow_home_folder_access,
+        ) {
+            log::error!("Auto-continue sync_home_guard_hook failed for cue {cue_id}: {e:#}");
+            self.rollback_auto_continue(cue_id);
+            return;
+        }
+
+        let cue = match self.cues.iter().find(|c| c.id == cue_id) {
+            Some(c) => c.clone(),
+            None => {
+                self.claude.auto_continue_count.remove(&cue_id);
+                self.claude.auto_continue_spawn_retries.remove(&cue_id);
+                return;
+            }
+        };
+
+        let latest_exec = self.db.get_latest_execution(cue_id).ok().flatten();
+
+        let provider = latest_exec
+            .as_ref()
+            .map(|e| e.provider.clone())
+            .unwrap_or_else(|| self.settings.cli_provider.clone());
+
+        let resume_session_id = latest_exec.as_ref().and_then(|e| e.session_id.clone());
+
+        let (raw_text, matched_command) =
+            resolve_command_prefix(&cue.text, &self.settings.commands);
+
+        let prompt = if resume_session_id.is_some() && provider == CliProvider::Claude {
+            "continue".to_string()
+        } else {
+            let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
+            let previous_diff = latest_exec.and_then(|e| e.diff).unwrap_or_default();
+
+            claude::build_reply_prompt(
+                &original_text,
+                &cue.file_path,
+                cue.line_number,
+                cue.line_number_end,
+                &previous_diff,
+                "continue",
+                &[],
+                Some(&self.project_root),
+            )
+        };
+
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.claude.expand_running = true;
+        self.reload_cues();
+
+        self.claude
+            .running_logs
+            .insert(cue_id, (String::new(), provider.clone()));
+        self.claude.start_times.insert(cue_id, Instant::now());
+
+        if self.insert_exec_and_spawn(
+            cue_id,
+            prompt,
+            provider,
+            &matched_command,
+            resume_session_id,
+        ) {
+            self.claude.auto_continue_spawn_retries.remove(&cue_id);
+        } else {
+            self.claude.running_logs.remove(&cue_id);
+            self.claude.start_times.remove(&cue_id);
+            self.rollback_auto_continue(cue_id);
+        }
+    }
+
+    /// Roll back a failed auto-continue dispatch: restore the cue to Done and
+    /// re-enqueue for one retry.  After a second failure, give up entirely.
+    fn rollback_auto_continue(&mut self, cue_id: i64) {
+        let retries = self
+            .claude
+            .auto_continue_spawn_retries
+            .entry(cue_id)
+            .or_insert(0);
+        *retries += 1;
+        if *retries > 1 {
+            log::warn!("Auto-continue spawn failed twice for cue {cue_id}, giving up");
+            self.claude.auto_continue_count.remove(&cue_id);
+            self.claude.auto_continue_spawn_retries.remove(&cue_id);
+        } else {
+            self.pending_auto_continues.push(cue_id);
+        }
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+        self.reload_cues();
     }
 
     pub(super) fn process_claude_results(&mut self) {
@@ -781,6 +919,15 @@ impl DirigentApp {
 
         if had_results {
             self.cached_total_cost = self.db.total_cost().unwrap_or(self.cached_total_cost);
+        }
+
+        // Drain any pending auto-continues that were re-enqueued due to spawn
+        // failure (process_single_result only drains after a result arrives).
+        if !self.pending_auto_continues.is_empty() && !had_results {
+            let auto_continues = std::mem::take(&mut self.pending_auto_continues);
+            for cue_id in auto_continues {
+                self.dispatch_auto_continue(cue_id);
+            }
         }
     }
 
@@ -831,6 +978,13 @@ impl DirigentApp {
 
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
+
+        // Dispatch pending auto-continues now that tracking state is cleared.
+        let auto_continues = std::mem::take(&mut self.pending_auto_continues);
+        for cue_id in auto_continues {
+            self.dispatch_auto_continue(cue_id);
+        }
+
         self.on_workflow_cue_completed(result.cue_id);
     }
 
@@ -1032,6 +1186,7 @@ impl DirigentApp {
     }
 
     fn handle_run_with_diff(&mut self, result: &ClaudeResult) {
+        self.claude.auto_continue_count.remove(&result.cue_id);
         let Some(diff) = result.diff.as_ref() else {
             return;
         };
@@ -1164,6 +1319,7 @@ impl DirigentApp {
         let has_question = claude::response_has_question(&result.response);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
+            self.claude.auto_continue_count.remove(&result.cue_id);
             self.set_status_message(format!("Claude is asking a question about \"{}\"", preview));
             let _ = self.db.update_cue_has_question(result.cue_id, true);
             let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
@@ -1173,7 +1329,24 @@ impl DirigentApp {
             self.reply_inputs
                 .entry(result.cue_id)
                 .or_insert_with(String::new);
+        } else if self.should_auto_continue(result.cue_id) {
+            let count = self
+                .claude
+                .auto_continue_count
+                .entry(result.cue_id)
+                .or_insert(0);
+            *count += 1;
+            let n = *count;
+            let max = self.settings.auto_continue_max;
+            self.set_status_message(format!("Auto-continuing \"{}\" ({}/{})", preview, n, max,));
+            let _ = self.db.update_cue_has_question(result.cue_id, false);
+            let _ = self.db.log_activity(
+                result.cue_id,
+                &format!("Stopped early — auto-continue {}/{}", n, max),
+            );
+            self.pending_auto_continues.push(result.cue_id);
         } else {
+            self.claude.auto_continue_count.remove(&result.cue_id);
             self.set_status_message(format!(
                 "Claude completed but no file changes detected for \"{}\"",
                 preview
@@ -1184,6 +1357,29 @@ impl DirigentApp {
                 .db
                 .log_activity(result.cue_id, "Run completed — no changes");
         }
+    }
+
+    /// Check whether a stopped-early run should be auto-continued.
+    fn should_auto_continue(&self, cue_id: i64) -> bool {
+        if !self.settings.auto_continue {
+            return false;
+        }
+        let count = self
+            .claude
+            .auto_continue_count
+            .get(&cue_id)
+            .copied()
+            .unwrap_or(0);
+        if count >= self.settings.auto_continue_max {
+            return false;
+        }
+        let log = self
+            .claude
+            .running_logs
+            .get(&cue_id)
+            .map(|(l, _)| l.as_str())
+            .unwrap_or("");
+        claude::detect_stopped_early(log)
     }
 
     /// Maximum size (in bytes) of a single cue's running log buffer.

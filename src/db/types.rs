@@ -130,6 +130,8 @@ pub(crate) struct Execution {
     pub duration_ms: Option<u64>,
     /// Number of conversation turns.
     pub num_turns: Option<u64>,
+    /// Claude session ID for conversation continuity across replies.
+    pub session_id: Option<String>,
 }
 
 /// Lightweight execution metrics for display in cue cards (avoids fetching full Execution blobs).

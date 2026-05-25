@@ -211,6 +211,7 @@ impl Database {
         self.add_column("executions", "num_turns", "INTEGER")?;
         self.add_column("executions", "input_tokens", "INTEGER")?;
         self.add_column("executions", "output_tokens", "INTEGER")?;
+        self.add_column("executions", "session_id", "TEXT")?;
 
         // Additional tables
         self.conn.execute_batch(

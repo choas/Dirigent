@@ -260,6 +260,12 @@ pub(crate) struct Settings {
     /// Automatically commit each cue when it moves to Review.
     #[serde(default)]
     pub auto_commit: bool,
+    /// Automatically send "continue" when a run stops mid-task.
+    #[serde(default)]
+    pub auto_continue: bool,
+    /// Maximum consecutive auto-continues per cue (prevents infinite loops).
+    #[serde(default = "default_auto_continue_max")]
+    pub auto_continue_max: u32,
     /// Append `--dangerously-skip-permissions` to the Claude CLI invocation.
     /// Enabled by default — without this flag, non-interactive `-p` mode
     /// cannot get tool permissions and Claude will only describe changes
@@ -335,6 +341,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_auto_continue_max() -> u32 {
+    3
+}
+
 fn default_font_family() -> String {
     "Menlo".to_string()
 }
@@ -393,6 +403,8 @@ impl Default for Settings {
             auto_context_file: false,
             auto_context_git_diff: false,
             auto_commit: false,
+            auto_continue: false,
+            auto_continue_max: default_auto_continue_max(),
             allow_dangerous_skip_permissions: true,
             claude_use_pty: true,
             show_frame_timing: false,

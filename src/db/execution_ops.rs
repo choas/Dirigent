@@ -99,7 +99,7 @@ impl Database {
 
     pub fn get_latest_execution(&self, cue_id: i64) -> Result<Option<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, session_id FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query(params![cue_id])?;
         if let Some(row) = rows.next()? {
@@ -136,10 +136,33 @@ impl Database {
         Ok(map)
     }
 
+    pub fn update_execution_session_id(&self, id: i64, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE executions SET session_id = ?1 WHERE id = ?2",
+            params![session_id, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get the Claude session ID from the latest execution for a cue.
+    /// Returns the session_id only if the most recent execution has one;
+    /// never skips over newer NULL-session runs to find an older session.
+    pub fn get_cue_session_id(&self, cue_id: i64) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id FROM executions WHERE cue_id = ?1 ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![cue_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Get all executions for a cue, ordered by id (oldest first).
     pub fn get_all_executions(&self, cue_id: i64) -> Result<Vec<Execution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
+            "SELECT id, cue_id, prompt, response, diff, log, status, provider, cost_usd, duration_ms, num_turns, session_id FROM executions WHERE cue_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![cue_id], row_to_execution)?;
         let mut execs = Vec::new();

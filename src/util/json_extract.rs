@@ -20,64 +20,79 @@ pub fn extract_json(s: &str) -> String {
             }
         }
     }
-    if let Some(result) = extract_last_balanced(s, '{', '}') {
-        return result;
+    let obj = extract_last_balanced_with_pos(s, '{', '}');
+    let arr = extract_last_balanced_with_pos(s, '[', ']');
+    match (obj, arr) {
+        (Some((_, obj_end, obj_str)), Some((_, arr_end, arr_str))) => {
+            if arr_end > obj_end {
+                arr_str
+            } else {
+                obj_str
+            }
+        }
+        (Some((_, _, obj_str)), None) => obj_str,
+        (None, Some((_, _, arr_str))) => arr_str,
+        (None, None) => s.trim().to_string(),
     }
-    if let Some(result) = extract_last_balanced(s, '[', ']') {
-        return result;
-    }
-    s.trim().to_string()
 }
 
 /// Find the last balanced `open`…`close` span in `s`, skipping over JSON
 /// string literals so that braces inside `"..."` don't affect depth counting.
-fn extract_last_balanced(s: &str, open: char, close: char) -> Option<String> {
+fn extract_last_balanced_with_pos(
+    s: &str,
+    open: char,
+    close: char,
+) -> Option<(usize, usize, String)> {
     let bytes = s.as_bytes();
-    let end = s.rfind(close)?;
     let open_b = open as u8;
     let close_b = close as u8;
 
-    let mut depth: i32 = 0;
-    let mut start = None;
-    let mut i = end;
-    loop {
-        let b = bytes[i];
-        if b == b'"' {
-            // Walk backwards past the string literal, handling escaped quotes.
+    let mut search_from = bytes.len();
+    while let Some(rel) = bytes[..search_from].iter().rposition(|&b| b == close_b) {
+        let end = rel;
+        let mut depth: i32 = 0;
+        let mut start = None;
+        let mut i = end;
+        loop {
+            let b = bytes[i];
+            if b == b'"' {
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
+                while i > 0 {
+                    if bytes[i] == b'"' {
+                        let backslashes =
+                            bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
+                        if backslashes % 2 == 0 {
+                            break;
+                        }
+                    }
+                    i -= 1;
+                }
+            } else if b == close_b {
+                depth += 1;
+            } else if b == open_b {
+                depth -= 1;
+                if depth == 0 {
+                    start = Some(i);
+                    break;
+                }
+            }
             if i == 0 {
                 break;
             }
             i -= 1;
-            while i > 0 {
-                if bytes[i] == b'"' {
-                    let backslashes = bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
-                    if backslashes % 2 == 0 {
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-        } else if b == close_b {
-            depth += 1;
-        } else if b == open_b {
-            depth -= 1;
-            if depth == 0 {
-                start = Some(i);
-                break;
-            }
         }
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
 
-    let start = start?;
-    if end > start {
-        Some(s[start..=end].to_string())
-    } else {
-        None
+        if let Some(s_pos) = start {
+            if end > s_pos {
+                return Some((s_pos, end, s[s_pos..=end].to_string()));
+            }
+        }
+        search_from = end;
     }
+    None
 }
 
 #[cfg(test)]
@@ -153,6 +168,30 @@ Some text in between.
     fn braces_inside_strings_skipped() {
         let input = r#"{"label": "Fix {the bug}", "id": 1}"#;
         assert_eq!(extract_json(input), input);
+    }
+
+    #[test]
+    fn array_after_object_picks_array() {
+        let input = r#"{"ignored": true} and then [1, 2, 3]"#;
+        assert_eq!(extract_json(input), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn stray_close_bracket_in_trailing_prose() {
+        let input = r#"{"key": "value"} see section] more"#;
+        assert_eq!(extract_json(input), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn stray_close_brace_in_trailing_prose() {
+        let input = r#"[1, 2, 3] refer to docs} end"#;
+        assert_eq!(extract_json(input), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn multiple_stray_closes_after_json() {
+        let input = r#"{"steps": [1]} blah ] blah } done"#;
+        assert_eq!(extract_json(input), r#"{"steps": [1]}"#);
     }
 
     #[test]
