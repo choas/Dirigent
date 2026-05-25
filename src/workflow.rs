@@ -251,7 +251,8 @@ fn try_parse_workflow_json(response: &str) -> Option<Vec<LlmWorkflowStep>> {
 
     let preview_len = 500;
     let suffix = if response.len() > preview_len {
-        &response[response.len() - preview_len..]
+        let start = response.floor_char_boundary(response.len() - preview_len);
+        &response[start..]
     } else {
         response
     };
