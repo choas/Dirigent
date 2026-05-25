@@ -717,6 +717,7 @@ impl DirigentApp {
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
                 available_branches: Vec::new(),
+                bookmark_push_statuses: HashMap::new(),
                 pushing: false,
                 push_rx: None,
                 show_push_error: false,
@@ -770,10 +771,16 @@ impl DirigentApp {
                 create_bookmark_needs_focus: false,
                 creating_bookmark: false,
                 create_bookmark_rx: None,
+                show_cleanup_bookmarks: false,
+                suspicious_bookmarks: Vec::new(),
+                cleaning_bookmark: false,
+                cleanup_bookmark_rx: None,
                 squashing: false,
                 squash_rx: None,
                 undoing: false,
                 undo_rx: None,
+                abandoning_empty: false,
+                abandon_empty_rx: None,
                 show_commit_dialog: false,
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
@@ -1219,9 +1226,11 @@ impl eframe::App for DirigentApp {
         self.process_pr_notify_result();
         self.process_move_to_branch_result();
         self.process_create_bookmark_result();
+        self.process_cleanup_bookmark_result();
         self.process_squash_result();
         self.process_undo_result();
         self.process_commit_result();
+        self.process_abandon_empty_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

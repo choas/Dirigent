@@ -522,6 +522,8 @@ pub(crate) struct GitState {
     pub(super) show_worktree_panel: bool,
     /// Branches available for worktree creation (local + remote, excluding checked-out).
     pub(super) available_branches: Vec<String>,
+    /// Per-bookmark push status (jj only): synced vs not-pushed for each bookmark name.
+    pub(super) bookmark_push_statuses: HashMap<String, crate::jj::BookmarkPushStatus>,
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -617,12 +619,22 @@ pub(crate) struct GitState {
     /// Whether a bookmark creation is in progress (jj only).
     pub(super) creating_bookmark: bool,
     pub(super) create_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Clean Up Bookmarks dialog is open (jj only).
+    pub(super) show_cleanup_bookmarks: bool,
+    /// Suspicious bookmarks found during scan.
+    pub(super) suspicious_bookmarks: Vec<crate::jj::SuspiciousBookmark>,
+    /// Whether a cleanup-bookmark deletion is in progress.
+    pub(super) cleaning_bookmark: bool,
+    pub(super) cleanup_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether a squash operation is in progress (jj only).
     pub(super) squashing: bool,
     pub(super) squash_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether an undo operation is in progress (jj only).
     pub(super) undoing: bool,
     pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether an abandon-empty-heads operation is in progress (jj only).
+    pub(super) abandoning_empty: bool,
+    pub(super) abandon_empty_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether the Commit dialog is open (jj only).
     pub(super) show_commit_dialog: bool,
     /// Commit message input for the Commit dialog.
@@ -696,6 +708,10 @@ impl GitState {
         }
         if self.show_commit_dialog {
             self.show_commit_dialog = false;
+            return true;
+        }
+        if self.show_cleanup_bookmarks {
+            self.show_cleanup_bookmarks = false;
             return true;
         }
         if self.show_create_bookmark {

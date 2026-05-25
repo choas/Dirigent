@@ -110,11 +110,25 @@ impl DirigentApp {
 
     /// Open the "Switch Branch" dialog with available branches populated.
     pub(super) fn open_switch_branch_dialog(&mut self) {
-        self.git.available_branches = match self.settings.vcs_backend {
-            VcsBackend::Jj => jj::jj_list_bookmarks(&self.project_root, &self.settings.jj_cli_path)
-                .unwrap_or_default(),
-            VcsBackend::Git => git::list_branches(&self.project_root).unwrap_or_default(),
-        };
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                let infos = jj::jj_list_bookmarks_with_status(
+                    &self.project_root,
+                    &self.settings.jj_cli_path,
+                )
+                .unwrap_or_default();
+                self.git.bookmark_push_statuses = infos
+                    .iter()
+                    .map(|b| (b.name.clone(), b.push_status))
+                    .collect();
+                self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+            }
+            VcsBackend::Git => {
+                self.git.available_branches =
+                    git::list_branches(&self.project_root).unwrap_or_default();
+                self.git.bookmark_push_statuses.clear();
+            }
+        }
         self.git.show_switch_branch = true;
     }
 
@@ -1095,5 +1109,128 @@ impl DirigentApp {
         self.git.graph_rows = rows;
         self.git.graph_max_lanes = max_lanes;
         self.git.history_cache_key = cache_key;
+    }
+
+    /// Find empty head commits and abandon them in one shot (jj only).
+    pub(super) fn start_abandon_empty_heads(&mut self) {
+        if self.git.abandoning_empty {
+            return;
+        }
+        self.git.abandoning_empty = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.abandon_empty_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        std::thread::spawn(move || {
+            let heads = jj::jj_find_empty_heads(&root, &jj_path);
+            if heads.is_empty() {
+                let _ = tx.send(Ok("No empty head commits found".to_string()));
+                return;
+            }
+            let ids: Vec<String> = heads.iter().map(|(id, _)| id.clone()).collect();
+            let count = ids.len();
+            let result = jj::jj_abandon(&root, &ids, &jj_path)
+                .map(|_| {
+                    let plural = if count == 1 { "" } else { "s" };
+                    format!("Abandoned {} empty head commit{}", count, plural)
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Finding empty heads...".into());
+    }
+
+    /// Check for completed abandon-empty-heads operation.
+    pub(super) fn process_abandon_empty_result(&mut self) {
+        let rx = match self.git.abandon_empty_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.abandoning_empty = false;
+                self.git.abandon_empty_rx = None;
+                self.set_status_message("Abandon empty heads failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.abandoning_empty = false;
+        self.git.abandon_empty_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(format!("Abandon failed: {}", e)),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
+    /// Open the Clean Up Bookmarks dialog, scanning for suspicious bookmarks.
+    pub(super) fn open_cleanup_bookmarks_dialog(&mut self) {
+        match jj::jj_find_suspicious_bookmarks(&self.project_root, &self.settings.jj_cli_path) {
+            Ok(suspicious) => {
+                self.git.suspicious_bookmarks = suspicious;
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to scan bookmarks: {}", e));
+                return;
+            }
+        }
+        self.git.show_cleanup_bookmarks = true;
+    }
+
+    /// Delete a suspicious bookmark (runs off the UI thread).
+    pub(super) fn start_delete_suspicious_bookmark(&mut self, name: String) {
+        if self.git.cleaning_bookmark {
+            return;
+        }
+        self.git.cleaning_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.cleanup_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let bm = name.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
+                .map(|()| bm)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message(format!("Deleting bookmark '{}'...", name));
+    }
+
+    /// Check for completed cleanup-bookmark deletion.
+    pub(super) fn process_cleanup_bookmark_result(&mut self) {
+        let rx = match self.git.cleanup_bookmark_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.cleaning_bookmark = false;
+                self.git.cleanup_bookmark_rx = None;
+                self.set_status_message("Bookmark deletion failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.cleaning_bookmark = false;
+        self.git.cleanup_bookmark_rx = None;
+        match result {
+            Ok(deleted_name) => {
+                self.git
+                    .suspicious_bookmarks
+                    .retain(|b| b.name != deleted_name);
+                self.set_status_message(format!("Deleted bookmark '{}'", deleted_name));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Delete bookmark failed: {}", e));
+            }
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
     }
 }

@@ -479,3 +479,30 @@ pub(crate) fn jj_revert_files(
     }
     Ok(())
 }
+
+/// Abandon one or more revisions by change id.
+pub(crate) fn jj_abandon(
+    repo_path: &Path,
+    change_ids: &[String],
+    jj_path: &str,
+) -> crate::error::Result<usize> {
+    if change_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let revset = change_ids.join(" | ");
+    let output = super::jj_cmd(jj_path)
+        .args(["abandon", "-r", &revset])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj abandon failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    Ok(change_ids.len())
+}

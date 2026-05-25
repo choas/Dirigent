@@ -15,6 +15,8 @@ struct MenuBarActions {
     import_pr_clicked: bool,
     commit_clicked: bool,
     create_bookmark_clicked: bool,
+    cleanup_bookmarks_clicked: bool,
+    abandon_empty_heads_clicked: bool,
     squash_clicked: bool,
     undo_clicked: bool,
     run_all_agents: bool,
@@ -236,6 +238,15 @@ impl DirigentApp {
             ui.close();
         }
 
+        if ui
+            .button("Clean Up Bookmarks")
+            .on_hover_text("Find and remove corrupted or tool-generated artifact bookmarks")
+            .clicked()
+        {
+            actions.cleanup_bookmarks_clicked = true;
+            ui.close();
+        }
+
         let squash_label = if self.git.squashing {
             "Squashing..."
         } else {
@@ -261,6 +272,22 @@ impl DirigentApp {
             .clicked()
         {
             actions.undo_clicked = true;
+            ui.close();
+        }
+
+        ui.separator();
+
+        let abandon_label = if self.git.abandoning_empty {
+            "Abandoning..."
+        } else {
+            "Abandon Empty Heads"
+        };
+        if ui
+            .add_enabled(!self.git.abandoning_empty, egui::Button::new(abandon_label))
+            .on_hover_text("Find and abandon empty head commits (no diff)")
+            .clicked()
+        {
+            actions.abandon_empty_heads_clicked = true;
             ui.close();
         }
     }
@@ -469,11 +496,17 @@ impl DirigentApp {
         if actions.create_bookmark_clicked {
             self.open_create_bookmark_dialog();
         }
+        if actions.cleanup_bookmarks_clicked {
+            self.open_cleanup_bookmarks_dialog();
+        }
         if actions.squash_clicked {
             self.start_squash_current_bookmark();
         }
         if actions.undo_clicked {
             self.start_jj_undo();
+        }
+        if actions.abandon_empty_heads_clicked {
+            self.start_abandon_empty_heads();
         }
         if let Some(kind) = actions.agent_to_cancel {
             self.cancel_agent(kind);

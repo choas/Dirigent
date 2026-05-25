@@ -273,8 +273,17 @@ impl DirigentApp {
             .max_height(250.0)
             .show(ui, |ui| {
                 for branch in &self.git.available_branches {
+                    let label = match self.git.bookmark_push_statuses.get(branch) {
+                        Some(jj::BookmarkPushStatus::NotPushed) => {
+                            format!("{branch}  \u{2191} not pushed")
+                        }
+                        Some(jj::BookmarkPushStatus::Synced) => {
+                            format!("{branch}  \u{2713} synced")
+                        }
+                        None => branch.clone(),
+                    };
                     if ui
-                        .selectable_label(false, egui::RichText::new(branch).monospace())
+                        .selectable_label(false, egui::RichText::new(&label).monospace())
                         .clicked()
                     {
                         *switch_to = Some(branch.clone());
@@ -402,10 +411,19 @@ impl DirigentApp {
                 .max_height(120.0)
                 .show(ui, |ui| {
                     for branch in self.git.available_branches.iter() {
+                        let label = match self.git.bookmark_push_statuses.get(branch) {
+                            Some(jj::BookmarkPushStatus::NotPushed) => {
+                                format!("{branch}  \u{2191} not pushed")
+                            }
+                            Some(jj::BookmarkPushStatus::Synced) => {
+                                format!("{branch}  \u{2713} synced")
+                            }
+                            None => branch.clone(),
+                        };
                         if ui
                             .selectable_label(
                                 self.git.new_worktree_name == *branch,
-                                egui::RichText::new(branch).monospace(),
+                                egui::RichText::new(&label).monospace(),
                             )
                             .clicked()
                         {
