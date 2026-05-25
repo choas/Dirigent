@@ -19,11 +19,11 @@ doesn't match, it's a bug in Dirigent's jj support.
 
 ### 1.1 Create an empty folder
 
-Create a folder for the demo project (e.g. `~/jj-hello-demo`) and initialize
-it with jj. This is the only terminal step:
+Create a folder for the demo project (e.g. `~/jj-hello-demo`). This is the
+only terminal step:
 
 ```bash
-mkdir ~/jj-hello-demo && cd ~/jj-hello-demo && jj git init
+mkdir ~/jj-hello-demo
 ```
 
 ### 1.2 Open the project in Dirigent
@@ -33,6 +33,18 @@ mkdir ~/jj-hello-demo && cd ~/jj-hello-demo && jj git init
 **Navigate to:** `~/jj-hello-demo`
 
 **Click:** Open
+
+### 1.3 Set jj as the VCS backend
+
+**Click:** Settings (gear icon)
+
+**Navigate to:** VCS Backend
+
+**Select:** jj
+
+**Click:** Save / Apply
+
+Dirigent will initialize the repository with jj automatically.
 
 **Expected:**
 - The **file tree** on the left is empty (no files yet)
