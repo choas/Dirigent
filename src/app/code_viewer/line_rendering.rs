@@ -6,6 +6,7 @@ use eframe::egui;
 use super::cue_input::render_cue_input;
 use super::types::{CodeLineActions, CodeLineContext, LineHighlight};
 use crate::agents::Severity;
+use crate::app::types::DiffLineKind;
 use crate::app::{icon, symbols, DirigentApp, FONT_SCALE_LINE_NUM};
 
 /// Check whether a relative path matches a diagnostic file path.
@@ -88,6 +89,8 @@ pub(crate) fn render_code_line(
         .map(|i| app.search.in_file_matches.get(i) == Some(&line_num))
         .unwrap_or(false);
 
+    let diff_kind = ctx.diff_lines.get(&line_num);
+
     let response = ui.horizontal(|ui| {
         render_gutter_indicator(
             ui,
@@ -98,6 +101,8 @@ pub(crate) fn render_code_line(
             ctx.diag_messages,
             actions,
         );
+
+        render_diff_gutter_bar(ui, app, diff_kind);
 
         let num_text = format!("{:>4} ", line_num);
         ui.label(
@@ -249,6 +254,33 @@ fn render_diagnostic_gutter(
     if resp.clicked() {
         actions.fix_diagnostic_line = Some(line_num);
     }
+}
+
+/// Render a thin vertical colored bar in the gutter for diff-changed lines.
+fn render_diff_gutter_bar(ui: &mut egui::Ui, app: &DirigentApp, diff_kind: Option<&DiffLineKind>) {
+    let kind = match diff_kind {
+        Some(k) => k,
+        None => return,
+    };
+    let color = match kind {
+        DiffLineKind::Added => app.semantic.addition_text(),
+        DiffLineKind::Modified => app.semantic.warning,
+        DiffLineKind::Deleted => app.semantic.deletion_text(),
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(3.0, ui.spacing().interact_size.y),
+        egui::Sense::hover(),
+    );
+    let bar_rect = if *kind == DiffLineKind::Deleted {
+        // For deleted lines, show a small horizontal dash instead of full height bar
+        egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, rect.center().y - 1.0),
+            egui::vec2(3.0, 2.0),
+        )
+    } else {
+        rect.shrink2(egui::vec2(0.0, 1.0))
+    };
+    ui.painter().rect_filled(bar_rect, 1.0, color);
 }
 
 /// Show underline hint when Cmd is held (go-to-definition).
