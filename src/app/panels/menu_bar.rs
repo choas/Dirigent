@@ -15,6 +15,7 @@ struct MenuBarActions {
     import_pr_clicked: bool,
     commit_clicked: bool,
     create_bookmark_clicked: bool,
+    merge_bookmark_clicked: bool,
     cleanup_bookmarks_clicked: bool,
     abandon_empty_heads_clicked: bool,
     squash_clicked: bool,
@@ -235,6 +236,20 @@ impl DirigentApp {
 
         if ui.button("Create Bookmark").clicked() {
             actions.create_bookmark_clicked = true;
+            ui.close();
+        }
+
+        let merge_label = if self.git.merging_bookmark {
+            "Merging..."
+        } else {
+            "Merge Bookmark"
+        };
+        if ui
+            .add_enabled(!self.git.merging_bookmark, egui::Button::new(merge_label))
+            .on_hover_text("Merge another bookmark into the current one")
+            .clicked()
+        {
+            actions.merge_bookmark_clicked = true;
             ui.close();
         }
 
@@ -495,6 +510,9 @@ impl DirigentApp {
         }
         if actions.create_bookmark_clicked {
             self.open_create_bookmark_dialog();
+        }
+        if actions.merge_bookmark_clicked {
+            self.open_merge_bookmark_dialog();
         }
         if actions.cleanup_bookmarks_clicked {
             self.open_cleanup_bookmarks_dialog();

@@ -781,6 +781,9 @@ impl DirigentApp {
                 undo_rx: None,
                 abandoning_empty: false,
                 abandon_empty_rx: None,
+                show_merge_bookmark: false,
+                merging_bookmark: false,
+                merge_bookmark_rx: None,
                 show_commit_dialog: false,
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
@@ -1231,6 +1234,7 @@ impl eframe::App for DirigentApp {
         self.process_squash_result();
         self.process_undo_result();
         self.process_commit_result();
+        self.process_merge_bookmark_result();
         self.process_abandon_empty_result();
 
         // Poll for Notion done result

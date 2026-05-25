@@ -503,28 +503,17 @@ The planets array should NOT appear in the diff (it didn't change between
 
 **Click:** **Worktrees** > `main`
 
-### 10.2 Create a merge cue
+### 10.2 Merge feature/personalized
 
-**Type** in the **prompt field:**
+**Click:** **jj** menu > **Merge Bookmark**
 
-```
-Merge the feature/personalized bookmark into main. Use jj commands:
-jj new main feature/personalized
-Then commit the merge. After that, update the main bookmark to point
-to the merge commit.
-```
+**Select:** `feature/personalized` in the bookmark picker
 
-**Click:** Send
+**Expected:** The status bar shows "Merging 'feature/personalized'..." and then
+updates to "Merged 'feature/personalized' into 'main'". The history panel
+shows a merge commit with two parents.
 
-### 10.3 Review the merge
-
-**Expected:** The cue moves to **Review**. The diff shows all the changes from
-`feature/personalized` being merged into `main`: the planets array, random
-selection, and name argument parsing.
-
-**Click:** Accept / Commit
-
-### 10.4 Verify main has the features
+### 10.3 Verify main has the features
 
 **Click:** `index.js` in the **file tree**
 
@@ -539,25 +528,17 @@ selection, and name argument parsing.
 
 ### 11.1 Merge docs
 
-**Type** in the **prompt field:**
+**Click:** **jj** menu > **Merge Bookmark**
 
-```
-Merge the docs bookmark into main using jj.
-```
-
-**Click:** Send, then review and commit.
+**Select:** `docs`
 
 **Expected:** `README.md` now appears in the **file tree** on `main`.
 
 ### 11.2 Merge tests
 
-**Type** in the **prompt field:**
+**Click:** **jj** menu > **Merge Bookmark**
 
-```
-Merge the test bookmark into main using jj.
-```
-
-**Click:** Send, then review and commit.
+**Select:** `test`
 
 **Expected:** `test.js` now appears in the **file tree** on `main`.
 
@@ -631,6 +612,6 @@ from the steps above.
 | 8 | File tree shows correct files per bookmark             | 8.1–5 |
 | 9 | Clicking a commit opens its diff                       | 9.1   |
 | 10| Diff shows only changes relative to parent             | 9.2   |
-| 11| Merge brings in changes from both parents              | 10.3  |
+| 11| Merge Bookmark button merges and updates file tree     | 10.2  |
 | 12| Tests pass after merging all bookmarks                 | 12.1  |
 | 13| Deleting bookmarks removes labels from history         | 13.2  |

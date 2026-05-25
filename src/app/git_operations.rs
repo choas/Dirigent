@@ -1006,6 +1006,67 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
+    /// Open the Merge Bookmark dialog (jj only).
+    pub(super) fn open_merge_bookmark_dialog(&mut self) {
+        let infos =
+            jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
+                .unwrap_or_default();
+        self.git.bookmark_push_statuses = infos
+            .iter()
+            .map(|b| (b.name.clone(), b.push_status))
+            .collect();
+        self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+        self.git.show_merge_bookmark = true;
+    }
+
+    /// Start an async merge-bookmark operation (jj only).
+    pub(super) fn start_merge_bookmark(&mut self, source: &str) {
+        if self.git.merging_bookmark {
+            return;
+        }
+        self.git.merging_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.merge_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let source_owned = source.to_string();
+        self.set_status_message(format!("Merging '{}'...", source_owned));
+        std::thread::spawn(move || {
+            let result =
+                jj::jj_merge_bookmark(&root, &source_owned, &jj_path).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Check for completed merge-bookmark operation.
+    pub(super) fn process_merge_bookmark_result(&mut self) {
+        let rx = match self.git.merge_bookmark_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.merging_bookmark = false;
+                self.git.merge_bookmark_rx = None;
+                self.set_status_message("Merge failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.merging_bookmark = false;
+        self.git.merge_bookmark_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(format!("Merge failed: {}", e)),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+        self.force_reload_open_tabs();
+        self.reload_file_tree();
+    }
+
     /// Open the Commit dialog (jj only).
     pub(super) fn open_commit_dialog(&mut self) {
         self.git.commit_message_input.clear();

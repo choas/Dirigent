@@ -506,3 +506,75 @@ pub(crate) fn jj_abandon(
 
     Ok(change_ids.len())
 }
+
+/// Merge a bookmark into the current bookmark.
+///
+/// Uses `jj new current source` to create a merge commit with two parents,
+/// then advances the current bookmark to the merge commit.
+pub(crate) fn jj_merge_bookmark(
+    repo_path: &Path,
+    source_bookmark: &str,
+    jj_path: &str,
+) -> crate::error::Result<String> {
+    // Get the current bookmark (the one that will receive the merge).
+    let current_bookmarks = bookmarks_for_rev(repo_path, "@-", jj_path);
+    let current_bm = current_bookmarks.first().cloned().unwrap_or_default();
+
+    // Create a merge commit: `jj new @- <source_bookmark>`
+    // This creates a new working-copy change whose parents are both the
+    // current bookmark and the source bookmark.
+    let output = super::jj_cmd(jj_path)
+        .args(["new", "@-", source_bookmark])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj new (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Describe the merge commit.
+    let msg = format!("merge '{}' into '{}'", source_bookmark, current_bm);
+    let desc_output = super::jj_cmd(jj_path)
+        .args(["describe", "-m", &msg])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !desc_output.status.success() {
+        let stderr = String::from_utf8_lossy(&desc_output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj describe (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Commit the merge so it becomes @- and a fresh empty @ is created.
+    let commit_output = super::jj_cmd(jj_path)
+        .args(["commit", "-m", &msg])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj commit (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Advance the current bookmark to the merge commit (@-).
+    if !current_bm.is_empty() {
+        let _ = super::jj_cmd(jj_path)
+            .args(["bookmark", "set", &current_bm, "-r", "@-"])
+            .current_dir(repo_path)
+            .output();
+    }
+
+    Ok(format!(
+        "Merged '{}' into '{}'",
+        source_bookmark, current_bm
+    ))
+}

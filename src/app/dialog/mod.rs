@@ -11,6 +11,7 @@ mod filter_pr;
 mod git_init;
 mod import_pr;
 mod log_viewer;
+mod merge_bookmark;
 mod merge_conflicts;
 mod move_to_branch;
 mod play_variables;
