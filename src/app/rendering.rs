@@ -70,6 +70,7 @@ impl DirigentApp {
             || self.git.show_pr_filter
             || self.git.show_move_to_branch
             || self.git.show_switch_branch
+            || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
     }
 

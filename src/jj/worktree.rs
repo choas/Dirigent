@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn long_bookmark_flagged() {
-        let long = "a".repeat(100);
+        let long = "ab".repeat(50);
         let s = check_bookmark(&long);
         assert!(s.is_some());
         assert!(s.unwrap().reason.contains("long"));
