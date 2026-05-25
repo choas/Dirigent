@@ -214,7 +214,7 @@ pub struct DirigentApp {
     // Git state
     pub(super) git: GitState,
     git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
-    git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
+    _git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
     // Settings & theme
     settings: Settings,
@@ -696,7 +696,7 @@ impl DirigentApp {
             confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
-            git_status_tx,
+            _git_status_tx: git_status_tx,
             git_status_rx,
             git: GitState {
                 info: git_info,
