@@ -543,10 +543,18 @@ impl DirigentApp {
         } else if let Some(reply) = actions.reply_send {
             self.trigger_claude_reply(cue_id, &reply, &[]);
         } else if let Some((path, line)) = actions.open_file {
-            let full_path = self.project_root.join(&path);
-            self.diff_review = None;
-            self.load_file(full_path);
-            self.viewer.scroll_to_line = Some(line);
+            let p = std::path::Path::new(&path);
+            if p.is_absolute()
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                self.set_status_message(format!("Rejected unsafe diff path: {}", path));
+            } else {
+                let full_path = self.project_root.join(p);
+                self.diff_review = None;
+                self.load_file(full_path);
+                self.viewer.scroll_to_line = Some(line);
+            }
         } else if actions.close {
             self.diff_review = None;
         }
