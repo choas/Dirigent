@@ -79,7 +79,7 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
     }
 
     if branch.is_empty() {
-        branch = "(no bookmark)".to_string();
+        branch = change_id.clone();
     }
 
     // Count status entries via `jj diff --types`
