@@ -424,6 +424,9 @@ pub struct DirigentApp {
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
+    // Cue IDs where the user was viewing the log when auto-commit was deferred;
+    // closing the log without explicitly accepting should skip the auto-commit.
+    user_reviewed_auto_commits: HashSet<i64>,
     // Cues that need an auto-continue reply after tracking state is flushed
     pending_auto_continues: Vec<i64>,
 
@@ -942,6 +945,7 @@ impl DirigentApp {
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
+            user_reviewed_auto_commits: HashSet::new(),
             pending_auto_continues: Vec::new(),
 
             ssh_worker: None,

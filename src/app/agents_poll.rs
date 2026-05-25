@@ -25,7 +25,11 @@ impl DirigentApp {
                 for cue_id in cue_ids {
                     if self.claude.show_log == Some(cue_id) {
                         // User is viewing the log — keep deferring.
+                        self.user_reviewed_auto_commits.insert(cue_id);
                         deferred.push(cue_id);
+                    } else if self.user_reviewed_auto_commits.remove(&cue_id) {
+                        // User reviewed the diff and closed without accepting
+                        // — skip auto-commit so they can decide manually.
                     } else {
                         self.process_commit_review(cue_id);
                     }
