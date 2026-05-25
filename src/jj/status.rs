@@ -32,20 +32,50 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
 
+    let mut change_id = lines
+        .get(1)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let mut description = lines
+        .get(2)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "(no description)".to_string());
+
     // If @ has no bookmark, check the parent — after `jj commit` the
     // bookmark lives on @- and the new @ is an empty child without one.
+    // Re-read all fields from @- so branch, change_id, and description
+    // are consistent.
     if branch.is_empty() {
         let parent_out = super::jj_cmd(jj_path)
-            .args(["log", "-r", "@-", "--no-graph", "-T", "bookmarks"])
+            .args([
+                "log",
+                "-r",
+                "@-",
+                "--no-graph",
+                "-T",
+                r#"bookmarks ++ "\n" ++ change_id.shortest(7) ++ "\n" ++ description.first_line()"#,
+            ])
             .current_dir(path)
             .output()
             .ok();
         if let Some(po) = parent_out {
             if po.status.success() {
-                let raw = String::from_utf8_lossy(&po.stdout);
-                let parent_bm = raw.trim().to_string();
+                let parent_lines: Vec<&str> =
+                    String::from_utf8_lossy(&po.stdout).lines().collect();
+                let parent_bm = parent_lines
+                    .first()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
                 if !parent_bm.is_empty() {
                     branch = parent_bm;
+                    if let Some(cid) = parent_lines.get(1) {
+                        change_id = cid.trim().to_string();
+                    }
+                    description = parent_lines
+                        .get(2)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|| "(no description)".to_string());
                 }
             }
         }
@@ -54,16 +84,6 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
     if branch.is_empty() {
         branch = "(no bookmark)".to_string();
     }
-
-    let change_id = lines
-        .get(1)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    let description = lines
-        .get(2)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "(no description)".to_string());
 
     // Count status entries via `jj diff --stat`
     let (modified, added, deleted) = count_status_entries(path, jj_path);
