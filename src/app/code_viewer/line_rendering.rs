@@ -258,6 +258,10 @@ fn render_diagnostic_gutter(
 
 /// Render a thin vertical colored bar in the gutter for diff-changed lines.
 fn render_diff_gutter_bar(ui: &mut egui::Ui, app: &DirigentApp, diff_kind: Option<&DiffLineKind>) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(3.0, ui.spacing().interact_size.y),
+        egui::Sense::hover(),
+    );
     let kind = match diff_kind {
         Some(k) => k,
         None => return,
@@ -267,12 +271,7 @@ fn render_diff_gutter_bar(ui: &mut egui::Ui, app: &DirigentApp, diff_kind: Optio
         DiffLineKind::Modified => app.semantic.warning,
         DiffLineKind::Deleted => app.semantic.deletion_text(),
     };
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(3.0, ui.spacing().interact_size.y),
-        egui::Sense::hover(),
-    );
     let bar_rect = if *kind == DiffLineKind::Deleted {
-        // For deleted lines, show a small horizontal dash instead of full height bar
         egui::Rect::from_min_size(
             egui::pos2(rect.min.x, rect.center().y - 1.0),
             egui::vec2(3.0, 2.0),

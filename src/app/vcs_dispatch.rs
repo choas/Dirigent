@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::types::DiffLineKind;
 use crate::diff_view::{parse_unified_diff, DiffLineKind as DiffViewLineKind};
@@ -111,16 +112,16 @@ pub(super) fn compute_diff_lines(
     backend: &VcsBackend,
     jj_path: &str,
     repo_path: &Path,
-) -> HashMap<String, HashMap<usize, DiffLineKind>> {
+) -> HashMap<String, Arc<HashMap<usize, DiffLineKind>>> {
     let diff_text = match get_working_diff(backend, jj_path, repo_path, &[]) {
         Some(d) => d,
         None => return HashMap::new(),
     };
     let parsed = parse_unified_diff(&diff_text);
-    let mut result: HashMap<String, HashMap<usize, DiffLineKind>> = HashMap::new();
+    let mut result_raw: HashMap<String, HashMap<usize, DiffLineKind>> = HashMap::new();
 
     for file_diff in &parsed.files {
-        let file_map = result.entry(file_diff.new_path.clone()).or_default();
+        let file_map = result_raw.entry(file_diff.new_path.clone()).or_default();
         for hunk in &file_diff.hunks {
             let mut has_deletions = false;
             for line in &hunk.lines {
@@ -151,7 +152,7 @@ pub(super) fn compute_diff_lines(
                     }
                 }
                 if !has_additions {
-                    let delete_at = hunk.new_start;
+                    let delete_at = hunk.new_start.saturating_sub(1);
                     if delete_at > 0 {
                         file_map.entry(delete_at).or_insert(DiffLineKind::Deleted);
                     }
@@ -159,5 +160,8 @@ pub(super) fn compute_diff_lines(
             }
         }
     }
-    result
+    result_raw
+        .into_iter()
+        .map(|(k, v)| (k, Arc::new(v)))
+        .collect()
 }
