@@ -710,6 +710,7 @@ impl GitState {
         }
         if self.show_commit_dialog {
             self.show_commit_dialog = false;
+            self.commit_review_cue_id = None;
             return true;
         }
         if self.show_cleanup_bookmarks {

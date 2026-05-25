@@ -27,7 +27,7 @@ impl DirigentApp {
                         // User is viewing the log — keep deferring.
                         deferred.push(cue_id);
                     } else {
-                        self.process_commit_review(cue_id);
+                        self.process_commit_review_auto(cue_id);
                     }
                 }
                 self.pending_auto_commits = deferred;

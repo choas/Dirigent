@@ -21,7 +21,11 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.label("Describe the current working-copy commit and start a new change.");
+                if self.git.commit_review_cue_id.is_some() {
+                    ui.label("Commit the reviewed changes with a message.");
+                } else {
+                    ui.label("Describe the current working-copy commit and start a new change.");
+                }
                 ui.add_space(SPACE_XS);
 
                 if let Some(ref info) = self.git.info {
@@ -91,6 +95,7 @@ impl DirigentApp {
             self.start_jj_commit();
         } else if dismiss {
             self.git.show_commit_dialog = false;
+            self.git.commit_review_cue_id = None;
         }
     }
 }

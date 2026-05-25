@@ -1009,6 +1009,7 @@ impl DirigentApp {
     /// Open the Commit dialog (jj only).
     pub(super) fn open_commit_dialog(&mut self) {
         self.git.commit_message_input.clear();
+        self.git.commit_review_cue_id = None;
         self.git.commit_needs_focus = true;
         self.git.show_commit_dialog = true;
     }
@@ -1023,6 +1024,17 @@ impl DirigentApp {
         if self.git.committing {
             return;
         }
+
+        let cue_id = self.git.commit_review_cue_id.take();
+
+        let diff_text = cue_id.and_then(|id| {
+            self.db
+                .get_latest_execution(id)
+                .ok()
+                .flatten()
+                .and_then(|e| e.diff)
+        });
+
         self.git.show_commit_dialog = false;
         self.git.committing = true;
         let (tx, rx) = mpsc::channel();
@@ -1030,11 +1042,22 @@ impl DirigentApp {
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         std::thread::spawn(move || {
-            let result = jj::jj_commit_all(&root, &msg, &jj_path, true)
+            let result = if let Some(ref diff) = diff_text {
+                jj::jj_commit_diff(&root, diff, &msg, &jj_path)
+            } else {
+                jj::jj_commit_all(&root, &msg, &jj_path, true)
+            };
+            let result = result
                 .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))
                 .map_err(|e| format!("Commit failed: {}", e));
             let _ = tx.send(result);
         });
+
+        if let Some(id) = cue_id {
+            let _ = self.db.update_cue_status(id, CueStatus::Done);
+            let _ = self.db.log_activity(id, "Committed");
+        }
+
         self.set_status_message("Committing...".into());
     }
 

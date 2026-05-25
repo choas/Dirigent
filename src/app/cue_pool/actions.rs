@@ -6,7 +6,7 @@ use crate::claude;
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::{CliProvider, SourceKind};
+use crate::settings::{CliProvider, SourceKind, VcsBackend};
 use crate::telemetry;
 
 use super::super::vcs_dispatch;
@@ -298,6 +298,14 @@ impl DirigentApp {
     }
 
     pub(in crate::app) fn process_commit_review(&mut self, cue_id: i64) {
+        self.process_commit_review_inner(cue_id, true);
+    }
+
+    pub(in crate::app) fn process_commit_review_auto(&mut self, cue_id: i64) {
+        self.process_commit_review_inner(cue_id, false);
+    }
+
+    fn process_commit_review_inner(&mut self, cue_id: i64, show_dialog: bool) {
         // For jj workspace cues the commit+bookmark was already done in
         // handle_run_with_diff. Just transition to Done and clean up.
         // Skip the fast-path if the workspace commit previously failed.
@@ -315,7 +323,7 @@ impl DirigentApp {
 
         match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
-                if let Some(ref diff) = exec.diff {
+                if exec.diff.is_some() {
                     let cue_text = self
                         .cues
                         .iter()
@@ -327,16 +335,26 @@ impl DirigentApp {
                         .as_deref()
                         .and_then(claude::extract_commit_message);
                     let commit_msg = git::generate_commit_message(&cue_text, extracted.as_deref());
-                    self.apply_commit_result(
-                        cue_id,
-                        vcs_dispatch::commit_diff(
-                            &self.settings.vcs_backend,
-                            &self.settings.jj_cli_path,
-                            &self.project_root,
-                            diff,
-                            &commit_msg,
-                        ),
-                    );
+
+                    if show_dialog && self.settings.vcs_backend == VcsBackend::Jj {
+                        self.git.commit_message_input = commit_msg;
+                        self.git.commit_review_cue_id = Some(cue_id);
+                        self.git.commit_needs_focus = true;
+                        self.git.show_commit_dialog = true;
+                    } else {
+                        self.apply_commit_result(
+                            cue_id,
+                            vcs_dispatch::commit_diff(
+                                &self.settings.vcs_backend,
+                                &self.settings.jj_cli_path,
+                                &self.project_root,
+                                exec.diff.as_deref().unwrap(),
+                                &commit_msg,
+                            ),
+                        );
+                        self.reload_git_info();
+                        self.reload_commit_history();
+                    }
                 } else {
                     self.set_status_message("Nothing to commit — no diff in execution".into());
                 }
@@ -348,8 +366,6 @@ impl DirigentApp {
                 self.set_status_message(format!("Commit failed: {}", e));
             }
         }
-        self.reload_git_info();
-        self.reload_commit_history();
     }
 
     fn apply_commit_result(&mut self, cue_id: i64, result: crate::error::Result<String>) {

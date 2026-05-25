@@ -1254,7 +1254,7 @@ impl DirigentApp {
             } else if agents_started > 0 {
                 self.pending_auto_commits.push(result.cue_id);
             } else {
-                self.process_commit_review(result.cue_id);
+                self.process_commit_review_auto(result.cue_id);
             }
         }
     }
