@@ -14,9 +14,9 @@ pub(crate) use history::{
 };
 pub(crate) use status::{jj_get_ahead_of_remote, jj_get_dirty_files, jj_read_info};
 pub(crate) use worktree::{
-    cue_bookmark_name, cue_workspace_name, jj_checkout_bookmark, jj_create_workspace,
-    jj_find_suspicious_bookmarks, jj_list_bookmarks, jj_list_bookmarks_with_status,
-    jj_list_workspaces, jj_remove_workspace, BookmarkInfo, BookmarkPushStatus, SuspiciousBookmark,
+    cue_bookmark_name, jj_checkout_bookmark, jj_create_workspace, jj_find_suspicious_bookmarks,
+    jj_list_bookmarks, jj_list_bookmarks_with_status, jj_list_workspaces, jj_remove_workspace,
+    BookmarkInfo, BookmarkPushStatus, SuspiciousBookmark,
 };
 
 fn jj_cmd(jj_path: &str) -> std::process::Command {

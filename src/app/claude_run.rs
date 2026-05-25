@@ -734,22 +734,6 @@ impl DirigentApp {
             }
         };
 
-        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
-            && !self.claude.workspace_paths.contains_key(&cue_id)
-        {
-            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
-            match jj::jj_create_workspace(&self.project_root, &ws_name, &self.settings.jj_cli_path)
-            {
-                Ok(ws_path) => {
-                    self.claude.workspace_paths.insert(cue_id, ws_path);
-                    self.claude.workspace_names.insert(cue_id, ws_name);
-                }
-                Err(e) => {
-                    log::error!("Failed to create jj workspace for cue {cue_id}: {e}");
-                }
-            }
-        }
-
         let (effective_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
@@ -784,27 +768,6 @@ impl DirigentApp {
                 return;
             }
         };
-
-        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
-            && !self.claude.workspace_paths.contains_key(&cue_id)
-        {
-            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
-            if let Some(parent) = self.project_root.parent() {
-                let dir_name = ws_name.rsplit('/').next().unwrap_or(&ws_name);
-                let expected = parent.join(dir_name);
-                if expected.is_dir() {
-                    self.claude.workspace_paths.insert(cue_id, expected);
-                    self.claude.workspace_names.insert(cue_id, ws_name);
-                } else if let Ok(ws_path) = jj::jj_create_workspace(
-                    &self.project_root,
-                    &ws_name,
-                    &self.settings.jj_cli_path,
-                ) {
-                    self.claude.workspace_paths.insert(cue_id, ws_path);
-                    self.claude.workspace_names.insert(cue_id, ws_name);
-                }
-            }
-        }
 
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
