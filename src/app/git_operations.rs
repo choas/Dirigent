@@ -1006,6 +1006,11 @@ impl DirigentApp {
                 self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
             }
         }
+        self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+        );
     }
 
     pub(super) fn reload_commit_history(&mut self) {

@@ -183,6 +183,12 @@ impl DirigentApp {
         let scroll_area =
             build_scroll_area(scroll_offset, self.viewer.tabs[active_idx].scroll_offset)
                 .id_salt(("code_scroll", &file_path));
+        let file_diff_lines = self
+            .git
+            .diff_lines
+            .get(rel_path)
+            .cloned()
+            .unwrap_or_default();
         let ctx = CodeLineContext {
             active_idx,
             sel_start,
@@ -190,6 +196,7 @@ impl DirigentApp {
             lines_with_cues: &lines_with_cues,
             diag_lines: &diag_lines,
             diag_messages: &diag_messages,
+            diff_lines: &file_diff_lines,
             ext: &ext,
             symbol_line_set: &symbol_line_set,
             cmd_held,
