@@ -145,8 +145,11 @@ pub(crate) fn jj_checkout_bookmark(
     bookmark: &str,
     jj_path: &str,
 ) -> crate::error::Result<()> {
+    // Use `jj new` instead of `jj edit`: it creates a fresh working-copy
+    // change on top of the bookmark and cleanly checks out the target tree,
+    // matching the behaviour of `git switch`.
     let output = super::jj_cmd(jj_path)
-        .args(["edit", bookmark])
+        .args(["new", bookmark])
         .current_dir(repo_path)
         .output()?;
 
