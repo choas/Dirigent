@@ -5,8 +5,9 @@ use eframe::egui;
 use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
-use crate::git;
 use crate::settings::SemanticColors;
+
+use super::super::vcs_dispatch;
 
 use super::super::types::GitViewDiffMode;
 
@@ -175,7 +176,12 @@ impl DirigentApp {
                 self.reload_git_info();
             }
             Some(GitViewAction::Restore(rel_path)) => {
-                match git::restore_file(&self.project_root, &rel_path) {
+                match vcs_dispatch::revert_files(
+                    &self.settings.vcs_backend,
+                    &self.settings.jj_cli_path,
+                    &self.project_root,
+                    &[rel_path.clone()],
+                ) {
                     Ok(()) => {
                         self.git.selected_files.remove(&rel_path);
                         self.set_status_message(format!("Restored {rel_path}"));
@@ -236,7 +242,12 @@ impl DirigentApp {
     }
 
     fn open_all_changes_diff(&mut self) {
-        if let Some(diff_text) = git::get_working_diff(&self.project_root, &[]) {
+        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &[],
+        ) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
             self.dismiss_central_overlays();
             self.diff_review = Some(super::super::DiffReview {

@@ -6,8 +6,11 @@ use eframe::egui;
 use super::super::{DiffReview, DirigentApp, FONT_SCALE_SUBHEADING};
 use crate::diff_view::{self, DiffViewMode};
 use crate::file_tree::FileEntry;
-use crate::git;
 use crate::settings::SemanticColors;
+
+use crate::settings::VcsBackend;
+
+use super::super::vcs_dispatch;
 
 /// Bundled context for recursive file-tree rendering, reducing parameter count.
 pub(super) struct FileTreeCtx<'a> {
@@ -248,8 +251,13 @@ impl DirigentApp {
         } else {
             String::new()
         };
+        let log_name = match self.settings.vcs_backend {
+            VcsBackend::Jj => "jj Log",
+            VcsBackend::Git => "Git Log",
+        };
         let header_text = format!(
-            "Git Log ({}/{}){}",
+            "{} ({}/{}){}",
+            log_name,
             self.git.commit_history.len(),
             self.git.commit_history_total,
             ahead_label
@@ -364,7 +372,21 @@ impl DirigentApp {
         author: &str,
     ) {
         let short_hash = &full_hash[..7.min(full_hash.len())];
-        let diff_text = git::get_commit_diff(&self.project_root, full_hash).unwrap_or_default();
+        let diff_text = match vcs_dispatch::get_commit_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            full_hash,
+        ) {
+            Some(d) => d,
+            None => {
+                self.set_status_message(format!(
+                    "Failed to load diff for commit {}",
+                    short_hash
+                ));
+                return;
+            }
+        };
         let parsed = diff_view::parse_unified_diff(&diff_text);
         let cue_text = if body.len() > message.len() {
             body
@@ -634,7 +656,9 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let dot = if params.is_unpushed { "\u{25CF} " } else { "" };
     let label = format!("{}{} {}", dot, params.commit.short_hash, msg);
 
-    let text_color = if params.is_unpushed {
+    let text_color = if params.commit.is_working_copy {
+        params.semantic.accent
+    } else if params.is_unpushed {
         ui.visuals().warn_fg_color
     } else {
         ui.visuals().text_color()

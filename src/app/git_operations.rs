@@ -4,11 +4,12 @@ use std::time::Instant;
 use crate::db::CueStatus;
 use crate::git;
 use crate::jj;
+use crate::settings::VcsBackend;
 
 use super::{detect_pr_number_from_branch, DirigentApp};
 
 impl DirigentApp {
-    /// Start an async git push operation.
+    /// Start an async push operation (git push or jj git push).
     pub(super) fn start_git_push(&mut self) {
         if self.git.pushing {
             return;
@@ -17,8 +18,13 @@ impl DirigentApp {
         let (tx, rx) = mpsc::channel();
         self.git.push_rx = Some(rx);
         let root = self.project_root.clone();
+        let backend = self.settings.vcs_backend.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
         std::thread::spawn(move || {
-            let result = git::git_push(&root).map_err(|e| e.to_string());
+            let result = match backend {
+                VcsBackend::Jj => jj::jj_push(&root, &jj_path).map_err(|e| e.to_string()),
+                VcsBackend::Git => git::git_push(&root).map_err(|e| e.to_string()),
+            };
             let _ = tx.send(result);
         });
         self.set_status_message("Pushing...".to_string());
@@ -56,9 +62,29 @@ impl DirigentApp {
         }
     }
 
-    /// Start an async git pull operation.
+    /// Start an async pull/fetch operation.
     pub(super) fn start_git_pull(&mut self) {
-        self.start_git_pull_with_strategy(git::PullStrategy::FfOnly);
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => self.start_jj_fetch(),
+            VcsBackend::Git => self.start_git_pull_with_strategy(git::PullStrategy::FfOnly),
+        }
+    }
+
+    /// Start an async jj git fetch.
+    fn start_jj_fetch(&mut self) {
+        if self.git.pulling {
+            return;
+        }
+        self.git.pulling = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.pull_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_pull(&root, &jj_path).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Fetching...".to_string());
     }
 
     /// Start an async git pull with a specific strategy.
@@ -84,7 +110,11 @@ impl DirigentApp {
 
     /// Open the "Switch Branch" dialog with available branches populated.
     pub(super) fn open_switch_branch_dialog(&mut self) {
-        self.git.available_branches = git::list_branches(&self.project_root).unwrap_or_default();
+        self.git.available_branches = match self.settings.vcs_backend {
+            VcsBackend::Jj => jj::jj_list_bookmarks(&self.project_root, &self.settings.jj_cli_path)
+                .unwrap_or_default(),
+            VcsBackend::Git => git::list_branches(&self.project_root).unwrap_or_default(),
+        };
         self.git.show_switch_branch = true;
     }
 
@@ -121,9 +151,15 @@ impl DirigentApp {
         let body = self.git.pr_body.clone();
         let base = self.git.pr_base.clone();
         let draft = self.git.pr_draft;
+        let backend = self.settings.vcs_backend.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
         std::thread::spawn(move || {
             // Push first so the remote branch exists
-            if let Err(e) = git::git_push(&root) {
+            let push_result = match backend {
+                VcsBackend::Jj => jj::jj_push(&root, &jj_path),
+                VcsBackend::Git => git::git_push(&root),
+            };
+            if let Err(e) = push_result {
                 let _ = tx.send(Err(format!("Push failed: {}", e)));
                 return;
             }
@@ -559,10 +595,15 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let (tx, rx) = mpsc::channel();
         self.git.pr_notify_rx = Some(rx);
+        let backend = self.settings.vcs_backend.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
 
         std::thread::spawn(move || {
             // First push
-            let push_result = crate::git::git_push(&project_root);
+            let push_result = match backend {
+                VcsBackend::Jj => crate::jj::jj_push(&project_root, &jj_path),
+                VcsBackend::Git => crate::git::git_push(&project_root),
+            };
             if let Err(e) = push_result {
                 let _ = tx.send(Err(format!("Push failed: {}", e)));
                 return;
@@ -784,46 +825,14 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
-    pub(super) fn reload_git_info(&mut self) {
-        self.git.info = git::read_git_info(&self.project_root);
-        let root = self.project_root.clone();
-        let tx = self.git_status_tx.clone();
-        std::thread::spawn(move || {
-            let dirty = git::get_dirty_files(&root);
-            let ahead = git::get_ahead_of_remote(&root);
-            let _ = tx.send((root, dirty, ahead));
-        });
-    }
-
-    pub(super) fn reload_commit_history(&mut self) {
-        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
-        // Cache key: HEAD hash + requested limit. Skip if unchanged.
-        let head_hash = self
-            .git
-            .info
-            .as_ref()
-            .map(|i| i.last_commit_hash.clone())
-            .unwrap_or_default();
-        let cache_key = (head_hash, limit);
-        if cache_key == self.git.history_cache_key {
-            return;
-        }
-        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
-        self.git.commit_history_total = git::count_commits(&self.project_root);
-        let (rows, max_lanes) = git::graph::compute_graph(&self.git.commit_history);
-        self.git.graph_rows = rows;
-        self.git.graph_max_lanes = max_lanes;
-        self.git.history_cache_key = cache_key;
-    }
-
-    // ── jj bookmark / squash / undo ─────────────────────────────────────
-
+    /// Open the Create Bookmark dialog (jj only).
     pub(super) fn open_create_bookmark_dialog(&mut self) {
         self.git.create_bookmark_name.clear();
         self.git.create_bookmark_needs_focus = true;
         self.git.show_create_bookmark = true;
     }
 
+    /// Create a jj bookmark at the current commit (runs off the UI thread).
     pub(super) fn start_create_bookmark(&mut self) {
         let name = self.git.create_bookmark_name.trim().to_string();
         if name.is_empty() {
@@ -849,6 +858,7 @@ impl DirigentApp {
         self.set_status_message(format!("Creating bookmark '{}'...", name));
     }
 
+    /// Check for completed bookmark creation.
     pub(super) fn process_create_bookmark_result(&mut self) {
         let rx = match self.git.create_bookmark_rx {
             Some(ref rx) => rx,
@@ -874,17 +884,18 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
+    /// Squash all commits on the current bookmark into a single commit (jj only).
     pub(super) fn start_squash_current_bookmark(&mut self) {
         if self.git.squashing {
             return;
         }
-        let branch = self
+        let bookmark = self
             .git
             .info
             .as_ref()
             .map(|i| i.branch.clone())
             .unwrap_or_default();
-        if branch.is_empty() || branch == "(no bookmark)" {
+        if bookmark.is_empty() {
             self.set_status_message("No bookmark to squash".into());
             return;
         }
@@ -893,22 +904,27 @@ impl DirigentApp {
         self.git.squash_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        let bm = branch.clone();
+        let bm = bookmark.clone();
         std::thread::spawn(move || {
             let result = jj::jj_squash_bookmark(&root, &bm, &jj_path)
                 .map(|n| {
                     if n == 0 {
-                        format!("Nothing to squash on '{}'", bm)
+                        format!(
+                            "Nothing to squash \u{2014} '{}' has 0 or 1 commits",
+                            bm
+                        )
                     } else {
-                        format!("Squashed {} commits on '{}' into one", n, bm)
+                        let plural = if n == 1 { "" } else { "s" };
+                        format!("Squashed {} commit{} on '{}' into one", n, plural, bm)
                     }
                 })
-                .map_err(|e| format!("Squash failed: {}", e));
+                .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
-        self.set_status_message(format!("Squashing commits on '{}'...", branch));
+        self.set_status_message(format!("Squashing commits on '{}'...", bookmark));
     }
 
+    /// Check for completed squash operation.
     pub(super) fn process_squash_result(&mut self) {
         let rx = match self.git.squash_rx {
             Some(ref rx) => rx,
@@ -928,13 +944,14 @@ impl DirigentApp {
         self.git.squash_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
-            Err(e) => self.set_status_message(e),
+            Err(e) => self.set_status_message(format!("Squash failed: {}", e)),
         }
         self.git.history_cache_key = (String::new(), 0);
         self.reload_git_info();
         self.reload_commit_history();
     }
 
+    /// Undo the last jj operation (runs off the UI thread).
     pub(super) fn start_jj_undo(&mut self) {
         if self.git.undoing {
             return;
@@ -951,7 +968,8 @@ impl DirigentApp {
         self.set_status_message("Undoing last operation...".into());
     }
 
-    pub(super) fn process_jj_undo_result(&mut self) {
+    /// Check for completed undo operation.
+    pub(super) fn process_undo_result(&mut self) {
         let rx = match self.git.undo_rx {
             Some(ref rx) => rx,
             None => return,
@@ -976,4 +994,52 @@ impl DirigentApp {
         self.reload_git_info();
         self.reload_commit_history();
     }
+
+    pub(super) fn reload_git_info(&mut self) {
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                let jj_path = &self.settings.jj_cli_path;
+                self.git.info = jj::jj_read_info(&self.project_root, jj_path);
+                self.git.dirty_files = jj::jj_get_dirty_files(&self.project_root, jj_path);
+                self.git.ahead_of_remote = jj::jj_get_ahead_of_remote(&self.project_root, jj_path);
+            }
+            VcsBackend::Git => {
+                self.git.info = git::read_git_info(&self.project_root);
+                self.git.dirty_files = git::get_dirty_files(&self.project_root);
+                self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
+            }
+        }
+    }
+
+    pub(super) fn reload_commit_history(&mut self) {
+        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
+        // Cache key: HEAD hash + requested limit. Skip if unchanged.
+        let head_hash = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.last_commit_hash.clone())
+            .unwrap_or_default();
+        let cache_key = (head_hash, limit);
+        if cache_key == self.git.history_cache_key {
+            return;
+        }
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                let jj_path = &self.settings.jj_cli_path;
+                self.git.commit_history =
+                    jj::jj_read_commit_history(&self.project_root, limit, jj_path);
+                self.git.commit_history_total = jj::jj_count_commits(&self.project_root, jj_path);
+            }
+            VcsBackend::Git => {
+                self.git.commit_history = git::read_commit_history(&self.project_root, limit);
+                self.git.commit_history_total = git::count_commits(&self.project_root);
+            }
+        }
+        let (rows, max_lanes) = git::graph::compute_graph(&self.git.commit_history);
+        self.git.graph_rows = rows;
+        self.git.graph_max_lanes = max_lanes;
+        self.git.history_cache_key = cache_key;
+    }
+
 }

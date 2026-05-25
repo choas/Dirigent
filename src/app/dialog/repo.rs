@@ -5,7 +5,8 @@ use eframe::egui;
 use super::super::{icon, DirigentApp, SPACE_SM};
 use crate::app::util::expand_tilde;
 use crate::git;
-use crate::settings::SemanticColors;
+use crate::jj;
+use crate::settings::{SemanticColors, VcsBackend};
 
 /// Format a byte size as a human-readable string (KB or MB).
 fn format_size(size_bytes: u64) -> String {
@@ -285,7 +286,13 @@ impl DirigentApp {
     /// Execute a branch switch and update state accordingly.
     fn perform_branch_switch(&mut self, branch: &str) {
         self.git.show_switch_branch = false;
-        match git::checkout_branch(&self.project_root, branch) {
+        let switch_result = match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                jj::jj_checkout_bookmark(&self.project_root, branch, &self.settings.jj_cli_path)
+            }
+            VcsBackend::Git => git::checkout_branch(&self.project_root, branch),
+        };
+        match switch_result {
             Ok(()) => {
                 self.set_status_message(format!("Switched to '{}'", branch));
                 self.reload_git_info();
@@ -507,13 +514,23 @@ impl DirigentApp {
         }
 
         if let Some(name) = actions.create_name {
-            match git::create_worktree(&self.project_root, &name) {
+            let create_result = match self.settings.vcs_backend {
+                VcsBackend::Jj => {
+                    jj::jj_create_workspace(&self.project_root, &name, &self.settings.jj_cli_path)
+                }
+                VcsBackend::Git => git::create_worktree(&self.project_root, &name),
+            };
+            match create_result {
                 Ok(_path) => {
                     self.git.new_worktree_name.clear();
                     self.reload_worktrees();
                 }
                 Err(e) => {
-                    self.set_status_message(format!("Failed to create worktree: {}", e));
+                    let label = match self.settings.vcs_backend {
+                        VcsBackend::Jj => "workspace",
+                        VcsBackend::Git => "worktree",
+                    };
+                    self.set_status_message(format!("Failed to create {}: {}", label, e));
                 }
             }
         }
@@ -539,7 +556,11 @@ impl DirigentApp {
         // No archive is created here — archiving only happens once the user
         // confirms removal (or if there are no dirty files).
         if !force {
-            let dirty = git::get_dirty_files(&path);
+            let dirty = super::super::vcs_dispatch::get_dirty_files(
+                &self.settings.vcs_backend,
+                &self.settings.jj_cli_path,
+                &path,
+            );
             if !dirty.is_empty() {
                 let mut files: Vec<_> = dirty.iter().collect();
                 files.sort_by_key(|(p, _)| (*p).clone());
@@ -561,6 +582,11 @@ impl DirigentApp {
                 return;
             }
         }
+
+        let label = match self.settings.vcs_backend {
+            VcsBackend::Jj => "workspace",
+            VcsBackend::Git => "worktree",
+        };
 
         // Archive the worktree's DB just before removal.
         let archive_msg = match git::main_worktree_path(&self.project_root) {
@@ -587,8 +613,8 @@ impl DirigentApp {
                     Ok(None) => None,
                     Err(e) => {
                         self.set_status_message(format!(
-                            "Cannot remove worktree: failed to archive DB: {}",
-                            e
+                            "Cannot remove {}: failed to archive DB: {}",
+                            label, e
                         ));
                         return;
                     }
@@ -596,24 +622,45 @@ impl DirigentApp {
             }
             Err(e) => {
                 self.set_status_message(format!(
-                    "Cannot remove worktree: could not determine main worktree path: {}",
-                    e
+                    "Cannot remove {}: could not determine main worktree path: {}",
+                    label, e
                 ));
                 return;
             }
         };
 
-        match git::remove_worktree(&self.project_root, &path, force) {
+        let remove_result = match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                let ws_name = self
+                    .git
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.path == path)
+                    .map(|wt| wt.name.clone())
+                    .unwrap_or_else(|| {
+                        path.file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    });
+                jj::jj_remove_workspace(&self.project_root, &ws_name, &self.settings.jj_cli_path)
+            }
+            VcsBackend::Git => git::remove_worktree(&self.project_root, &path, force),
+        };
+        match remove_result {
             Ok(()) => {
                 self.git.pending_force_remove = None;
                 self.git.pending_archive_msg = None;
                 self.reload_worktrees();
                 if let Some(msg) = archive_msg {
-                    self.set_status_message(format!("Worktree removed. {}", msg));
+                    self.set_status_message(format!(
+                        "{} removed. {}",
+                        if label == "workspace" { "Workspace" } else { "Worktree" },
+                        msg
+                    ));
                 }
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to remove worktree: {}", e));
+                self.set_status_message(format!("Failed to remove {}: {}", label, e));
             }
         }
     }

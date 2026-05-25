@@ -8,6 +8,8 @@ use crate::diff_view::{self, DiffSearchHighlight, DiffViewMode};
 use crate::git;
 use crate::settings::SemanticColors;
 
+use super::super::vcs_dispatch;
+
 /// Read-only search state shared across diff rendering functions.
 struct SearchState<'a> {
     active: bool,
@@ -558,6 +560,29 @@ impl DirigentApp {
     }
 
     fn handle_diff_accept(&mut self, cue_id: i64, diff_text: &str, cue_text: &str) {
+        if self.claude.workspace_paths.contains_key(&cue_id)
+            && !self.claude.workspace_commit_failed.contains(&cue_id)
+        {
+            self.set_status_message("Accepted — changes committed in workspace".to_string());
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+            let _ = self
+                .db
+                .log_activity(cue_id, "Accepted (workspace commit)");
+            self.cleanup_jj_workspace(cue_id);
+            let cue_prompt = self
+                .cues
+                .iter()
+                .find(|c| c.id == cue_id)
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+            self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id), &cue_prompt);
+            self.reload_cues();
+            self.reload_git_info();
+            self.reload_commit_history();
+            self.diff_review = None;
+            return;
+        }
+
         let extracted = self
             .db
             .get_latest_execution(cue_id)
@@ -566,7 +591,13 @@ impl DirigentApp {
             .and_then(|e| e.response)
             .and_then(|r| claude::extract_commit_message(&r));
         let commit_msg = git::generate_commit_message(cue_text, extracted.as_deref());
-        match git::commit_diff(&self.project_root, diff_text, &commit_msg) {
+        match vcs_dispatch::commit_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            diff_text,
+            &commit_msg,
+        ) {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
                 self.set_status_message(format!("Committed: {}", short));
@@ -590,8 +621,44 @@ impl DirigentApp {
     }
 
     fn handle_diff_reject(&mut self, cue_id: i64, diff_text: &str) {
+        // For jj workspace cues: delete the bookmark and forget the workspace.
+        if self.claude.workspace_paths.contains_key(&cue_id) {
+            let cue_text = self
+                .cues
+                .iter()
+                .find(|c| c.id == cue_id)
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+            let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
+            if let Err(e) = crate::jj::jj_delete_bookmark(
+                &self.project_root,
+                &bookmark,
+                &self.settings.jj_cli_path,
+            ) {
+                self.set_status_message(format!(
+                    "Reject failed — could not delete bookmark: {e}"
+                ));
+                return;
+            }
+            self.cleanup_jj_workspace(cue_id);
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
+            self.set_status_message(
+                "Reverted — bookmark deleted, workspace removed".to_string(),
+            );
+            self.reload_cues();
+            self.reload_git_info();
+            self.diff_review = None;
+            return;
+        }
+
         let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff_text);
-        match git::revert_files(&self.project_root, &file_paths) {
+        match vcs_dispatch::revert_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &file_paths,
+        ) {
             Ok(()) => {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 let result = self.reload_open_tabs_and_notify_lsp();

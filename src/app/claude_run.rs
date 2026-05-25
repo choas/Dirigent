@@ -1,5 +1,5 @@
-use std::collections::{HashMap, VecDeque};
-use std::path::Path;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -12,8 +12,9 @@ use crate::claude;
 use crate::db::{Cue, CueStatus, Execution};
 use crate::gemini;
 use crate::git;
+use crate::jj;
 use crate::opencode;
-use crate::settings::{self, CliProvider, CueCommand};
+use crate::settings::{self, CliProvider, CueCommand, VcsBackend};
 use crate::telemetry;
 
 /// Result of a background Claude invocation.
@@ -55,6 +56,9 @@ pub(crate) struct ClaudeRunState {
     pub(super) auto_continue_count: HashMap<i64, u32>,
     /// Spawn-failure retry count per cue for auto-continues.
     pub(super) auto_continue_spawn_retries: HashMap<i64, u32>,
+    pub(super) workspace_paths: HashMap<i64, PathBuf>,
+    pub(super) workspace_names: HashMap<i64, String>,
+    pub(super) workspace_commit_failed: HashSet<i64>,
 }
 
 impl ClaudeRunState {
@@ -76,6 +80,9 @@ impl ClaudeRunState {
             log_heartbeats: HashMap::new(),
             auto_continue_count: HashMap::new(),
             auto_continue_spawn_retries: HashMap::new(),
+            workspace_paths: HashMap::new(),
+            workspace_names: HashMap::new(),
+            workspace_commit_failed: HashSet::new(),
         }
     }
 }
@@ -265,6 +272,22 @@ struct RunRequest<'a> {
     config: &'a ProviderConfig,
     cue_id: i64,
     exec_id: i64,
+    vcs_backend: VcsBackend,
+    jj_cli_path: String,
+}
+
+fn vcs_get_working_diff(req: &RunRequest, files: &[String]) -> Option<String> {
+    match req.vcs_backend {
+        VcsBackend::Jj => jj::jj_get_working_diff(req.project_root, files, &req.jj_cli_path),
+        VcsBackend::Git => git::get_working_diff(req.project_root, files),
+    }
+}
+
+fn vcs_get_dirty_files(req: &RunRequest) -> HashMap<String, char> {
+    match req.vcs_backend {
+        VcsBackend::Jj => jj::jj_get_dirty_files(req.project_root, &req.jj_cli_path),
+        VcsBackend::Git => git::get_dirty_files(req.project_root),
+    }
 }
 
 /// Run the CLI provider on a background thread and produce a `ClaudeResult`.
@@ -307,16 +330,16 @@ struct ProviderRunOutcome {
 /// text-parsed diff last is what keeps the same model output from being
 /// interpreted differently across Claude, Gemini, and OpenCode.
 fn resolve_run_diff(
-    project_root: &Path,
+    req: &RunRequest,
     baseline: &HashMap<String, Option<u64>>,
     outcome: &ProviderRunOutcome,
 ) -> Option<String> {
     if !outcome.edited_files.is_empty() {
-        if let Some(d) = git::get_working_diff(project_root, &outcome.edited_files) {
+        if let Some(d) = vcs_get_working_diff(req, &outcome.edited_files) {
             return Some(d);
         }
     }
-    scoped_working_diff(project_root, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
+    scoped_working_diff(req, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
 }
 
 /// Build a `ClaudeResult` from a provider's outcome (or error). Centralizing
@@ -329,7 +352,7 @@ fn finalize_run<E: std::fmt::Display>(
 ) -> ClaudeResult {
     match res {
         Ok(outcome) => {
-            let diff = resolve_run_diff(req.project_root, baseline, &outcome);
+            let diff = resolve_run_diff(req, baseline, &outcome);
             ClaudeResult {
                 cue_id: req.cue_id,
                 exec_id: req.exec_id,
@@ -355,7 +378,7 @@ fn run_claude_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req.project_root);
+    let baseline = snapshot_dirty_state(req);
 
     let res = claude::invoke_claude_streaming(
         req.prompt,
@@ -417,32 +440,25 @@ fn hash_file_bytes(path: &Path) -> Option<u64> {
 /// Snapshot every currently-dirty file's content hash before a run starts.
 /// `scoped_working_diff` consults this to decide whether an already-dirty
 /// file was further modified by the run.
-fn snapshot_dirty_state(project_root: &Path) -> HashMap<String, Option<u64>> {
-    git::get_dirty_files(project_root)
+fn snapshot_dirty_state(req: &RunRequest) -> HashMap<String, Option<u64>> {
+    vcs_get_dirty_files(req)
         .into_keys()
         .map(|f| {
-            let hash = hash_file_bytes(&project_root.join(&f));
+            let hash = hash_file_bytes(&req.project_root.join(&f));
             (f, hash)
         })
         .collect()
 }
 
-/// Compute a working-tree diff scoped to files actually changed by the run.
-///
-/// A file is included when it became dirty during the run (absent from the
-/// baseline) or when its content hash differs from the pre-run snapshot
-/// (the run further edited an already-dirty file). This avoids the prior
-/// failure mode where edits to an already-dirty file produced `None` and
-/// caused the run to be falsely marked "no changes".
 fn scoped_working_diff(
-    project_root: &Path,
+    req: &RunRequest,
     baseline: &HashMap<String, Option<u64>>,
 ) -> Option<String> {
-    let current_dirty = git::get_dirty_files(project_root);
+    let current_dirty = vcs_get_dirty_files(req);
     let changed: Vec<String> = current_dirty
         .into_keys()
         .filter(|f| {
-            let current = hash_file_bytes(&project_root.join(f));
+            let current = hash_file_bytes(&req.project_root.join(f));
             match baseline.get(f) {
                 None => true,
                 Some(prev) => prev != &current,
@@ -452,7 +468,7 @@ fn scoped_working_diff(
     if changed.is_empty() {
         return None;
     }
-    git::get_working_diff(project_root, &changed)
+    vcs_get_working_diff(req, &changed)
 }
 
 fn run_gemini_provider(
@@ -460,7 +476,7 @@ fn run_gemini_provider(
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req.project_root);
+    let baseline = snapshot_dirty_state(req);
 
     let gemini_config = gemini::GeminiRunConfig {
         model: &req.config.model,
@@ -499,7 +515,7 @@ fn run_opencode_provider(
     // Snapshot dirty files before the run so the fallback diff can detect
     // which files were actually modified — including ones that were already
     // dirty at baseline — by comparing post-run content to pre-run hashes.
-    let baseline = snapshot_dirty_state(req.project_root);
+    let baseline = snapshot_dirty_state(req);
 
     let opencode_config = opencode::OpenCodeRunConfig {
         model: &req.config.model,
@@ -574,9 +590,16 @@ impl DirigentApp {
         provider: CliProvider,
         config: ProviderConfig,
     ) -> TaskHandle {
-        let project_root = self.project_root.clone();
+        let project_root = self
+            .claude
+            .workspace_paths
+            .get(&cue_id)
+            .cloned()
+            .unwrap_or_else(|| self.project_root.clone());
         let claude_tx = self.claude.tx.clone();
         let log_tx = self.claude.log_tx.clone();
+        let vcs_backend = self.settings.vcs_backend.clone();
+        let jj_cli_path = self.settings.jj_cli_path.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_thread = Arc::clone(&cancel);
         let provider_for_log = provider.clone();
@@ -596,6 +619,8 @@ impl DirigentApp {
                 config: &config,
                 cue_id,
                 exec_id,
+                vcs_backend: vcs_backend.clone(),
+                jj_cli_path: jj_cli_path.clone(),
             };
             let result = run_provider(&req, on_log, cancel_thread);
             let _ = claude_tx.send(result);
@@ -709,12 +734,32 @@ impl DirigentApp {
             }
         };
 
+        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
+            && !self.claude.workspace_paths.contains_key(&cue_id)
+        {
+            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
+            match jj::jj_create_workspace(
+                &self.project_root,
+                &ws_name,
+                &self.settings.jj_cli_path,
+            ) {
+                Ok(ws_path) => {
+                    self.claude.workspace_paths.insert(cue_id, ws_path);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
+                }
+                Err(e) => {
+                    log::error!("Failed to create jj workspace for cue {cue_id}: {e}");
+                }
+            }
+        }
+
         let (effective_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
         if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command, None) {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.cleanup_jj_workspace(cue_id);
             self.reload_cues();
         }
     }
@@ -742,6 +787,27 @@ impl DirigentApp {
                 return;
             }
         };
+
+        if matches!(self.settings.vcs_backend, VcsBackend::Jj)
+            && !self.claude.workspace_paths.contains_key(&cue_id)
+        {
+            let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
+            if let Some(parent) = self.project_root.parent() {
+                let dir_name = ws_name.rsplit('/').next().unwrap_or(&ws_name);
+                let expected = parent.join(dir_name);
+                if expected.is_dir() {
+                    self.claude.workspace_paths.insert(cue_id, expected);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
+                } else if let Ok(ws_path) = jj::jj_create_workspace(
+                    &self.project_root,
+                    &ws_name,
+                    &self.settings.jj_cli_path,
+                ) {
+                    self.claude.workspace_paths.insert(cue_id, ws_path);
+                    self.claude.workspace_names.insert(cue_id, ws_name);
+                }
+            }
+        }
 
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
@@ -1484,6 +1550,23 @@ impl DirigentApp {
             self.claude
                 .running_logs
                 .insert(cue_id, (text, CliProvider::Claude));
+        }
+    }
+
+    pub(super) fn cleanup_jj_workspace(&mut self, cue_id: i64) {
+        self.claude.workspace_commit_failed.remove(&cue_id);
+        if let Some(ws_path) = self.claude.workspace_paths.remove(&cue_id) {
+            let ws_name = self.claude.workspace_names.remove(&cue_id);
+            if let Some(name) = &ws_name {
+                let _ = jj::jj_remove_workspace(
+                    &self.project_root,
+                    name,
+                    &self.settings.jj_cli_path,
+                );
+            }
+            if ws_path.is_dir() {
+                let _ = std::fs::remove_dir_all(&ws_path);
+            }
         }
     }
 

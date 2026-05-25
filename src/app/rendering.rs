@@ -228,6 +228,7 @@ impl DirigentApp {
     pub(super) fn render_floating_dialogs(&mut self, ctx: &egui::Context) {
         self.render_repo_picker(ctx);
         self.render_move_to_branch_dialog(ctx);
+        self.render_create_bookmark_dialog(ctx);
         self.render_switch_branch_dialog(ctx);
         self.render_worktree_panel(ctx);
         self.render_force_remove_dialog(ctx);

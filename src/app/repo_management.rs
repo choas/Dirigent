@@ -5,7 +5,8 @@ use super::{start_fs_watcher, DirigentApp, NavigationHistory};
 use crate::db::Database;
 use crate::file_tree::FileTree;
 use crate::git;
-use crate::settings;
+use crate::jj;
+use crate::settings::{self, VcsBackend};
 
 impl DirigentApp {
     pub(super) fn switch_repo(&mut self, new_root: PathBuf) {
@@ -54,20 +55,7 @@ impl DirigentApp {
         self.archived_cue_limit = 10;
         self.confirm_delete_archived = false;
         self.reload_cues();
-        self.git.info = git::read_git_info(&self.project_root);
-        self.git.dirty_files.clear();
-        self.git.dirty_dirs.clear();
-        self.git.ahead_of_remote = 0;
-        while self.git_status_rx.try_recv().is_ok() {}
-        {
-            let root = self.project_root.clone();
-            let tx = self.git_status_tx.clone();
-            std::thread::spawn(move || {
-                let dirty = git::get_dirty_files(&root);
-                let ahead = git::get_ahead_of_remote(&root);
-                let _ = tx.send((root, dirty, ahead));
-            });
-        }
+        self.reload_git_info();
         self.viewer.tabs.clear();
         self.viewer.active_tab = None;
         self.viewer.nav_history = NavigationHistory::new();
@@ -75,17 +63,15 @@ impl DirigentApp {
         self.viewer.quick_open_query.clear();
         self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
-        let limit = self.git.commit_history_limit.max(self.git.ahead_of_remote);
-        self.git.commit_history = git::read_commit_history(&self.project_root, limit);
-        self.git.commit_history_total = git::count_commits(&self.project_root);
         self.git.history_cache_key = (String::new(), 0);
+        self.reload_commit_history();
         self.expanded_dirs = HashSet::new();
         self.git.git_view_expanded_dirs.clear();
         self.diff_review = None;
         self.prompt_history_query = String::new();
         self.prompt_history_results = Vec::new();
         self.prompt_history_active = false;
-        self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        self.reload_worktrees();
         self.cached_total_cost = self.db.total_cost().unwrap_or(0.0);
         self.cached_prompt_input.clear();
         self.cached_prompt_hints.clear();
@@ -135,7 +121,13 @@ impl DirigentApp {
     }
 
     pub(super) fn reload_worktrees(&mut self) {
-        self.git.worktrees = git::list_worktrees(&self.project_root).unwrap_or_default();
+        self.git.worktrees = match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                jj::jj_list_workspaces(&self.project_root, &self.settings.jj_cli_path)
+                    .unwrap_or_default()
+            }
+            VcsBackend::Git => git::list_worktrees(&self.project_root).unwrap_or_default(),
+        };
         // Refresh archived DBs list from main worktree
         if let Ok(main_path) = git::main_worktree_path(&self.project_root) {
             self.git.archived_dbs = git::list_archived_dbs(&main_path);

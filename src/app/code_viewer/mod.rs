@@ -13,8 +13,8 @@ use eframe::egui;
 
 use super::{DiffReview, DirigentApp, SPACE_MD, SPACE_SM};
 use crate::diff_view::{self, DiffViewMode};
-use crate::git;
 
+use super::vcs_dispatch;
 use line_rendering::{
     build_diagnostic_lookup, build_diagnostic_messages, build_scroll_area, render_code_line,
 };
@@ -317,7 +317,12 @@ impl DirigentApp {
     /// Open a diff review for a dirty file.
     pub(super) fn open_file_diff(&mut self, rel_path: &str) {
         let files = vec![rel_path.to_string()];
-        if let Some(diff_text) = git::get_working_diff(&self.project_root, &files) {
+        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &files,
+        ) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
             self.dismiss_central_overlays();
             self.diff_review = Some(DiffReview {

@@ -1,7 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon_small, DirigentApp};
-use crate::git;
+use super::super::{icon_small, vcs_dispatch, DirigentApp};
 
 impl DirigentApp {
     // Feature 4: Repo bar at top
@@ -18,7 +17,11 @@ impl DirigentApp {
                 }
                 if ui.small_button("Worktrees").clicked() {
                     self.reload_worktrees();
-                    match git::list_branches(&self.project_root) {
+                    match vcs_dispatch::list_branches(
+                        &self.settings.vcs_backend,
+                        &self.settings.jj_cli_path,
+                        &self.project_root,
+                    ) {
                         Ok(branches) => self.git.available_branches = branches,
                         Err(e) => {
                             log::error!(
