@@ -263,9 +263,9 @@ of printing "hello <planet>!".
 
 ### 5.1 Switch back to main
 
-**Click:** **Worktrees** in the **repo bar**
+**Click:** **jj** menu > **Switch Branch**
 
-**Select:** `main` in the bookmark picker
+**Select:** `main` in the branch picker
 
 **Expected:** The **file tree** refreshes. `index.js` now shows the original
 `hello world!` version (not the planet version). The **status bar** shows
