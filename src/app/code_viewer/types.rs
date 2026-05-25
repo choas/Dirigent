@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::agents::Severity;
+use crate::app::types::DiffLineKind;
 
 /// Highlight state for a single code line.
 pub(crate) struct LineHighlight {
@@ -33,6 +34,7 @@ pub(crate) struct CodeLineContext<'a> {
     pub lines_with_cues: &'a HashMap<usize, bool>,
     pub diag_lines: &'a HashMap<usize, Severity>,
     pub diag_messages: &'a HashMap<usize, Vec<String>>,
+    pub diff_lines: &'a HashMap<usize, DiffLineKind>,
     pub ext: &'a str,
     pub symbol_line_set: &'a HashSet<usize>,
     pub cmd_held: bool,

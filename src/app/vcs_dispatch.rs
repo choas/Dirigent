@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
+use super::types::DiffLineKind;
+use crate::diff_view::{parse_unified_diff, DiffLineKind as DiffViewLineKind};
 use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;
@@ -101,4 +104,64 @@ pub(super) fn list_branches(
         VcsBackend::Jj => jj::jj_list_bookmarks(repo_path, jj_path),
         VcsBackend::Git => git::list_branches(repo_path),
     }
+}
+
+/// Compute per-file diff line indicators from the working-tree diff.
+/// Returns a map: relative file path -> (1-based line number -> DiffLineKind).
+pub(super) fn compute_diff_lines(
+    backend: &VcsBackend,
+    jj_path: &str,
+    repo_path: &Path,
+) -> HashMap<String, Arc<HashMap<usize, DiffLineKind>>> {
+    let diff_text = match get_working_diff(backend, jj_path, repo_path, &[]) {
+        Some(d) => d,
+        None => return HashMap::new(),
+    };
+    let parsed = parse_unified_diff(&diff_text);
+    let mut result_raw: HashMap<String, HashMap<usize, DiffLineKind>> = HashMap::new();
+
+    for file_diff in &parsed.files {
+        let file_map = result_raw.entry(file_diff.new_path.clone()).or_default();
+        for hunk in &file_diff.hunks {
+            let mut has_deletions = false;
+            for line in &hunk.lines {
+                if line.kind == DiffViewLineKind::Deletion {
+                    has_deletions = true;
+                    break;
+                }
+            }
+            for line in &hunk.lines {
+                if line.kind == DiffViewLineKind::Addition {
+                    if let Some(lineno) = line.new_lineno {
+                        let kind = if has_deletions {
+                            DiffLineKind::Modified
+                        } else {
+                            DiffLineKind::Added
+                        };
+                        file_map.insert(lineno, kind);
+                    }
+                }
+            }
+            // Mark a single "deleted" indicator at the line just before the deletion point
+            if has_deletions {
+                let mut has_additions = false;
+                for line in &hunk.lines {
+                    if line.kind == DiffViewLineKind::Addition {
+                        has_additions = true;
+                        break;
+                    }
+                }
+                if !has_additions {
+                    let delete_at = hunk.new_start.saturating_sub(1);
+                    if delete_at > 0 {
+                        file_map.entry(delete_at).or_insert(DiffLineKind::Deleted);
+                    }
+                }
+            }
+        }
+    }
+    result_raw
+        .into_iter()
+        .map(|(k, v)| (k, Arc::new(v)))
+        .collect()
 }

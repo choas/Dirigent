@@ -424,6 +424,9 @@ pub struct DirigentApp {
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
+    // Cue IDs where the user was viewing the log when auto-commit was deferred;
+    // closing the log without explicitly accepting should skip the auto-commit.
+    user_reviewed_auto_commits: HashSet<i64>,
     // Cues that need an auto-continue reply after tracking state is flushed
     pending_auto_continues: Vec<i64>,
 
@@ -489,6 +492,32 @@ fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout);
         s.trim().parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Detect the PR number and URL for the current branch using `gh pr view`.
+fn detect_pr_info(project_root: &std::path::Path) -> Option<(u32, String)> {
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "number,url",
+            "-q",
+            "[.number, .url] | @tsv",
+        ])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let s = s.trim();
+        let mut parts = s.splitn(2, '\t');
+        let number: u32 = parts.next()?.parse().ok()?;
+        let url = parts.next()?.to_string();
+        Some((number, url))
     } else {
         None
     }
@@ -666,6 +695,16 @@ impl DirigentApp {
             }
         }
 
+        let initial_diff_lines = if skip_scan {
+            HashMap::new()
+        } else {
+            vcs_dispatch::compute_diff_lines(
+                &settings.vcs_backend,
+                &settings.jj_cli_path,
+                &project_root,
+            )
+        };
+
         let mut app = DirigentApp {
             project_root,
             db,
@@ -700,6 +739,7 @@ impl DirigentApp {
             git_status_rx,
             git: GitState {
                 info: git_info,
+                diff_lines: initial_diff_lines,
                 dirty_files,
                 dirty_dirs: HashSet::new(),
                 show_git_view: false,
@@ -774,6 +814,10 @@ impl DirigentApp {
                 squash_rx: None,
                 undoing: false,
                 undo_rx: None,
+                pr_number: None,
+                pr_url: None,
+                pr_detect_rx: None,
+                pr_detect_branch: String::new(),
             },
             settings,
             semantic,
@@ -901,6 +945,7 @@ impl DirigentApp {
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
+            user_reviewed_auto_commits: HashSet::new(),
             pending_auto_continues: Vec::new(),
 
             ssh_worker: None,
@@ -921,6 +966,9 @@ impl DirigentApp {
             last_render_code_viewer_time: Duration::ZERO,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        if !skip_scan {
+            app.maybe_detect_pr();
+        }
         #[cfg(target_os = "macos")]
         update_macos_dock_icon(&app.settings.custom_dock_icon_path);
         app
