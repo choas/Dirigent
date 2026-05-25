@@ -1,6 +1,31 @@
 use std::path::Path;
+use std::process::Output;
 
 use crate::error::DirigentError;
+
+fn is_stale_working_copy(output: &Output) -> bool {
+    if output.status.success() {
+        return false;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.contains("working copy is stale")
+}
+
+fn update_stale_working_copy(repo_path: &Path, jj_path: &str) -> crate::error::Result<()> {
+    let output = super::jj_cmd(jj_path)
+        .args(["workspace", "update-stale"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj workspace update-stale failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
 
 /// Push the current bookmarks to the remote via `jj git push`.
 pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
@@ -8,6 +33,24 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
         .args(["git", "push"])
         .current_dir(repo_path)
         .output()?;
+
+    if is_stale_working_copy(&output) {
+        update_stale_working_copy(repo_path, jj_path)?;
+        let output = super::jj_cmd(jj_path)
+            .args(["git", "push"])
+            .current_dir(repo_path)
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DirigentError::JjCommand(format!(
+                "jj git push failed: {}",
+                stderr.trim()
+            )));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let summary = stdout.lines().next().unwrap_or("ok").trim();
+        return Ok(format!("Pushed ({})", summary));
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -28,6 +71,24 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
         .args(["git", "fetch"])
         .current_dir(repo_path)
         .output()?;
+
+    if is_stale_working_copy(&output) {
+        update_stale_working_copy(repo_path, jj_path)?;
+        let output = super::jj_cmd(jj_path)
+            .args(["git", "fetch"])
+            .current_dir(repo_path)
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DirigentError::JjCommand(format!(
+                "jj git fetch failed: {}",
+                stderr.trim()
+            )));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let summary = stdout.lines().next().unwrap_or("ok").trim();
+        return Ok(format!("Fetched ({})", summary));
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
