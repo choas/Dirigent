@@ -1026,4 +1026,32 @@ mod tests {
         assert!(pairs[1].0.is_some());
         assert!(pairs[1].1.is_none());
     }
+
+    #[test]
+    fn parse_jj_git_format_diff() {
+        let diff = "\
+diff --git a/file1.txt b/file1.txt
+index 7898192261..0f7bc76605 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,1 +1,2 @@
+ a
++c
+diff --git a/file2.txt b/file2.txt
+new file mode 100644
+index 0000000000..6178079822
+--- /dev/null
++++ b/file2.txt
+@@ -0,0 +1,1 @@
++b
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 2);
+        assert_eq!(parsed.files[0].new_path, "file1.txt");
+        assert_eq!(parsed.files[1].new_path, "file2.txt");
+        assert_eq!(parsed.files[0].hunks.len(), 1);
+        assert_eq!(parsed.files[1].hunks.len(), 1);
+        assert_eq!(parsed.files[0].hunks[0].lines.len(), 2);
+        assert_eq!(parsed.files[1].hunks[0].lines.len(), 1);
+    }
 }

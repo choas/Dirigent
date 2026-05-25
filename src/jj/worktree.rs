@@ -9,7 +9,7 @@ pub(crate) fn jj_list_workspaces(
     jj_path: &str,
 ) -> crate::error::Result<Vec<WorktreeInfo>> {
     let output = super::jj_cmd(jj_path)
-        .args(["workspace", "list"])
+        .args(["workspace", "list", "--color", "never"])
         .current_dir(repo_path)
         .output()?;
 
@@ -208,7 +208,7 @@ pub(crate) fn jj_list_bookmarks(
     jj_path: &str,
 ) -> crate::error::Result<Vec<String>> {
     let output = super::jj_cmd(jj_path)
-        .args(["bookmark", "list", "--all-remotes"])
+        .args(["bookmark", "list", "--all-remotes", "--color", "never"])
         .current_dir(repo_path)
         .output()?;
 

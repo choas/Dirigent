@@ -13,6 +13,9 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         .args([
             "log",
             "--no-graph",
+            "--color",
+            "never",
+            "--ignore-working-copy",
             "-n",
             &limit_str,
             "-T",
@@ -175,7 +178,15 @@ fn format_time_ago(diff: i64) -> String {
 
 pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
     let output = super::jj_cmd(jj_path)
-        .args(["log", "--no-graph", "-T", r#"change_id ++ "\n""#])
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "--ignore-working-copy",
+            "-T",
+            r#"change_id ++ "\n""#,
+        ])
         .current_dir(path)
         .output();
 
@@ -190,18 +201,21 @@ pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
 
 pub(crate) fn jj_get_commit_diff(path: &Path, change_id: &str, jj_path: &str) -> Option<String> {
     let output = super::jj_cmd(jj_path)
-        .args(["diff", "--git", "-r", change_id])
+        .args([
+            "diff",
+            "--git",
+            "--color",
+            "never",
+            "--ignore-working-copy",
+            "-r",
+            change_id,
+        ])
         .current_dir(path)
         .output()
         .ok()?;
 
     if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        if text.trim().is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        Some(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         None
     }

@@ -12,6 +12,8 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
             "-r",
             "@",
             "--no-graph",
+            "--color",
+            "never",
             "-T",
             r#"bookmarks ++ "\n" ++ change_id.shortest(7) ++ "\n" ++ description.first_line()"#,
         ])
@@ -53,6 +55,8 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
                 "-r",
                 "@-",
                 "--no-graph",
+                "--color",
+                "never",
                 "-T",
                 r#"bookmarks ++ "\n" ++ change_id.shortest(7) ++ "\n" ++ description.first_line()"#,
             ])
@@ -101,7 +105,7 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
 
 fn count_status_entries(path: &Path, jj_path: &str) -> (usize, usize, usize, usize) {
     let output = super::jj_cmd(jj_path)
-        .args(["diff", "--types"])
+        .args(["diff", "--types", "--color", "never"])
         .current_dir(path)
         .output();
 
@@ -140,7 +144,7 @@ pub(crate) fn jj_get_dirty_files(path: &Path, jj_path: &str) -> HashMap<String, 
     let mut result = HashMap::new();
 
     let output = super::jj_cmd(jj_path)
-        .args(["diff", "--types"])
+        .args(["diff", "--types", "--color", "never"])
         .current_dir(path)
         .output();
 
@@ -185,6 +189,9 @@ pub(crate) fn jj_get_ahead_of_remote(path: &Path, jj_path: &str) -> usize {
             "-r",
             "remote_bookmarks()..@-",
             "--no-graph",
+            "--color",
+            "never",
+            "--ignore-working-copy",
             "-T",
             r#"change_id ++ "\n""#,
         ])

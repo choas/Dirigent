@@ -45,7 +45,16 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 /// Read bookmarks for a given revision (e.g. `@`, `@-`).
 fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> {
     let output = super::jj_cmd(jj_path)
-        .args(["log", "-r", rev, "--no-graph", "-T", "bookmarks"])
+        .args([
+            "log",
+            "-r",
+            rev,
+            "--no-graph",
+            "--color",
+            "never",
+            "-T",
+            "bookmarks",
+        ])
         .current_dir(repo_path)
         .output();
     match output {
@@ -108,6 +117,8 @@ pub(crate) fn jj_commit_all(
             "-r",
             "@-",
             "--no-graph",
+            "--color",
+            "never",
             "-T",
             "change_id.shortest(7)",
         ])
@@ -266,6 +277,8 @@ pub(crate) fn jj_squash_bookmark(
         .args([
             "log",
             "--no-graph",
+            "--color",
+            "never",
             "-r",
             &revset,
             "-T",
@@ -311,7 +324,16 @@ pub(crate) fn jj_squash_bookmark(
 
     // Move the bookmark to the surviving commit (now the only one in the range).
     let surviving = super::jj_cmd(jj_path)
-        .args(["log", "--no-graph", "-r", &revset, "-T", r#"change_id"#])
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            &revset,
+            "-T",
+            r#"change_id"#,
+        ])
         .current_dir(repo_path)
         .output()?;
     if surviving.status.success() {
