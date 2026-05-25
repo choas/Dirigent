@@ -784,6 +784,7 @@ impl DirigentApp {
                 show_commit_dialog: false,
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
+                commit_review_cue_id: None,
                 committing: false,
                 commit_rx: None,
             },

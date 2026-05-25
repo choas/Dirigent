@@ -641,6 +641,8 @@ pub(crate) struct GitState {
     pub(super) commit_message_input: String,
     /// Whether the text field should receive initial focus on the next frame.
     pub(super) commit_needs_focus: bool,
+    /// When the commit dialog was opened for a cue review, the cue ID.
+    pub(super) commit_review_cue_id: Option<i64>,
     /// Whether a commit operation is in progress (jj only).
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
