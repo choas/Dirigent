@@ -54,6 +54,14 @@ impl DirigentApp {
         self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
         self.archived_cue_limit = 10;
         self.confirm_delete_archived = false;
+
+        // Load project-specific settings before any VCS calls so the correct
+        // backend (git vs jj) is used from the start.
+        let recent_repos = self.settings.recent_repos.clone();
+        self.settings = settings::load_settings(&self.project_root);
+        self.settings.recent_repos = recent_repos;
+        self.ensure_jj_colocated();
+
         self.reload_cues();
         self.reload_git_info();
         self.viewer.tabs.clear();
@@ -80,13 +88,6 @@ impl DirigentApp {
         self.cue_warnings.clear();
         // Reload cues and all cue-derived caches (archived counts, labels, activity, etc.)
         self.reload_cues();
-
-        // Load project-specific settings if the new repo has them,
-        // carrying over recent_repos from the current session.
-        let recent_repos = self.settings.recent_repos.clone();
-        self.settings = settings::load_settings(&self.project_root);
-        self.settings.recent_repos = recent_repos;
-        self.ensure_jj_colocated();
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
         if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {

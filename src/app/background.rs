@@ -33,10 +33,17 @@ impl DirigentApp {
 
         let recent_repos = self.settings.recent_repos.clone();
         let auto_commit = self.settings.auto_commit;
+        let old_backend = self.settings.vcs_backend.clone();
         self.settings = new_settings;
         self.settings.recent_repos = recent_repos;
         self.settings.auto_commit = auto_commit;
         self.needs_theme_apply = true;
+        if self.settings.vcs_backend != old_backend {
+            self.git.history_cache_key = (String::new(), 0);
+            self.reload_git_info();
+            self.reload_commit_history();
+            self.reload_worktrees();
+        }
     }
 
     /// Handle filesystem changes: rescan file tree, reload tabs, trigger agents.
