@@ -199,13 +199,26 @@ server.tool(
 
 server.tool(
   "dirigent_update_cue",
-  "Edit a cue's text or tag",
+  "Edit a cue's text, tag, or location (file path / line range)",
   {
     cue_id: z.number().int().positive().describe("Cue ID"),
     text: z.string().optional().describe("New cue text"),
     tag: z.string().optional().describe("New tag value"),
+    file_path: z.string().optional().describe("New file path"),
+    line_number: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("New start line"),
+    line_number_end: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("New end line"),
   },
-  async ({ cue_id, text, tag }) => {
+  async ({ cue_id, text, tag, file_path, line_number, line_number_end }) => {
     const cue = db
       .prepare("SELECT id FROM cues WHERE id = ?")
       .get(cue_id) as { id: number } | undefined;
@@ -224,10 +237,25 @@ server.tool(
       updates.push("tag = ?");
       params.push(tag);
     }
+    if (file_path !== undefined) {
+      updates.push("file_path = ?");
+      params.push(file_path);
+    }
+    if (line_number !== undefined) {
+      updates.push("line_number = ?");
+      params.push(line_number);
+    }
+    if (line_number_end !== undefined) {
+      updates.push("line_number_end = ?");
+      params.push(line_number_end);
+    }
     if (updates.length === 0)
       return {
         content: [
-          { type: "text", text: "No fields to update — provide text or tag" },
+          {
+            type: "text",
+            text: "No fields to update — provide text, tag, file_path, line_number, or line_number_end",
+          },
         ],
         isError: true,
       };
@@ -297,6 +325,69 @@ server.tool(
         },
       ],
     };
+  }
+);
+
+server.tool(
+  "dirigent_search_cues",
+  "Search cues by keyword (case-insensitive match on cue text)",
+  {
+    query: z.string().min(1).describe("Search term"),
+    status: z
+      .enum(VALID_STATUSES)
+      .optional()
+      .describe("Optionally restrict search to a status"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(200)
+      .default(30)
+      .describe("Max results (up to 200)"),
+  },
+  async ({ query, status, limit }) => {
+    let sql =
+      "SELECT id, text, file_path, line_number, line_number_end, status, tag FROM cues WHERE text LIKE ?";
+    const params: unknown[] = [`%${query}%`];
+    if (status) {
+      sql += " AND status = ?";
+      params.push(status);
+    }
+    sql += " ORDER BY id DESC LIMIT ?";
+    params.push(limit);
+    const rows = db.prepare(sql).all(...params);
+    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+  }
+);
+
+server.tool(
+  "dirigent_list_executions",
+  "List all executions for a cue (newest first, metrics only)",
+  {
+    cue_id: z.number().int().positive().describe("Cue ID"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(50)
+      .default(10)
+      .describe("Max results (up to 50)"),
+  },
+  async ({ cue_id, limit }) => {
+    const rows = db
+      .prepare(
+        `SELECT id, cue_id, status, provider, cost_usd, duration_ms, num_turns,
+                input_tokens, output_tokens
+         FROM executions WHERE cue_id = ? ORDER BY id DESC LIMIT ?`
+      )
+      .all(cue_id, limit);
+    if (rows.length === 0)
+      return {
+        content: [
+          { type: "text", text: `No executions found for cue #${cue_id}` },
+        ],
+      };
+    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
   }
 );
 
