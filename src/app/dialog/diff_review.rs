@@ -565,9 +565,7 @@ impl DirigentApp {
         {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
             let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(cue_id, "Accepted (workspace commit)");
+            let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
             let cue_prompt = self
                 .cues
@@ -635,17 +633,13 @@ impl DirigentApp {
                 &bookmark,
                 &self.settings.jj_cli_path,
             ) {
-                self.set_status_message(format!(
-                    "Reject failed — could not delete bookmark: {e}"
-                ));
+                self.set_status_message(format!("Reject failed — could not delete bookmark: {e}"));
                 return;
             }
             self.cleanup_jj_workspace(cue_id);
             let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
-            self.set_status_message(
-                "Reverted — bookmark deleted, workspace removed".to_string(),
-            );
+            self.set_status_message("Reverted — bookmark deleted, workspace removed".to_string());
             self.reload_cues();
             self.reload_git_info();
             self.diff_review = None;

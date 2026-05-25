@@ -251,11 +251,7 @@ pub(crate) fn jj_delete_bookmark(
 
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.
 #[allow(dead_code)]
-pub(crate) fn jj_bookmark_commit_count(
-    repo_path: &Path,
-    bookmark: &str,
-    jj_path: &str,
-) -> usize {
+pub(crate) fn jj_bookmark_commit_count(repo_path: &Path, bookmark: &str, jj_path: &str) -> usize {
     let revset = format!("trunk()..{}", bookmark);
     let output = super::jj_cmd(jj_path)
         .args([
@@ -337,14 +333,7 @@ pub(crate) fn jj_squash_bookmark(
 
     // Move the bookmark to the surviving commit (now the only one in the range).
     let surviving = super::jj_cmd(jj_path)
-        .args([
-            "log",
-            "--no-graph",
-            "-r",
-            &revset,
-            "-T",
-            r#"change_id"#,
-        ])
+        .args(["log", "--no-graph", "-r", &revset, "-T", r#"change_id"#])
         .current_dir(repo_path)
         .output()?;
     if surviving.status.success() {

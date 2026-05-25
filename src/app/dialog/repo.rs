@@ -654,7 +654,11 @@ impl DirigentApp {
                 if let Some(msg) = archive_msg {
                     self.set_status_message(format!(
                         "{} removed. {}",
-                        if label == "workspace" { "Workspace" } else { "Worktree" },
+                        if label == "workspace" {
+                            "Workspace"
+                        } else {
+                            "Worktree"
+                        },
                         msg
                     ));
                 }

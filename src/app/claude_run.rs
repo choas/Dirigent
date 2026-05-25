@@ -738,11 +738,8 @@ impl DirigentApp {
             && !self.claude.workspace_paths.contains_key(&cue_id)
         {
             let ws_name = jj::cue_workspace_name(cue_id, &cue.text);
-            match jj::jj_create_workspace(
-                &self.project_root,
-                &ws_name,
-                &self.settings.jj_cli_path,
-            ) {
+            match jj::jj_create_workspace(&self.project_root, &ws_name, &self.settings.jj_cli_path)
+            {
                 Ok(ws_path) => {
                     self.claude.workspace_paths.insert(cue_id, ws_path);
                     self.claude.workspace_names.insert(cue_id, ws_name);
@@ -1558,11 +1555,8 @@ impl DirigentApp {
         if let Some(ws_path) = self.claude.workspace_paths.remove(&cue_id) {
             let ws_name = self.claude.workspace_names.remove(&cue_id);
             if let Some(name) = &ws_name {
-                let _ = jj::jj_remove_workspace(
-                    &self.project_root,
-                    name,
-                    &self.settings.jj_cli_path,
-                );
+                let _ =
+                    jj::jj_remove_workspace(&self.project_root, name, &self.settings.jj_cli_path);
             }
             if ws_path.is_dir() {
                 let _ = std::fs::remove_dir_all(&ws_path);

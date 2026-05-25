@@ -306,9 +306,7 @@ impl DirigentApp {
         {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
             let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(cue_id, "Accepted (workspace commit)");
+            let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
             self.reload_git_info();
             self.reload_commit_history();
@@ -522,9 +520,7 @@ impl DirigentApp {
                 && !self.claude.workspace_commit_failed.contains(&cue_id)
             {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                let _ = self
-                    .db
-                    .log_activity(cue_id, "Accepted (workspace commit)");
+                let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
                 self.cleanup_jj_workspace(cue_id);
                 workspace_accepted += 1;
             } else {

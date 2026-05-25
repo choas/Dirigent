@@ -380,10 +380,7 @@ impl DirigentApp {
         ) {
             Some(d) => d,
             None => {
-                self.set_status_message(format!(
-                    "Failed to load diff for commit {}",
-                    short_hash
-                ));
+                self.set_status_message(format!("Failed to load diff for commit {}", short_hash));
                 return;
             }
         };

@@ -909,10 +909,7 @@ impl DirigentApp {
             let result = jj::jj_squash_bookmark(&root, &bm, &jj_path)
                 .map(|n| {
                     if n == 0 {
-                        format!(
-                            "Nothing to squash \u{2014} '{}' has 0 or 1 commits",
-                            bm
-                        )
+                        format!("Nothing to squash \u{2014} '{}' has 0 or 1 commits", bm)
                     } else {
                         let plural = if n == 1 { "" } else { "s" };
                         format!("Squashed {} commit{} on '{}' into one", n, plural, bm)
@@ -1041,5 +1038,4 @@ impl DirigentApp {
         self.git.graph_max_lanes = max_lanes;
         self.git.history_cache_key = cache_key;
     }
-
 }
