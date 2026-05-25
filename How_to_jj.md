@@ -40,12 +40,15 @@ This section walks through the full cycle: starting work, making changes,
 committing, pushing, and creating a PR. Everything described here happens
 entirely inside Dirigent -- no terminal or external jj commands needed.
 
-### 1. Start from a bookmark
+### 1. Pick a starting point
 
 Open the **Worktree Manager** (click **Worktrees** in the repo bar) and use the
-**branch/bookmark picker** to select where you want to start (e.g. `main`).
-Dirigent creates a new working-copy commit on top of that bookmark. You're ready
-to edit.
+**branch/bookmark picker** to select where you want to start. You can pick any
+existing bookmark -- including `main`, which jj imports automatically from git.
+There's no need to create a new bookmark first; just select `main` and Dirigent
+creates a new working-copy commit on top of it. You're ready to edit.
+
+You only need your own bookmark later, when you want to **push** (see step 4).
 
 ### 2. Create a cue and let Claude work
 
