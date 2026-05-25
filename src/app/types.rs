@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use crate::db::CueStatus;
@@ -506,7 +506,7 @@ pub(crate) struct GitState {
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
     /// Per-file diff line indicators: rel_path -> (1-based line_num -> change kind).
-    pub(super) diff_lines: HashMap<String, HashMap<usize, DiffLineKind>>,
+    pub(super) diff_lines: HashMap<String, Arc<HashMap<usize, DiffLineKind>>>,
     /// Absolute paths of directories that contain at least one dirty file (pre-computed).
     pub(super) dirty_dirs: HashSet<PathBuf>,
     /// Whether the git changes view is shown instead of the file tree.
