@@ -86,6 +86,7 @@ impl DirigentApp {
         let recent_repos = self.settings.recent_repos.clone();
         self.settings = settings::load_settings(&self.project_root);
         self.settings.recent_repos = recent_repos;
+        self.ensure_jj_colocated();
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
         if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
@@ -117,6 +118,45 @@ impl DirigentApp {
                 "Dirigent - {}",
                 folder
             )));
+        }
+    }
+
+    /// If the VCS backend is jj but no `.jj` directory exists yet (git-only
+    /// repo), run `jj git init --colocate` to create a jj repo backed by git.
+    pub(super) fn ensure_jj_colocated(&mut self) {
+        if self.settings.vcs_backend != VcsBackend::Jj {
+            return;
+        }
+        if self.project_root.join(".jj").is_dir() {
+            return;
+        }
+        if !self.project_root.join(".git").exists() {
+            return;
+        }
+        let jj_path = &self.settings.jj_cli_path;
+        let mut cmd = if jj_path.is_empty() {
+            std::process::Command::new("jj")
+        } else {
+            std::process::Command::new(jj_path)
+        };
+        match cmd
+            .args(["git", "init", "--colocate"])
+            .current_dir(&self.project_root)
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                self.set_status_message(format!(
+                    "Initialized jj repo (colocated) at {}",
+                    self.project_root.display()
+                ));
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                self.set_status_message(format!("jj git init failed: {}", stderr.trim()));
+            }
+            Err(e) => {
+                self.set_status_message(format!("jj git init failed: {}", e));
+            }
         }
     }
 
