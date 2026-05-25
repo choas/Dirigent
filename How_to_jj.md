@@ -42,9 +42,10 @@ entirely inside Dirigent -- no terminal or external jj commands needed.
 
 ### 1. Start from a bookmark
 
-Use the **branch/bookmark picker** in the repo bar and select where you want to
-start (e.g. `main`). Dirigent creates a new working-copy commit on top of that
-bookmark. You're ready to edit.
+Open the **Worktree Manager** (click **Worktrees** in the repo bar) and use the
+**branch/bookmark picker** to select where you want to start (e.g. `main`).
+Dirigent creates a new working-copy commit on top of that bookmark. You're ready
+to edit.
 
 ### 2. Create a cue and let Claude work
 
@@ -357,8 +358,9 @@ the file from the parent commit, undoing changes in the working copy.
 
 ### Switch to a different bookmark
 
-Use the **branch/bookmark picker** in the repo bar. Selecting a bookmark
-creates a new working-copy commit at that bookmark's position.
+Open the **Worktree Manager** (click **Worktrees** in the repo bar) and use the
+**branch/bookmark picker**. Selecting a bookmark creates a new working-copy
+commit at that bookmark's position.
 
 ### Create a bookmark
 
@@ -391,14 +393,14 @@ is a separate working directory sharing the same repo.
 
 | What you want to do          | Dirigent action                        |
 |------------------------------|----------------------------------------|
-| Start new work from main     | Branch picker > main                   |
+| Start new work from main     | Worktree Manager > Branch picker > main|
 | See what changed             | File tree + status bar                 |
 | Commit current work          | Commit button + message                |
 | View history                 | History panel                          |
 | Push to remote               | jj menu > Push                         |
 | Fetch from remote            | jj menu > Fetch                        |
 | Revert a file                | File tree > Revert action              |
-| Switch bookmark              | Branch picker                          |
+| Switch bookmark              | Worktree Manager > Branch picker       |
 | Create a bookmark            | jj menu > Create Bookmark              |
 | Squash commits               | jj menu > Squash Commits               |
 | Undo last operation          | jj menu > Undo Last Operation          |
