@@ -134,18 +134,76 @@ pub(crate) fn jj_commit_all(
     Ok(change_id)
 }
 
-/// Commit specific files from a diff by squashing changes.
-/// In jj, all file edits are already part of the working-copy commit,
-/// so we describe it and finalize.
+/// Commit only the files referenced in `diff_text`.
+///
+/// In jj every edit is already part of the working-copy commit (`@`).
+/// To commit a subset we temporarily revert the *other* dirty files to
+/// their parent state, commit, then write the originals back so they
+/// reappear in the new `@`.
 pub(crate) fn jj_commit_diff(
     repo_path: &Path,
-    _diff_text: &str,
+    diff_text: &str,
     commit_message: &str,
     jj_path: &str,
 ) -> crate::error::Result<String> {
-    // In jj, all changes are already tracked in the working copy commit.
-    // We just describe and finalize.
-    jj_commit_all(repo_path, commit_message, jj_path, true)
+    let diff_files = crate::git::parse_diff_file_paths_for_repo(repo_path, diff_text);
+
+    if diff_files.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "no files to commit — diff contains no file paths".into(),
+        ));
+    }
+
+    let dirty = super::status::jj_get_dirty_files(repo_path, jj_path);
+    let other_files: Vec<String> = dirty
+        .keys()
+        .filter(|f| !diff_files.contains(f))
+        .cloned()
+        .collect();
+
+    if other_files.is_empty() {
+        return jj_commit_all(repo_path, commit_message, jj_path, true);
+    }
+
+    // Snapshot each non-diff file so we can put it back after the commit.
+    // `None` means the file was deleted in the working copy (doesn't exist on disk).
+    let saved: Vec<(String, Option<Vec<u8>>)> = other_files
+        .iter()
+        .map(|f| {
+            let content = std::fs::read(repo_path.join(f)).ok();
+            (f.clone(), content)
+        })
+        .collect();
+
+    // Revert non-diff files to parent state so they aren't part of the commit.
+    let mut restore_args: Vec<&str> = vec!["restore", "--from", "@-", "--"];
+    for f in &other_files {
+        restore_args.push(f);
+    }
+    let _ = super::jj_cmd(jj_path)
+        .args(&restore_args)
+        .current_dir(repo_path)
+        .output();
+
+    let result = jj_commit_all(repo_path, commit_message, jj_path, true);
+
+    // Put the non-diff files back so they remain as pending changes in the new @.
+    for (rel, content) in &saved {
+        let full = repo_path.join(rel);
+        match content {
+            Some(data) => {
+                if let Some(parent) = full.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&full, data);
+            }
+            None => {
+                let _ = std::fs::remove_file(&full);
+            }
+        }
+    }
+
+    result
 }
 
 /// Set (or move) a bookmark on a specific revision.
