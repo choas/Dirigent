@@ -184,10 +184,11 @@ pub(crate) struct DiffSearchHighlight<'a> {
 fn first_change_line(file: &FileDiff) -> usize {
     for hunk in &file.hunks {
         for line in &hunk.lines {
-            if line.kind == DiffLineKind::Addition {
+            if line.kind != DiffLineKind::Context {
                 if let Some(n) = line.new_lineno {
                     return n;
                 }
+                return hunk.new_start;
             }
         }
     }

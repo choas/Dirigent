@@ -59,13 +59,15 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         } else {
             change_id.clone()
         };
-        let mut message = parts[1].trim().to_string();
-        let author = parts[2].trim().to_string();
-        let timestamp_str = parts[3].trim();
-        let bookmarks_str = parts[4].trim();
-        let tags_str = parts[5].trim();
-        let parents_str = parts[6].trim();
-        let is_empty = parts[7].trim() == "empty";
+        // Pull trailing fields from the end so tabs in the description don't shift offsets.
+        let n = parts.len();
+        let is_empty = parts[n - 1].trim() == "empty";
+        let parents_str = parts[n - 2].trim();
+        let tags_str = parts[n - 3].trim();
+        let bookmarks_str = parts[n - 4].trim();
+        let timestamp_str = parts[n - 5].trim();
+        let author = parts[n - 6].trim().to_string();
+        let mut message = parts[1..n - 6].join("\t").trim().to_string();
 
         if message.is_empty() {
             message = "(no description yet)".to_string();

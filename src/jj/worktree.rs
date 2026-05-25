@@ -146,7 +146,7 @@ pub(crate) fn jj_checkout_bookmark(
     jj_path: &str,
 ) -> crate::error::Result<()> {
     let output = super::jj_cmd(jj_path)
-        .args(["new", bookmark])
+        .args(["edit", bookmark])
         .current_dir(repo_path)
         .output()?;
 
