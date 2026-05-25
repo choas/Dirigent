@@ -61,8 +61,8 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
             .ok();
         if let Some(po) = parent_out {
             if po.status.success() {
-                let parent_lines: Vec<&str> =
-                    String::from_utf8_lossy(&po.stdout).lines().collect();
+                let parent_stdout = String::from_utf8_lossy(&po.stdout).into_owned();
+                let parent_lines: Vec<&str> = parent_stdout.lines().collect();
                 let parent_bm = parent_lines
                     .first()
                     .map(|s| s.trim().to_string())
