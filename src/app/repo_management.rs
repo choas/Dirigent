@@ -28,8 +28,8 @@ impl DirigentApp {
             ));
             return;
         }
-        // Offer to initialize git if not a repository
-        if git2::Repository::discover(&new_root).is_err() {
+        // Accept the directory if it contains a jj or git repository
+        if !new_root.join(".jj").is_dir() && git2::Repository::discover(&new_root).is_err() {
             self.git_init_confirm = Some(new_root);
             return;
         }

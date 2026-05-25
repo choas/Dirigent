@@ -128,6 +128,10 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     if settings.jj_cli_path.is_empty() {
         settings.jj_cli_path = which("jj").unwrap_or_default();
     }
+    // Auto-detect VCS backend: if the project has a .jj directory, use jj.
+    if project_root.join(".jj").is_dir() {
+        settings.vcs_backend = crate::settings::VcsBackend::Jj;
+    }
     // Append any new default plays that aren't already in the user's playbook
     for default_play in default_playbook() {
         if !settings

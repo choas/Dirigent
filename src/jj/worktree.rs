@@ -14,7 +14,7 @@ pub(crate) fn jj_list_workspaces(
         .output()?;
 
     if !output.status.success() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ));
     }
@@ -66,7 +66,7 @@ pub(crate) fn jj_create_workspace(
 ) -> crate::error::Result<PathBuf> {
     let parent = repo_path
         .parent()
-        .ok_or_else(|| DirigentError::GitCommand("no parent directory".into()))?;
+        .ok_or_else(|| DirigentError::JjCommand("no parent directory".into()))?;
 
     let dir_name = name.rsplit('/').next().unwrap_or(name);
     let ws_path = parent.join(dir_name);
@@ -83,7 +83,7 @@ pub(crate) fn jj_create_workspace(
         .output()?;
 
     if !output.status.success() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ));
     }
@@ -131,7 +131,7 @@ pub(crate) fn jj_remove_workspace(
         .output()?;
 
     if !output.status.success() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ));
     }
@@ -151,7 +151,7 @@ pub(crate) fn jj_checkout_bookmark(
         .output()?;
 
     if !output.status.success() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ));
     }
@@ -214,7 +214,7 @@ pub(crate) fn jj_list_bookmarks(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark list failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
             stderr.trim()

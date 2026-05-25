@@ -11,7 +11,7 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj git push failed: {}",
             stderr.trim()
         )));
@@ -31,7 +31,7 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj git fetch failed: {}",
             stderr.trim()
         )));
@@ -95,7 +95,7 @@ pub(crate) fn jj_commit_all(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj commit failed: {}",
             stderr.trim()
         )));
@@ -149,7 +149,7 @@ pub(crate) fn jj_commit_diff(
     let diff_files = crate::git::parse_diff_file_paths_for_repo(repo_path, diff_text);
 
     if diff_files.is_empty() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             "no files to commit — diff contains no file paths".into(),
         ));
     }
@@ -220,7 +220,7 @@ pub(crate) fn jj_set_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark set failed: {}",
             stderr.trim()
         )));
@@ -241,7 +241,7 @@ pub(crate) fn jj_delete_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark delete failed: {}",
             stderr.trim()
         )));
@@ -298,7 +298,7 @@ pub(crate) fn jj_squash_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj log for squash failed: {}",
             stderr.trim()
         )));
@@ -322,7 +322,7 @@ pub(crate) fn jj_squash_bookmark(
 
         if !sq_output.status.success() {
             let stderr = String::from_utf8_lossy(&sq_output.stderr);
-            return Err(DirigentError::GitCommand(format!(
+            return Err(DirigentError::JjCommand(format!(
                 "jj squash -r {} failed: {}",
                 cid.trim(),
                 stderr.trim()
@@ -363,7 +363,7 @@ pub(crate) fn jj_create_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark create failed: {}",
             stderr.trim()
         )));
@@ -380,7 +380,7 @@ pub(crate) fn jj_undo(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj op restore failed: {}",
             stderr.trim()
         )));
@@ -409,7 +409,7 @@ pub(crate) fn jj_revert_files(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DirigentError::GitCommand(format!(
+            return Err(DirigentError::JjCommand(format!(
                 "jj restore failed for {}: {}",
                 path,
                 stderr.trim()
