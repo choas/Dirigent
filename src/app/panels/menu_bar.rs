@@ -13,6 +13,7 @@ struct MenuBarActions {
     switch_branch_clicked: bool,
     create_pr_clicked: bool,
     import_pr_clicked: bool,
+    commit_clicked: bool,
     create_bookmark_clicked: bool,
     squash_clicked: bool,
     undo_clicked: bool,
@@ -205,6 +206,31 @@ impl DirigentApp {
     }
 
     fn render_git_menu_jj_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let has_changes = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.modified_count + i.added_count + i.deleted_count > 0)
+            .unwrap_or(false);
+        let commit_label = if self.git.committing {
+            "Committing..."
+        } else {
+            "Commit"
+        };
+        if ui
+            .add_enabled(
+                has_changes && !self.git.committing,
+                egui::Button::new(commit_label),
+            )
+            .on_hover_text("Describe the working copy and create a new change")
+            .clicked()
+        {
+            actions.commit_clicked = true;
+            ui.close();
+        }
+
+        ui.separator();
+
         if ui.button("Create Bookmark").clicked() {
             actions.create_bookmark_clicked = true;
             ui.close();
@@ -436,6 +462,9 @@ impl DirigentApp {
         }
         if actions.import_pr_clicked {
             self.open_import_pr_dialog();
+        }
+        if actions.commit_clicked {
+            self.open_commit_dialog();
         }
         if actions.create_bookmark_clicked {
             self.open_create_bookmark_dialog();

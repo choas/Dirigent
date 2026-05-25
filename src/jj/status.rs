@@ -34,20 +34,20 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
 
-    let mut change_id = lines
+    let change_id = lines
         .get(1)
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let mut description = lines
+    let description = lines
         .get(2)
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "(no description)".to_string());
 
     // If @ has no bookmark, check the parent — after `jj commit` the
     // bookmark lives on @- and the new @ is an empty child without one.
-    // Re-read all fields from @- so branch, change_id, and description
-    // are consistent.
+    // Use @-'s bookmark name but keep @'s own change_id so the status bar
+    // always reflects the current working copy identity.
     if branch.is_empty() {
         let parent_out = super::jj_cmd(jj_path)
             .args([
@@ -58,7 +58,7 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
                 "--color",
                 "never",
                 "-T",
-                r#"bookmarks ++ "\n" ++ change_id.shortest(7) ++ "\n" ++ description.first_line()"#,
+                r#"bookmarks ++ "\n" ++ description.first_line()"#,
             ])
             .current_dir(path)
             .output()
@@ -73,13 +73,6 @@ pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
                     .unwrap_or_default();
                 if !parent_bm.is_empty() {
                     branch = parent_bm;
-                    if let Some(cid) = parent_lines.get(1) {
-                        change_id = cid.trim().to_string();
-                    }
-                    description = parent_lines
-                        .get(2)
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_else(|| "(no description)".to_string());
                 }
             }
         }

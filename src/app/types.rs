@@ -623,6 +623,15 @@ pub(crate) struct GitState {
     /// Whether an undo operation is in progress (jj only).
     pub(super) undoing: bool,
     pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Commit dialog is open (jj only).
+    pub(super) show_commit_dialog: bool,
+    /// Commit message input for the Commit dialog.
+    pub(super) commit_message_input: String,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) commit_needs_focus: bool,
+    /// Whether a commit operation is in progress (jj only).
+    pub(super) committing: bool,
+    pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 impl GitState {
@@ -683,6 +692,10 @@ impl GitState {
         }
         if self.show_import_pr {
             self.show_import_pr = false;
+            return true;
+        }
+        if self.show_commit_dialog {
+            self.show_commit_dialog = false;
             return true;
         }
         if self.show_create_bookmark {

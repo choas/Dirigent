@@ -774,6 +774,11 @@ impl DirigentApp {
                 squash_rx: None,
                 undoing: false,
                 undo_rx: None,
+                show_commit_dialog: false,
+                commit_message_input: String::new(),
+                commit_needs_focus: false,
+                committing: false,
+                commit_rx: None,
             },
             settings,
             semantic,
@@ -1216,6 +1221,7 @@ impl eframe::App for DirigentApp {
         self.process_create_bookmark_result();
         self.process_squash_result();
         self.process_undo_result();
+        self.process_commit_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

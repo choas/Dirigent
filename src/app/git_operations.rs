@@ -992,6 +992,64 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
+    /// Open the Commit dialog (jj only).
+    pub(super) fn open_commit_dialog(&mut self) {
+        self.git.commit_message_input.clear();
+        self.git.commit_needs_focus = true;
+        self.git.show_commit_dialog = true;
+    }
+
+    /// Commit the jj working copy with the user's message (runs off the UI thread).
+    pub(super) fn start_jj_commit(&mut self) {
+        let msg = self.git.commit_message_input.trim().to_string();
+        if msg.is_empty() {
+            self.set_status_message("Commit message cannot be empty".into());
+            return;
+        }
+        if self.git.committing {
+            return;
+        }
+        self.git.show_commit_dialog = false;
+        self.git.committing = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.commit_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        std::thread::spawn(move || {
+            let result = jj::jj_commit_all(&root, &msg, &jj_path, true)
+                .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))
+                .map_err(|e| format!("Commit failed: {}", e));
+            let _ = tx.send(result);
+        });
+        self.set_status_message("Committing...".into());
+    }
+
+    /// Check for completed commit operation.
+    pub(super) fn process_commit_result(&mut self) {
+        let rx = match self.git.commit_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.committing = false;
+                self.git.commit_rx = None;
+                self.set_status_message("Commit failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.committing = false;
+        self.git.commit_rx = None;
+        match result {
+            Ok(msg) => self.set_status_message(msg),
+            Err(e) => self.set_status_message(e),
+        }
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
     pub(super) fn reload_git_info(&mut self) {
         match self.settings.vcs_backend {
             VcsBackend::Jj => {
