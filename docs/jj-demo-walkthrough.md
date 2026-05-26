@@ -598,6 +598,42 @@ still visible in the graph but have no bookmark labels.
 
 ---
 
+## Step 14 — Push to remote
+
+### 14.1 Add a remote (if needed)
+
+If the project doesn't have a remote yet, create a repository on your Git
+hosting provider (e.g. GitHub, GitLab) and add the remote:
+
+**Click:** **jj** menu > **Git** > **Add Remote**
+
+**Type name:** `origin`
+
+**Type URL:** `<your-repo-url>`
+
+**Click:** Add
+
+### 14.2 Push main to the remote
+
+**Click:** **jj** menu > **Git** > **Push**
+
+**Expected:** The status bar shows "Pushing to origin..." and then updates to
+"Pushed 'main' to origin". The `main` bookmark and all its commits are pushed
+to the remote.
+
+> **Bug?** If the push fails with "no remote configured", the remote wasn't
+> added correctly in 14.1. If it fails with "bookmark not tracked", the
+> bookmark may need to be explicitly tracked on the remote first.
+
+### 14.3 Verify
+
+**Look at** the **history panel**.
+
+**Expected:** The `main` bookmark now shows a remote tracking indicator
+(e.g. `main@origin`) confirming the push succeeded.
+
+---
+
 ## Bug Checklist
 
 Use this as a quick reference when testing. Each row maps to an expectation
@@ -618,3 +654,4 @@ from the steps above.
 | 11| Merge Bookmark button merges and updates file tree     | 10.2  |
 | 12| Tests pass after merging all bookmarks                 | 12.1  |
 | 13| Delete Bookmark button removes labels from history     | 13.1  |
+| 14| Push sends main bookmark and commits to remote         | 14.2  |
