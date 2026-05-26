@@ -230,6 +230,7 @@ impl DirigentApp {
         self.render_repo_picker(ctx);
         self.render_move_to_branch_dialog(ctx);
         self.render_create_bookmark_dialog(ctx);
+        self.render_delete_bookmark_dialog(ctx);
         self.render_merge_bookmark_dialog(ctx);
         self.render_switch_branch_dialog(ctx);
         self.render_worktree_panel(ctx);

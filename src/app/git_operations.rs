@@ -1006,6 +1006,73 @@ impl DirigentApp {
         self.reload_commit_history();
     }
 
+    /// Open the Delete Bookmark dialog (jj only).
+    pub(super) fn open_delete_bookmark_dialog(&mut self) {
+        let infos =
+            jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
+                .unwrap_or_default();
+        self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+        self.git.show_delete_bookmark = true;
+    }
+
+    /// Start an async delete-bookmark operation (jj only).
+    pub(super) fn start_delete_bookmark(&mut self, name: &str) {
+        if self.git.deleting_bookmark {
+            return;
+        }
+        self.git.deleting_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.delete_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        let bm = name.to_string();
+        self.set_status_message(format!("Deleting bookmark '{}'...", bm));
+        std::thread::spawn(move || {
+            let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
+                .map(|()| format!("Deleted bookmark '{}'", bm))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Check for completed delete-bookmark operation.
+    pub(super) fn process_delete_bookmark_result(&mut self) {
+        let rx = match self.git.delete_bookmark_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.git.deleting_bookmark = false;
+                self.git.delete_bookmark_rx = None;
+                self.set_status_message("Bookmark deletion failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.deleting_bookmark = false;
+        self.git.delete_bookmark_rx = None;
+        match result {
+            Ok(msg) => {
+                self.set_status_message(msg);
+                // Refresh the branch list in the dialog if still open.
+                if self.git.show_delete_bookmark {
+                    let infos = jj::jj_list_bookmarks_with_status(
+                        &self.project_root,
+                        &self.settings.jj_cli_path,
+                    )
+                    .unwrap_or_default();
+                    self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+                }
+            }
+            Err(e) => self.set_status_message(format!("Delete failed: {}", e)),
+        }
+        self.git.history_cache_key = (String::new(), 0);
+        self.reload_git_info();
+        self.reload_commit_history();
+    }
+
     /// Open the Merge Bookmark dialog (jj only).
     pub(super) fn open_merge_bookmark_dialog(&mut self) {
         let infos =

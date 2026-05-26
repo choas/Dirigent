@@ -781,6 +781,9 @@ impl DirigentApp {
                 undo_rx: None,
                 abandoning_empty: false,
                 abandon_empty_rx: None,
+                show_delete_bookmark: false,
+                deleting_bookmark: false,
+                delete_bookmark_rx: None,
                 show_merge_bookmark: false,
                 merging_bookmark: false,
                 merge_bookmark_rx: None,
@@ -1235,6 +1238,7 @@ impl eframe::App for DirigentApp {
         self.process_undo_result();
         self.process_commit_result();
         self.process_merge_bookmark_result();
+        self.process_delete_bookmark_result();
         self.process_abandon_empty_result();
 
         // Poll for Notion done result

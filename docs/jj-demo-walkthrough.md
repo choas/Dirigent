@@ -577,14 +577,17 @@ Running tests...
 
 ### 13.1 Delete feature bookmarks
 
-**Type** in the **prompt field:**
+**Click:** **jj** menu > **Delete Bookmark**
 
-```
-Delete the merged bookmarks: feature/random-planet, feature/personalized,
-docs, and test. Use jj bookmark delete for each.
-```
+**Click:** Delete next to `feature/random-planet`
 
-**Click:** Send
+**Click:** Delete next to `feature/personalized`
+
+**Click:** Delete next to `docs`
+
+**Click:** Delete next to `test`
+
+**Close** the dialog.
 
 ### 13.2 Verify
 
@@ -614,4 +617,4 @@ from the steps above.
 | 10| Diff shows only changes relative to parent             | 9.2   |
 | 11| Merge Bookmark button merges and updates file tree     | 10.2  |
 | 12| Tests pass after merging all bookmarks                 | 12.1  |
-| 13| Deleting bookmarks removes labels from history         | 13.2  |
+| 13| Delete Bookmark button removes labels from history     | 13.1  |

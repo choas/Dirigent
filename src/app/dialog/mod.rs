@@ -5,6 +5,7 @@ mod create_bookmark;
 mod create_pr;
 mod cue_agent_runs;
 mod custom_theme;
+mod delete_bookmark;
 mod diff_review;
 mod file_ops;
 mod filter_pr;

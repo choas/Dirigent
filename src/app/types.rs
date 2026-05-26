@@ -635,6 +635,11 @@ pub(crate) struct GitState {
     /// Whether an abandon-empty-heads operation is in progress (jj only).
     pub(super) abandoning_empty: bool,
     pub(super) abandon_empty_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Delete Bookmark dialog is open (jj only).
+    pub(super) show_delete_bookmark: bool,
+    /// Whether a delete-bookmark operation is in progress (jj only).
+    pub(super) deleting_bookmark: bool,
+    pub(super) delete_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether the Merge Bookmark dialog is open (jj only).
     pub(super) show_merge_bookmark: bool,
     /// Whether a merge-bookmark operation is in progress (jj only).
@@ -720,6 +725,10 @@ impl GitState {
         }
         if self.show_cleanup_bookmarks {
             self.show_cleanup_bookmarks = false;
+            return true;
+        }
+        if self.show_delete_bookmark {
+            self.show_delete_bookmark = false;
             return true;
         }
         if self.show_merge_bookmark {
