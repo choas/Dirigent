@@ -656,6 +656,10 @@ pub(crate) struct GitState {
     /// Whether a commit operation is in progress (jj only).
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// The bookmark the user is actively working on (jj only).
+    /// Only this bookmark is advanced when committing, preventing unrelated
+    /// bookmarks on the same parent commit from being dragged forward.
+    pub(super) active_bookmark: Option<String>,
 }
 
 impl GitState {

@@ -350,6 +350,7 @@ impl DirigentApp {
                                 &self.project_root,
                                 exec.diff.as_deref().unwrap(),
                                 &commit_msg,
+                                self.git.active_bookmark.as_deref(),
                             ),
                         );
                         self.reload_git_info();
@@ -567,6 +568,7 @@ impl DirigentApp {
                 &self.settings.jj_cli_path,
                 &self.project_root,
                 &commit_msg,
+                self.git.active_bookmark.as_deref(),
             ) {
                 Ok(hash) => {
                     let short = &hash[..7.min(hash.len())];

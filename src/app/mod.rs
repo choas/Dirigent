@@ -794,6 +794,7 @@ impl DirigentApp {
                 commit_review_cue_id: None,
                 committing: false,
                 commit_rx: None,
+                active_bookmark: None,
             },
             settings,
             semantic,

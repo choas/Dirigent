@@ -232,7 +232,12 @@ impl DirigentApp {
         let mut open = true;
         let mut switch_to: Option<String> = None;
 
-        egui::Window::new("Switch Branch")
+        let title = if self.settings.vcs_backend == VcsBackend::Jj {
+            "Switch Bookmark"
+        } else {
+            "Switch Branch"
+        };
+        egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -265,7 +270,12 @@ impl DirigentApp {
         }
 
         if self.git.available_branches.is_empty() {
-            self.empty_label(ui, "No other branches available");
+            let msg = if self.settings.vcs_backend == VcsBackend::Jj {
+                "No other bookmarks available"
+            } else {
+                "No other branches available"
+            };
+            self.empty_label(ui, msg);
             return;
         }
 
@@ -303,6 +313,7 @@ impl DirigentApp {
         };
         match switch_result {
             Ok(()) => {
+                self.git.active_bookmark = Some(branch.to_string());
                 self.set_status_message(format!("Switched to '{}'", branch));
                 self.reload_git_info();
                 self.reload_commit_history();
@@ -311,7 +322,12 @@ impl DirigentApp {
                 self.git.recompute_dirty_dirs(&self.project_root);
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to switch branch: {}", e));
+                let noun = if self.settings.vcs_backend == VcsBackend::Jj {
+                    "bookmark"
+                } else {
+                    "branch"
+                };
+                self.set_status_message(format!("Failed to switch {}: {}", noun, e));
             }
         }
     }

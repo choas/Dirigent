@@ -72,6 +72,7 @@ impl DirigentApp {
         self.viewer.quick_open_selected = 0;
         self.git.commit_history_limit = 10;
         self.git.history_cache_key = (String::new(), 0);
+        self.git.active_bookmark = None;
         self.reload_commit_history();
         self.expanded_dirs = HashSet::new();
         self.git.git_view_expanded_dirs.clear();

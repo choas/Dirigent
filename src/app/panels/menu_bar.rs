@@ -104,14 +104,20 @@ impl DirigentApp {
                 .map(|i| i.branch == "main" || i.branch == "master")
                 .unwrap_or(false);
             if is_default && self.git.ahead_of_remote > 0 {
+                let target = if self.settings.vcs_backend == VcsBackend::Jj {
+                    "bookmark"
+                } else {
+                    "branch"
+                };
                 let label = format!(
-                    "Move {} commit{} to branch",
+                    "Move {} commit{} to {}",
                     self.git.ahead_of_remote,
                     if self.git.ahead_of_remote == 1 {
                         ""
                     } else {
                         "s"
-                    }
+                    },
+                    target
                 );
                 if ui.button(label).clicked() {
                     actions.move_to_branch_clicked = true;
@@ -119,7 +125,12 @@ impl DirigentApp {
                 }
             }
 
-            if ui.button("Switch Branch").clicked() {
+            let switch_label = if self.settings.vcs_backend == VcsBackend::Jj {
+                "Switch Bookmark"
+            } else {
+                "Switch Branch"
+            };
+            if ui.button(switch_label).clicked() {
                 actions.switch_branch_clicked = true;
                 ui.close();
             }

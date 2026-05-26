@@ -856,6 +856,7 @@ impl DirigentApp {
         if self.git.creating_bookmark {
             return;
         }
+        self.git.active_bookmark = Some(name.clone());
         self.git.show_create_bookmark = false;
         self.git.creating_bookmark = true;
         let (tx, rx) = mpsc::channel();
@@ -1169,11 +1170,12 @@ impl DirigentApp {
         self.git.commit_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
+        let active_bm = self.git.active_bookmark.clone();
         std::thread::spawn(move || {
             let result = if let Some(ref diff) = diff_text {
-                jj::jj_commit_diff(&root, diff, &msg, &jj_path)
+                jj::jj_commit_diff(&root, diff, &msg, &jj_path, active_bm.as_deref())
             } else {
-                jj::jj_commit_all(&root, &msg, &jj_path, true)
+                jj::jj_commit_all(&root, &msg, &jj_path, true, active_bm.as_deref())
             };
             let result = result
                 .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))

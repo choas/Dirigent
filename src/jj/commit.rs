@@ -138,11 +138,17 @@ fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> 
 /// change (`@-` after the commit). This mimics git's branch-advancement
 /// behaviour. Set to false for per-cue workspace commits where only the
 /// cue-specific bookmark should track the new commit.
+///
+/// When `bookmark_to_advance` is `Some(name)`, only that specific bookmark is
+/// advanced — other bookmarks sharing the same parent commit are left in place.
+/// This prevents unrelated bookmarks (e.g. "main") from being dragged forward
+/// when the user is working on a feature bookmark.
 pub(crate) fn jj_commit_all(
     repo_path: &Path,
     commit_message: &str,
     jj_path: &str,
     advance_bookmarks: bool,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     let parent_bookmarks = if advance_bookmarks {
         // Before committing, check whether @ already carries a bookmark.
@@ -196,7 +202,15 @@ pub(crate) fn jj_commit_all(
 
     // Advance the parent's bookmarks to the committed change so the
     // bookmark tracks forward, matching git's branch behaviour.
+    // When a specific bookmark is targeted, only advance that one —
+    // this prevents dragging unrelated bookmarks (e.g. "main") forward
+    // when they happen to share the same parent commit.
     for bm in &parent_bookmarks {
+        if let Some(target) = bookmark_to_advance {
+            if bm != target {
+                continue;
+            }
+        }
         let _ = super::jj_cmd(jj_path)
             .args(["bookmark", "set", bm, "-r", "@-"])
             .current_dir(repo_path)
@@ -217,6 +231,7 @@ pub(crate) fn jj_commit_diff(
     diff_text: &str,
     commit_message: &str,
     jj_path: &str,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     let diff_files = crate::git::parse_diff_file_paths_for_repo(repo_path, diff_text);
 
@@ -234,7 +249,13 @@ pub(crate) fn jj_commit_diff(
         .collect();
 
     if other_files.is_empty() {
-        return jj_commit_all(repo_path, commit_message, jj_path, true);
+        return jj_commit_all(
+            repo_path,
+            commit_message,
+            jj_path,
+            true,
+            bookmark_to_advance,
+        );
     }
 
     // Snapshot each non-diff file so we can put it back after the commit.
@@ -257,7 +278,13 @@ pub(crate) fn jj_commit_diff(
         .current_dir(repo_path)
         .output();
 
-    let result = jj_commit_all(repo_path, commit_message, jj_path, true);
+    let result = jj_commit_all(
+        repo_path,
+        commit_message,
+        jj_path,
+        true,
+        bookmark_to_advance,
+    );
 
     // Put the non-diff files back so they remain as pending changes in the new @.
     for (rel, content) in &saved {

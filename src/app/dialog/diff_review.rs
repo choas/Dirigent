@@ -603,6 +603,7 @@ impl DirigentApp {
                 &self.project_root,
                 diff_text,
                 &commit_msg,
+                self.git.active_bookmark.as_deref(),
             ) {
                 Ok(hash) => {
                     let short = &hash[..7.min(hash.len())];
