@@ -74,6 +74,7 @@ pub(crate) enum RunningAnimation {
     LavaLamp,
     ClaudeCodeName,
     Dino,
+    Jujutsu,
 }
 
 impl RunningAnimation {
@@ -83,6 +84,7 @@ impl RunningAnimation {
             RunningAnimation::LavaLamp => "Lava Lamp",
             RunningAnimation::ClaudeCodeName => "Claude Code",
             RunningAnimation::Dino => "Desert Dino",
+            RunningAnimation::Jujutsu => "Jujutsu",
         }
     }
 
@@ -92,6 +94,7 @@ impl RunningAnimation {
             RunningAnimation::LavaLamp,
             RunningAnimation::ClaudeCodeName,
             RunningAnimation::Dino,
+            RunningAnimation::Jujutsu,
         ]
     }
 }

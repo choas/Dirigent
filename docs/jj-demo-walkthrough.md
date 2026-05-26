@@ -102,7 +102,7 @@ console.log("hello world!");
 
 ### 2.3 Commit
 
-**Click:** Accept / Commit
+**Click:** Commit
 
 **Type** the commit message: `feat: initial hello world CLI`
 
@@ -177,7 +177,7 @@ and added lines with the planets array and random selection.
 
 ### 3.4 Commit
 
-**Click:** Accept / Commit
+**Click:** Commit
 
 **Type:** `feat: greet a random planet instead of world`
 
@@ -243,7 +243,7 @@ of printing "hello <planet>!".
 
 ### 4.5 Commit
 
-**Click:** Accept / Commit
+**Click:** Commit
 
 **Type:** `feat: personalized greeting with name argument`
 
@@ -305,7 +305,7 @@ Create a README.md file for this project. Include:
 **Expected:** The diff shows a new `README.md` file. The `index.js` file
 should NOT appear in the diff (it wasn't changed).
 
-**Click:** Accept / Commit
+**Click:** Commit
 
 **Type:** `docs: add README with usage instructions`
 
@@ -373,7 +373,7 @@ Exit with code 1 if any test fails.
 **Expected:** The diff shows a new `test.js` file with three test cases using
 regex matching. `index.js` and `package.json` should NOT be in the diff.
 
-**Click:** Accept / Commit
+**Click:** Commit
 
 **Type:** `test: add CLI output tests`
 

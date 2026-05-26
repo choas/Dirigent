@@ -9,6 +9,7 @@ mod dialog;
 mod dino;
 mod file_navigation;
 mod git_operations;
+mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
 mod markdown_viewer;
