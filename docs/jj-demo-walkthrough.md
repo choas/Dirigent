@@ -333,7 +333,7 @@ should NOT appear in the diff (it wasn't changed).
 
 ### 6.1 Switch to feature/personalized
 
-**Click:** **Worktrees** in the **repo bar**
+**Click:** **jj** menu > **Switch Bookmark**
 
 **Select:** `feature/personalized` in the bookmark picker
 
@@ -423,7 +423,7 @@ This verifies that switching bookmarks updates the working copy correctly.
 
 ### 8.1 Switch to `main`
 
-**Click:** **Worktrees** > `main`
+**Click:** **jj** menu > **Switch Bookmark** > `main`
 
 **Click:** `index.js` in the **file tree**
 
@@ -434,7 +434,7 @@ No `test.js` (that's only on `test`).
 
 ### 8.2 Switch to `feature/random-planet`
 
-**Click:** **Worktrees** > `feature/random-planet`
+**Click:** **jj** menu > **Switch Bookmark** > `feature/random-planet`
 
 **Click:** `index.js`
 
@@ -443,7 +443,7 @@ No `test.js` (that's only on `test`).
 
 ### 8.3 Switch to `feature/personalized`
 
-**Click:** **Worktrees** > `feature/personalized`
+**Click:** **jj** menu > **Switch Bookmark** > `feature/personalized`
 
 **Click:** `index.js`
 
@@ -452,7 +452,7 @@ and the planets array.
 
 ### 8.4 Switch to `docs`
 
-**Click:** **Worktrees** > `docs`
+**Click:** **jj** menu > **Switch Bookmark** > `docs`
 
 **Expected:** `README.md` appears in the **file tree**. `index.js` is the
 original `hello world!` version (because `docs` branches from `main`).
@@ -462,7 +462,7 @@ original `hello world!` version (because `docs` branches from `main`).
 
 ### 8.5 Switch to `test`
 
-**Click:** **Worktrees** > `test`
+**Click:** **jj** menu > **Switch Bookmark** > `test`
 
 **Expected:** `test.js` appears in the **file tree**. `index.js` is the full
 personalized version (because `test` branches from `feature/personalized`).
@@ -503,7 +503,7 @@ The planets array should NOT appear in the diff (it didn't change between
 
 ### 10.1 Switch to main
 
-**Click:** **Worktrees** > `main`
+**Click:** **jj** menu > **Switch Bookmark** > `main`
 
 ### 10.2 Merge feature/personalized
 
