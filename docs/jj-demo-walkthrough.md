@@ -143,8 +143,10 @@ The **status bar** shows `main`.
 
 **Click:** Create
 
-**Expected:** The **status bar** shows `feature/random-planet`. The history
-panel shows the new bookmark label on the current (empty) working-copy commit.
+**Expected:** The **status bar** shows `feature/random-planet main` (both
+bookmarks appear because `feature/random-planet` was just created on the same
+commit as `main`). The history panel shows the new bookmark label on the
+current (empty) working-copy commit.
 
 ### 3.2 Enter the prompt
 
@@ -263,9 +265,9 @@ of printing "hello <planet>!".
 
 ### 5.1 Switch back to main
 
-**Click:** **jj** menu > **Switch Branch**
+**Click:** **jj** menu > **Switch Bookmark**
 
-**Select:** `main` in the branch picker
+**Select:** `main` in the bookmark picker
 
 **Expected:** The **file tree** refreshes. `index.js` now shows the original
 `hello world!` version (not the planet version). The **status bar** shows
