@@ -105,18 +105,6 @@ pub(super) fn get_ahead_of_remote(backend: &VcsBackend, jj_path: &str, repo_path
     }
 }
 
-/// VCS-backend-aware dispatch for listing branches/bookmarks.
-pub(super) fn list_branches(
-    backend: &VcsBackend,
-    jj_path: &str,
-    repo_path: &Path,
-) -> crate::error::Result<Vec<String>> {
-    match backend {
-        VcsBackend::Jj => jj::jj_list_bookmarks(repo_path, jj_path),
-        VcsBackend::Git => git::list_branches(repo_path),
-    }
-}
-
 /// VCS-backend-aware dispatch for listing branches with push status (jj only).
 pub(super) fn list_branches_with_status(
     backend: &VcsBackend,

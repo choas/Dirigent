@@ -185,16 +185,6 @@ fn cue_slug(cue_text: &str) -> String {
     }
 }
 
-/// Generate a jj workspace name for a cue, e.g. `cue-42-add-authentication`.
-pub(crate) fn cue_workspace_name(cue_id: i64, cue_text: &str) -> String {
-    let slug = cue_slug(cue_text);
-    if slug.is_empty() {
-        format!("cue-{}", cue_id)
-    } else {
-        format!("cue-{}-{}", cue_id, slug)
-    }
-}
-
 /// Generate a jj bookmark name for a cue, e.g. `cue/42-add-authentication`.
 pub(crate) fn cue_bookmark_name(cue_id: i64, cue_text: &str) -> String {
     let slug = cue_slug(cue_text);
