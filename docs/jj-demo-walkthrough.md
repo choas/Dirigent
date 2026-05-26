@@ -600,9 +600,35 @@ still visible in the graph but have no bookmark labels.
 
 ---
 
-## Step 14 — Push to remote
+## Step 14 — Abandon empty heads
 
-### 14.1 Add a remote (if needed)
+After deleting bookmarks, jj may leave behind empty head commits (changes with
+no diff). Dirigent can find and abandon these in one click.
+
+### 14.1 Abandon empty heads
+
+**Click:** **jj** menu > **Abandon Empty Heads**
+
+**Expected:** The status bar shows "Abandoned N empty head commit(s)" (where N
+is the number of leftover empties). If there are no empty heads, the status bar
+shows "No empty heads found".
+
+### 14.2 Verify
+
+**Look at** the **history panel**.
+
+**Expected:** The previously empty head commits are gone from the graph. Only
+commits with actual content remain.
+
+> **Bug?** If empty heads still appear after clicking, the abandon command may
+> have failed silently. Check that the jj binary is accessible and that the
+> repository is in a clean state.
+
+---
+
+## Step 15 — Push to remote
+
+### 15.1 Add a remote (if needed)
 
 If the project doesn't have a remote yet, create a repository on your Git
 hosting provider (e.g. GitHub, GitLab) and add the remote:
@@ -615,7 +641,7 @@ hosting provider (e.g. GitHub, GitLab) and add the remote:
 
 **Click:** Add
 
-### 14.2 Push main to the remote
+### 15.2 Push main to the remote
 
 **Click:** **jj** menu > **Git** > **Push**
 
@@ -624,10 +650,10 @@ hosting provider (e.g. GitHub, GitLab) and add the remote:
 to the remote.
 
 > **Bug?** If the push fails with "no remote configured", the remote wasn't
-> added correctly in 14.1. If it fails with "bookmark not tracked", the
+> added correctly in 15.1. If it fails with "bookmark not tracked", the
 > bookmark may need to be explicitly tracked on the remote first.
 
-### 14.3 Verify
+### 15.3 Verify
 
 **Look at** the **history panel**.
 
@@ -656,4 +682,5 @@ from the steps above.
 | 11| Merge Bookmark button merges and updates file tree     | 10.2  |
 | 12| Tests pass after merging all bookmarks                 | 12.1  |
 | 13| Delete Bookmark button removes labels from history     | 13.1  |
-| 14| Push sends main bookmark and commits to remote         | 14.2  |
+| 14| Abandon Empty Heads removes empty commits from graph   | 14.1  |
+| 15| Push sends main bookmark and commits to remote         | 15.2  |
