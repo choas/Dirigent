@@ -287,6 +287,9 @@ impl DirigentApp {
                         Some(jj::BookmarkPushStatus::NotPushed) => {
                             format!("{branch}  \u{2191} not pushed")
                         }
+                        Some(jj::BookmarkPushStatus::NeedsPush) => {
+                            format!("{branch}  \u{2191} needs push")
+                        }
                         Some(jj::BookmarkPushStatus::Synced) => {
                             format!("{branch}  \u{2713} synced")
                         }
@@ -433,6 +436,9 @@ impl DirigentApp {
                         let label = match self.git.bookmark_push_statuses.get(branch) {
                             Some(jj::BookmarkPushStatus::NotPushed) => {
                                 format!("{branch}  \u{2191} not pushed")
+                            }
+                            Some(jj::BookmarkPushStatus::NeedsPush) => {
+                                format!("{branch}  \u{2191} needs push")
                             }
                             Some(jj::BookmarkPushStatus::Synced) => {
                                 format!("{branch}  \u{2713} synced")

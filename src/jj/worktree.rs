@@ -200,6 +200,8 @@ pub(crate) fn cue_bookmark_name(cue_id: i64, cue_text: &str) -> String {
 pub(crate) enum BookmarkPushStatus {
     /// Bookmark exists at @origin and matches the local version.
     Synced,
+    /// Bookmark exists at @origin but targets a different revision.
+    NeedsPush,
     /// Bookmark has no @origin tracking branch (local-only or only @git).
     NotPushed,
 }
@@ -243,12 +245,13 @@ pub(crate) fn jj_list_bookmarks_with_status(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let mut local_names: Vec<String> = Vec::new();
-    let mut has_origin: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut local_bookmarks: Vec<(String, String)> = Vec::new();
+    let mut origin_targets: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     for line in stdout.lines() {
-        let name = match line.split(':').next() {
-            Some(n) => n.trim(),
+        let (name, target) = match line.split_once(':') {
+            Some((n, t)) => (n.trim(), t.trim().to_string()),
             None => continue,
         };
         if name.is_empty() {
@@ -259,20 +262,20 @@ pub(crate) fn jj_list_bookmarks_with_status(
             let base = &name[..at_pos];
             let remote = &name[at_pos + 1..];
             if remote == "origin" {
-                has_origin.insert(base.to_string());
+                origin_targets.insert(base.to_string(), target);
             }
         } else {
-            local_names.push(name.to_string());
+            local_bookmarks.push((name.to_string(), target));
         }
     }
 
-    let bookmarks = local_names
+    let bookmarks = local_bookmarks
         .into_iter()
-        .map(|name| {
-            let push_status = if has_origin.contains(&name) {
-                BookmarkPushStatus::Synced
-            } else {
-                BookmarkPushStatus::NotPushed
+        .map(|(name, local_target)| {
+            let push_status = match origin_targets.get(&name) {
+                Some(origin_target) if *origin_target == local_target => BookmarkPushStatus::Synced,
+                Some(_) => BookmarkPushStatus::NeedsPush,
+                None => BookmarkPushStatus::NotPushed,
             };
             BookmarkInfo { name, push_status }
         })

@@ -1098,10 +1098,11 @@ impl DirigentApp {
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let source_owned = source.to_string();
+        let dest_bm = self.git.active_bookmark.clone();
         self.set_status_message(format!("Merging '{}'...", source_owned));
         std::thread::spawn(move || {
-            let result =
-                jj::jj_merge_bookmark(&root, &source_owned, &jj_path).map_err(|e| e.to_string());
+            let result = jj::jj_merge_bookmark(&root, &source_owned, &jj_path, dest_bm.as_deref())
+                .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
     }
