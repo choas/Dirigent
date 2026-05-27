@@ -63,7 +63,7 @@ Dirigent will initialize the repository with jj automatically.
 
 **Type** in the **prompt field** at the bottom:
 
-```
+```text
 Create a Node.js CLI app. Create these files:
 
 package.json with name "hello-cli", version "1.0.0", main "index.js",
