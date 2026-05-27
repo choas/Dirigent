@@ -5,6 +5,7 @@ use claude_pty::{Event, ExitStatus, PollEvent, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SENTINEL_GRACE: Duration = Duration::from_secs(3);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
@@ -115,6 +116,10 @@ pub(super) fn consume_pty_events(
                             graceful_exit(session);
                             break;
                         }
+                    } else if done_sentinel.is_none() && last_event_time.elapsed() >= IDLE_TIMEOUT {
+                        on_log("\n⚠ No PTY events for 120 s — exiting to avoid stall.\n");
+                        graceful_exit(session);
+                        break;
                     }
                 }
                 std::thread::sleep(POLL_INTERVAL);

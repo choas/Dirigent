@@ -158,18 +158,12 @@ fn resolve_project_logo(project_root: &Path) -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
     let png_bytes: Vec<u8> = if !custom_path.is_empty() {
-        match std::fs::read(custom_path) {
-            Ok(b) => b,
-            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
-        }
-    } else if let Some(local) = resolve_project_logo(project_root) {
-        match std::fs::read(&local) {
-            Ok(b) => b,
-            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
-        }
+        std::fs::read(custom_path).ok()
     } else {
-        include_bytes!("../../assets/logo.png").to_vec()
-    };
+        None
+    }
+    .or_else(|| resolve_project_logo(project_root).and_then(|p| std::fs::read(p).ok()))
+    .unwrap_or_else(|| include_bytes!("../../assets/logo.png").to_vec());
     unsafe {
         use objc::runtime::{Class, Object};
         use objc::{msg_send, sel, sel_impl};
