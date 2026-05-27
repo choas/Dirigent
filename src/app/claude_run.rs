@@ -1249,8 +1249,11 @@ impl DirigentApp {
 
         if self.settings.auto_commit {
             if self.claude.show_log == Some(result.cue_id) {
-                // User is watching the log — defer commit so they can review.
+                // User is watching the log — defer so they can review.
+                // If they close the log without explicitly accepting,
+                // the auto-commit is skipped.
                 self.pending_auto_commits.push(result.cue_id);
+                self.user_reviewed_auto_commits.insert(result.cue_id);
             } else if agents_started > 0 {
                 self.pending_auto_commits.push(result.cue_id);
             } else {

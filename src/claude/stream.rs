@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use claude_pty::{Event, ExitStatus, PollEvent, Session};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const IDLE_EXIT_SECS: u64 = 10;
 const SENTINEL_GRACE: Duration = Duration::from_secs(3);
 
 /// State accumulated while consuming PTY events.
@@ -17,8 +16,8 @@ pub(super) struct PtyResult {
 /// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
 /// and sends `prompt` on the first `TuiPrompt`. The loop exits when the
 /// `done_sentinel` file appears (Claude Code `Stop` hook fired), when a
-/// second prompt appears (fallback heuristic), when the idle-exit timer fires,
-/// or when the session ends (`LibDone`).
+/// second prompt appears (fallback heuristic), or when the session ends
+/// (`LibDone`).
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
@@ -81,6 +80,10 @@ pub(super) fn consume_pty_events(
                                 on_log("\0");
                                 continue;
                             }
+                            if is_tui_chrome_line(plain) {
+                                on_log("\0");
+                                continue;
+                            }
                             on_log(ansi);
                             on_log("\n");
                             state.response.push_str(plain);
@@ -113,17 +116,6 @@ pub(super) fn consume_pty_events(
                             break;
                         }
                     }
-                }
-                if prompt_sent
-                    && sentinel_seen.is_none()
-                    && last_event_time.elapsed() >= Duration::from_secs(IDLE_EXIT_SECS)
-                {
-                    on_log(&format!(
-                        "\n⚠ No output for {}s — session timed out.\n",
-                        IDLE_EXIT_SECS,
-                    ));
-                    graceful_exit(session);
-                    break;
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
@@ -293,6 +285,15 @@ fn extract_kv<'a>(line: &'a str, key: &str) -> Option<&'a str> {
         }
     }
     None
+}
+
+// ── TUI chrome filtering ────────────────────────────────────────────
+
+/// Detect Claude Code TUI status/action bar lines that should not appear
+/// in the captured output. These contain interactive hints like
+/// "(shift+tab to cycle) · esc to interrupt".
+fn is_tui_chrome_line(line: &str) -> bool {
+    line.contains("esc to interrupt") || line.contains("shift+tab to cycle")
 }
 
 // ── Plan path extraction ────────────────────────────────────────────
@@ -504,5 +505,17 @@ mod tests {
     fn detect_stopped_early_no_stop_hook() {
         let log = "Some output\nDone 30s (5 lines)\n";
         assert!(!detect_stopped_early(log));
+    }
+
+    #[test]
+    fn tui_chrome_line_detected() {
+        assert!(is_tui_chrome_line(
+            "─────────────────────ns on (shift+tab to cycle) · esc to interrupt"
+        ));
+        assert!(is_tui_chrome_line(
+            "2 actions on (shift+tab to cycle) · esc to interrupt"
+        ));
+        assert!(!is_tui_chrome_line("⏺ Read file.rs"));
+        assert!(!is_tui_chrome_line("Normal output text"));
     }
 }

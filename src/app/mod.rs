@@ -142,17 +142,33 @@ pub(crate) fn set_macos_dock_name(name: &str) {
     }
 }
 
+/// Search for a project-local `logo.png` in well-known locations.
+/// Returns the first path that exists, or `None`.
+fn resolve_project_logo(project_root: &Path) -> Option<PathBuf> {
+    let candidates = [
+        project_root.join("logo.png"),
+        project_root.join("assets/logo.png"),
+        project_root.join(".Dirigent/logo.png"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 /// Update the macOS Dock icon at runtime from a custom PNG path.
-/// Falls back to the built-in logo when the path is empty or unreadable.
+/// Falls back to a project-local logo.png, then to the built-in logo.
 #[cfg(target_os = "macos")]
-pub(crate) fn update_macos_dock_icon(custom_path: &str) {
-    let png_bytes: Vec<u8> = if custom_path.is_empty() {
-        include_bytes!("../../assets/logo.png").to_vec()
-    } else {
+pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
+    let png_bytes: Vec<u8> = if !custom_path.is_empty() {
         match std::fs::read(custom_path) {
             Ok(b) => b,
             Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
         }
+    } else if let Some(local) = resolve_project_logo(project_root) {
+        match std::fs::read(&local) {
+            Ok(b) => b,
+            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
+        }
+    } else {
+        include_bytes!("../../assets/logo.png").to_vec()
     };
     unsafe {
         use objc::runtime::{Class, Object};
@@ -425,6 +441,9 @@ pub struct DirigentApp {
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
+    // Cue IDs where the user was viewing the log when auto-commit was deferred;
+    // closing the log without explicitly accepting should skip the auto-commit.
+    user_reviewed_auto_commits: HashSet<i64>,
     // Cues that need an auto-continue reply after tracking state is flushed
     pending_auto_continues: Vec<i64>,
 
@@ -490,6 +509,32 @@ fn detect_pr_number_from_branch(project_root: &std::path::Path, _branch: &str) -
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout);
         s.trim().parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Detect the PR number and URL for the current branch using `gh pr view`.
+fn detect_pr_info(project_root: &std::path::Path) -> Option<(u32, String)> {
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "number,url",
+            "-q",
+            "[.number, .url] | @tsv",
+        ])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let s = s.trim();
+        let mut parts = s.splitn(2, '\t');
+        let number: u32 = parts.next()?.parse().ok()?;
+        let url = parts.next()?.to_string();
+        Some((number, url))
     } else {
         None
     }
@@ -667,6 +712,16 @@ impl DirigentApp {
             }
         }
 
+        let initial_diff_lines = if skip_scan {
+            HashMap::new()
+        } else {
+            vcs_dispatch::compute_diff_lines(
+                &settings.vcs_backend,
+                &settings.jj_cli_path,
+                &project_root,
+            )
+        };
+
         let mut app = DirigentApp {
             project_root,
             db,
@@ -701,6 +756,7 @@ impl DirigentApp {
             git_status_rx,
             git: GitState {
                 info: git_info,
+                diff_lines: initial_diff_lines,
                 dirty_files,
                 dirty_dirs: HashSet::new(),
                 show_git_view: false,
@@ -795,6 +851,10 @@ impl DirigentApp {
                 committing: false,
                 commit_rx: None,
                 active_bookmark: None,
+                pr_number: None,
+                pr_url: None,
+                pr_detect_rx: None,
+                pr_detect_branch: String::new(),
             },
             settings,
             semantic,
@@ -922,6 +982,7 @@ impl DirigentApp {
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
+            user_reviewed_auto_commits: HashSet::new(),
             pending_auto_continues: Vec::new(),
 
             ssh_worker: None,
@@ -942,8 +1003,11 @@ impl DirigentApp {
             last_render_code_viewer_time: Duration::ZERO,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        if !skip_scan {
+            app.maybe_detect_pr();
+        }
         #[cfg(target_os = "macos")]
-        update_macos_dock_icon(&app.settings.custom_dock_icon_path);
+        update_macos_dock_icon(&app.settings.custom_dock_icon_path, &app.project_root);
         app
     }
 
@@ -979,7 +1043,9 @@ impl DirigentApp {
                     .ok()
                     .map(|i| i.into_rgba8())
             } else {
-                None
+                resolve_project_logo(&self.project_root)
+                    .and_then(|p| image::open(p).ok())
+                    .map(|i| i.into_rgba8())
             }
             .unwrap_or_else(|| {
                 let png_bytes = include_bytes!("../../assets/logo.png");

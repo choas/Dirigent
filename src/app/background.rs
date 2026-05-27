@@ -57,6 +57,25 @@ impl DirigentApp {
                     .retain(|f| self.git.dirty_files.contains_key(f));
                 self.git.recompute_dirty_dirs(&self.project_root);
                 self.git.ahead_of_remote = ahead;
+                self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
+                    &self.settings.vcs_backend,
+                    &self.settings.jj_cli_path,
+                    &self.project_root,
+                );
+            }
+        }
+
+        // Poll for async PR detection result
+        if let Some(ref rx) = self.git.pr_detect_rx {
+            if let Ok(result) = rx.try_recv() {
+                if let Some((number, url)) = result {
+                    self.git.pr_number = Some(number);
+                    self.git.pr_url = Some(url);
+                } else {
+                    self.git.pr_number = None;
+                    self.git.pr_url = None;
+                }
+                self.git.pr_detect_rx = None;
             }
         }
 
@@ -69,6 +88,11 @@ impl DirigentApp {
         self.last_fs_rescan = std::time::Instant::now();
         self.reload_file_tree();
         self.git.dirty_files = super::vcs_dispatch::get_dirty_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+        );
+        self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,

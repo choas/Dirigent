@@ -1231,6 +1231,34 @@ impl DirigentApp {
                 self.git.ahead_of_remote = git::get_ahead_of_remote(&self.project_root);
             }
         }
+        self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+        );
+        self.maybe_detect_pr();
+    }
+
+    /// Kick off async PR detection if the branch changed since the last detection.
+    pub(super) fn maybe_detect_pr(&mut self) {
+        let branch = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.branch.clone())
+            .unwrap_or_default();
+        if branch == self.git.pr_detect_branch {
+            return;
+        }
+        self.git.pr_detect_branch = branch;
+        self.git.pr_number = None;
+        self.git.pr_url = None;
+        let project_root = self.project_root.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.git.pr_detect_rx = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(super::detect_pr_info(&project_root));
+        });
     }
 
     pub(super) fn reload_commit_history(&mut self) {

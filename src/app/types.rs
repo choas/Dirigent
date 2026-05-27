@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use crate::db::CueStatus;
@@ -13,6 +13,14 @@ use crate::settings::PlayVariable;
 pub(super) enum GitViewDiffMode {
     FullFile,
     DiffOnly,
+}
+
+/// Kind of change for a line in the working-tree diff (gutter indicator).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DiffLineKind {
+    Added,
+    Modified,
+    Deleted,
 }
 
 use super::markdown_parser;
@@ -497,6 +505,8 @@ pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
     /// Relative paths of files with uncommitted changes, mapped to status letter.
     pub(super) dirty_files: HashMap<String, char>,
+    /// Per-file diff line indicators: rel_path -> (1-based line_num -> change kind).
+    pub(super) diff_lines: HashMap<String, Arc<HashMap<usize, DiffLineKind>>>,
     /// Absolute paths of directories that contain at least one dirty file (pre-computed).
     pub(super) dirty_dirs: HashSet<PathBuf>,
     /// Whether the git changes view is shown instead of the file tree.
@@ -660,6 +670,14 @@ pub(crate) struct GitState {
     /// Only this bookmark is advanced when committing, preventing unrelated
     /// bookmarks on the same parent commit from being dragged forward.
     pub(super) active_bookmark: Option<String>,
+    /// PR number for the current branch (detected via `gh pr view`).
+    pub(super) pr_number: Option<u32>,
+    /// PR URL for the current branch (for opening in browser).
+    pub(super) pr_url: Option<String>,
+    /// Receiver for async PR detection results.
+    pub(super) pr_detect_rx: Option<mpsc::Receiver<Option<(u32, String)>>>,
+    /// Branch name when PR was last detected (to avoid re-detecting on every refresh).
+    pub(super) pr_detect_branch: String,
 }
 
 impl GitState {

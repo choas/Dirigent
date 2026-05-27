@@ -20,12 +20,21 @@ impl DirigentApp {
                 .values()
                 .any(|s| *s == AgentStatus::Running);
             if !any_running {
-                let cue_ids = std::mem::take(&mut self.pending_auto_commits);
+                let cue_ids_raw = std::mem::take(&mut self.pending_auto_commits);
+                let mut seen = std::collections::HashSet::new();
+                let cue_ids: Vec<i64> = cue_ids_raw
+                    .into_iter()
+                    .filter(|id| seen.insert(*id))
+                    .collect();
                 let mut deferred = Vec::new();
                 for cue_id in cue_ids {
                     if self.claude.show_log == Some(cue_id) {
                         // User is viewing the log — keep deferring.
+                        self.user_reviewed_auto_commits.insert(cue_id);
                         deferred.push(cue_id);
+                    } else if self.user_reviewed_auto_commits.remove(&cue_id) {
+                        // User reviewed the diff and closed without accepting
+                        // — skip auto-commit so they can decide manually.
                     } else {
                         self.process_commit_review_auto(cue_id);
                     }
