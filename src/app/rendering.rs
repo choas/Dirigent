@@ -55,6 +55,7 @@ impl DirigentApp {
             || self.git.show_worktree_panel
             || self.show_about
             || self.pending_play.is_some()
+            || self.git.show_commit_dialog
             || self.git.show_create_pr
             || self.git.pending_force_remove.is_some()
             || self.git.pending_delete_archive.is_some()

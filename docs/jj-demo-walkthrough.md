@@ -676,7 +676,7 @@ from the steps above.
 | 5 | Bookmark auto-advances after commit                    | 3.4   |
 | 6 | Switching bookmarks updates file tree content          | 5.1   |
 | 7 | `docs` branches from `main` (not from feature chain)   | 5.4   |
-| 8 | File tree shows correct files per bookmark             | 8.1–5 |
+| 8 | File tree shows correct files per bookmark             | 8.1–8.5 |
 | 9 | Clicking a commit opens its diff                       | 9.1   |
 | 10| Diff shows only changes relative to parent             | 9.2   |
 | 11| Merge Bookmark button merges and updates file tree     | 10.2  |
