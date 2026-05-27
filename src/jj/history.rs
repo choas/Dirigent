@@ -15,7 +15,6 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
             "--no-graph",
             "--color",
             "never",
-            "--ignore-working-copy",
             "-n",
             &limit_str,
             "-T",

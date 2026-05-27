@@ -542,10 +542,19 @@ pub(crate) fn jj_merge_bookmark(
     repo_path: &Path,
     source_bookmark: &str,
     jj_path: &str,
+    destination_bookmark: Option<&str>,
 ) -> crate::error::Result<String> {
-    // Get the current bookmark (the one that will receive the merge).
-    let current_bookmarks = bookmarks_for_rev(repo_path, "@-", jj_path);
-    let current_bm = current_bookmarks.first().cloned().unwrap_or_default();
+    // Use the explicitly provided destination bookmark if available,
+    // otherwise fall back to querying @- (which may be ambiguous).
+    let current_bm = destination_bookmark
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            bookmarks_for_rev(repo_path, "@-", jj_path)
+                .first()
+                .cloned()
+                .unwrap_or_default()
+        });
 
     // Create a merge commit: `jj new @- <source_bookmark>`
     // This creates a new working-copy change whose parents are both the
