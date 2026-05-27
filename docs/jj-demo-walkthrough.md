@@ -196,7 +196,7 @@ and added lines with the planets array and random selection.
 > **Note:** jj identifies commits by change IDs (e.g. `yrwzwnn`), not by
 > bookmark names. Bookmark labels appear at the end of the line. The `@`
 > marker indicates the working copy. `zzzzzzz` is always the root commit.
-
+>
 > **Bug?** If `feature/random-planet` doesn't appear as a label, bookmark
 > auto-advance after commit may not be working.
 
