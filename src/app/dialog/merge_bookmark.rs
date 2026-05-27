@@ -32,7 +32,21 @@ impl DirigentApp {
                 ui.label("Select bookmark to merge:");
                 ui.add_space(4.0);
 
-                if self.git.available_branches.is_empty() {
+                let current_branch = self
+                    .git
+                    .info
+                    .as_ref()
+                    .map(|i| i.branch.as_str())
+                    .unwrap_or("");
+
+                let other_branches: Vec<&String> = self
+                    .git
+                    .available_branches
+                    .iter()
+                    .filter(|b| b.as_str() != current_branch)
+                    .collect();
+
+                if other_branches.is_empty() {
                     ui.label(
                         egui::RichText::new("No other bookmarks available")
                             .italics()
@@ -41,25 +55,15 @@ impl DirigentApp {
                     return;
                 }
 
-                let current_branch = self
-                    .git
-                    .info
-                    .as_ref()
-                    .map(|i| i.branch.as_str())
-                    .unwrap_or("");
-
                 egui::ScrollArea::vertical()
                     .max_height(250.0)
                     .show(ui, |ui| {
-                        for branch in &self.git.available_branches {
-                            if branch == current_branch {
-                                continue;
-                            }
+                        for branch in &other_branches {
                             if ui
-                                .selectable_label(false, egui::RichText::new(branch).monospace())
+                                .selectable_label(false, egui::RichText::new(*branch).monospace())
                                 .clicked()
                             {
-                                merge_source = Some(branch.clone());
+                                merge_source = Some((*branch).clone());
                             }
                         }
                     });

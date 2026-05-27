@@ -135,7 +135,7 @@ impl DirigentApp {
         if self.project_root.join(".jj").is_dir() {
             return;
         }
-        if !self.project_root.join(".git").exists() {
+        if git2::Repository::discover(&self.project_root).is_err() {
             return;
         }
         let jj_path = &self.settings.jj_cli_path;
