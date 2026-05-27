@@ -152,7 +152,7 @@ current (empty) working-copy commit.
 
 **Type** in the **prompt field:**
 
-```
+```text
 Update index.js: instead of printing "hello world!", pick a random planet
 from this list: Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto.
 Print "hello <planet>!" where <planet> is the randomly selected one.
@@ -186,7 +186,7 @@ and added lines with the planets array and random selection.
 **Expected:** The **jj Logs** shows entries with jj change IDs
 (short random strings), descriptions, and bookmark labels at the end:
 
-```
+```text
 ● <id> @ (no description yet) (empty)
 ● <id> feat: greet a random planet instead of world  feature/random-planet
 ● <id> feat: initial hello world CLI  main
@@ -221,7 +221,7 @@ switch — the next feature builds on the planet feature.
 
 **Type** in the **prompt field:**
 
-```
+```text
 Update index.js: accept an optional name as a CLI argument (process.argv[2]).
 If a name is provided, print "hello <name> from <planet>!" where planet is
 still randomly selected. If no name is given, keep the current behavior
@@ -251,7 +251,7 @@ of printing "hello <planet>!".
 
 **Expected:** The **jj Logs** now shows a chain:
 
-```
+```text
 ● <id> @ (no description yet) (empty)
 ● <id> feat: personalized greeting with name argument  feature/personalized
 ● <id> feat: greet a random planet instead of world  feature/random-planet
@@ -288,7 +288,7 @@ we're on top of `main`.
 
 **Type** in the **prompt field:**
 
-```
+```text
 Create a README.md file for this project. Include:
 - Project name: hello-cli
 - Description: A friendly greeting CLI built with Node.js
@@ -314,7 +314,7 @@ should NOT appear in the diff (it wasn't changed).
 **Expected:** The **jj Logs** now shows `docs` as a separate branch off
 `main`, parallel to the `feature/random-planet` chain:
 
-```
+```text
 ● <id> @ (no description yet) (empty)
 ● <id> docs: add README with usage instructions  docs
 │ ● <id> feat: personalized greeting with name argument  feature/personalized
@@ -352,7 +352,7 @@ name argument and planet selection.
 
 **Type** in the **prompt field:**
 
-```
+```text
 Create a test.js file that tests the CLI. Use child_process execSync to run
 "node index.js" and verify the output. Test three cases:
 
@@ -390,7 +390,7 @@ regex matching. `index.js` and `package.json` should NOT be in the diff.
 **Expected:** The complete graph should show this topology (each line
 shows a jj change ID, the commit description, and the bookmark label):
 
-```
+```text
 ● <id> @ (no description yet) (empty)
 ● <id> test: add CLI output tests  test
 │ ● <id> docs: add README with usage instructions  docs
@@ -552,7 +552,7 @@ shows a merge commit with two parents.
 
 **Type** in the **prompt field:**
 
-```
+```text
 Run npm test and show me the results.
 ```
 
@@ -560,7 +560,7 @@ Run npm test and show me the results.
 
 **Expected:** Claude runs the tests and reports:
 
-```
+```text
 Running tests...
 
   ✓ no args prints hello <planet>!

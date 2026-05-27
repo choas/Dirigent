@@ -403,7 +403,7 @@ is a separate working directory sharing the same repo.
 | Push to remote               | jj menu > Push                         |
 | Fetch from remote            | jj menu > Fetch                        |
 | Revert a file                | File tree > Revert action              |
-| Switch bookmark              | jj menu > Switch Bookmark              |
+| Switch bookmark              | Worktree Manager > branch/bookmark picker |
 | Create a bookmark            | jj menu > Create Bookmark              |
 | Squash commits               | jj menu > Squash Commits               |
 | Undo last operation          | jj menu > Undo Last Operation          |

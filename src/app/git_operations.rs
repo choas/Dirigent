@@ -1183,11 +1183,7 @@ impl DirigentApp {
             let _ = tx.send(result);
         });
 
-        if let Some(id) = cue_id {
-            let _ = self.db.update_cue_status(id, CueStatus::Done);
-            let _ = self.db.log_activity(id, "Committed");
-        }
-
+        self.git.commit_pending_cue_id = cue_id;
         self.set_status_message("Committing...".into());
     }
 
@@ -1202,6 +1198,9 @@ impl DirigentApp {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.committing = false;
                 self.git.commit_rx = None;
+                if let Some(id) = self.git.commit_pending_cue_id.take() {
+                    let _ = self.db.log_activity(id, "Commit failed");
+                }
                 self.set_status_message("Commit failed unexpectedly".into());
                 return;
             }
@@ -1209,9 +1208,21 @@ impl DirigentApp {
         };
         self.git.committing = false;
         self.git.commit_rx = None;
+        let pending_cue = self.git.commit_pending_cue_id.take();
         match result {
-            Ok(msg) => self.set_status_message(msg),
-            Err(e) => self.set_status_message(e),
+            Ok(msg) => {
+                if let Some(id) = pending_cue {
+                    let _ = self.db.update_cue_status(id, CueStatus::Done);
+                    let _ = self.db.log_activity(id, "Committed");
+                }
+                self.set_status_message(msg);
+            }
+            Err(e) => {
+                if let Some(id) = pending_cue {
+                    let _ = self.db.log_activity(id, "Commit failed");
+                }
+                self.set_status_message(e);
+            }
         }
         self.reload_git_info();
         self.reload_commit_history();
