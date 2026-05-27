@@ -97,7 +97,10 @@ impl DirigentApp {
         self.logo_texture = None;
         #[cfg(target_os = "macos")]
         {
-            crate::app::update_macos_dock_icon(&self.settings.custom_dock_icon_path);
+            crate::app::update_macos_dock_icon(
+                &self.settings.custom_dock_icon_path,
+                &self.project_root,
+            );
             let folder = self
                 .project_root
                 .file_name()

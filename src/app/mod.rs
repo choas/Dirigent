@@ -141,17 +141,33 @@ pub(crate) fn set_macos_dock_name(name: &str) {
     }
 }
 
+/// Search for a project-local `logo.png` in well-known locations.
+/// Returns the first path that exists, or `None`.
+fn resolve_project_logo(project_root: &Path) -> Option<PathBuf> {
+    let candidates = [
+        project_root.join("logo.png"),
+        project_root.join("assets/logo.png"),
+        project_root.join(".Dirigent/logo.png"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 /// Update the macOS Dock icon at runtime from a custom PNG path.
-/// Falls back to the built-in logo when the path is empty or unreadable.
+/// Falls back to a project-local logo.png, then to the built-in logo.
 #[cfg(target_os = "macos")]
-pub(crate) fn update_macos_dock_icon(custom_path: &str) {
-    let png_bytes: Vec<u8> = if custom_path.is_empty() {
-        include_bytes!("../../assets/logo.png").to_vec()
-    } else {
+pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
+    let png_bytes: Vec<u8> = if !custom_path.is_empty() {
         match std::fs::read(custom_path) {
             Ok(b) => b,
             Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
         }
+    } else if let Some(local) = resolve_project_logo(project_root) {
+        match std::fs::read(&local) {
+            Ok(b) => b,
+            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
+        }
+    } else {
+        include_bytes!("../../assets/logo.png").to_vec()
     };
     unsafe {
         use objc::runtime::{Class, Object};
@@ -970,7 +986,7 @@ impl DirigentApp {
             app.maybe_detect_pr();
         }
         #[cfg(target_os = "macos")]
-        update_macos_dock_icon(&app.settings.custom_dock_icon_path);
+        update_macos_dock_icon(&app.settings.custom_dock_icon_path, &app.project_root);
         app
     }
 
@@ -1006,7 +1022,9 @@ impl DirigentApp {
                     .ok()
                     .map(|i| i.into_rgba8())
             } else {
-                None
+                resolve_project_logo(&self.project_root)
+                    .and_then(|p| image::open(p).ok())
+                    .map(|i| i.into_rgba8())
             }
             .unwrap_or_else(|| {
                 let png_bytes = include_bytes!("../../assets/logo.png");

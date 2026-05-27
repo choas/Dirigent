@@ -302,11 +302,21 @@ fn scrub_sentry_event(
     Some(event)
 }
 
-fn load_logo_icon() -> egui::IconData {
-    let png_bytes = include_bytes!("../assets/logo.png");
-    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
-        .expect("failed to decode logo.png")
-        .into_rgba8();
+fn load_logo_icon(project_root: &std::path::Path) -> egui::IconData {
+    let img = ["logo.png", "assets/logo.png", ".Dirigent/logo.png"]
+        .iter()
+        .map(|rel| project_root.join(rel))
+        .find(|p| p.is_file())
+        .and_then(|p| image::open(p).ok())
+        .map(|i| i.into_rgba8())
+        .unwrap_or_else(|| {
+            image::load_from_memory_with_format(
+                include_bytes!("../assets/logo.png"),
+                image::ImageFormat::Png,
+            )
+            .expect("failed to decode logo.png")
+            .into_rgba8()
+        });
     let (width, height) = img.dimensions();
     egui::IconData {
         rgba: img.into_raw(),
@@ -426,7 +436,7 @@ fn main() -> eframe::Result {
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_else(|| project_root.to_string_lossy())
         ))
-        .with_icon(std::sync::Arc::new(load_logo_icon()));
+        .with_icon(std::sync::Arc::new(load_logo_icon(&project_root)));
 
     #[cfg(target_os = "macos")]
     if let Some(pos) = screen_center_position(1200.0, 800.0) {
