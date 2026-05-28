@@ -6,7 +6,7 @@ use crate::claude;
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::{CliProvider, SourceKind, VcsBackend};
+use crate::settings::{SourceKind, VcsBackend};
 use crate::telemetry;
 
 use super::super::vcs_dispatch;
@@ -502,7 +502,7 @@ impl DirigentApp {
                 {
                     if let Some(last) = execs.last() {
                         if let Some(ref log_text) = last.log {
-                            e.insert((log_text.clone(), CliProvider::Claude));
+                            e.insert((log_text.clone(), last.provider.clone()));
                         }
                     }
                 }

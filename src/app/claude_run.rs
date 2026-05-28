@@ -1535,16 +1535,12 @@ impl DirigentApp {
         if !is_running {
             return;
         }
-        let log_text = self
-            .db
-            .get_latest_execution(cue_id)
-            .ok()
-            .flatten()
-            .and_then(|e| e.log);
-        if let Some(text) = log_text {
-            self.claude
-                .running_logs
-                .insert(cue_id, (text, CliProvider::Claude));
+        let log_text = self.db.get_latest_execution(cue_id).ok().flatten();
+        if let Some(exec) = log_text {
+            let provider = exec.provider;
+            if let Some(text) = exec.log {
+                self.claude.running_logs.insert(cue_id, (text, provider));
+            }
         }
     }
 

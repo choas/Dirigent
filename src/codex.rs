@@ -254,6 +254,21 @@ pub(crate) fn invoke_codex_streaming(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
+    let yolo_note = if config.skip_permissions {
+        "--yolo "
+    } else {
+        ""
+    };
+    let model_note = if config.model.is_empty() {
+        String::new()
+    } else {
+        format!("--model {} ", config.model)
+    };
+    on_log(&format!(
+        "▶ codex exec --json {}{}<prompt>\n",
+        yolo_note, model_note
+    ));
+
     claude::apply_env_vars(&mut cmd, config.env_vars, &mut on_log);
     claude::apply_dirigent_env(&mut cmd, project_root, &mut on_log);
 
