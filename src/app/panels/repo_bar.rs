@@ -13,9 +13,8 @@ impl DirigentApp {
                         .sense(egui::Sense::click()),
                 );
                 if response.clicked() {
-                    ui.output_mut(|o| {
-                        o.copied_text = self.project_root.to_string_lossy().into_owned();
-                    });
+                    ui.ctx()
+                        .copy_text(self.project_root.to_string_lossy().into_owned());
                     self.set_status_message("Path copied to clipboard".into());
                 }
                 response
