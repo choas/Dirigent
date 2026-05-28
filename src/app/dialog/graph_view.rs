@@ -148,7 +148,10 @@ impl DirigentApp {
                         // Message
                         let msg_x = text_x + char_width * 9.0;
                         let msg = if commit.message.len() > max_msg_chars + 3 {
-                            format!("{}...", &commit.message[..max_msg_chars])
+                            format!(
+                                "{}...",
+                                crate::app::truncate_str(&commit.message, max_msg_chars)
+                            )
                         } else {
                             commit.message.clone()
                         };
