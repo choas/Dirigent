@@ -532,6 +532,8 @@ pub(crate) struct GitState {
     pub(super) show_worktree_panel: bool,
     /// Branches available for worktree creation (local + remote, excluding checked-out).
     pub(super) available_branches: Vec<String>,
+    /// Branch names whose tip commit was authored by the current git user.
+    pub(super) own_branches: HashSet<String>,
     /// Per-bookmark push status (jj only): synced vs not-pushed for each bookmark name.
     pub(super) bookmark_push_statuses: HashMap<String, crate::jj::BookmarkPushStatus>,
     /// Whether a git push is currently in progress.

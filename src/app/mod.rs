@@ -768,6 +768,7 @@ impl DirigentApp {
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
                 available_branches: Vec::new(),
+                own_branches: HashSet::new(),
                 bookmark_push_statuses: HashMap::new(),
                 pushing: false,
                 push_rx: None,

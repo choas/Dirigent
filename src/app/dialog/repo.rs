@@ -295,10 +295,12 @@ impl DirigentApp {
                         }
                         None => branch.clone(),
                     };
-                    if ui
-                        .selectable_label(false, egui::RichText::new(&label).monospace())
-                        .clicked()
-                    {
+                    let is_own = self.git.own_branches.contains(branch);
+                    let mut text = egui::RichText::new(&label).monospace();
+                    if is_own {
+                        text = text.color(self.semantic.accent);
+                    }
+                    if ui.selectable_label(false, text).clicked() {
                         *switch_to = Some(branch.clone());
                     }
                 }

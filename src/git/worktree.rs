@@ -89,6 +89,58 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
     Ok(worktrees)
 }
 
+/// Return the set of branch names whose tip commit was authored by the
+/// currently configured git user (matched by email).
+pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String> {
+    use std::process::Command;
+
+    let email = Command::new("git")
+        .args(["config", "user.email"])
+        .current_dir(repo_path)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_lowercase());
+    let email = match email {
+        Some(e) if !e.is_empty() => e,
+        _ => return std::collections::HashSet::new(),
+    };
+
+    let mut own = std::collections::HashSet::new();
+    let output = Command::new("git")
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)\t%(authoremail)",
+            "refs/heads/",
+            "refs/remotes/",
+        ])
+        .current_dir(repo_path)
+        .output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return own,
+    };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((name, author)) = line.split_once('\t') else {
+            continue;
+        };
+        let author_clean = author
+            .trim()
+            .trim_matches('<')
+            .trim_matches('>')
+            .to_lowercase();
+        if author_clean == email {
+            // Local branches: refname:short is just the name.
+            // Remote branches: refname:short is "origin/name" — strip to match available_branches.
+            let short = match name.find('/') {
+                Some(pos) => &name[pos + 1..],
+                None => name,
+            };
+            own.insert(short.to_string());
+        }
+    }
+    own
+}
+
 /// List branch names available for worktree creation (local + remote-tracking),
 /// excluding branches already checked out in an existing worktree.
 pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {

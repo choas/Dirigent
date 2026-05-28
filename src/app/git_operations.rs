@@ -126,6 +126,7 @@ impl DirigentApp {
             VcsBackend::Git => {
                 self.git.available_branches =
                     git::list_branches(&self.project_root).unwrap_or_default();
+                self.git.own_branches = git::own_branches(&self.project_root);
                 self.git.bookmark_push_statuses.clear();
             }
         }
