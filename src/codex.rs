@@ -134,6 +134,16 @@ fn extract_text_from_event(event: &serde_json::Value) -> Option<&str> {
         .and_then(|t| t.as_str())
         .or_else(|| event.get("message").and_then(|t| t.as_str()))
         .or_else(|| {
+            event.get("msg").and_then(|m| {
+                let msg_type = m.get("type").and_then(|t| t.as_str());
+                if msg_type.is_none() || msg_type == Some("text") {
+                    m.get("content").and_then(|c| c.as_str())
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| {
             event
                 .get("item")
                 .and_then(|i| i.get("text"))
@@ -145,6 +155,19 @@ fn extract_text_from_event(event: &serde_json::Value) -> Option<&str> {
                 .and_then(|p| p.get("text"))
                 .and_then(|t| t.as_str())
         })
+}
+
+fn is_turn_complete_event(event: &serde_json::Value) -> bool {
+    matches!(
+        event.get("type").and_then(|t| t.as_str()),
+        Some("turn.completed") | Some("turn_complete")
+    ) || matches!(
+        event
+            .get("msg")
+            .and_then(|m| m.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("turn_complete")
+    )
 }
 
 fn process_event_stream(
@@ -188,7 +211,7 @@ fn process_event_stream(
             if let Some(cost) = event.get("cost_usd").and_then(|c| c.as_f64()) {
                 metrics.cost_usd = cost;
             }
-            if event.get("type").and_then(|t| t.as_str()) == Some("turn.completed") {
+            if is_turn_complete_event(&event) {
                 metrics.num_turns = metrics.num_turns.saturating_add(1);
             }
             continue;
@@ -343,4 +366,53 @@ pub(crate) fn invoke_codex_streaming(
 
 pub(crate) fn parse_diff_from_response(_response: &str) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_text_from_codex_msg_content() {
+        let event = serde_json::json!({
+            "msg": {
+                "type": "text",
+                "content": "codex response"
+            }
+        });
+
+        assert_eq!(extract_text_from_event(&event), Some("codex response"));
+    }
+
+    #[test]
+    fn ignores_non_text_msg_content() {
+        let event = serde_json::json!({
+            "msg": {
+                "type": "turn_complete",
+                "content": "not response text"
+            }
+        });
+
+        assert_eq!(extract_text_from_event(&event), None);
+    }
+
+    #[test]
+    fn process_event_stream_accumulates_codex_msg_content() {
+        let input = concat!(
+            "{\"msg\":{\"type\":\"text\",\"content\":\"first\"}}\n",
+            "{\"msg\":{\"type\":\"text\",\"content\":\"second\"}}\n",
+            "{\"msg\":{\"type\":\"turn_complete\"}}\n",
+        );
+        let cancel = AtomicBool::new(false);
+        let mut log = String::new();
+
+        let (final_result, edited_files, metrics) =
+            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+                .expect("stream should parse");
+
+        assert_eq!(final_result, "first\nsecond\n");
+        assert_eq!(log, "first\nsecond\n");
+        assert!(edited_files.is_empty());
+        assert_eq!(metrics.num_turns, 1);
+    }
 }
