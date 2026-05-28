@@ -15,10 +15,15 @@ pub(super) struct PtyResult {
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
 ///
 /// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
-/// and sends `prompt` on the first `TuiPrompt`. The loop exits when the
-/// `done_sentinel` file appears (Claude Code `Stop` hook fired), when a
-/// second prompt appears (fallback heuristic), or when the session ends
-/// (`LibDone`).
+/// and sends `prompt` on the first [`TuiPrompt`](Event::TuiPrompt). The loop
+/// exits when:
+///
+/// 1. The `done_sentinel` file appears (Claude Code `Stop` hook fired).
+/// 2. A second `TuiPrompt` arrives (fallback heuristic) — triggers
+///    [`graceful_exit`].
+/// 3. The session ends (`LibDone`).
+/// 4. `done_sentinel` is `None` and no PTY events arrive for 120 s after the
+///    prompt is submitted (idle timeout) — triggers [`graceful_exit`].
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
