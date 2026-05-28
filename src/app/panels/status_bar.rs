@@ -86,14 +86,25 @@ impl DirigentApp {
     fn render_status_bar_git_info(&mut self, ui: &mut egui::Ui) {
         if let Some(ref info) = self.git.info {
             let is_default_branch = info.branch == "main" || info.branch == "master";
-            let mut branch_text = icon_small(
+            let branch_text = icon_small(
                 &format!("\u{25CF} {}", info.branch),
                 self.settings.font_size,
             );
-            if !is_default_branch {
-                branch_text = branch_text.color(egui::Color32::from_rgb(255, 165, 0));
-            }
-            let branch_label = ui.label(branch_text);
+            let branch_label = if !is_default_branch {
+                let bg = egui::Color32::from_rgb(255, 165, 0);
+                let fg = ui.visuals().widgets.noninteractive.bg_fill;
+                let font = egui::FontId::monospace(self.settings.font_size * 0.85);
+                let text = format!("\u{25CF} {}", info.branch);
+                let galley = ui.painter().layout_no_wrap(text, font, fg);
+                let desired = galley.size() + egui::vec2(8.0, 2.0);
+                let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::hover());
+                ui.painter().rect_filled(rect, 3.0, bg);
+                let text_pos = rect.center() - galley.size() / 2.0;
+                ui.painter().galley(text_pos, galley, fg);
+                resp
+            } else {
+                ui.label(branch_text)
+            };
             branch_label.on_hover_text(format!(
                 "{} {}",
                 info.last_commit_hash, info.last_commit_message
