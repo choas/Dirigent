@@ -176,7 +176,11 @@ impl SemanticColors {
     }
 
     pub fn codex_color(&self) -> egui::Color32 {
-        if self.is_dark { egui::Color32::from_rgb(220, 160, 255) } else { egui::Color32::from_rgb(130, 70, 170) }
+        if self.is_dark {
+            egui::Color32::from_rgb(220, 160, 255)
+        } else {
+            egui::Color32::from_rgb(130, 70, 170)
+        }
     }
 
     pub fn provider_color(&self, provider: &CliProvider) -> egui::Color32 {

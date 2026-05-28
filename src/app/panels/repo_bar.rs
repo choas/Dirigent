@@ -7,10 +7,20 @@ impl DirigentApp {
     pub(in super::super) fn render_repo_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("repo_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(icon_small(
-                    &format!("\u{25B6} {}", self.project_root.display()),
-                    self.settings.font_size,
-                ));
+                let path_text = format!("\u{25B6} {}", self.project_root.display());
+                let response = ui.add(
+                    egui::Label::new(icon_small(&path_text, self.settings.font_size))
+                        .sense(egui::Sense::click()),
+                );
+                if response.clicked() {
+                    ui.output_mut(|o| {
+                        o.copied_text = self.project_root.to_string_lossy().into_owned();
+                    });
+                    self.set_status_message("Path copied to clipboard".into());
+                }
+                response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Click to copy path");
                 if ui.small_button("Change...").clicked() {
                     self.repo_path_input = self.project_root.to_string_lossy().to_string();
                     self.show_repo_picker = true;
