@@ -127,6 +127,7 @@ impl DirigentApp {
 
     fn render_claude_model_combo(&mut self, ui: &mut egui::Ui) {
         const DEFAULT_CLAUDE_MODELS: &[&str] = &[
+            "claude-opus-4-8",
             "claude-opus-4-6",
             "claude-opus-4-5-20251101",
             "claude-sonnet-4-6",

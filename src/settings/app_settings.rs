@@ -381,7 +381,7 @@ impl Default for Settings {
             theme: ThemeChoice::Dark,
             custom_themes: Vec::new(),
             cli_provider: CliProvider::default(),
-            claude_model: "claude-opus-4-6".to_string(),
+            claude_model: "claude-opus-4-8".to_string(),
             claude_custom_models: Vec::new(),
             claude_cli_path: String::new(),
             claude_extra_args: String::new(),
