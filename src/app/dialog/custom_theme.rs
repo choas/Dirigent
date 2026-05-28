@@ -420,7 +420,7 @@ impl DirigentApp {
                 &project_root,
                 &prompt_text,
                 is_dark,
-                cancel,
+                cancel.clone(),
             );
             let _ = tx.send(result);
             if let Some(c) = ctx.get() {
@@ -511,7 +511,7 @@ Return ONLY the JSON object."#,
                 settings.allow_dangerous_skip_permissions,
                 false,
                 |_| {},
-                cancel,
+                cancel.clone(),
             )
             .map_err(|e| format!("Claude invocation failed: {e}"))?;
             result.stdout
@@ -530,7 +530,7 @@ Return ONLY the JSON object."#,
                 project_root,
                 &config,
                 |_| {},
-                cancel,
+                cancel.clone(),
             )
             .map_err(|e| format!("OpenCode invocation failed: {e}"))?;
             result.stdout
@@ -549,9 +549,23 @@ Return ONLY the JSON object."#,
                 project_root,
                 &config,
                 |_| {},
-                cancel,
+                cancel.clone(),
             )
             .map_err(|e| format!("Gemini invocation failed: {e}"))?;
+            result.stdout
+        }
+
+        CliProvider::Codex => {
+            let config = crate::codex::CodexRunConfig {
+                model: pf.model,
+                cli_path: pf.cli_path,
+                extra_args: pf.extra_args,
+                env_vars: pf.env_vars,
+                pre_run_script: pf.pre_run_script,
+                post_run_script: pf.post_run_script,
+            };
+            let result = crate::codex::invoke_codex_streaming(&prompt, project_root, &config, |_| {}, cancel)
+                .map_err(|e| format!("Codex invocation failed: {e}"))?;
             result.stdout
         }
     };
