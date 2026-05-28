@@ -340,7 +340,11 @@ impl DirigentApp {
                 .selected_text(&self.settings.codex_model)
                 .show_ui(ui, |ui| {
                     for model in ["gpt-5-codex", "gpt-5.4", "gpt-5.4-mini"] {
-                        ui.selectable_value(&mut self.settings.codex_model, model.to_string(), model);
+                        ui.selectable_value(
+                            &mut self.settings.codex_model,
+                            model.to_string(),
+                            model,
+                        );
                     }
                 });
             ui.add(
@@ -412,6 +416,12 @@ impl DirigentApp {
             "Pre-run Script:",
             &mut self.settings.codex_pre_run_script,
             "shell command before run",
+        );
+        cli_field(
+            ui,
+            "Env Variables:",
+            &mut self.settings.codex_env_vars,
+            "KEY=VAL, one per line",
         );
         cli_field(
             ui,

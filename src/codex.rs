@@ -51,6 +51,7 @@ pub(crate) struct CodexRunConfig<'a> {
     pub env_vars: &'a str,
     pub pre_run_script: &'a str,
     pub post_run_script: &'a str,
+    pub skip_permissions: bool,
 }
 
 #[derive(Default)]
@@ -195,6 +196,27 @@ fn process_event_stream(
     Ok((final_result, edited_files, metrics))
 }
 
+fn stream_stderr(
+    stderr_handle: impl std::io::Read,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, std::io::Error> {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(stderr_handle);
+    let mut all = String::new();
+    for line_result in reader.lines() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let line = line_result?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        all.push_str(&line);
+        all.push('\n');
+    }
+    Ok(all)
+}
+
 pub(crate) fn invoke_codex_streaming(
     prompt: &str,
     project_root: &Path,
@@ -213,7 +235,10 @@ pub(crate) fn invoke_codex_streaming(
 
     let start = Instant::now();
     let mut cmd = Command::new(codex_bin);
-    cmd.arg("exec").arg("--yolo").arg("--json");
+    cmd.arg("exec").arg("--json");
+    if config.skip_permissions {
+        cmd.arg("--yolo");
+    }
     if !config.model.is_empty() {
         cmd.arg("--model").arg(config.model);
     }
@@ -248,13 +273,17 @@ pub(crate) fn invoke_codex_streaming(
             .take()
             .ok_or_else(|| CodexError::SpawnFailed(std::io::Error::other("missing stderr")))?;
 
+        let cancel_for_stderr = Arc::clone(&cancel);
+        let stderr_thread =
+            std::thread::spawn(move || stream_stderr(stderr_handle, cancel_for_stderr));
+
         let (result, files, metrics) = process_event_stream(stdout_handle, &cancel, &mut on_log)
             .map_err(CodexError::StreamReadError)?;
 
-        let mut stderr_buf = String::new();
-        use std::io::Read;
-        let mut reader = std::io::BufReader::new(stderr_handle);
-        let _ = reader.read_to_string(&mut stderr_buf);
+        let stderr_buf = stderr_thread
+            .join()
+            .unwrap_or_else(|_| Ok(String::new()))
+            .unwrap_or_default();
 
         let status = guard.wait().map_err(CodexError::SpawnFailed)?;
         (result, files, metrics, stderr_buf, status)
@@ -267,13 +296,6 @@ pub(crate) fn invoke_codex_streaming(
         on_log(&stderr);
     }
 
-    if cancel.load(Ordering::Relaxed) {
-        return Err(CodexError::Cancelled);
-    }
-    if !status.success() {
-        return Err(CodexError::NonZeroExit(status));
-    }
-
     run_hook_script(
         "Post-run script",
         config.post_run_script,
@@ -281,6 +303,13 @@ pub(crate) fn invoke_codex_streaming(
         &mut on_log,
         false,
     )?;
+
+    if cancel.load(Ordering::Relaxed) {
+        return Err(CodexError::Cancelled);
+    }
+    if !status.success() {
+        return Err(CodexError::NonZeroExit(status));
+    }
 
     Ok(CodexResponse {
         stdout: final_result,

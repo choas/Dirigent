@@ -563,9 +563,16 @@ Return ONLY the JSON object."#,
                 env_vars: pf.env_vars,
                 pre_run_script: pf.pre_run_script,
                 post_run_script: pf.post_run_script,
+                skip_permissions: settings.allow_dangerous_skip_permissions,
             };
-            let result = crate::codex::invoke_codex_streaming(&prompt, project_root, &config, |_| {}, cancel)
-                .map_err(|e| format!("Codex invocation failed: {e}"))?;
+            let result = crate::codex::invoke_codex_streaming(
+                &prompt,
+                project_root,
+                &config,
+                |_| {},
+                cancel,
+            )
+            .map_err(|e| format!("Codex invocation failed: {e}"))?;
             result.stdout
         }
     };

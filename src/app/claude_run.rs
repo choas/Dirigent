@@ -523,6 +523,7 @@ fn run_codex_provider(
         env_vars: &req.config.env_vars,
         pre_run_script: &req.config.pre_run_script,
         post_run_script: &req.config.post_run_script,
+        skip_permissions: req.config.skip_permissions,
     };
     let res =
         codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
