@@ -262,17 +262,57 @@ impl DirigentApp {
             self.git.commit_history_total,
             ahead_label
         );
-        let header_resp = egui::CollapsingHeader::new(
-            egui::RichText::new(header_text)
-                .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
-                .strong(),
-        )
-        .default_open(self.git.show_log)
-        .show(ui, |ui| self.render_git_log_entries(ui));
-        self.git.show_log = header_resp.fully_open();
-        if let Some(Some((full_hash, message, body, author))) = header_resp.body_returned {
-            self.open_commit_diff_review(&full_hash, &message, body, &author);
+        ui.horizontal(|ui| {
+            let header_resp = egui::CollapsingHeader::new(
+                egui::RichText::new(&header_text)
+                    .size(self.settings.font_size * FONT_SCALE_SUBHEADING)
+                    .strong(),
+            )
+            .default_open(self.git.show_log)
+            .show(ui, |_ui| {});
+            self.git.show_log = header_resp.fully_open();
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button("\u{1F4CA}")
+                    .on_hover_text("Open full graph view")
+                    .clicked()
+                {
+                    self.open_graph_view();
+                }
+            });
+        });
+
+        if self.git.show_log {
+            let result = self.render_git_log_entries(ui);
+            if let Some((full_hash, message, body, author)) = result {
+                self.open_commit_diff_review(&full_hash, &message, body, &author);
+            }
         }
+    }
+
+    fn open_graph_view(&mut self) {
+        self.git.show_graph_view = true;
+        self.git.graph_view_limit = 100;
+        self.reload_graph_view_history();
+    }
+
+    pub(in crate::app) fn reload_graph_view_history(&mut self) {
+        let limit = self.git.graph_view_limit;
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                let jj_path = &self.settings.jj_cli_path;
+                self.git.graph_view_commits =
+                    crate::jj::jj_read_commit_history(&self.project_root, limit, jj_path);
+            }
+            VcsBackend::Git => {
+                self.git.graph_view_commits =
+                    crate::git::read_commit_history(&self.project_root, limit);
+            }
+        }
+        let (rows, max_lanes) = crate::git::graph::compute_graph(&self.git.graph_view_commits);
+        self.git.graph_view_rows = rows;
+        self.git.graph_view_max_lanes = max_lanes;
     }
 
     /// Render individual commit entries inside the git log scroll area.
@@ -364,7 +404,7 @@ impl DirigentApp {
     }
 
     /// Open a diff review for the given commit.
-    fn open_commit_diff_review(
+    pub(in crate::app) fn open_commit_diff_review(
         &mut self,
         full_hash: &str,
         message: &str,

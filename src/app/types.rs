@@ -679,6 +679,18 @@ pub(crate) struct GitState {
     pub(super) pr_detect_rx: Option<mpsc::Receiver<Option<(u32, String)>>>,
     /// Branch name when PR was last detected (to avoid re-detecting on every refresh).
     pub(super) pr_detect_branch: String,
+    /// Whether the full-project graph view is shown in the central panel.
+    pub(super) show_graph_view: bool,
+    /// Commit history loaded for the full graph view (separate from sidebar history).
+    pub(super) graph_view_commits: Vec<git::CommitInfo>,
+    /// Graph layout rows for the full graph view.
+    pub(super) graph_view_rows: Vec<git::graph::GraphRow>,
+    /// Max lanes in the full graph view.
+    pub(super) graph_view_max_lanes: usize,
+    /// Number of commits loaded in the graph view.
+    pub(super) graph_view_limit: usize,
+    /// Row hovered in the full graph view (previous frame).
+    pub(super) graph_view_hovered_row: Option<usize>,
 }
 
 impl GitState {

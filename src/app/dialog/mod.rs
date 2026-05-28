@@ -10,6 +10,7 @@ mod diff_review;
 mod file_ops;
 mod filter_pr;
 mod git_init;
+mod graph_view;
 mod import_pr;
 mod log_viewer;
 mod merge_bookmark;
