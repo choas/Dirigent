@@ -9,12 +9,12 @@ use super::tasks::TaskHandle;
 use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::claude;
+use crate::codex;
 use crate::db::{Cue, CueStatus, Execution};
 use crate::gemini;
 use crate::git;
 use crate::jj;
 use crate::opencode;
-use crate::codex;
 use crate::settings::{self, CliProvider, CueCommand, VcsBackend};
 use crate::telemetry;
 
@@ -509,7 +509,6 @@ fn run_gemini_provider(
     finalize_run(req, &baseline, res)
 }
 
-
 fn run_codex_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send + 'static,
@@ -525,13 +524,19 @@ fn run_codex_provider(
         pre_run_script: &req.config.pre_run_script,
         post_run_script: &req.config.post_run_script,
     };
-    let res = codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
-        .map(|response| ProviderRunOutcome {
-            stdout: response.stdout,
-            edited_files: response.edited_files,
-            metrics: claude::RunMetrics::default(),
-            parse_diff: codex::parse_diff_from_response,
-        });
+    let res =
+        codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
+            .map(|response| ProviderRunOutcome {
+                stdout: response.stdout,
+                edited_files: response.edited_files,
+                metrics: claude::RunMetrics {
+                    cost_usd: response.cost_usd.unwrap_or(0.0),
+                    duration_ms: response.duration_ms.unwrap_or(0),
+                    num_turns: response.num_turns.unwrap_or(0),
+                    ..claude::RunMetrics::default()
+                },
+                parse_diff: codex::parse_diff_from_response,
+            });
     finalize_run(req, &baseline, res)
 }
 fn run_opencode_provider(
@@ -820,9 +825,7 @@ impl DirigentApp {
         {
             reply.to_string()
         } else {
-            let previous_diff = latest_exec
-                .and_then(|e| e.diff)
-                .unwrap_or_default();
+            let previous_diff = latest_exec.and_then(|e| e.diff).unwrap_or_default();
 
             claude::build_reply_prompt(
                 &original_text,
