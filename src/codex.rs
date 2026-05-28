@@ -135,6 +135,12 @@ fn extract_text_from_event(event: &serde_json::Value) -> Option<&str> {
         .or_else(|| event.get("message").and_then(|t| t.as_str()))
         .or_else(|| {
             event
+                .get("item")
+                .and_then(|i| i.get("text"))
+                .and_then(|t| t.as_str())
+        })
+        .or_else(|| {
+            event
                 .get("part")
                 .and_then(|p| p.get("text"))
                 .and_then(|t| t.as_str())

@@ -48,12 +48,16 @@ impl DirigentApp {
 
         // Collect conversation data: past executions + current running log
         let past_execs = self.claude.conversation_history.clone();
+        let fallback_provider = past_execs
+            .last()
+            .map(|e| e.provider.clone())
+            .unwrap_or_else(|| self.settings.cli_provider.clone());
         let (current_running_log, current_provider) = self
             .claude
             .running_logs
             .get(&cue_id)
             .cloned()
-            .unwrap_or((String::new(), CliProvider::Claude));
+            .unwrap_or((String::new(), fallback_provider));
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
 
         let mut close = false;
