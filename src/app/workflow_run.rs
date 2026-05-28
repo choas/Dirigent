@@ -441,7 +441,9 @@ fn run_workflow_analysis(
                 extra_args: pf.extra_args,
                 env_vars: pf.env_vars,
                 pre_run_script: pf.pre_run_script,
+                pre_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
                 post_run_script: pf.post_run_script,
+                post_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
                 skip_permissions: settings.allow_dangerous_skip_permissions,
             };
             let result =

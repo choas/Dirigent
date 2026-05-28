@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,6 +16,7 @@ pub(crate) enum CodexError {
     Cancelled,
     NonZeroExit(std::process::ExitStatus),
     InvalidExtraArgs(String),
+    HookRejected(String),
 }
 
 impl std::fmt::Display for CodexError {
@@ -28,6 +29,7 @@ impl std::fmt::Display for CodexError {
             CodexError::InvalidExtraArgs(args) => {
                 write!(f, "failed to parse extra_args (unmatched quote?): {args}")
             }
+            CodexError::HookRejected(msg) => write!(f, "hook script rejected: {msg}"),
             CodexError::NonZeroExit(status) => write!(f, "codex exited with {status}"),
         }
     }
@@ -50,8 +52,16 @@ pub(crate) struct CodexRunConfig<'a> {
     pub extra_args: &'a str,
     pub env_vars: &'a str,
     pub pre_run_script: &'a str,
+    pub pre_run_script_trust: HookScriptTrust,
     pub post_run_script: &'a str,
+    pub post_run_script_trust: HookScriptTrust,
     pub skip_permissions: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookScriptTrust {
+    ProjectLocal,
+    Trusted,
 }
 
 #[derive(Default)]
@@ -61,21 +71,87 @@ struct StreamMetrics {
     num_turns: Option<u64>,
 }
 
+struct HookCommand {
+    program: String,
+    args: Vec<String>,
+}
+
+fn is_safe_hook_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '=' | '+' | ',')
+        })
+}
+
+fn validate_hook_command(script: &str, trust: HookScriptTrust) -> Result<HookCommand, String> {
+    if trust != HookScriptTrust::Trusted {
+        return Err(
+            "project-local Codex hook scripts are not trusted and will not be executed".to_string(),
+        );
+    }
+    let trimmed = script.trim();
+    if trimmed.lines().count() > 1 {
+        return Err("multi-line hook scripts are not supported".to_string());
+    }
+    if trimmed.chars().any(|c| {
+        matches!(
+            c,
+            ';' | '|' | '&' | '<' | '>' | '$' | '`' | '\\' | '(' | ')' | '{' | '}'
+        )
+    }) {
+        return Err("shell metacharacters are not allowed in Codex hook scripts".to_string());
+    }
+    let mut parts = shlex::split(trimmed)
+        .ok_or_else(|| "failed to parse hook script (unmatched quote?)".to_string())?;
+    if parts.is_empty() {
+        return Err("empty hook script".to_string());
+    }
+    if parts.iter().any(|part| part == "-c") {
+        return Err("inline command execution flags are not allowed in hook scripts".to_string());
+    }
+    if parts.iter().any(|part| !is_safe_hook_token(part)) {
+        return Err("hook script contains unsupported characters".to_string());
+    }
+    let program = parts.remove(0);
+    if program.starts_with('-') {
+        return Err("hook command must name an executable".to_string());
+    }
+    Ok(HookCommand {
+        program,
+        args: parts,
+    })
+}
+
 fn run_hook_script(
     label: &str,
     script: &str,
+    trust: HookScriptTrust,
     project_root: &Path,
     on_log: &mut impl FnMut(&str),
     fail_on_error: bool,
 ) -> Result<(), CodexError> {
-    if script.trim().is_empty() {
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
         return Ok(());
     }
-    on_log(&format!("▶ {}: {}\n", label, script.trim()));
-    let result = Command::new("sh")
-        .arg("-c")
-        .arg(script.trim())
+    let hook = match validate_hook_command(trimmed, trust) {
+        Ok(hook) => hook,
+        Err(reason) => {
+            let msg = format!("{label} skipped: {reason}");
+            log::warn!("[codex] {}: {:?}", msg, trimmed);
+            on_log(&format!("⚠ {msg}\n"));
+            if fail_on_error {
+                return Err(CodexError::HookRejected(msg));
+            }
+            return Ok(());
+        }
+    };
+
+    on_log(&format!("▶ {}: {}\n", label, trimmed));
+    let result = Command::new(&hook.program)
+        .args(&hook.args)
         .current_dir(project_root)
+        .stdin(Stdio::null())
         .output();
     match result {
         Ok(output) => {
@@ -93,6 +169,7 @@ fn run_hook_script(
             }
         }
         Err(e) => {
+            on_log(&format!("⚠ {} script error: {}\n", label, e));
             if fail_on_error {
                 return Err(CodexError::SpawnFailed(e));
             }
@@ -261,6 +338,7 @@ pub(crate) fn invoke_codex_streaming(
     run_hook_script(
         "Pre-run script",
         config.pre_run_script,
+        config.pre_run_script_trust,
         project_root,
         &mut on_log,
         true,
@@ -346,6 +424,7 @@ pub(crate) fn invoke_codex_streaming(
     run_hook_script(
         "Post-run script",
         config.post_run_script,
+        config.post_run_script_trust,
         project_root,
         &mut on_log,
         false,
@@ -434,5 +513,53 @@ mod tests {
         assert_eq!(metrics.cost_usd, Some(0.0));
         assert_eq!(metrics.duration_ms, Some(0));
         assert_eq!(metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn rejects_project_local_hook_scripts_without_executing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join("marker");
+        let mut log = String::new();
+
+        run_hook_script(
+            "Post-run script",
+            &format!("touch {}", marker.display()),
+            HookScriptTrust::ProjectLocal,
+            dir.path(),
+            &mut |text| log.push_str(text),
+            false,
+        )
+        .expect("post-run rejection should not fail the run");
+
+        assert!(!marker.exists());
+        assert!(log.contains("project-local Codex hook scripts are not trusted"));
+    }
+
+    #[test]
+    fn rejects_project_local_pre_run_hook_as_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = String::new();
+
+        let result = run_hook_script(
+            "Pre-run script",
+            "echo safe-looking",
+            HookScriptTrust::ProjectLocal,
+            dir.path(),
+            &mut |text| log.push_str(text),
+            true,
+        );
+
+        assert!(matches!(result, Err(CodexError::HookRejected(_))));
+        assert!(log.contains("Pre-run script skipped"));
+    }
+
+    #[test]
+    fn trusted_hook_validation_rejects_shell_constructs() {
+        assert!(validate_hook_command("echo ok; rm -rf .", HookScriptTrust::Trusted).is_err());
+        assert!(validate_hook_command("sh -c echo", HookScriptTrust::Trusted).is_err());
+        assert!(
+            validate_hook_command("cargo test --package Dirigent", HookScriptTrust::Trusted)
+                .is_ok()
+        );
     }
 }

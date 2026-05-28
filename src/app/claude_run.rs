@@ -522,7 +522,9 @@ fn run_codex_provider(
         extra_args: &req.config.extra_args,
         env_vars: &req.config.env_vars,
         pre_run_script: &req.config.pre_run_script,
+        pre_run_script_trust: codex::HookScriptTrust::ProjectLocal,
         post_run_script: &req.config.post_run_script,
+        post_run_script_trust: codex::HookScriptTrust::ProjectLocal,
         skip_permissions: req.config.skip_permissions,
     };
     let res =
