@@ -2,6 +2,46 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [0.6.0] - 2026-05-28
+
+### Added
+- jj (Jujutsu) VCS backend with bookmark management, log viewer, commit workflow, squash, and workspace support
+- Claude PTY integration for pseudo-terminal Claude Code interaction with idle-timeout, auto-accept, and session reuse
+- Auto-continue for runs that stop mid-task (reuses session ID)
+- Dirigent MCP server for external tool integration
+- Gemini CLI as an alternative CLI provider
+- PR status indicator in status bar with clickable link to GitHub
+- Custom Dock logo selection in Settings
+- In-app log viewer with structured logging
+- Running animation selector (Lava Lamp, Claude character, Desert Dino) with customizable heartbeat styles (Wave, Morse Code)
+- Frame timing performance monitor in status bar (toggle in Settings)
+- Diff view "Open File" button per file
+- Sentry as a cue source
+- Project logo detection (logo.png in project root)
+- Scrollable tab bar for many open files
+
+### Fixed
+- Claude PTY prompt detection stuck after first response
+- PTY timeout and stop detection reliability
+- JSON extraction balanced-bracket parsing inside string literals
+- UTF-8 slice panics in workflow JSON parse failures
+- PR creation from linked worktrees nested inside the main repo
+- Tab context menu not appearing on right-click
+- Git push error messages now show concrete error details
+- Diff file paths preserved when subdirectory matches repo name
+- MCP server crash on database access and config write without mkdir
+- Auto-commit race condition with concurrent agents
+- Stale git status from wrong repo overwriting current repo
+- Side-by-side diff bounds-checked lookups
+- Numerous code review findings (CodeRabbit, Qodo) verified and fixed
+
+### Changed
+- Claude Code invocation refactored to use PTY by default (with fallback toggle in Settings)
+- Unified per-provider diff fallback order between Claude and Gemini
+- jj operations integrated into existing Git menus and status bar
+- Documentation reorganized into docs/ directory
+- Removed macOS build workflow (CI simplification)
+
 ## [0.5.1] - 2026-05-12
 
 ### Fixed
