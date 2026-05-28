@@ -540,8 +540,9 @@ pub(crate) fn invoke_codex_streaming(
     }
     cmd.arg(prompt)
         .current_dir(project_root)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let yolo_note = if config.skip_permissions {
         "--yolo "
