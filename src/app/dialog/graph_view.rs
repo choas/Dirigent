@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{DirigentApp, SPACE_SM};
+use super::super::DirigentApp;
 use crate::settings::VcsBackend;
 
 impl DirigentApp {
@@ -56,22 +56,16 @@ impl DirigentApp {
             egui::ScrollArea::vertical()
                 .id_salt("graph_view_scroll")
                 .auto_shrink([false, false])
-                .show_rows(ui, row_height, num_commits + 1, |ui, row_range| {
+                .show_rows(ui, row_height, num_commits, |ui, row_range| {
                     let avail_width = ui.available_width();
+
+                    if row_range.end + 20 >= num_commits && num_commits >= self.git.graph_view_limit
+                    {
+                        load_more = true;
+                    }
 
                     for idx in row_range {
                         if idx >= num_commits {
-                            // "Load More" button at the end
-                            ui.add_space(SPACE_SM);
-                            if ui
-                                .button(
-                                    egui::RichText::new("Load More\u{2026}")
-                                        .color(ui.visuals().hyperlink_color),
-                                )
-                                .clicked()
-                            {
-                                load_more = true;
-                            }
                             continue;
                         }
 
