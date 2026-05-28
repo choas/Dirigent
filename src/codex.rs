@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::claude;
@@ -187,22 +187,20 @@ fn resolve_codex_bin(cli_path: &str) -> Result<PathBuf, CodexError> {
     which::which(bin).map_err(|_| CodexError::NotFound)
 }
 
-fn spawn_watchdog(
-    child: &Arc<Mutex<std::process::Child>>,
-    cancel: &Arc<AtomicBool>,
-    done: &Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    let child = Arc::clone(child);
-    let cancel = Arc::clone(cancel);
-    let done = Arc::clone(done);
-    std::thread::spawn(move || {
-        while !done.load(Ordering::Relaxed) {
-            if cancel.load(Ordering::Relaxed) {
-                let _ = child.lock().map(|mut c| c.kill());
-                return;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
+fn spawn_child_waiter(
+    mut child: Child,
+    cancel: Arc<AtomicBool>,
+    terminate: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<std::io::Result<ExitStatus>> {
+    std::thread::spawn(move || loop {
+        if cancel.load(Ordering::Relaxed) || terminate.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            return child.wait();
         }
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        std::thread::sleep(WATCHDOG_POLL_INTERVAL);
     })
 }
 
@@ -382,40 +380,49 @@ pub(crate) fn invoke_codex_streaming(
     claude::apply_env_vars(&mut cmd, config.env_vars, &mut on_log);
     claude::apply_dirigent_env(&mut cmd, project_root, &mut on_log);
 
-    let child = cmd.spawn().map_err(CodexError::SpawnFailed)?;
-    let child = Arc::new(Mutex::new(child));
-    let done = Arc::new(AtomicBool::new(false));
-    let watchdog = spawn_watchdog(&child, &cancel, &done);
-
-    let (final_result, edited_files, metrics, stderr, status) = {
-        let mut guard = child.lock().expect("child mutex poisoned");
-        let stdout_handle = guard
-            .stdout
-            .take()
-            .ok_or_else(|| CodexError::SpawnFailed(std::io::Error::other("missing stdout")))?;
-        let stderr_handle = guard
-            .stderr
-            .take()
-            .ok_or_else(|| CodexError::SpawnFailed(std::io::Error::other("missing stderr")))?;
-
-        let cancel_for_stderr = Arc::clone(&cancel);
-        let stderr_thread =
-            std::thread::spawn(move || stream_stderr(stderr_handle, cancel_for_stderr));
-
-        let (result, files, metrics) = process_event_stream(stdout_handle, &cancel, &mut on_log)
-            .map_err(CodexError::StreamReadError)?;
-
-        let stderr_buf = stderr_thread
-            .join()
-            .unwrap_or_else(|_| Ok(String::new()))
-            .unwrap_or_default();
-
-        let status = guard.wait().map_err(CodexError::SpawnFailed)?;
-        (result, files, metrics, stderr_buf, status)
+    let mut child = cmd.spawn().map_err(CodexError::SpawnFailed)?;
+    let stdout_handle = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CodexError::SpawnFailed(std::io::Error::other(
+                "missing stdout",
+            )));
+        }
     };
+    let stderr_handle = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CodexError::SpawnFailed(std::io::Error::other(
+                "missing stderr",
+            )));
+        }
+    };
+    let terminate_child = Arc::new(AtomicBool::new(false));
+    let child_waiter = spawn_child_waiter(child, Arc::clone(&cancel), Arc::clone(&terminate_child));
 
-    done.store(true, Ordering::Relaxed);
-    let _ = watchdog.join();
+    let cancel_for_stderr = Arc::clone(&cancel);
+    let stderr_thread = std::thread::spawn(move || stream_stderr(stderr_handle, cancel_for_stderr));
+
+    let stream_result = process_event_stream(stdout_handle, &cancel, &mut on_log);
+    if stream_result.is_err() {
+        terminate_child.store(true, Ordering::Relaxed);
+    }
+
+    let stderr = stderr_thread
+        .join()
+        .unwrap_or_else(|_| Ok(String::new()))
+        .unwrap_or_default();
+
+    let status = child_waiter
+        .join()
+        .unwrap_or_else(|_| Err(std::io::Error::other("codex waiter thread panicked")))
+        .map_err(CodexError::SpawnFailed)?;
+    let (final_result, edited_files, metrics) =
+        stream_result.map_err(CodexError::StreamReadError)?;
 
     if !stderr.is_empty() {
         on_log(&stderr);
