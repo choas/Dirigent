@@ -759,8 +759,6 @@ impl DirigentApp {
             return;
         }
 
-        let provider = self.settings.cli_provider.clone();
-
         let cue = match self.cues.iter().find(|c| c.id == cue_id) {
             Some(c) => c.clone(),
             None => {
@@ -769,6 +767,13 @@ impl DirigentApp {
             }
         };
 
+        let latest_exec = self.db.get_latest_execution(cue_id).ok().flatten();
+
+        let provider = latest_exec
+            .as_ref()
+            .map(|e| e.provider.clone())
+            .unwrap_or_else(|| self.settings.cli_provider.clone());
+
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
@@ -776,7 +781,7 @@ impl DirigentApp {
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
 
-        let resume_session_id = self.db.get_cue_session_id(cue_id).ok().flatten();
+        let resume_session_id = latest_exec.as_ref().and_then(|e| e.session_id.clone());
 
         // When resuming a Claude session the previous context is already in the
         // conversation, so we only need to send the user's reply. For a fresh
@@ -788,11 +793,7 @@ impl DirigentApp {
         {
             reply.to_string()
         } else {
-            let previous_diff = self
-                .db
-                .get_latest_execution(cue_id)
-                .ok()
-                .flatten()
+            let previous_diff = latest_exec
                 .and_then(|e| e.diff)
                 .unwrap_or_default();
 
