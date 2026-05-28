@@ -199,6 +199,17 @@ pub(crate) struct Settings {
     pub gemini_pre_run_script: String,
     #[serde(default)]
     pub gemini_post_run_script: String,
+    pub codex_model: String,
+    #[serde(default)]
+    pub codex_cli_path: String,
+    #[serde(default)]
+    pub codex_extra_args: String,
+    #[serde(default)]
+    pub codex_env_vars: String,
+    #[serde(default)]
+    pub codex_pre_run_script: String,
+    #[serde(default)]
+    pub codex_post_run_script: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -336,6 +347,14 @@ impl Settings {
                 pre_run_script: &self.gemini_pre_run_script,
                 post_run_script: &self.gemini_post_run_script,
             },
+            CliProvider::Codex => ProviderFields {
+                model: &self.codex_model,
+                cli_path: &self.codex_cli_path,
+                extra_args: &self.codex_extra_args,
+                env_vars: &self.codex_env_vars,
+                pre_run_script: &self.codex_pre_run_script,
+                post_run_script: &self.codex_post_run_script,
+            },
         }
     }
 }
@@ -381,6 +400,12 @@ impl Default for Settings {
             gemini_env_vars: String::new(),
             gemini_pre_run_script: String::new(),
             gemini_post_run_script: String::new(),
+            codex_model: "gpt-5-codex".to_string(),
+            codex_cli_path: String::new(),
+            codex_extra_args: String::new(),
+            codex_env_vars: String::new(),
+            codex_pre_run_script: String::new(),
+            codex_post_run_script: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,

@@ -120,6 +120,7 @@ impl DirigentApp {
             CliProvider::Claude => self.render_claude_model_combo(ui),
             CliProvider::OpenCode => self.render_opencode_model_combo(ui, refresh_models),
             CliProvider::Gemini => self.render_gemini_model_combo(ui, refresh_models),
+            CliProvider::Codex => self.render_codex_model_combo(ui),
         }
         ui.end_row();
     }
@@ -224,6 +225,9 @@ impl DirigentApp {
             }
             CliProvider::Gemini => {
                 self.render_settings_gemini_cli_fields(ui);
+            }
+            CliProvider::Codex => {
+                self.render_settings_codex_cli_fields(ui);
             }
         }
     }
@@ -330,6 +334,27 @@ impl DirigentApp {
         });
     }
 
+    fn render_codex_model_combo(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("codex_model_combo")
+                .selected_text(&self.settings.codex_model)
+                .show_ui(ui, |ui| {
+                    for model in ["gpt-5-codex", "gpt-5.4", "gpt-5.4-mini"] {
+                        ui.selectable_value(
+                            &mut self.settings.codex_model,
+                            model.to_string(),
+                            model,
+                        );
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.codex_model)
+                    .desired_width(200.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+    }
+
     fn render_settings_gemini_cli_fields(&mut self, ui: &mut egui::Ui) {
         cli_field(
             ui,
@@ -362,6 +387,46 @@ impl DirigentApp {
             ui,
             "Post-run Script:",
             &mut self.settings.gemini_post_run_script,
+            "shell command after run",
+        );
+    }
+
+    fn render_settings_codex_cli_fields(&mut self, ui: &mut egui::Ui) {
+        cli_field(
+            ui,
+            "CLI Path:",
+            &mut self.settings.codex_cli_path,
+            "not found — enter path to codex",
+        );
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.codex_extra_args,
+            "e.g. --sandbox workspace-write",
+        );
+        ui.label("Default Flags:");
+        ui.label(
+            egui::RichText::new("--yolo --model <model> <prompt>")
+                .monospace()
+                .weak(),
+        );
+        ui.end_row();
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.codex_pre_run_script,
+            "shell command before run",
+        );
+        cli_field(
+            ui,
+            "Env Variables:",
+            &mut self.settings.codex_env_vars,
+            "KEY=VAL, one per line",
+        );
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.codex_post_run_script,
             "shell command after run",
         );
     }

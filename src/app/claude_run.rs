@@ -9,6 +9,7 @@ use super::tasks::TaskHandle;
 use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::claude;
+use crate::codex;
 use crate::db::{Cue, CueStatus, Execution};
 use crate::gemini;
 use crate::git;
@@ -300,6 +301,7 @@ fn run_provider(
         CliProvider::Claude => run_claude_provider(req, on_log, cancel),
         CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
         CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
+        CliProvider::Codex => run_codex_provider(req, on_log, cancel),
     }
 }
 
@@ -507,6 +509,39 @@ fn run_gemini_provider(
     finalize_run(req, &baseline, res)
 }
 
+fn run_codex_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send + 'static,
+    cancel: Arc<AtomicBool>,
+) -> ClaudeResult {
+    let baseline = snapshot_dirty_state(req);
+
+    let codex_config = codex::CodexRunConfig {
+        model: &req.config.model,
+        cli_path: &req.config.cli_path,
+        extra_args: &req.config.extra_args,
+        env_vars: &req.config.env_vars,
+        pre_run_script: &req.config.pre_run_script,
+        pre_run_script_trust: codex::HookScriptTrust::ProjectLocal,
+        post_run_script: &req.config.post_run_script,
+        post_run_script_trust: codex::HookScriptTrust::ProjectLocal,
+        skip_permissions: req.config.skip_permissions,
+    };
+    let res =
+        codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
+            .map(|response| ProviderRunOutcome {
+                stdout: response.stdout,
+                edited_files: response.edited_files,
+                metrics: claude::RunMetrics {
+                    cost_usd: response.cost_usd.unwrap_or(0.0),
+                    duration_ms: response.duration_ms.unwrap_or(0),
+                    num_turns: response.num_turns.unwrap_or(0),
+                    ..claude::RunMetrics::default()
+                },
+                parse_diff: codex::parse_diff_from_response,
+            });
+    finalize_run(req, &baseline, res)
+}
 fn run_opencode_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send + 'static,
@@ -793,9 +828,7 @@ impl DirigentApp {
         {
             reply.to_string()
         } else {
-            let previous_diff = latest_exec
-                .and_then(|e| e.diff)
-                .unwrap_or_default();
+            let previous_diff = latest_exec.and_then(|e| e.diff).unwrap_or_default();
 
             claude::build_reply_prompt(
                 &original_text,
@@ -1504,16 +1537,12 @@ impl DirigentApp {
         if !is_running {
             return;
         }
-        let log_text = self
-            .db
-            .get_latest_execution(cue_id)
-            .ok()
-            .flatten()
-            .and_then(|e| e.log);
-        if let Some(text) = log_text {
-            self.claude
-                .running_logs
-                .insert(cue_id, (text, CliProvider::Claude));
+        let log_text = self.db.get_latest_execution(cue_id).ok().flatten();
+        if let Some(exec) = log_text {
+            let provider = exec.provider;
+            if let Some(text) = exec.log {
+                self.claude.running_logs.insert(cue_id, (text, provider));
+            }
         }
     }
 

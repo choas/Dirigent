@@ -13,6 +13,7 @@ mod jj;
 mod log_collector;
 mod lsp;
 mod opencode;
+mod codex;
 mod prompt_hints;
 mod prompt_suggestions;
 mod settings;
