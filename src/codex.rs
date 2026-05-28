@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::claude;
 
@@ -56,8 +56,9 @@ pub(crate) struct CodexRunConfig<'a> {
 
 #[derive(Default)]
 struct StreamMetrics {
-    cost_usd: f64,
-    num_turns: u64,
+    cost_usd: Option<f64>,
+    duration_ms: Option<u64>,
+    num_turns: Option<u64>,
 }
 
 fn run_hook_script(
@@ -209,10 +210,13 @@ fn process_event_stream(
                 }
             }
             if let Some(cost) = event.get("cost_usd").and_then(|c| c.as_f64()) {
-                metrics.cost_usd = cost;
+                metrics.cost_usd = Some(cost);
+            }
+            if let Some(duration_ms) = event.get("duration_ms").and_then(|d| d.as_u64()) {
+                metrics.duration_ms = Some(duration_ms);
             }
             if is_turn_complete_event(&event) {
-                metrics.num_turns = metrics.num_turns.saturating_add(1);
+                metrics.num_turns = Some(metrics.num_turns.unwrap_or(0).saturating_add(1));
             }
             continue;
         }
@@ -262,7 +266,6 @@ pub(crate) fn invoke_codex_streaming(
         true,
     )?;
 
-    let start = Instant::now();
     let mut cmd = Command::new(codex_bin);
     cmd.arg("exec").arg("--json");
     if config.skip_permissions {
@@ -358,9 +361,9 @@ pub(crate) fn invoke_codex_streaming(
     Ok(CodexResponse {
         stdout: final_result,
         edited_files,
-        cost_usd: Some(metrics.cost_usd),
-        duration_ms: Some(start.elapsed().as_millis() as u64),
-        num_turns: Some(metrics.num_turns),
+        cost_usd: metrics.cost_usd,
+        duration_ms: metrics.duration_ms,
+        num_turns: metrics.num_turns,
     })
 }
 
@@ -413,6 +416,23 @@ mod tests {
         assert_eq!(final_result, "first\nsecond\n");
         assert_eq!(log, "first\nsecond\n");
         assert!(edited_files.is_empty());
-        assert_eq!(metrics.num_turns, 1);
+        assert_eq!(metrics.cost_usd, None);
+        assert_eq!(metrics.duration_ms, None);
+        assert_eq!(metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn process_event_stream_preserves_emitted_zero_metrics() {
+        let input = "{\"type\":\"turn.completed\",\"cost_usd\":0.0,\"duration_ms\":0}\n";
+        let cancel = AtomicBool::new(false);
+        let mut log = String::new();
+
+        let (_final_result, _edited_files, metrics) =
+            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+                .expect("stream should parse");
+
+        assert_eq!(metrics.cost_usd, Some(0.0));
+        assert_eq!(metrics.duration_ms, Some(0));
+        assert_eq!(metrics.num_turns, Some(1));
     }
 }
