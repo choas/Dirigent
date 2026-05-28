@@ -1281,7 +1281,11 @@ impl DirigentApp {
         let agents_started =
             self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
 
-        if self.settings.auto_commit {
+        let cue_auto_commit = self
+            .cues
+            .iter()
+            .any(|c| c.id == result.cue_id && c.auto_commit);
+        if cue_auto_commit {
             if self.claude.show_log == Some(result.cue_id) {
                 // User is watching the log — defer so they can review.
                 // If they close the log without explicitly accepting,

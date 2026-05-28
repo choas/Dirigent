@@ -110,6 +110,10 @@ pub(crate) struct Cue {
     pub plan_path: Option<String>,
     /// True when Claude's response contained a question requiring user input.
     pub has_question: bool,
+    /// True when this cue was started as part of a workflow.
+    pub workflow: bool,
+    /// True when this cue should be auto-committed on completion (set by workflow).
+    pub auto_commit: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

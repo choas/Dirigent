@@ -95,6 +95,7 @@ impl DirigentApp {
         // Collect cue IDs to trigger (can't borrow self mutably while iterating plan)
         let cue_ids: Vec<i64> = plan.steps[0].cue_ids.clone();
 
+        let auto_commit = self.settings.auto_commit;
         for &cue_id in &cue_ids {
             // Only move cues that are still in Inbox — skip already-completed ones.
             let is_inbox = self
@@ -104,6 +105,7 @@ impl DirigentApp {
             if !is_inbox {
                 continue;
             }
+            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
             let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
             let _ = self.db.log_activity(cue_id, "Workflow: started (step 0)");
             self.cue_move_flash
@@ -201,6 +203,7 @@ impl DirigentApp {
                 plan.steps[idx].status = WorkflowStepStatus::Running;
                 let cue_ids: Vec<i64> = plan.steps[idx].cue_ids.clone();
 
+                let auto_commit = self.settings.auto_commit;
                 for &cue_id in &cue_ids {
                     // Only move cues that are still in Inbox — skip already-completed ones.
                     let is_inbox = self
@@ -210,6 +213,7 @@ impl DirigentApp {
                     if !is_inbox {
                         continue;
                     }
+                    let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
                     let _ = self
                         .db

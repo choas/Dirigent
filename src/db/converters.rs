@@ -36,10 +36,12 @@ const COL_ATTACHED_IMAGES: usize = 9;
 const COL_TAG: usize = 10;
 const COL_PLAN_PATH: usize = 11;
 const COL_HAS_QUESTION: usize = 12;
+const COL_WORKFLOW: usize = 13;
+const COL_AUTO_COMMIT: usize = 14;
 
 /// Column list for SELECT queries that feed into [`row_to_cue`].
 pub(super) const CUE_COLUMNS: &str =
-    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path, has_question";
+    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path, has_question, workflow, auto_commit";
 
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(COL_STATUS)?;
@@ -62,6 +64,8 @@ pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
         tag: row.get(COL_TAG)?,
         plan_path: row.get(COL_PLAN_PATH)?,
         has_question: row.get::<_, Option<i64>>(COL_HAS_QUESTION)?.unwrap_or(0) != 0,
+        workflow: row.get::<_, Option<i64>>(COL_WORKFLOW)?.unwrap_or(0) != 0,
+        auto_commit: row.get::<_, Option<i64>>(COL_AUTO_COMMIT)?.unwrap_or(0) != 0,
     })
 }
 
