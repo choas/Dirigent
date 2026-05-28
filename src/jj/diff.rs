@@ -7,7 +7,8 @@ pub(crate) fn jj_get_working_diff(
     jj_path: &str,
 ) -> Option<String> {
     let mut cmd = super::jj_cmd(jj_path);
-    cmd.args(["diff", "--git"]).current_dir(repo_path);
+    cmd.args(["diff", "--git", "--color", "never"])
+        .current_dir(repo_path);
     if !files.is_empty() {
         cmd.arg("--");
         for f in files {

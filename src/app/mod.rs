@@ -9,6 +9,7 @@ mod dialog;
 mod dino;
 mod file_navigation;
 mod git_operations;
+mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
 mod markdown_viewer;
@@ -141,18 +142,28 @@ pub(crate) fn set_macos_dock_name(name: &str) {
     }
 }
 
+/// Search for a project-local `logo.png` in well-known locations.
+/// Returns the first path that exists, or `None`.
+fn resolve_project_logo(project_root: &Path) -> Option<PathBuf> {
+    let candidates = [
+        project_root.join("logo.png"),
+        project_root.join("assets/logo.png"),
+        project_root.join(".Dirigent/logo.png"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 /// Update the macOS Dock icon at runtime from a custom PNG path.
-/// Falls back to the built-in logo when the path is empty or unreadable.
+/// Falls back to a project-local logo.png, then to the built-in logo.
 #[cfg(target_os = "macos")]
-pub(crate) fn update_macos_dock_icon(custom_path: &str) {
-    let png_bytes: Vec<u8> = if custom_path.is_empty() {
-        include_bytes!("../../assets/logo.png").to_vec()
+pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
+    let png_bytes: Vec<u8> = if !custom_path.is_empty() {
+        std::fs::read(custom_path).ok()
     } else {
-        match std::fs::read(custom_path) {
-            Ok(b) => b,
-            Err(_) => include_bytes!("../../assets/logo.png").to_vec(),
-        }
-    };
+        None
+    }
+    .or_else(|| resolve_project_logo(project_root).and_then(|p| std::fs::read(p).ok()))
+    .unwrap_or_else(|| include_bytes!("../../assets/logo.png").to_vec());
     unsafe {
         use objc::runtime::{Class, Object};
         use objc::{msg_send, sel, sel_impl};
@@ -214,7 +225,7 @@ pub struct DirigentApp {
     // Git state
     pub(super) git: GitState,
     git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
-    git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
+    _git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
     // Settings & theme
     settings: Settings,
@@ -735,7 +746,7 @@ impl DirigentApp {
             confirm_delete_archived: false,
             claude: ClaudeRunState::new(),
             diff_review: None,
-            git_status_tx,
+            _git_status_tx: git_status_tx,
             git_status_rx,
             git: GitState {
                 info: git_info,
@@ -757,6 +768,7 @@ impl DirigentApp {
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
                 available_branches: Vec::new(),
+                bookmark_push_statuses: HashMap::new(),
                 pushing: false,
                 push_rx: None,
                 show_push_error: false,
@@ -810,10 +822,30 @@ impl DirigentApp {
                 create_bookmark_needs_focus: false,
                 creating_bookmark: false,
                 create_bookmark_rx: None,
+                show_cleanup_bookmarks: false,
+                suspicious_bookmarks: Vec::new(),
+                cleaning_bookmark: false,
+                cleanup_bookmark_rx: None,
                 squashing: false,
                 squash_rx: None,
                 undoing: false,
                 undo_rx: None,
+                abandoning_empty: false,
+                abandon_empty_rx: None,
+                show_delete_bookmark: false,
+                deleting_bookmark: false,
+                delete_bookmark_rx: None,
+                show_merge_bookmark: false,
+                merging_bookmark: false,
+                merge_bookmark_rx: None,
+                show_commit_dialog: false,
+                commit_message_input: String::new(),
+                commit_needs_focus: false,
+                commit_review_cue_id: None,
+                committing: false,
+                commit_rx: None,
+                commit_pending_cue_id: None,
+                active_bookmark: None,
                 pr_number: None,
                 pr_url: None,
                 pr_detect_rx: None,
@@ -970,7 +1002,7 @@ impl DirigentApp {
             app.maybe_detect_pr();
         }
         #[cfg(target_os = "macos")]
-        update_macos_dock_icon(&app.settings.custom_dock_icon_path);
+        update_macos_dock_icon(&app.settings.custom_dock_icon_path, &app.project_root);
         app
     }
 
@@ -1006,7 +1038,9 @@ impl DirigentApp {
                     .ok()
                     .map(|i| i.into_rgba8())
             } else {
-                None
+                resolve_project_logo(&self.project_root)
+                    .and_then(|p| image::open(p).ok())
+                    .map(|i| i.into_rgba8())
             }
             .unwrap_or_else(|| {
                 let png_bytes = include_bytes!("../../assets/logo.png");
@@ -1262,8 +1296,13 @@ impl eframe::App for DirigentApp {
         self.process_pr_notify_result();
         self.process_move_to_branch_result();
         self.process_create_bookmark_result();
+        self.process_cleanup_bookmark_result();
         self.process_squash_result();
         self.process_undo_result();
+        self.process_commit_result();
+        self.process_merge_bookmark_result();
+        self.process_delete_bookmark_result();
+        self.process_abandon_empty_result();
 
         // Poll for Notion done result
         self.process_notion_done_result();

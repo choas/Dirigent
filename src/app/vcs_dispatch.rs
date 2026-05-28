@@ -27,9 +27,16 @@ pub(super) fn commit_all(
     jj_path: &str,
     repo_path: &Path,
     commit_message: &str,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     match backend {
-        VcsBackend::Jj => jj::jj_commit_all(repo_path, commit_message, jj_path, true),
+        VcsBackend::Jj => jj::jj_commit_all(
+            repo_path,
+            commit_message,
+            jj_path,
+            true,
+            bookmark_to_advance,
+        ),
         VcsBackend::Git => git::commit_all(repo_path, commit_message),
     }
 }
@@ -41,9 +48,16 @@ pub(super) fn commit_diff(
     repo_path: &Path,
     diff_text: &str,
     commit_message: &str,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     match backend {
-        VcsBackend::Jj => jj::jj_commit_diff(repo_path, diff_text, commit_message, jj_path),
+        VcsBackend::Jj => jj::jj_commit_diff(
+            repo_path,
+            diff_text,
+            commit_message,
+            jj_path,
+            bookmark_to_advance,
+        ),
         VcsBackend::Git => git::commit_diff(repo_path, diff_text, commit_message),
     }
 }
@@ -94,15 +108,24 @@ pub(super) fn get_ahead_of_remote(backend: &VcsBackend, jj_path: &str, repo_path
     }
 }
 
-/// VCS-backend-aware dispatch for listing branches/bookmarks.
-pub(super) fn list_branches(
+/// VCS-backend-aware dispatch for listing branches with push status (jj only).
+pub(super) fn list_branches_with_status(
     backend: &VcsBackend,
     jj_path: &str,
     repo_path: &Path,
-) -> crate::error::Result<Vec<String>> {
+) -> crate::error::Result<Vec<jj::BookmarkInfo>> {
     match backend {
-        VcsBackend::Jj => jj::jj_list_bookmarks(repo_path, jj_path),
-        VcsBackend::Git => git::list_branches(repo_path),
+        VcsBackend::Jj => jj::jj_list_bookmarks_with_status(repo_path, jj_path),
+        VcsBackend::Git => {
+            let names = git::list_branches(repo_path)?;
+            Ok(names
+                .into_iter()
+                .map(|name| jj::BookmarkInfo {
+                    name,
+                    push_status: jj::BookmarkPushStatus::Synced,
+                })
+                .collect())
+        }
     }
 }
 

@@ -232,7 +232,12 @@ impl DirigentApp {
         let mut open = true;
         let mut switch_to: Option<String> = None;
 
-        egui::Window::new("Switch Branch")
+        let title = if self.settings.vcs_backend == VcsBackend::Jj {
+            "Switch Bookmark"
+        } else {
+            "Switch Branch"
+        };
+        egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -265,7 +270,12 @@ impl DirigentApp {
         }
 
         if self.git.available_branches.is_empty() {
-            self.empty_label(ui, "No other branches available");
+            let msg = if self.settings.vcs_backend == VcsBackend::Jj {
+                "No other bookmarks available"
+            } else {
+                "No other branches available"
+            };
+            self.empty_label(ui, msg);
             return;
         }
 
@@ -273,8 +283,20 @@ impl DirigentApp {
             .max_height(250.0)
             .show(ui, |ui| {
                 for branch in &self.git.available_branches {
+                    let label = match self.git.bookmark_push_statuses.get(branch) {
+                        Some(jj::BookmarkPushStatus::NotPushed) => {
+                            format!("{branch}  \u{2191} not pushed")
+                        }
+                        Some(jj::BookmarkPushStatus::NeedsPush) => {
+                            format!("{branch}  \u{2191} needs push")
+                        }
+                        Some(jj::BookmarkPushStatus::Synced) => {
+                            format!("{branch}  \u{2713} synced")
+                        }
+                        None => branch.clone(),
+                    };
                     if ui
-                        .selectable_label(false, egui::RichText::new(branch).monospace())
+                        .selectable_label(false, egui::RichText::new(&label).monospace())
                         .clicked()
                     {
                         *switch_to = Some(branch.clone());
@@ -294,12 +316,21 @@ impl DirigentApp {
         };
         match switch_result {
             Ok(()) => {
+                self.git.active_bookmark = Some(branch.to_string());
                 self.set_status_message(format!("Switched to '{}'", branch));
                 self.reload_git_info();
                 self.reload_commit_history();
+                self.force_reload_open_tabs();
+                self.reload_file_tree();
+                self.git.recompute_dirty_dirs(&self.project_root);
             }
             Err(e) => {
-                self.set_status_message(format!("Failed to switch branch: {}", e));
+                let noun = if self.settings.vcs_backend == VcsBackend::Jj {
+                    "bookmark"
+                } else {
+                    "branch"
+                };
+                self.set_status_message(format!("Failed to switch {}: {}", noun, e));
             }
         }
     }
@@ -402,10 +433,22 @@ impl DirigentApp {
                 .max_height(120.0)
                 .show(ui, |ui| {
                     for branch in self.git.available_branches.iter() {
+                        let label = match self.git.bookmark_push_statuses.get(branch) {
+                            Some(jj::BookmarkPushStatus::NotPushed) => {
+                                format!("{branch}  \u{2191} not pushed")
+                            }
+                            Some(jj::BookmarkPushStatus::NeedsPush) => {
+                                format!("{branch}  \u{2191} needs push")
+                            }
+                            Some(jj::BookmarkPushStatus::Synced) => {
+                                format!("{branch}  \u{2713} synced")
+                            }
+                            None => branch.clone(),
+                        };
                         if ui
                             .selectable_label(
                                 self.git.new_worktree_name == *branch,
-                                egui::RichText::new(branch).monospace(),
+                                egui::RichText::new(&label).monospace(),
                             )
                             .clicked()
                         {

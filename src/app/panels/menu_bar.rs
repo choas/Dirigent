@@ -13,7 +13,12 @@ struct MenuBarActions {
     switch_branch_clicked: bool,
     create_pr_clicked: bool,
     import_pr_clicked: bool,
+    commit_clicked: bool,
     create_bookmark_clicked: bool,
+    merge_bookmark_clicked: bool,
+    delete_bookmark_clicked: bool,
+    cleanup_bookmarks_clicked: bool,
+    abandon_empty_heads_clicked: bool,
     squash_clicked: bool,
     undo_clicked: bool,
     run_all_agents: bool,
@@ -99,14 +104,20 @@ impl DirigentApp {
                 .map(|i| i.branch == "main" || i.branch == "master")
                 .unwrap_or(false);
             if is_default && self.git.ahead_of_remote > 0 {
+                let target = if self.settings.vcs_backend == VcsBackend::Jj {
+                    "bookmark"
+                } else {
+                    "branch"
+                };
                 let label = format!(
-                    "Move {} commit{} to branch",
+                    "Move {} commit{} to {}",
                     self.git.ahead_of_remote,
                     if self.git.ahead_of_remote == 1 {
                         ""
                     } else {
                         "s"
-                    }
+                    },
+                    target
                 );
                 if ui.button(label).clicked() {
                     actions.move_to_branch_clicked = true;
@@ -114,7 +125,12 @@ impl DirigentApp {
                 }
             }
 
-            if ui.button("Switch Branch").clicked() {
+            let switch_label = if self.settings.vcs_backend == VcsBackend::Jj {
+                "Switch Bookmark"
+            } else {
+                "Switch Branch"
+            };
+            if ui.button(switch_label).clicked() {
                 actions.switch_branch_clicked = true;
                 ui.close();
             }
@@ -205,8 +221,70 @@ impl DirigentApp {
     }
 
     fn render_git_menu_jj_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let has_changes = self
+            .git
+            .info
+            .as_ref()
+            .map(|i| i.modified_count + i.added_count + i.deleted_count > 0)
+            .unwrap_or(false);
+        let commit_label = if self.git.committing {
+            "Committing..."
+        } else {
+            "Commit"
+        };
+        if ui
+            .add_enabled(
+                has_changes && !self.git.committing,
+                egui::Button::new(commit_label),
+            )
+            .on_hover_text("Describe the working copy and create a new change")
+            .clicked()
+        {
+            actions.commit_clicked = true;
+            ui.close();
+        }
+
+        ui.separator();
+
         if ui.button("Create Bookmark").clicked() {
             actions.create_bookmark_clicked = true;
+            ui.close();
+        }
+
+        let merge_label = if self.git.merging_bookmark {
+            "Merging..."
+        } else {
+            "Merge Bookmark"
+        };
+        if ui
+            .add_enabled(!self.git.merging_bookmark, egui::Button::new(merge_label))
+            .on_hover_text("Merge another bookmark into the current one")
+            .clicked()
+        {
+            actions.merge_bookmark_clicked = true;
+            ui.close();
+        }
+
+        let delete_label = if self.git.deleting_bookmark {
+            "Deleting..."
+        } else {
+            "Delete Bookmark"
+        };
+        if ui
+            .add_enabled(!self.git.deleting_bookmark, egui::Button::new(delete_label))
+            .on_hover_text("Delete a bookmark")
+            .clicked()
+        {
+            actions.delete_bookmark_clicked = true;
+            ui.close();
+        }
+
+        if ui
+            .button("Clean Up Bookmarks")
+            .on_hover_text("Find and remove corrupted or tool-generated artifact bookmarks")
+            .clicked()
+        {
+            actions.cleanup_bookmarks_clicked = true;
             ui.close();
         }
 
@@ -235,6 +313,22 @@ impl DirigentApp {
             .clicked()
         {
             actions.undo_clicked = true;
+            ui.close();
+        }
+
+        ui.separator();
+
+        let abandon_label = if self.git.abandoning_empty {
+            "Abandoning..."
+        } else {
+            "Abandon Empty Heads"
+        };
+        if ui
+            .add_enabled(!self.git.abandoning_empty, egui::Button::new(abandon_label))
+            .on_hover_text("Find and abandon empty head commits (no diff)")
+            .clicked()
+        {
+            actions.abandon_empty_heads_clicked = true;
             ui.close();
         }
     }
@@ -437,14 +531,29 @@ impl DirigentApp {
         if actions.import_pr_clicked {
             self.open_import_pr_dialog();
         }
+        if actions.commit_clicked {
+            self.open_commit_dialog();
+        }
         if actions.create_bookmark_clicked {
             self.open_create_bookmark_dialog();
+        }
+        if actions.merge_bookmark_clicked {
+            self.open_merge_bookmark_dialog();
+        }
+        if actions.delete_bookmark_clicked {
+            self.open_delete_bookmark_dialog();
+        }
+        if actions.cleanup_bookmarks_clicked {
+            self.open_cleanup_bookmarks_dialog();
         }
         if actions.squash_clicked {
             self.start_squash_current_bookmark();
         }
         if actions.undo_clicked {
             self.start_jj_undo();
+        }
+        if actions.abandon_empty_heads_clicked {
+            self.start_abandon_empty_heads();
         }
         if let Some(kind) = actions.agent_to_cancel {
             self.cancel_agent(kind);

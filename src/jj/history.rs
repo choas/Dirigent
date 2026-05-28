@@ -13,6 +13,8 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         .args([
             "log",
             "--no-graph",
+            "--color",
+            "never",
             "-n",
             &limit_str,
             "-T",
@@ -175,7 +177,15 @@ fn format_time_ago(diff: i64) -> String {
 
 pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
     let output = super::jj_cmd(jj_path)
-        .args(["log", "--no-graph", "-T", r#"change_id ++ "\n""#])
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "--ignore-working-copy",
+            "-T",
+            r#"change_id ++ "\n""#,
+        ])
         .current_dir(path)
         .output();
 
@@ -188,20 +198,59 @@ pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
     }
 }
 
+/// Find empty head commits (leaves of the commit graph that have no diff).
+///
+/// Uses `heads(all())` to find all head revisions, then filters to those
+/// that are marked `empty` by jj.  Returns a vec of `(change_id, description)`.
+pub(crate) fn jj_find_empty_heads(path: &Path, jj_path: &str) -> Vec<(String, String)> {
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "--ignore-working-copy",
+            "-r",
+            "heads(all()) & empty()",
+            "-T",
+            r#"change_id ++ "\t" ++ description.first_line() ++ "\n""#,
+        ])
+        .current_dir(path)
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let (id, desc) = line.split_once('\t')?;
+            Some((id.trim().to_string(), desc.trim().to_string()))
+        })
+        .collect()
+}
+
 pub(crate) fn jj_get_commit_diff(path: &Path, change_id: &str, jj_path: &str) -> Option<String> {
     let output = super::jj_cmd(jj_path)
-        .args(["diff", "--git", "-r", change_id])
+        .args([
+            "diff",
+            "--git",
+            "--color",
+            "never",
+            "--ignore-working-copy",
+            "-r",
+            change_id,
+        ])
         .current_dir(path)
         .output()
         .ok()?;
 
     if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        if text.trim().is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        Some(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         None
     }

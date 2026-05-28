@@ -36,7 +36,7 @@ impl DirigentApp {
                         // User reviewed the diff and closed without accepting
                         // — skip auto-commit so they can decide manually.
                     } else {
-                        self.process_commit_review(cue_id);
+                        self.process_commit_review_auto(cue_id);
                     }
                 }
                 self.pending_auto_commits = deferred;

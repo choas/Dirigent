@@ -11,6 +11,9 @@ pub enum DirigentError {
     #[error("git: {0}")]
     GitCommand(String),
 
+    #[error("jj: {0}")]
+    JjCommand(String),
+
     #[error("sqlite: {0}")]
     Sqlite(String),
 

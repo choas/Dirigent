@@ -1,6 +1,31 @@
 use std::path::Path;
+use std::process::Output;
 
 use crate::error::DirigentError;
+
+fn is_stale_working_copy(output: &Output) -> bool {
+    if output.status.success() {
+        return false;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.contains("working copy is stale")
+}
+
+fn update_stale_working_copy(repo_path: &Path, jj_path: &str) -> crate::error::Result<()> {
+    let output = super::jj_cmd(jj_path)
+        .args(["workspace", "update-stale"])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj workspace update-stale failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
 
 /// Push the current bookmarks to the remote via `jj git push`.
 pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
@@ -9,9 +34,27 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
         .current_dir(repo_path)
         .output()?;
 
+    if is_stale_working_copy(&output) {
+        update_stale_working_copy(repo_path, jj_path)?;
+        let output = super::jj_cmd(jj_path)
+            .args(["git", "push"])
+            .current_dir(repo_path)
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DirigentError::JjCommand(format!(
+                "jj git push failed: {}",
+                stderr.trim()
+            )));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let summary = stdout.lines().next().unwrap_or("ok").trim();
+        return Ok(format!("Pushed ({})", summary));
+    }
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj git push failed: {}",
             stderr.trim()
         )));
@@ -29,9 +72,27 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
         .current_dir(repo_path)
         .output()?;
 
+    if is_stale_working_copy(&output) {
+        update_stale_working_copy(repo_path, jj_path)?;
+        let output = super::jj_cmd(jj_path)
+            .args(["git", "fetch"])
+            .current_dir(repo_path)
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DirigentError::JjCommand(format!(
+                "jj git fetch failed: {}",
+                stderr.trim()
+            )));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let summary = stdout.lines().next().unwrap_or("ok").trim();
+        return Ok(format!("Fetched ({})", summary));
+    }
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj git fetch failed: {}",
             stderr.trim()
         )));
@@ -45,7 +106,16 @@ pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 /// Read bookmarks for a given revision (e.g. `@`, `@-`).
 fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> {
     let output = super::jj_cmd(jj_path)
-        .args(["log", "-r", rev, "--no-graph", "-T", "bookmarks"])
+        .args([
+            "log",
+            "-r",
+            rev,
+            "--no-graph",
+            "--color",
+            "never",
+            "-T",
+            "bookmarks",
+        ])
         .current_dir(repo_path)
         .output();
     match output {
@@ -68,11 +138,17 @@ fn bookmarks_for_rev(repo_path: &Path, rev: &str, jj_path: &str) -> Vec<String> 
 /// change (`@-` after the commit). This mimics git's branch-advancement
 /// behaviour. Set to false for per-cue workspace commits where only the
 /// cue-specific bookmark should track the new commit.
+///
+/// When `bookmark_to_advance` is `Some(name)`, only that specific bookmark is
+/// advanced — other bookmarks sharing the same parent commit are left in place.
+/// This prevents unrelated bookmarks (e.g. "main") from being dragged forward
+/// when the user is working on a feature bookmark.
 pub(crate) fn jj_commit_all(
     repo_path: &Path,
     commit_message: &str,
     jj_path: &str,
     advance_bookmarks: bool,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     let parent_bookmarks = if advance_bookmarks {
         // Before committing, check whether @ already carries a bookmark.
@@ -95,7 +171,7 @@ pub(crate) fn jj_commit_all(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj commit failed: {}",
             stderr.trim()
         )));
@@ -108,6 +184,8 @@ pub(crate) fn jj_commit_all(
             "-r",
             "@-",
             "--no-graph",
+            "--color",
+            "never",
             "-T",
             "change_id.shortest(7)",
         ])
@@ -124,7 +202,15 @@ pub(crate) fn jj_commit_all(
 
     // Advance the parent's bookmarks to the committed change so the
     // bookmark tracks forward, matching git's branch behaviour.
+    // When a specific bookmark is targeted, only advance that one —
+    // this prevents dragging unrelated bookmarks (e.g. "main") forward
+    // when they happen to share the same parent commit.
     for bm in &parent_bookmarks {
+        if let Some(target) = bookmark_to_advance {
+            if bm != target {
+                continue;
+            }
+        }
         let _ = super::jj_cmd(jj_path)
             .args(["bookmark", "set", bm, "-r", "@-"])
             .current_dir(repo_path)
@@ -145,11 +231,12 @@ pub(crate) fn jj_commit_diff(
     diff_text: &str,
     commit_message: &str,
     jj_path: &str,
+    bookmark_to_advance: Option<&str>,
 ) -> crate::error::Result<String> {
     let diff_files = crate::git::parse_diff_file_paths_for_repo(repo_path, diff_text);
 
     if diff_files.is_empty() {
-        return Err(DirigentError::GitCommand(
+        return Err(DirigentError::JjCommand(
             "no files to commit — diff contains no file paths".into(),
         ));
     }
@@ -162,7 +249,13 @@ pub(crate) fn jj_commit_diff(
         .collect();
 
     if other_files.is_empty() {
-        return jj_commit_all(repo_path, commit_message, jj_path, true);
+        return jj_commit_all(
+            repo_path,
+            commit_message,
+            jj_path,
+            true,
+            bookmark_to_advance,
+        );
     }
 
     // Snapshot each non-diff file so we can put it back after the commit.
@@ -185,7 +278,13 @@ pub(crate) fn jj_commit_diff(
         .current_dir(repo_path)
         .output();
 
-    let result = jj_commit_all(repo_path, commit_message, jj_path, true);
+    let result = jj_commit_all(
+        repo_path,
+        commit_message,
+        jj_path,
+        true,
+        bookmark_to_advance,
+    );
 
     // Put the non-diff files back so they remain as pending changes in the new @.
     for (rel, content) in &saved {
@@ -206,28 +305,6 @@ pub(crate) fn jj_commit_diff(
     result
 }
 
-/// Set (or move) a bookmark on a specific revision.
-pub(crate) fn jj_set_bookmark(
-    repo_path: &Path,
-    name: &str,
-    rev: &str,
-    jj_path: &str,
-) -> crate::error::Result<()> {
-    let output = super::jj_cmd(jj_path)
-        .args(["bookmark", "set", name, "-r", rev])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
-            "jj bookmark set failed: {}",
-            stderr.trim()
-        )));
-    }
-    Ok(())
-}
-
 /// Delete a bookmark.
 pub(crate) fn jj_delete_bookmark(
     repo_path: &Path,
@@ -241,7 +318,7 @@ pub(crate) fn jj_delete_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark delete failed: {}",
             stderr.trim()
         )));
@@ -288,6 +365,8 @@ pub(crate) fn jj_squash_bookmark(
         .args([
             "log",
             "--no-graph",
+            "--color",
+            "never",
             "-r",
             &revset,
             "-T",
@@ -298,7 +377,7 @@ pub(crate) fn jj_squash_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj log for squash failed: {}",
             stderr.trim()
         )));
@@ -322,7 +401,7 @@ pub(crate) fn jj_squash_bookmark(
 
         if !sq_output.status.success() {
             let stderr = String::from_utf8_lossy(&sq_output.stderr);
-            return Err(DirigentError::GitCommand(format!(
+            return Err(DirigentError::JjCommand(format!(
                 "jj squash -r {} failed: {}",
                 cid.trim(),
                 stderr.trim()
@@ -333,7 +412,16 @@ pub(crate) fn jj_squash_bookmark(
 
     // Move the bookmark to the surviving commit (now the only one in the range).
     let surviving = super::jj_cmd(jj_path)
-        .args(["log", "--no-graph", "-r", &revset, "-T", r#"change_id"#])
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            &revset,
+            "-T",
+            r#"change_id"#,
+        ])
         .current_dir(repo_path)
         .output()?;
     if surviving.status.success() {
@@ -363,7 +451,7 @@ pub(crate) fn jj_create_bookmark(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj bookmark create failed: {}",
             stderr.trim()
         )));
@@ -380,7 +468,7 @@ pub(crate) fn jj_undo(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::GitCommand(format!(
+        return Err(DirigentError::JjCommand(format!(
             "jj op restore failed: {}",
             stderr.trim()
         )));
@@ -409,7 +497,7 @@ pub(crate) fn jj_revert_files(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DirigentError::GitCommand(format!(
+            return Err(DirigentError::JjCommand(format!(
                 "jj restore failed for {}: {}",
                 path,
                 stderr.trim()
@@ -417,4 +505,112 @@ pub(crate) fn jj_revert_files(
         }
     }
     Ok(())
+}
+
+/// Abandon one or more revisions by change id.
+pub(crate) fn jj_abandon(
+    repo_path: &Path,
+    change_ids: &[String],
+    jj_path: &str,
+) -> crate::error::Result<usize> {
+    if change_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let revset = change_ids.join(" | ");
+    let output = super::jj_cmd(jj_path)
+        .args(["abandon", "-r", &revset])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj abandon failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    Ok(change_ids.len())
+}
+
+/// Merge a bookmark into the current bookmark.
+///
+/// Uses `jj new current source` to create a merge commit with two parents,
+/// then advances the current bookmark to the merge commit.
+pub(crate) fn jj_merge_bookmark(
+    repo_path: &Path,
+    source_bookmark: &str,
+    jj_path: &str,
+    destination_bookmark: Option<&str>,
+) -> crate::error::Result<String> {
+    // Use the explicitly provided destination bookmark if available,
+    // otherwise fall back to querying @- (which may be ambiguous).
+    let current_bm = destination_bookmark
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            bookmarks_for_rev(repo_path, "@-", jj_path)
+                .first()
+                .cloned()
+                .unwrap_or_default()
+        });
+
+    // Create a merge commit: `jj new @- <source_bookmark>`
+    // This creates a new working-copy change whose parents are both the
+    // current bookmark and the source bookmark.
+    let output = super::jj_cmd(jj_path)
+        .args(["new", "@-", source_bookmark])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj new (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Describe the merge commit.
+    let msg = format!("merge '{}' into '{}'", source_bookmark, current_bm);
+    let desc_output = super::jj_cmd(jj_path)
+        .args(["describe", "-m", &msg])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !desc_output.status.success() {
+        let stderr = String::from_utf8_lossy(&desc_output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj describe (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Commit the merge so it becomes @- and a fresh empty @ is created.
+    let commit_output = super::jj_cmd(jj_path)
+        .args(["commit", "-m", &msg])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        return Err(DirigentError::JjCommand(format!(
+            "jj commit (merge) failed: {}",
+            stderr.trim()
+        )));
+    }
+
+    // Advance the current bookmark to the merge commit (@-).
+    if !current_bm.is_empty() {
+        let _ = super::jj_cmd(jj_path)
+            .args(["bookmark", "set", &current_bm, "-r", "@-"])
+            .current_dir(repo_path)
+            .output();
+    }
+
+    Ok(format!(
+        "Merged '{}' into '{}'",
+        source_bookmark, current_bm
+    ))
 }

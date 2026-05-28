@@ -55,6 +55,7 @@ impl DirigentApp {
             || self.git.show_worktree_panel
             || self.show_about
             || self.pending_play.is_some()
+            || self.git.show_commit_dialog
             || self.git.show_create_pr
             || self.git.pending_force_remove.is_some()
             || self.git.pending_delete_archive.is_some()
@@ -70,6 +71,7 @@ impl DirigentApp {
             || self.git.show_pr_filter
             || self.git.show_move_to_branch
             || self.git.show_switch_branch
+            || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
     }
 
@@ -229,6 +231,8 @@ impl DirigentApp {
         self.render_repo_picker(ctx);
         self.render_move_to_branch_dialog(ctx);
         self.render_create_bookmark_dialog(ctx);
+        self.render_delete_bookmark_dialog(ctx);
+        self.render_merge_bookmark_dialog(ctx);
         self.render_switch_branch_dialog(ctx);
         self.render_worktree_panel(ctx);
         self.render_force_remove_dialog(ctx);
@@ -243,7 +247,8 @@ impl DirigentApp {
         self.render_pr_error_dialog(ctx);
         self.render_pull_diverged_dialog(ctx);
         self.render_pull_unmerged_dialog(ctx);
-        self.render_create_bookmark_dialog(ctx);
+        self.render_cleanup_bookmarks_dialog(ctx);
+        self.render_commit_dialog(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);

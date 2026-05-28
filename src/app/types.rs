@@ -532,6 +532,8 @@ pub(crate) struct GitState {
     pub(super) show_worktree_panel: bool,
     /// Branches available for worktree creation (local + remote, excluding checked-out).
     pub(super) available_branches: Vec<String>,
+    /// Per-bookmark push status (jj only): synced vs not-pushed for each bookmark name.
+    pub(super) bookmark_push_statuses: HashMap<String, crate::jj::BookmarkPushStatus>,
     /// Whether a git push is currently in progress.
     pub(super) pushing: bool,
     pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -627,12 +629,48 @@ pub(crate) struct GitState {
     /// Whether a bookmark creation is in progress (jj only).
     pub(super) creating_bookmark: bool,
     pub(super) create_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Clean Up Bookmarks dialog is open (jj only).
+    pub(super) show_cleanup_bookmarks: bool,
+    /// Suspicious bookmarks found during scan.
+    pub(super) suspicious_bookmarks: Vec<crate::jj::SuspiciousBookmark>,
+    /// Whether a cleanup-bookmark deletion is in progress.
+    pub(super) cleaning_bookmark: bool,
+    pub(super) cleanup_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether a squash operation is in progress (jj only).
     pub(super) squashing: bool,
     pub(super) squash_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether an undo operation is in progress (jj only).
     pub(super) undoing: bool,
     pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether an abandon-empty-heads operation is in progress (jj only).
+    pub(super) abandoning_empty: bool,
+    pub(super) abandon_empty_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Delete Bookmark dialog is open (jj only).
+    pub(super) show_delete_bookmark: bool,
+    /// Whether a delete-bookmark operation is in progress (jj only).
+    pub(super) deleting_bookmark: bool,
+    pub(super) delete_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Merge Bookmark dialog is open (jj only).
+    pub(super) show_merge_bookmark: bool,
+    /// Whether a merge-bookmark operation is in progress (jj only).
+    pub(super) merging_bookmark: bool,
+    pub(super) merge_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Commit dialog is open (jj only).
+    pub(super) show_commit_dialog: bool,
+    /// Commit message input for the Commit dialog.
+    pub(super) commit_message_input: String,
+    /// Whether the text field should receive initial focus on the next frame.
+    pub(super) commit_needs_focus: bool,
+    /// When the commit dialog was opened for a cue review, the cue ID.
+    pub(super) commit_review_cue_id: Option<i64>,
+    /// Whether a commit operation is in progress (jj only).
+    pub(super) committing: bool,
+    pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    pub(super) commit_pending_cue_id: Option<i64>,
+    /// The bookmark the user is actively working on (jj only).
+    /// Only this bookmark is advanced when committing, preventing unrelated
+    /// bookmarks on the same parent commit from being dragged forward.
+    pub(super) active_bookmark: Option<String>,
     /// PR number for the current branch (detected via `gh pr view`).
     pub(super) pr_number: Option<u32>,
     /// PR URL for the current branch (for opening in browser).
@@ -701,6 +739,23 @@ impl GitState {
         }
         if self.show_import_pr {
             self.show_import_pr = false;
+            return true;
+        }
+        if self.show_commit_dialog {
+            self.show_commit_dialog = false;
+            self.commit_review_cue_id = None;
+            return true;
+        }
+        if self.show_cleanup_bookmarks {
+            self.show_cleanup_bookmarks = false;
+            return true;
+        }
+        if self.show_delete_bookmark {
+            self.show_delete_bookmark = false;
+            return true;
+        }
+        if self.show_merge_bookmark {
+            self.show_merge_bookmark = false;
             return true;
         }
         if self.show_create_bookmark {

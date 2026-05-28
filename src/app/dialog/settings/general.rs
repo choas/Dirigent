@@ -443,6 +443,7 @@ impl DirigentApp {
 
     fn render_settings_misc_rows(&mut self, ui: &mut egui::Ui) {
         ui.label("VCS Backend:");
+        let prev_backend = self.settings.vcs_backend.clone();
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("vcs_backend_combo")
                 .selected_text(self.settings.vcs_backend.display_name())
@@ -466,6 +467,9 @@ impl DirigentApp {
                 );
             }
         });
+        if self.settings.vcs_backend == VcsBackend::Jj && prev_backend != VcsBackend::Jj {
+            self.ensure_jj_colocated();
+        }
         ui.end_row();
 
         if self.settings.vcs_backend == VcsBackend::Jj {
