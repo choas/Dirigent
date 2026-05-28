@@ -246,6 +246,180 @@ fn is_turn_complete_event(event: &serde_json::Value) -> bool {
     )
 }
 
+fn extract_file_path_from_input(input: &serde_json::Value) -> Option<String> {
+    input
+        .get("file_path")
+        .or_else(|| input.get("path"))
+        .or_else(|| input.get("file"))
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string())
+}
+
+fn append_unique_path(paths: &mut Vec<String>, path: String) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn collect_edited_paths(event: &serde_json::Value, edited_files: &mut Vec<String>) {
+    if let Some(path) = event
+        .get("path")
+        .and_then(|p| p.as_str())
+        .or_else(|| event.get("file_path").and_then(|p| p.as_str()))
+    {
+        append_unique_path(edited_files, path.to_string());
+    }
+
+    let Some(item) = event.get("item") else {
+        return;
+    };
+
+    if let Some(path) = item
+        .get("path")
+        .and_then(|p| p.as_str())
+        .or_else(|| item.get("file_path").and_then(|p| p.as_str()))
+    {
+        append_unique_path(edited_files, path.to_string());
+    }
+
+    if item.get("type").and_then(|t| t.as_str()) == Some("file_change") {
+        if let Some(changes) = item.get("changes").and_then(|c| c.as_array()) {
+            for change in changes {
+                if let Some(path) = change.get("path").and_then(|p| p.as_str()) {
+                    append_unique_path(edited_files, path.to_string());
+                }
+            }
+        }
+    }
+}
+
+fn build_tool_detail(input: &serde_json::Value) -> String {
+    if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
+        format!(" $ {}", command.lines().next().unwrap_or(""))
+    } else if let Some(file_path) = extract_file_path_from_input(input) {
+        format!(" {}", file_path)
+    } else if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
+        format!(" \"{}\"", pattern)
+    } else if let Some(arguments) = input
+        .get("arguments")
+        .or_else(|| input.get("input"))
+        .or_else(|| input.get("params"))
+    {
+        match arguments {
+            serde_json::Value::String(s) if !s.is_empty() => format!(" {}", s),
+            serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                format!(" {}", arguments)
+            }
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    }
+}
+
+fn build_file_change_detail(item: &serde_json::Value) -> String {
+    let Some(changes) = item.get("changes").and_then(|c| c.as_array()) else {
+        return String::new();
+    };
+
+    let mut parts = Vec::new();
+    for change in changes {
+        let path = change.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+        let kind = change.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        if kind.is_empty() {
+            parts.push(path.to_string());
+        } else {
+            parts.push(format!("{} {}", kind, path));
+        }
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", parts.join(", "))
+    }
+}
+
+fn display_name_for_tool_type(tool_type: &str) -> &str {
+    match tool_type {
+        "command_execution" | "local_shell_call" => "Bash",
+        "file_change" => "FileChange",
+        "function_call" => "Tool",
+        other => other,
+    }
+}
+
+fn extract_tool_call_from_item(item: &serde_json::Value) -> Option<(String, String)> {
+    let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if matches!(
+        item_type,
+        "" | "agent_message" | "message" | "reasoning" | "reasoning_summary"
+    ) {
+        return None;
+    }
+
+    if item_type == "file_change" {
+        return Some((
+            display_name_for_tool_type(item_type).to_string(),
+            build_file_change_detail(item),
+        ));
+    }
+
+    if item_type == "command_execution" || item_type == "local_shell_call" {
+        let detail = item
+            .get("command")
+            .and_then(|c| c.as_str())
+            .map(|command| format!(" $ {}", command.lines().next().unwrap_or("")))
+            .unwrap_or_default();
+        return Some((display_name_for_tool_type(item_type).to_string(), detail));
+    }
+
+    let name = item
+        .get("name")
+        .or_else(|| item.get("tool"))
+        .or_else(|| item.get("tool_name"))
+        .and_then(|n| n.as_str())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| display_name_for_tool_type(item_type).to_string());
+    let detail = build_tool_detail(item);
+
+    Some((name, detail))
+}
+
+fn extract_tool_call_from_event(event: &serde_json::Value) -> Option<(String, String)> {
+    if let Some(item) = event.get("item") {
+        return extract_tool_call_from_item(item);
+    }
+
+    let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if matches!(
+        event_type,
+        "tool_call" | "tool_use" | "tool" | "function_call" | "mcp_tool_call"
+    ) {
+        let name = event
+            .get("name")
+            .or_else(|| event.get("tool"))
+            .or_else(|| event.get("tool_name"))
+            .and_then(|n| n.as_str())
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| display_name_for_tool_type(event_type).to_string());
+        return Some((name, build_tool_detail(event)));
+    }
+
+    None
+}
+
+fn should_log_tool_event(event_type: &str, item_id: Option<&str>, logged_ids: &[String]) -> bool {
+    match event_type {
+        "item.started" => true,
+        "item.completed" => match item_id {
+            Some(id) => !logged_ids.iter().any(|seen| seen == id),
+            None => true,
+        },
+        "tool_call" | "tool_use" | "tool" | "function_call" | "mcp_tool_call" => true,
+        _ => false,
+    }
+}
+
 fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
@@ -257,6 +431,7 @@ fn process_event_stream(
     let mut final_result = String::new();
     let mut edited_files = Vec::new();
     let mut metrics = StreamMetrics::default();
+    let mut logged_tool_item_ids = Vec::new();
 
     for line_result in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -269,21 +444,27 @@ fn process_event_stream(
         }
 
         if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let item_id = event
+                .get("item")
+                .and_then(|item| item.get("id"))
+                .and_then(|id| id.as_str());
+
+            if should_log_tool_event(event_type, item_id, &logged_tool_item_ids) {
+                if let Some((name, detail)) = extract_tool_call_from_event(&event) {
+                    on_log(&format!("\u{2192} {}{}\n", name, detail));
+                    if let Some(id) = item_id {
+                        logged_tool_item_ids.push(id.to_string());
+                    }
+                }
+            }
             if let Some(text) = extract_text_from_event(&event) {
                 on_log(text);
                 on_log("\n");
                 final_result.push_str(text);
                 final_result.push('\n');
             }
-            if let Some(path) = event
-                .get("path")
-                .and_then(|p| p.as_str())
-                .or_else(|| event.get("file_path").and_then(|p| p.as_str()))
-            {
-                if !edited_files.iter().any(|f| f == path) {
-                    edited_files.push(path.to_string());
-                }
-            }
+            collect_edited_paths(&event, &mut edited_files);
             if let Some(cost) = event.get("cost_usd").and_then(|c| c.as_f64()) {
                 metrics.cost_usd = Some(cost);
             }
@@ -505,6 +686,54 @@ mod tests {
         assert_eq!(metrics.cost_usd, None);
         assert_eq!(metrics.duration_ms, None);
         assert_eq!(metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn process_event_stream_logs_codex_command_execution_once() {
+        let input = concat!(
+            "{\"type\":\"item.started\",\"item\":{\"id\":\"item_0\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'printf probe'\",\"status\":\"in_progress\"}}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'printf probe'\",\"aggregated_output\":\"probe\",\"exit_code\":0,\"status\":\"completed\"}}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"done\"}}\n",
+        );
+        let cancel = AtomicBool::new(false);
+        let mut log = String::new();
+
+        let (final_result, edited_files, _metrics) =
+            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+                .expect("stream should parse");
+
+        assert_eq!(final_result, "done\n");
+        assert_eq!(log, "\u{2192} Bash $ /bin/zsh -lc 'printf probe'\ndone\n");
+        assert!(edited_files.is_empty());
+    }
+
+    #[test]
+    fn process_event_stream_logs_codex_file_change_and_tracks_path() {
+        let input = concat!(
+            "{\"type\":\"item.started\",\"item\":{\"id\":\"item_0\",\"type\":\"file_change\",\"changes\":[{\"path\":\"src/codex.rs\",\"kind\":\"modify\"}],\"status\":\"in_progress\"}}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"file_change\",\"changes\":[{\"path\":\"src/codex.rs\",\"kind\":\"modify\"}],\"status\":\"completed\"}}\n",
+        );
+        let cancel = AtomicBool::new(false);
+        let mut log = String::new();
+
+        let (_final_result, edited_files, _metrics) =
+            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+                .expect("stream should parse");
+
+        assert_eq!(log, "\u{2192} FileChange modify src/codex.rs\n");
+        assert_eq!(edited_files, vec!["src/codex.rs".to_string()]);
+    }
+
+    #[test]
+    fn process_event_stream_logs_completed_tool_without_started_event() {
+        let input = "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"function_call\",\"name\":\"read_file\",\"arguments\":{\"path\":\"src/main.rs\"}}}\n";
+        let cancel = AtomicBool::new(false);
+        let mut log = String::new();
+
+        process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
+
+        assert_eq!(log, "\u{2192} read_file {\"path\":\"src/main.rs\"}\n");
     }
 
     #[test]
