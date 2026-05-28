@@ -50,7 +50,7 @@ Dirigent will initialize the repository with jj automatically.
 - The **file tree** on the left is empty (no files yet)
 - The **repo bar** at the top shows `jj-hello-demo`
 - The **status bar** at the bottom shows a jj change ID
-- The **jj Logs** shows a single root commit
+- The **jj Log** shows a single root commit
 
 > **Bug?** If the status bar doesn't show a change ID or shows a git hash
 > instead, the jj backend detection may not be working.
@@ -110,11 +110,11 @@ console.log("hello world!");
 
 **Expected:**
 - The **status bar** updates to a new change ID
-- The **jj Logs** shows the commit with the message
+- The **jj Log** shows the commit with the message
 - The **file tree** shows `index.js`, `package.json`, `.gitignore`
 - The cue moves to **Done**
 
-> **Bug?** If the commit doesn't appear in the jj Logs, or the change ID
+> **Bug?** If the commit doesn't appear in the jj Log, or the change ID
 > doesn't update, the jj commit flow may not be triggering correctly.
 
 ### 2.4 Create the `main` bookmark
@@ -125,10 +125,10 @@ console.log("hello world!");
 
 **Click:** Create
 
-**Expected:** The **jj Logs** shows the `main` label on the commit.
+**Expected:** The **jj Log** shows the `main` label on the commit.
 The **status bar** shows `main`.
 
-> **Bug?** If the bookmark doesn't appear in the jj Logs, bookmark
+> **Bug?** If the bookmark doesn't appear in the jj Log, bookmark
 > creation or display may be broken.
 
 ---
@@ -145,7 +145,7 @@ The **status bar** shows `main`.
 
 **Expected:** The **status bar** shows `feature/random-planet main` (both
 bookmarks appear because `feature/random-planet` was just created on the same
-commit as `main`). The jj Logs shows the new bookmark label on the
+commit as `main`). The jj Log shows the new bookmark label on the
 current (empty) working-copy commit.
 
 ### 3.2 Enter the prompt
@@ -183,7 +183,7 @@ and added lines with the planets array and random selection.
 
 **Click:** Commit
 
-**Expected:** The **jj Logs** shows entries with jj change IDs
+**Expected:** The **jj Log** shows entries with jj change IDs
 (short random strings), descriptions, and bookmark labels at the end:
 
 ```text
@@ -249,7 +249,7 @@ of printing "hello <planet>!".
 
 **Click:** Commit
 
-**Expected:** The **jj Logs** now shows a chain:
+**Expected:** The **jj Log** now shows a chain:
 
 ```text
 ● <id> @ (no description yet) (empty)
@@ -311,7 +311,7 @@ should NOT appear in the diff (it wasn't changed).
 
 **Click:** Commit
 
-**Expected:** The **jj Logs** now shows `docs` as a separate branch off
+**Expected:** The **jj Log** now shows `docs` as a separate branch off
 `main`, parallel to the `feature/random-planet` chain:
 
 ```text
@@ -385,7 +385,7 @@ regex matching. `index.js` and `package.json` should NOT be in the diff.
 
 ### 7.1 Check the full graph
 
-**Click:** The **History** tab
+**Click:** The **jj Log** tab
 
 **Expected:** The complete graph should show this topology (each line
 shows a jj change ID, the commit description, and the bookmark label):
@@ -410,7 +410,7 @@ on top of `test`.
 
 ### 7.2 Count the bookmarks
 
-**Look at** the bookmark labels in the jj Logs.
+**Look at** the bookmark labels in the jj Log.
 
 **Expected:** Five bookmarks: `main`, `feature/random-planet`,
 `feature/personalized`, `docs`, `test`.
@@ -473,7 +473,7 @@ personalized version (because `test` branches from `feature/personalized`).
 
 ### 9.1 View the random-planet diff
 
-**Click:** The `feature/random-planet` commit in the **jj Logs**
+**Click:** The `feature/random-planet` commit in the **jj Log**
 
 **Expected:** The diff shows `index.js` changed from `console.log("hello world!")`
 to the planet version. Removed lines in red, added lines in green. Stats
@@ -484,7 +484,7 @@ show something like `+12 -1`.
 
 ### 9.2 View the personalized diff
 
-**Click:** The `feature/personalized` commit in the **jj Logs**
+**Click:** The `feature/personalized` commit in the **jj Log**
 
 **Expected:** The diff shows only the `process.argv` and `if/else` additions.
 The planets array should NOT appear in the diff (it didn't change between
@@ -492,7 +492,7 @@ The planets array should NOT appear in the diff (it didn't change between
 
 ### 9.3 View the test diff
 
-**Click:** The `test` commit in the **jj Logs**
+**Click:** The `test` commit in the **jj Log**
 
 **Expected:** The diff shows only `test.js` as a new file. No changes to
 `index.js` or `package.json`.
@@ -512,7 +512,7 @@ The planets array should NOT appear in the diff (it didn't change between
 **Select:** `feature/personalized` in the bookmark picker
 
 **Expected:** The status bar shows "Merging 'feature/personalized'..." and then
-updates to "Merged 'feature/personalized' into 'main'". The jj Logs
+updates to "Merged 'feature/personalized' into 'main'". The jj Log
 shows a merge commit with two parents.
 
 ### 10.3 Verify main has the features
@@ -593,7 +593,7 @@ Running tests...
 
 ### 13.2 Verify
 
-**Look at** the **jj Logs**.
+**Look at** the **jj Log**.
 
 **Expected:** Only `main` remains as a bookmark label. The old commits are
 still visible in the graph but have no bookmark labels.
@@ -615,7 +615,7 @@ shows "No empty heads found".
 
 ### 14.2 Verify
 
-**Look at** the **jj Logs**.
+**Look at** the **jj Log**.
 
 **Expected:** The previously empty head commits are gone from the graph. Only
 commits with actual content remain.
@@ -631,19 +631,15 @@ commits with actual content remain.
 ### 15.1 Add a remote (if needed)
 
 If the project doesn't have a remote yet, create a repository on your Git
-hosting provider (e.g. GitHub, GitLab) and add the remote:
+hosting provider (e.g. GitHub, GitLab) and add the remote via the terminal:
 
-**Click:** **jj** menu > **Git** > **Add Remote**
-
-**Type name:** `origin`
-
-**Type URL:** `<your-repo-url>`
-
-**Click:** Add
+```bash
+jj git remote add origin <your-repo-url>
+```
 
 ### 15.2 Push main to the remote
 
-**Click:** **jj** menu > **Git** > **Push**
+**Click:** **jj** menu > **Push**
 
 **Expected:** The status bar shows "Pushing to origin..." and then updates to
 "Pushed 'main' to origin". The `main` bookmark and all its commits are pushed
@@ -655,7 +651,7 @@ to the remote.
 
 ### 15.3 Verify
 
-**Look at** the **jj Logs**.
+**Look at** the **jj Log**.
 
 **Expected:** The `main` bookmark now shows a remote tracking indicator
 (e.g. `main@origin`) confirming the push succeeded.
@@ -671,8 +667,8 @@ from the steps above.
 |---|--------------------------------------------------------|-------|
 | 1 | jj change ID shown in status bar (not git hash)        | 1.2   |
 | 2 | Cue diff preview appears after Claude finishes         | 2.2   |
-| 3 | Commit updates change ID and jj Logs             | 2.3   |
-| 4 | Bookmark label appears in jj Logs after creation | 2.4   |
+| 3 | Commit updates change ID and jj Log                    | 2.3   |
+| 4 | Bookmark label appears in jj Log after creation        | 2.4   |
 | 5 | Bookmark auto-advances after commit                    | 3.4   |
 | 6 | Switching bookmarks updates file tree content          | 5.1   |
 | 7 | `docs` branches from `main` (not from feature chain)   | 5.4   |

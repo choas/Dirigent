@@ -71,7 +71,7 @@ on the cue). Enter a commit message. Dirigent does three things:
 
 After the commit:
 - The **status bar** updates to show the new change ID
-- The **history panel** shows your described commit with its bookmark label
+- The **jj Log** shows your described commit with its bookmark label
 - The cue moves from **Review** to **Done**
 - The status message confirms: "Committed: a1b2c3d"
 
@@ -84,12 +84,12 @@ parent commit.
 You have two choices:
 
 **Keep working:** Create another cue, let Claude make more changes, commit
-again. Each commit stacks on top of the previous one. The history panel shows
+again. Each commit stacks on top of the previous one. The **jj Log** shows
 the growing chain. You can make as many commits as you like before pushing.
 
 **Push to the remote:** Open the **jj** menu and click **Push**. Dirigent pushes all
 bookmarks that track a remote. The status bar shows "Pushing..." during the
-operation, then confirms with "Pushed (updated 1 bookmark)". The history panel
+operation, then confirms with "Pushed (updated 1 bookmark)". The **jj Log**
 refreshes to show the remote tracking state.
 
 ### 5. Create a pull request
@@ -132,7 +132,7 @@ You push -- all three commits go to the remote
 You create a PR
 ```
 
-Each commit is a clean, described unit of work. The history panel shows the
+Each commit is a clean, described unit of work. The **jj Log** shows the
 full chain with the commit graph. Your bookmark advances automatically with
 each commit, so when you push, all commits behind that bookmark go to the
 remote.
@@ -253,9 +253,9 @@ haven't been pushed yet. This is your signal that a push is available.
 
 ---
 
-## Understanding the history panel
+## Understanding the jj Log panel
 
-The history panel shows your commit history as a graph, similar to `jj log`.
+The **jj Log** panel shows your commit history as a graph, similar to `jj log`.
 Each entry shows:
 
 - **Change ID** (7 characters) -- jj's stable identifier for the commit
@@ -296,68 +296,19 @@ working, and resolve later. There is no "detached HEAD" anxiety.
 
 ---
 
-## One workspace per cue
-
-### Every cue gets its own workspace
-
-Dirigent creates a dedicated jj workspace for *every* cue -- even when only one
-is running. This keeps the design simple and consistent: the default workspace
-stays clean (it's where you browse code), and each cue's changes are fully
-isolated from the start. There's no special "single cue" vs "parallel cues" mode.
-
-```text
-repo/                          <- default workspace (browsing, no cue runs here)
-repo-workspace-add-auth/       <- workspace for cue "add authentication"
-repo-workspace-add-logging/    <- workspace for cue "add logging"
-```
+## Workspaces
 
 jj workspaces are lightweight -- they share the repo store, each has an
 independent working-copy commit, and creating or tearing down a workspace is
-fast with no side effects on other workspaces. This makes "one workspace per cue"
-cheap enough to be the default, not a special case.
+fast with no side effects on other workspaces.
 
-### Auto-commit and bookmarks
-
-When a cue finishes, Dirigent automatically commits the changes in that cue's
-workspace and sets a **bookmark** pointing to the new commit. The user doesn't
-have to remember to commit -- it just happens. The bookmark is named after the
-cue (e.g., `cue/42-add-authentication`), so every cue's result is easy to find
-in the log.
-
-After both cues are committed, the user can review them independently. If they
-look good, stack them (rebase one on top of the other) or merge them.
-
-### Reverting a cue is just deleting a bookmark
-
-This is where jj shines compared to git. If the user doesn't like what a cue
-produced, reverting is trivial: Dirigent deletes the bookmark and cleans up the
-workspace. In jj, bookmarks are just pointers -- the commit still exists in the
-log but is no longer referenced. Nothing is destroyed, and the operation is
-instant.
-
-If the user changes their mind later, the commit can still be restored via
-**Undo Last Operation** in the **jj** menu. Compare this to git, where reverting
-means creating a new revert commit (which clutters history) or using
-`git reset --hard` (which can lose work if you're not careful). jj's approach is
-non-destructive by default.
-
-### Why not git worktrees?
-
-Git worktrees achieve similar isolation, but they're heavier: each worktree is a
-full checkout with its own `.git` link, and branch management gets awkward (you
-can't have the same branch checked out in two worktrees). jj workspaces share
-the repo store, have independent working-copy commits, and have no branch
-conflicts. The "one workspace per cue" model would be cumbersome with git
-worktrees -- with jj workspaces it's natural.
+Use the **Worktree Manager** to create and manage workspaces manually. Each
+workspace gets its own working directory, which is useful for reviewing code on
+one bookmark while working on another.
 
 ---
 
 ## Common tasks
-
-### Revert a file
-
-In the file tree, use the **Revert** action on individual files. This restores
-the file from the parent commit, undoing changes in the working copy.
 
 ### Switch to a different bookmark
 
@@ -399,10 +350,9 @@ is a separate working directory sharing the same repo.
 | Start new work from main     | Worktree Manager > Branch picker > main|
 | See what changed             | File tree + status bar                 |
 | Commit current work          | Commit button + message                |
-| View history                 | History panel                          |
+| View history                 | jj Log panel                           |
 | Push to remote               | jj menu > Push                         |
 | Fetch from remote            | jj menu > Fetch                        |
-| Revert a file                | File tree > Revert action              |
 | Switch bookmark              | Worktree Manager > branch/bookmark picker |
 | Create a bookmark            | jj menu > Create Bookmark              |
 | Squash commits               | jj menu > Squash Commits               |
