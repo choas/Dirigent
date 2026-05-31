@@ -4,9 +4,10 @@ use git2::Repository;
 
 use crate::error::DirigentError;
 
-/// Create a GitHub pull request for the current branch using `gh pr create`.
-/// Falls back to the REST API when the GraphQL mutation fails (common race
-/// condition after pushing a brand-new branch).
+/// Create a pull request for the current branch.
+///
+/// GitHub remotes use the `gh` CLI (with a REST fallback). Codeberg remotes use
+/// the Forgejo REST API directly, since `gh` cannot talk to Codeberg.
 /// Returns the PR URL on success.
 pub(crate) fn create_pull_request(
     repo_path: &Path,
@@ -25,6 +26,16 @@ pub(crate) fn create_pull_request(
         .shorthand()
         .ok_or_else(|| DirigentError::GitCommand("HEAD is not on a branch".into()))?
         .to_string();
+
+    // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
+    if let Some(remote) = origin_remote_url(&repo)
+        .as_deref()
+        .and_then(parse_remote_url)
+    {
+        if remote.is_codeberg() {
+            return create_pull_request_codeberg(&remote, title, body, base, &branch_name, draft);
+        }
+    }
 
     // Run `gh` from the main worktree directory so it can resolve the remote.
     let gh_dir = main_worktree_path(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
@@ -146,10 +157,188 @@ fn create_pull_request_rest(
     Ok(url)
 }
 
+/// A git hosting remote parsed into its host, owner and repository name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteInfo {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl RemoteInfo {
+    /// Whether this remote is hosted on Codeberg (Forgejo).
+    fn is_codeberg(&self) -> bool {
+        self.host.eq_ignore_ascii_case("codeberg.org")
+    }
+}
+
+/// Read the URL of the `origin` remote (falling back to the first configured remote).
+fn origin_remote_url(repo: &Repository) -> Option<String> {
+    if let Ok(remote) = repo.find_remote("origin") {
+        if let Some(url) = remote.url() {
+            return Some(url.to_string());
+        }
+    }
+    let remotes = repo.remotes().ok()?;
+    let name = remotes.iter().flatten().next()?;
+    let remote = repo.find_remote(name).ok()?;
+    remote.url().map(|u| u.to_string())
+}
+
+/// Parse a git remote URL into host/owner/repo.
+///
+/// Handles the common forms:
+///   - `https://host/owner/repo.git`
+///   - `ssh://git@host/owner/repo.git`
+///   - `git@host:owner/repo.git`
+fn parse_remote_url(url: &str) -> Option<RemoteInfo> {
+    let url = url.trim();
+
+    // Reduce every form to `host/owner/repo` (path may still carry a leading slash).
+    let rest = if let Some(idx) = url.find("://") {
+        // scheme://[user@]host/owner/repo
+        let after = &url[idx + 3..];
+        after.rsplit('@').next().unwrap_or(after).to_string()
+    } else if let Some(at) = url.find('@') {
+        // user@host:owner/repo  ->  host/owner/repo
+        url[at + 1..].replacen(':', "/", 1)
+    } else {
+        url.to_string()
+    };
+
+    let rest = rest.strip_suffix(".git").unwrap_or(&rest);
+    let mut segments = rest.split('/').filter(|s| !s.is_empty());
+    let host = segments.next()?.to_string();
+    let owner = segments.next()?.to_string();
+    let repo = segments.next()?.to_string();
+    if host.is_empty() || owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(RemoteInfo { host, owner, repo })
+}
+
+/// Create a pull request on Codeberg via the Forgejo REST API.
+///
+/// Requires a Codeberg access token in the `CODEBERG_TOKEN` (or `FORGEJO_TOKEN`)
+/// environment variable. Forgejo has no draft flag on creation, so draft PRs are
+/// marked with the conventional `WIP:` title prefix.
+fn create_pull_request_codeberg(
+    remote: &RemoteInfo,
+    title: &str,
+    body: &str,
+    base: &str,
+    head: &str,
+    draft: bool,
+) -> crate::error::Result<String> {
+    let token = std::env::var("CODEBERG_TOKEN")
+        .or_else(|_| std::env::var("FORGEJO_TOKEN"))
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            DirigentError::GitCommand(
+                "Codeberg PR creation requires an access token. Create one at \
+                 Codeberg > Settings > Applications and set it in the CODEBERG_TOKEN \
+                 environment variable."
+                    .into(),
+            )
+        })?;
+
+    let title = if draft {
+        format!("WIP: {}", title)
+    } else {
+        title.to_string()
+    };
+
+    let api = format!(
+        "https://{}/api/v1/repos/{}/{}/pulls",
+        remote.host, remote.owner, remote.repo
+    );
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| DirigentError::GitCommand(format!("HTTP client error: {}", e)))?;
+
+    let resp = client
+        .post(&api)
+        .header("Authorization", format!("token {}", token))
+        .header("Accept", "application/json")
+        .json(&serde_json::json!({
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+        }))
+        .send()
+        .map_err(|e| DirigentError::GitCommand(format!("Codeberg API request failed: {}", e)))?;
+
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(DirigentError::GitCommand(format!(
+            "Codeberg PR creation failed (HTTP {}): {}",
+            status.as_u16(),
+            text.trim()
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| DirigentError::GitCommand(format!("invalid Codeberg API response: {}", e)))?;
+    let url = json
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if url.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "Codeberg PR created but no URL returned".into(),
+        ));
+    }
+    Ok(url)
+}
+
+/// Query the Forgejo API for a Codeberg repo's default branch. Returns `None` on
+/// any failure so callers can fall back to the generic detection path.
+fn codeberg_default_branch(remote: &RemoteInfo) -> Option<String> {
+    let api = format!(
+        "https://{}/api/v1/repos/{}/{}",
+        remote.host, remote.owner, remote.repo
+    );
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .ok()?;
+    let mut req = client.get(&api).header("Accept", "application/json");
+    if let Ok(token) = std::env::var("CODEBERG_TOKEN").or_else(|_| std::env::var("FORGEJO_TOKEN")) {
+        if !token.trim().is_empty() {
+            req = req.header("Authorization", format!("token {}", token));
+        }
+    }
+    let json: serde_json::Value = req.send().ok()?.json().ok()?;
+    json.get("default_branch")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 /// Get the default branch name for the repository (e.g. "main" or "master").
 /// Falls back to "main" if detection fails.
 pub(crate) fn get_default_branch(repo_path: &Path) -> String {
     use std::process::Command;
+
+    // Codeberg (Forgejo) repos: ask the Forgejo API; `gh` cannot reach them.
+    if let Ok(repo) = Repository::discover(repo_path) {
+        if let Some(remote) = origin_remote_url(&repo)
+            .as_deref()
+            .and_then(parse_remote_url)
+        {
+            if remote.is_codeberg() {
+                if let Some(branch) = codeberg_default_branch(&remote) {
+                    return branch;
+                }
+            }
+        }
+    }
 
     // Try gh api first (most reliable for GitHub repos)
     if let Ok(output) = Command::new("gh")
@@ -239,4 +428,51 @@ pub(crate) fn main_worktree_path(repo_path: &Path) -> crate::error::Result<PathB
     }
 
     Err(DirigentError::GitCommand("no main worktree found".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_https_remote() {
+        let r = parse_remote_url("https://codeberg.org/lars/dirigent.git").unwrap();
+        assert_eq!(r.host, "codeberg.org");
+        assert_eq!(r.owner, "lars");
+        assert_eq!(r.repo, "dirigent");
+        assert!(r.is_codeberg());
+    }
+
+    #[test]
+    fn parses_scp_style_remote() {
+        let r = parse_remote_url("git@codeberg.org:lars/dirigent.git").unwrap();
+        assert_eq!(r.host, "codeberg.org");
+        assert_eq!(r.owner, "lars");
+        assert_eq!(r.repo, "dirigent");
+    }
+
+    #[test]
+    fn parses_ssh_scheme_remote() {
+        let r = parse_remote_url("ssh://git@codeberg.org/lars/dirigent.git").unwrap();
+        assert_eq!(r.host, "codeberg.org");
+        assert_eq!(r.owner, "lars");
+        assert_eq!(r.repo, "dirigent");
+    }
+
+    #[test]
+    fn parses_remote_without_git_suffix() {
+        let r = parse_remote_url("https://codeberg.org/lars/dirigent").unwrap();
+        assert_eq!(r.repo, "dirigent");
+    }
+
+    #[test]
+    fn github_is_not_codeberg() {
+        let r = parse_remote_url("git@github.com:lars/dirigent.git").unwrap();
+        assert!(!r.is_codeberg());
+    }
+
+    #[test]
+    fn rejects_incomplete_url() {
+        assert!(parse_remote_url("https://codeberg.org/lars").is_none());
+    }
 }
