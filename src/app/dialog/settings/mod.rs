@@ -14,6 +14,7 @@ use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::gemini;
 use crate::opencode;
 use crate::settings;
+use crate::settings::CliProvider;
 
 /// Render a collapsible section header with an arrow toggle, label, and summary text.
 /// Returns the (possibly toggled) expanded state.
@@ -68,11 +69,20 @@ impl DirigentApp {
             self.gemini_models_loading = false;
         }
 
-        // Kick off background fetch if not yet loaded and not already loading
-        if self.opencode_models.is_empty() && !self.opencode_models_loading {
+        // Kick off background fetch if not yet loaded and not already loading.
+        // Only fetch for the currently selected provider — invoking another
+        // provider's CLI (e.g. `gemini models list`) can trigger a keychain
+        // access prompt for credentials we don't need yet.
+        if self.settings.cli_provider == CliProvider::OpenCode
+            && self.opencode_models.is_empty()
+            && !self.opencode_models_loading
+        {
             self.spawn_opencode_models_fetch();
         }
-        if self.gemini_models.is_empty() && !self.gemini_models_loading {
+        if self.settings.cli_provider == CliProvider::Gemini
+            && self.gemini_models.is_empty()
+            && !self.gemini_models_loading
+        {
             self.spawn_gemini_models_fetch();
         }
 
