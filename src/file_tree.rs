@@ -11,6 +11,8 @@ pub(crate) struct FileEntry {
     pub path: PathBuf,
     pub is_dir: bool,
     pub is_ignored: bool,
+    /// True if this entry is a symbolic link (to a file or directory).
+    pub is_symlink: bool,
     pub children: Vec<FileEntry>,
 }
 
@@ -49,6 +51,7 @@ fn collapse_entry(mut entry: FileEntry) -> FileEntry {
         entry.name = format!("{}/{}", entry.name, child.name);
         entry.path = child.path;
         entry.is_ignored = entry.is_ignored || child.is_ignored;
+        entry.is_symlink = child.is_symlink;
         entry.children = child.children;
     }
     // If the collapsed directory contains exactly one file (no subdirs),
@@ -64,6 +67,7 @@ fn collapse_entry(mut entry: FileEntry) -> FileEntry {
             path: child.path,
             is_dir: false,
             is_ignored: entry.is_ignored || child.is_ignored,
+            is_symlink: child.is_symlink,
             children: Vec::new(),
         };
     }
@@ -90,7 +94,17 @@ fn scan_directory(
 
         let path = entry.path();
         let file_type = entry.file_type()?;
-        let is_dir = file_type.is_dir();
+        let is_symlink = file_type.is_symlink();
+
+        // `file_type` from `read_dir` does not follow symlinks, so for a link we
+        // resolve the target to learn whether it points at a directory.
+        let is_dir = if is_symlink {
+            std::fs::metadata(&path)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+        } else {
+            file_type.is_dir()
+        };
 
         let is_ignored = repo
             .and_then(|r| {
@@ -99,7 +113,9 @@ fn scan_directory(
             })
             .unwrap_or(false);
 
-        let children = if is_dir {
+        // Recurse into real directories only. Symlinked directories are shown
+        // but not descended into, to avoid following cycles back into the tree.
+        let children = if is_dir && !is_symlink {
             scan_directory(&path, root, repo)?
         } else {
             Vec::new()
@@ -110,6 +126,7 @@ fn scan_directory(
             path,
             is_dir,
             is_ignored,
+            is_symlink,
             children,
         });
     }
@@ -133,6 +150,7 @@ mod tests {
             path: PathBuf::from(name),
             is_dir: true,
             is_ignored: false,
+            is_symlink: false,
             children,
         }
     }
@@ -143,6 +161,7 @@ mod tests {
             path: PathBuf::from(name),
             is_dir: false,
             is_ignored: false,
+            is_symlink: false,
             children: Vec::new(),
         }
     }
@@ -212,5 +231,37 @@ mod tests {
         assert_eq!(collapsed[0].name, "src");
         assert!(collapsed[0].is_dir);
         assert_eq!(collapsed[0].children.len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_marks_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let tmp =
+            std::env::temp_dir().join(format!("dirigent_symlink_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("real_dir")).unwrap();
+        std::fs::write(tmp.join("real_file.txt"), b"hi").unwrap();
+        symlink(tmp.join("real_file.txt"), tmp.join("link_file.txt")).unwrap();
+        symlink(tmp.join("real_dir"), tmp.join("link_dir")).unwrap();
+
+        let entries = scan_directory(&tmp, &tmp, None).unwrap();
+        let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+
+        assert!(!by_name("real_file.txt").is_symlink);
+        assert!(!by_name("real_dir").is_symlink);
+
+        let link_file = by_name("link_file.txt");
+        assert!(link_file.is_symlink);
+        assert!(!link_file.is_dir);
+
+        let link_dir = by_name("link_dir");
+        assert!(link_dir.is_symlink);
+        assert!(link_dir.is_dir);
+        // Symlinked directories are not descended into (cycle safety).
+        assert!(link_dir.children.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

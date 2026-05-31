@@ -485,11 +485,13 @@ mod tests {
                 path: PathBuf::from("src"),
                 is_dir: true,
                 is_ignored: false,
+                is_symlink: false,
                 children: vec![FileEntry {
                     name: "main.rs".into(),
                     path: PathBuf::from("src/main.rs"),
                     is_dir: false,
                     is_ignored: false,
+                    is_symlink: false,
                     children: vec![],
                 }],
             },
@@ -498,6 +500,7 @@ mod tests {
                 path: PathBuf::from("README.md"),
                 is_dir: false,
                 is_ignored: false,
+                is_symlink: false,
                 children: vec![],
             },
         ];

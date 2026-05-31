@@ -480,13 +480,17 @@ impl DirigentApp {
 
         // Directory name
         let name_color = entry_name_color(ui, entry.is_ignored, dir_has_dirty, ctx.semantic);
-        ui.painter().text(
+        let name_rect = ui.painter().text(
             egui::pos2(text_pos.x + 20.0, text_pos.y),
             egui::Align2::LEFT_CENTER,
             &entry.name,
             egui::FontId::proportional(ctx.font_size),
             name_color,
         );
+
+        if entry.is_symlink {
+            paint_symlink_badge(ui, name_rect, ctx.font_size);
+        }
 
         if response.clicked() {
             if is_expanded {
@@ -542,13 +546,17 @@ impl DirigentApp {
         let name_color =
             entry_name_color(ui, entry.is_ignored, status_letter.is_some(), ctx.semantic);
         let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
-        ui.painter().text(
+        let name_rect = ui.painter().text(
             text_pos,
             egui::Align2::LEFT_CENTER,
             &entry.name,
             egui::FontId::proportional(ctx.font_size),
             name_color,
         );
+
+        if entry.is_symlink {
+            paint_symlink_badge(ui, name_rect, ctx.font_size);
+        }
 
         paint_git_status_badge(ui, row_rect, status_letter, ctx.semantic);
 
@@ -1089,6 +1097,19 @@ pub(super) fn paint_git_status_badge(
             badge_color,
         );
     }
+}
+
+/// Paint a small "link" glyph just after a symlinked entry's name to mark it
+/// as a symbolic link (to a file or directory).
+pub(super) fn paint_symlink_badge(ui: &egui::Ui, name_rect: egui::Rect, font_size: f32) {
+    let pos = egui::pos2(name_rect.right() + 6.0, name_rect.center().y);
+    ui.painter().text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        "\u{1F517}", // 🔗
+        egui::FontId::proportional((font_size - 2.0).max(8.0)),
+        ui.visuals().weak_text_color(),
+    );
 }
 
 /// Render the context menu for a directory entry.
