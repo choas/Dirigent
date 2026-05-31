@@ -30,7 +30,15 @@ pub(crate) fn create_pull_request(
 
     // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
     if let Some(remote) = forgejo::codeberg_remote(repo_path) {
-        return create_pull_request_codeberg(&remote, title, body, base, &branch_name, draft);
+        return create_pull_request_codeberg(
+            repo_path,
+            &remote,
+            title,
+            body,
+            base,
+            &branch_name,
+            draft,
+        );
     }
 
     // Run `gh` from the main worktree directory so it can resolve the remote.
@@ -159,6 +167,7 @@ fn create_pull_request_rest(
 /// environment variable. Forgejo has no draft flag on creation, so draft PRs are
 /// marked with the conventional `WIP:` title prefix.
 fn create_pull_request_codeberg(
+    repo_path: &Path,
     remote: &RemoteInfo,
     title: &str,
     body: &str,
@@ -166,8 +175,8 @@ fn create_pull_request_codeberg(
     head: &str,
     draft: bool,
 ) -> crate::error::Result<String> {
-    let token =
-        forgejo::token().ok_or_else(|| DirigentError::GitCommand(forgejo::TOKEN_HELP.into()))?;
+    let token = forgejo::token(repo_path)
+        .ok_or_else(|| DirigentError::GitCommand(forgejo::TOKEN_HELP.into()))?;
 
     let title = if draft {
         format!("WIP: {}", title)
@@ -219,11 +228,11 @@ fn create_pull_request_codeberg(
 
 /// Query the Forgejo API for a Codeberg repo's default branch. Returns `None` on
 /// any failure so callers can fall back to the generic detection path.
-fn codeberg_default_branch(remote: &RemoteInfo) -> Option<String> {
+fn codeberg_default_branch(repo_path: &Path, remote: &RemoteInfo) -> Option<String> {
     let api = remote.api_base();
     let client = forgejo::client(15).ok()?;
     let mut req = client.get(&api).header("Accept", "application/json");
-    if let Some(token) = forgejo::token() {
+    if let Some(token) = forgejo::token(repo_path) {
         req = req.header("Authorization", format!("token {}", token));
     }
     let json: serde_json::Value = req.send().ok()?.json().ok()?;
@@ -240,7 +249,7 @@ pub(crate) fn get_default_branch(repo_path: &Path) -> String {
 
     // Codeberg (Forgejo) repos: ask the Forgejo API; `gh` cannot reach them.
     if let Some(remote) = forgejo::codeberg_remote(repo_path) {
-        if let Some(branch) = codeberg_default_branch(&remote) {
+        if let Some(branch) = codeberg_default_branch(repo_path, &remote) {
             return branch;
         }
     }

@@ -219,11 +219,12 @@ fn forgejo_get_all(
 /// `pulls/{n}/comments` list like GitHub), so this walks each review's comments
 /// in addition to the review bodies and issue-level comments.
 fn fetch_pr_findings_codeberg(
+    project_root: &Path,
     remote: &RemoteInfo,
     pr_number: u32,
 ) -> crate::error::Result<Vec<PrFinding>> {
     let client = forgejo::client(SUBPROCESS_TIMEOUT_SECS)?;
-    let token = forgejo::token();
+    let token = forgejo::token(project_root);
     let token = token.as_deref();
     let base = remote.api_base();
     let mut findings = Vec::new();
@@ -279,7 +280,7 @@ pub(crate) fn fetch_pr_findings(
 ) -> crate::error::Result<Vec<PrFinding>> {
     // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
     if let Some(remote) = forgejo::codeberg_remote(project_root) {
-        return fetch_pr_findings_codeberg(&remote, pr_number);
+        return fetch_pr_findings_codeberg(project_root, &remote, pr_number);
     }
 
     let mut findings = Vec::new();

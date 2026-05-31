@@ -103,12 +103,22 @@ pub(crate) fn codeberg_remote(repo_path: &Path) -> Option<RemoteInfo> {
     remote.is_codeberg().then_some(remote)
 }
 
-/// Read a Codeberg/Forgejo access token from the environment, if set.
-pub(crate) fn token() -> Option<String> {
-    std::env::var("CODEBERG_TOKEN")
-        .or_else(|_| std::env::var("FORGEJO_TOKEN"))
-        .ok()
-        .filter(|t| !t.trim().is_empty())
+/// Read a Codeberg/Forgejo access token.
+///
+/// Resolution order, first non-empty hit wins: `.Dirigent/.env`, then `.env` in
+/// the project root, then the process environment. This mirrors how other
+/// source integrations resolve their tokens, so a token placed in
+/// `.Dirigent/.env` works for PR operations too — not only one exported into
+/// Dirigent's own environment.
+pub(crate) fn token(project_root: &Path) -> Option<String> {
+    for key in ["CODEBERG_TOKEN", "FORGEJO_TOKEN"] {
+        let from_file = crate::claude::load_env_var_with_dirigent_fallback(project_root, key);
+        let resolved = from_file.or_else(|| std::env::var(key).ok());
+        if let Some(v) = resolved.filter(|t| !t.trim().is_empty()) {
+            return Some(v);
+        }
+    }
+    None
 }
 
 /// Build a blocking HTTP client with the given timeout.

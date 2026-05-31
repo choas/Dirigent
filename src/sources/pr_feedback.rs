@@ -61,12 +61,13 @@ fn gh_api_post(
 /// comments need a richer payload, so for all finding types we post a single
 /// issue-level comment mentioning the fix.
 fn notify_pr_finding_fixed_codeberg(
+    project_root: &Path,
     remote: &RemoteInfo,
     pr_number: u32,
     body: &str,
 ) -> crate::error::Result<()> {
-    let token =
-        forgejo::token().ok_or_else(|| DirigentError::Source(forgejo::TOKEN_HELP.into()))?;
+    let token = forgejo::token(project_root)
+        .ok_or_else(|| DirigentError::Source(forgejo::TOKEN_HELP.into()))?;
     let client = forgejo::client(SUBPROCESS_TIMEOUT_SECS)?;
     let url = format!("{}/issues/{}/comments", remote.api_base(), pr_number);
 
@@ -109,7 +110,7 @@ pub(crate) fn notify_pr_finding_fixed(
 
     // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
     if let Some(remote) = forgejo::codeberg_remote(project_root) {
-        notify_pr_finding_fixed_codeberg(&remote, pr_number, &body)?;
+        notify_pr_finding_fixed_codeberg(project_root, &remote, pr_number, &body)?;
         return Ok(true);
     }
 
