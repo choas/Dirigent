@@ -1215,16 +1215,16 @@ impl DirigentApp {
 
     fn handle_run_error(&mut self, result: &ClaudeResult, error: &str) {
         let preview = self.cue_preview(result.cue_id);
-        self.set_status_message(format!("Claude error for \"{}\": {}", preview, error));
-        let _ = self.db.fail_execution(result.exec_id, error);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(result.cue_id, "Run failed");
         let provider_name = self
             .claude
             .running_logs
             .get(&result.cue_id)
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
+        self.set_status_message(format!("{provider_name} error for \"{preview}\": {error}"));
+        let _ = self.db.fail_execution(result.exec_id, error);
+        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+        let _ = self.db.log_activity(result.cue_id, "Run failed");
         telemetry::emit_execution_failed(
             &self.project_name(),
             result.cue_id,

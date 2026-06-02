@@ -11,7 +11,12 @@ use super::playbook::default_playbook;
 ///   1. Try a login-shell `which` to pick up the user's full PATH.
 ///   2. Fall back to a plain `which` (works when launched from a terminal).
 ///   3. Probe well-known installation directories as a last resort.
-fn which(name: &str) -> Option<String> {
+///
+/// `name` may be a bare command name (`claude`) or an absolute path. For an
+/// absolute path, the login/plain `which` lookups verify it is still present
+/// and executable, so a stale stored path resolves to `None` instead of being
+/// blindly spawned.
+pub(crate) fn resolve_in_path(name: &str) -> Option<String> {
     // Reject names with shell metacharacters to prevent command injection.
     // `name` may originate from deserialized settings.json which could be
     // attacker-controlled (e.g. a malicious .Dirigent/settings.json in a repo).
@@ -120,16 +125,16 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
     }
     // Auto-detect CLI paths on first launch (when paths are empty)
     if settings.claude_cli_path.is_empty() {
-        settings.claude_cli_path = which("claude").unwrap_or_default();
+        settings.claude_cli_path = resolve_in_path("claude").unwrap_or_default();
     }
     if settings.opencode_cli_path.is_empty() {
-        settings.opencode_cli_path = which("opencode").unwrap_or_default();
+        settings.opencode_cli_path = resolve_in_path("opencode").unwrap_or_default();
     }
     if settings.codex_cli_path.is_empty() {
-        settings.codex_cli_path = which("codex").unwrap_or_default();
+        settings.codex_cli_path = resolve_in_path("codex").unwrap_or_default();
     }
     if settings.jj_cli_path.is_empty() {
-        settings.jj_cli_path = which("jj").unwrap_or_default();
+        settings.jj_cli_path = resolve_in_path("jj").unwrap_or_default();
     }
     // Auto-detect VCS backend: if the project has a .jj directory, use jj.
     if project_root.join(".jj").is_dir() {

@@ -146,6 +146,22 @@ fn invoke_pty(
     })
 }
 
+/// Resolve the Claude binary to an absolute, currently-existing executable.
+///
+/// A configured `cli_path` is tried first, but if it is stale (e.g. the binary
+/// was moved or removed since it was auto-detected) we fall back to resolving
+/// `claude` from PATH so the run still works. Only when nothing resolves do we
+/// return [`ClaudeError::NotFound`], which surfaces a clear "configure path in
+/// Settings" message instead of a cryptic spawn ENOENT.
+fn resolve_claude_binary(cli_path: &str) -> Result<String, ClaudeError> {
+    if !cli_path.is_empty() {
+        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
+            return Ok(path);
+        }
+    }
+    crate::settings::resolve_in_path("claude").ok_or(ClaudeError::NotFound)
+}
+
 /// Headless path: spawn `claude -p <prompt>` with piped stdout/stderr,
 /// forward both streams to `on_log`, and accumulate stdout as the response.
 #[allow(clippy::too_many_arguments)]
@@ -161,14 +177,9 @@ fn invoke_headless(
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    let claude_bin = if cli_path.is_empty() {
-        "claude"
-    } else {
-        cli_path
-    };
-    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
+    let claude_bin = resolve_claude_binary(cli_path)?;
 
-    let mut cmd = Command::new(claude_bin);
+    let mut cmd = Command::new(&claude_bin);
     cmd.arg("-p").arg(prompt);
     if skip_permissions {
         cmd.arg("--dangerously-skip-permissions");
