@@ -30,6 +30,7 @@ pub(super) fn consume_pty_events(
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
     done_sentinel: Option<&std::path::Path>,
+    session_id: Option<&str>,
 ) -> PtyResult {
     let mut state = PtyResult {
         response: String::new(),
@@ -139,10 +140,16 @@ pub(super) fn consume_pty_events(
     let elapsed = start_time.elapsed();
     let secs = elapsed.as_secs();
     let response_lines = state.response.lines().count();
+    let session_suffix = match session_id {
+        Some(id) if !id.is_empty() => format!(" — session {id}"),
+        _ => String::new(),
+    };
     if response_lines > 0 {
-        on_log(&format!("\nDone {secs}s ({response_lines} lines)\n"));
+        on_log(&format!(
+            "\nDone {secs}s ({response_lines} lines){session_suffix}\n"
+        ));
     } else {
-        on_log(&format!("\nDone {secs}s\n"));
+        on_log(&format!("\nDone {secs}s{session_suffix}\n"));
     }
 
     report_exit_status(session, prompt_sent, &state.response, on_log);

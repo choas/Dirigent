@@ -137,13 +137,37 @@ fn invoke_pty(
     })?;
 
     let sentinel = done_hook.as_ref().map(|h| h.sentinel_path());
-    let state = consume_pty_events(&mut session, prompt, &cancel, on_log, sentinel);
+    let session_id = extract_session_id(extra_args_vec);
+    let state = consume_pty_events(
+        &mut session,
+        prompt,
+        &cancel,
+        on_log,
+        sentinel,
+        session_id.as_deref(),
+    );
     drop(done_hook);
 
     Ok(ClaudeResponse {
         stdout: state.response,
         metrics: Default::default(),
     })
+}
+
+/// Extract the Claude session id from the extra CLI args.
+///
+/// The caller injects either `--session-id <uuid>` (fresh run) or
+/// `--resume <uuid>` (continuation) into `extra_args_vec`; this returns the
+/// value following whichever flag appears so it can be surfaced in the live
+/// log when the run completes.
+fn extract_session_id(extra_args_vec: &[String]) -> Option<String> {
+    let mut iter = extra_args_vec.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--session-id" || arg == "--resume" {
+            return iter.next().filter(|v| !v.is_empty()).cloned();
+        }
+    }
+    None
 }
 
 /// Resolve the Claude binary to an absolute, currently-existing executable.
