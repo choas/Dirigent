@@ -224,6 +224,19 @@ impl DirigentApp {
             {
                 self.create_commit_cue();
             }
+            if has_selection {
+                ui.add_space(SPACE_SM);
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 0.0],
+                        egui::Button::new("Reset Selected"),
+                    )
+                    .on_hover_text("Clear the current file selection")
+                    .clicked()
+                {
+                    self.git.selected_files.clear();
+                }
+            }
             ui.add_space(SPACE_SM);
         });
     }
