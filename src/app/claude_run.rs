@@ -1039,6 +1039,16 @@ impl DirigentApp {
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
 
+        // Dispatch a queued follow-up now that the completed run's tracking
+        // state has been cleared. Doing this earlier (inside
+        // `handle_successful_run`) would let `flush_and_clear_tracking` wipe
+        // the follow-up's freshly inserted `running_logs`/`exec_ids`/
+        // `start_times` — leaving the resumed run with no `current_exec_id`,
+        // so its live output never rendered in the conversation view.
+        if !is_error {
+            self.try_dispatch_follow_up(result.cue_id);
+        }
+
         // Dispatch pending auto-continues now that tracking state is cleared.
         let auto_continues = std::mem::take(&mut self.pending_auto_continues);
         for cue_id in auto_continues {
@@ -1102,8 +1112,10 @@ impl DirigentApp {
         }
     }
 
-    /// Post-processing after a successful (non-error) run: refresh git state,
-    /// open tabs, and dispatch any queued follow-ups.
+    /// Post-processing after a successful (non-error) run: refresh git state
+    /// and open tabs. Queued follow-ups are dispatched separately, *after*
+    /// `flush_and_clear_tracking`, so the new run's tracking state survives —
+    /// see `process_single_result`.
     fn handle_successful_run(&mut self, result: &ClaudeResult) {
         let plan_path = self
             .claude
@@ -1117,7 +1129,6 @@ impl DirigentApp {
         let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
         self.reload_commit_history();
-        self.try_dispatch_follow_up(result.cue_id);
     }
 
     /// Finalize a stale execution in the DB without touching live state.
