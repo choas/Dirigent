@@ -220,6 +220,13 @@ impl DirigentApp {
             actions.push((cue.id, CueAction::CommitReview(cue.id)));
         }
         if ui
+            .small_button(icon("\u{2713} Done", fs))
+            .on_hover_text("Mark done without committing (move out of Review)")
+            .clicked()
+        {
+            actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
+        }
+        if ui
             .small_button(icon("\u{21BA} Revert", fs))
             .on_hover_text("Revert changes and move back to Inbox")
             .clicked()
