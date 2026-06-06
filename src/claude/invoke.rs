@@ -97,7 +97,19 @@ fn invoke_pty(
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    let mut builder = ClaudeCode::builder().cwd(project_root);
+    // Give the PTY a wide, tall terminal. Claude's TUI lays its output out to
+    // the terminal width: at the library's default 120 cols a wide multi-column
+    // table no longer fits, so the renderer collapses every column to its header
+    // width and drops the cell contents — the user sees an empty bordered table
+    // with no rows. A real terminal (via `claude --resume`) is far wider and
+    // renders the same table in full. Match that here so wide tables and other
+    // width-sensitive layouts survive capture. egui re-wraps prose to the panel
+    // width on display, so the extra width only benefits fixed-width layouts.
+    const PTY_ROWS: u16 = 50;
+    const PTY_COLS: u16 = 220;
+    let mut builder = ClaudeCode::builder()
+        .cwd(project_root)
+        .pty_size(PTY_ROWS, PTY_COLS);
     if !cli_path.is_empty() {
         builder = builder.binary(cli_path);
     }
