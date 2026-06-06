@@ -212,8 +212,12 @@ impl DirigentApp {
         {
             toggle_reply_input(&mut self.reply_inputs, cue.id);
         }
+        let commit_btn =
+            egui::Button::new(icon("\u{2713} Commit", fs).color(self.semantic.badge_text))
+                .fill(self.semantic.accent)
+                .small();
         if ui
-            .small_button(icon("\u{2713} Commit", fs))
+            .add(commit_btn)
             .on_hover_text("Commit the applied changes")
             .clicked()
         {
