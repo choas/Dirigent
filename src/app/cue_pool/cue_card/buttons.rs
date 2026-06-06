@@ -194,6 +194,10 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let fs = self.settings.font_size;
+        if cue.has_question {
+            ui.label(icon("?", fs).color(self.semantic.warning).strong())
+                .on_hover_text("Claude is waiting for your answer — use Reply");
+        }
         if cue.plan_path.is_some() {
             self.render_plan_buttons(ui, cue, actions, fs);
         }

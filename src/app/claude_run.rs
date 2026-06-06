@@ -1278,7 +1278,17 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(result.cue_id, "Run completed — review ready");
-        self.notify_review_ready(result.cue_id);
+
+        // Claude can make changes AND still end by asking the user something
+        // (e.g. "I updated X — should I also do Y?"). Surface that so the user
+        // can answer instead of the question being lost behind the diff; on the
+        // PTY this is the only signal the user gets that Claude is blocked.
+        if self.run_has_question(result) {
+            self.flag_pending_question(result.cue_id);
+        } else {
+            let _ = self.db.update_cue_has_question(result.cue_id, false);
+            self.notify_review_ready(result.cue_id);
+        }
 
         let cue_prompt = self
             .cues
@@ -1380,6 +1390,40 @@ impl DirigentApp {
         self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
     }
 
+    /// Detect whether a completed run ended with a question for the user.
+    ///
+    /// Checks the captured response first, then falls back to the live
+    /// PTY/provider log: under the Claude PTY the trailing question is rendered
+    /// to the interactive TUI and may only survive in the streamed screen
+    /// output, not in `result.response`. Without this fallback Claude can ask a
+    /// question and silently wait while the cue looks finished.
+    fn run_has_question(&self, result: &ClaudeResult) -> bool {
+        if claude::response_has_question(&result.response) {
+            return true;
+        }
+        self.claude
+            .running_logs
+            .get(&result.cue_id)
+            .map(|(log, _)| claude::response_has_question(log))
+            .unwrap_or(false)
+    }
+
+    /// Flag that Claude is blocked on a question for `cue_id`: mark the cue,
+    /// open its reply box so the user can answer immediately, notify, and log.
+    fn flag_pending_question(&mut self, cue_id: i64) {
+        self.claude.auto_continue_count.remove(&cue_id);
+        let preview = self.cue_preview(cue_id);
+        self.set_status_message(format!(
+            "Claude is waiting for your answer about \"{preview}\""
+        ));
+        let _ = self.db.update_cue_has_question(cue_id, true);
+        let _ = self
+            .db
+            .log_activity(cue_id, "Run completed — question pending");
+        self.reply_inputs.entry(cue_id).or_insert_with(String::new);
+        self.notify_run_complete(cue_id, true);
+    }
+
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {
         let (m_cost, m_dur, m_turns) = (
             Some(result.metrics.cost_usd),
@@ -1394,19 +1438,11 @@ impl DirigentApp {
             m_dur,
             m_turns,
         );
-        let has_question = claude::response_has_question(&result.response);
+        let has_question = self.run_has_question(result);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
-            self.claude.auto_continue_count.remove(&result.cue_id);
-            self.set_status_message(format!("Claude is asking a question about \"{}\"", preview));
-            let _ = self.db.update_cue_has_question(result.cue_id, true);
             let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(result.cue_id, "Run completed — question pending");
-            self.reply_inputs
-                .entry(result.cue_id)
-                .or_insert_with(String::new);
+            self.flag_pending_question(result.cue_id);
         } else if self.should_auto_continue(result.cue_id) {
             let count = self
                 .claude
@@ -1576,6 +1612,13 @@ impl DirigentApp {
     }
 
     fn notify_review_ready(&self, cue_id: i64) {
+        self.notify_run_complete(cue_id, false);
+    }
+
+    /// Play the completion sound and (optionally) post a desktop notification.
+    /// When `question` is set, the popup makes clear Claude is blocked waiting
+    /// for the user to answer, rather than just announcing a ready review.
+    fn notify_run_complete(&self, cue_id: i64, question: bool) {
         if self.settings.notify_sound {
             std::thread::spawn(|| {
                 // Play the embedded Glass sound via `afplay` (a separate process).
@@ -1604,7 +1647,12 @@ impl DirigentApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-            send_macos_notification("Dirigent", &project_name, &preview);
+            let subtitle = if question {
+                format!("{project_name} — Claude is waiting for your answer")
+            } else {
+                project_name
+            };
+            send_macos_notification("Dirigent", &subtitle, &preview);
         }
     }
 }
