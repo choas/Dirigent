@@ -11,6 +11,33 @@ fn is_stale_working_copy(output: &Output) -> bool {
     stderr.contains("working copy is stale")
 }
 
+/// Detect the rejection `jj git push` emits when a commit being pushed — or any
+/// of its ancestors — still contains a conflict. The tip bookmark can look
+/// perfectly resolved while an earlier commit in its history is conflicted, so
+/// the bare jj message ("Won't push commit <id> since it has conflicts") leaves
+/// the user staring at a clean tip with no idea where the conflict lives.
+fn is_conflicted_commit_rejection(stderr: &str) -> bool {
+    stderr.contains("since it has conflicts")
+        || (stderr.contains("Won't push commit") && stderr.contains("conflicts"))
+}
+
+/// Build a friendly error for the conflicted-ancestor push rejection that points
+/// the user at the exact commits to resolve.
+fn conflicted_ancestor_message(repo_path: &Path, jj_path: &str, stderr: &str) -> String {
+    let bookmark = bookmarks_for_rev(repo_path, "@-", jj_path)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "<bookmark>".to_string());
+    format!(
+        "jj git push refused: a commit in the history still has conflicts.\n\n\
+         The tip bookmark may look resolved, but jj won't push while any ancestor \
+         commit is conflicted. List the conflicted commits to resolve with:\n\n  \
+         jj log -r 'ancestors({bookmark}) & conflicts()'\n\n\
+         jj reported:\n{}",
+        stderr.trim()
+    )
+}
+
 fn update_stale_working_copy(repo_path: &Path, jj_path: &str) -> crate::error::Result<()> {
     let output = super::jj_cmd(jj_path)
         .args(["workspace", "update-stale"])
@@ -42,6 +69,11 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
             .output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if is_conflicted_commit_rejection(&stderr) {
+                return Err(DirigentError::JjCommand(conflicted_ancestor_message(
+                    repo_path, jj_path, &stderr,
+                )));
+            }
             return Err(DirigentError::JjCommand(format!(
                 "jj git push failed: {}",
                 stderr.trim()
@@ -54,6 +86,11 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_conflicted_commit_rejection(&stderr) {
+            return Err(DirigentError::JjCommand(conflicted_ancestor_message(
+                repo_path, jj_path, &stderr,
+            )));
+        }
         return Err(DirigentError::JjCommand(format!(
             "jj git push failed: {}",
             stderr.trim()
