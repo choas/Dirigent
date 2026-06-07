@@ -6,7 +6,8 @@ mod worktree;
 
 pub(crate) use commit::{
     jj_abandon, jj_commit_all, jj_commit_diff, jj_create_bookmark, jj_delete_bookmark,
-    jj_merge_bookmark, jj_pull, jj_push, jj_revert_files, jj_squash_bookmark, jj_undo,
+    jj_merge_bookmark, jj_merged_bookmarks, jj_pull, jj_push, jj_revert_files, jj_squash_bookmark,
+    jj_undo,
 };
 pub(crate) use diff::jj_get_working_diff;
 pub(crate) use history::{

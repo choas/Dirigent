@@ -841,6 +841,7 @@ impl DirigentApp {
                 show_delete_bookmark: false,
                 deleting_bookmark: false,
                 delete_bookmark_rx: None,
+                merged_bookmarks: Vec::new(),
                 show_merge_bookmark: false,
                 merging_bookmark: false,
                 merge_bookmark_rx: None,

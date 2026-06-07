@@ -363,6 +363,38 @@ pub(crate) fn jj_delete_bookmark(
     Ok(())
 }
 
+/// List local bookmarks that are fully merged into `trunk()`.
+///
+/// A bookmark counts as merged when its target commit is an ancestor of (or
+/// equal to) `trunk()` — i.e. it has no commits of its own ahead of trunk and
+/// is therefore safe to delete. The revset includes the trunk bookmark itself
+/// (e.g. `main`/`master`), so callers should filter out protected names.
+pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            "bookmarks() & ::trunk()",
+            "-T",
+            r#"local_bookmarks ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            raw.split_whitespace()
+                .map(|s| s.trim_end_matches('*').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.
 #[allow(dead_code)]
 pub(crate) fn jj_bookmark_commit_count(repo_path: &Path, bookmark: &str, jj_path: &str) -> usize {

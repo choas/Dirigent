@@ -652,6 +652,9 @@ pub(crate) struct GitState {
     /// Whether a delete-bookmark operation is in progress (jj only).
     pub(super) deleting_bookmark: bool,
     pub(super) delete_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Names of bookmarks fully merged into trunk, shown in the Delete Bookmark
+    /// dialog so they can be flagged and bulk-deleted (jj only).
+    pub(super) merged_bookmarks: Vec<String>,
     /// Whether the Merge Bookmark dialog is open (jj only).
     pub(super) show_merge_bookmark: bool,
     /// Whether a merge-bookmark operation is in progress (jj only).

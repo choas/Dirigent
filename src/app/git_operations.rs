@@ -1014,6 +1014,8 @@ impl DirigentApp {
             jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
                 .unwrap_or_default();
         self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+        self.git.merged_bookmarks =
+            jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         self.git.show_delete_bookmark = true;
     }
 
@@ -1038,6 +1040,53 @@ impl DirigentApp {
             let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
                 .map(|()| format!("Deleted bookmark '{}'", bm))
                 .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Start an async delete of every bookmark fully merged into trunk (jj only).
+    ///
+    /// Protected bookmarks (`main`/`master`) are never deleted, even though the
+    /// trunk bookmark itself is reported as merged.
+    pub(super) fn start_delete_merged_bookmarks(&mut self) {
+        if self.git.deleting_bookmark {
+            return;
+        }
+        let merged: Vec<String> = self
+            .git
+            .merged_bookmarks
+            .iter()
+            .filter(|b| b.as_str() != "main" && b.as_str() != "master")
+            .cloned()
+            .collect();
+        if merged.is_empty() {
+            self.set_status_message("No merged bookmarks to delete".to_string());
+            return;
+        }
+        self.git.deleting_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.delete_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        self.set_status_message(format!("Deleting {} merged bookmark(s)...", merged.len()));
+        std::thread::spawn(move || {
+            let mut deleted = 0usize;
+            let mut errors: Vec<String> = Vec::new();
+            for bm in &merged {
+                match jj::jj_delete_bookmark(&root, bm, &jj_path) {
+                    Ok(()) => deleted += 1,
+                    Err(e) => errors.push(format!("{}: {}", bm, e)),
+                }
+            }
+            let result = if errors.is_empty() {
+                Ok(format!("Deleted {} merged bookmark(s)", deleted))
+            } else {
+                Err(format!(
+                    "Deleted {}; failed — {}",
+                    deleted,
+                    errors.join("; ")
+                ))
+            };
             let _ = tx.send(result);
         });
     }
@@ -1071,6 +1120,8 @@ impl DirigentApp {
                     )
                     .unwrap_or_default();
                     self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+                    self.git.merged_bookmarks =
+                        jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
                 }
             }
             Err(e) => self.set_status_message(format!("Delete failed: {}", e)),
