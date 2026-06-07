@@ -335,6 +335,11 @@ pub struct DirigentApp {
     // Follow-up prompts queued for currently running cues (cue_id -> FIFO list of prompts)
     follow_up_queue: HashMap<i64, Vec<String>>,
 
+    // Most recent follow-up prompt text actually sent for a cue (cue_id -> text).
+    // Used as the basis for the commit message so the commit reflects the latest
+    // instruction rather than the original cue.
+    last_follow_up: HashMap<i64, String>,
+
     // Scheduled runs: cue_id -> when to trigger (wall-clock so sleep doesn't delay)
     scheduled_runs: HashMap<i64, SystemTime>,
 
@@ -925,6 +930,7 @@ impl DirigentApp {
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
             follow_up_queue: HashMap::new(),
+            last_follow_up: HashMap::new(),
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),

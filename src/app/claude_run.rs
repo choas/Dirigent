@@ -813,6 +813,12 @@ impl DirigentApp {
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
 
+        // Remember the raw follow-up text so a later commit can use it as the
+        // commit message basis instead of the original cue text.
+        if !reply.trim().is_empty() {
+            self.last_follow_up.insert(cue_id, reply.trim().to_string());
+        }
+
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
 

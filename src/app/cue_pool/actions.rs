@@ -197,6 +197,7 @@ impl DirigentApp {
         self.cancel_cue_task(id);
         self.run_queue.retain(|&cid| cid != id);
         self.follow_up_queue.remove(&id);
+        self.last_follow_up.remove(&id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
         self.reply_inputs.remove(&id);
@@ -324,12 +325,21 @@ impl DirigentApp {
         match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
                 if exec.diff.is_some() {
+                    // Prefer the most recent follow-up prompt as the commit
+                    // message basis — it reflects the latest instruction that
+                    // produced these changes. Fall back to the original cue text.
                     let cue_text = self
-                        .cues
-                        .iter()
-                        .find(|c| c.id == cue_id)
-                        .map(|c| c.text.clone())
-                        .unwrap_or_default();
+                        .last_follow_up
+                        .get(&cue_id)
+                        .filter(|t| !t.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            self.cues
+                                .iter()
+                                .find(|c| c.id == cue_id)
+                                .map(|c| c.text.clone())
+                                .unwrap_or_default()
+                        });
                     let extracted = exec
                         .response
                         .as_deref()
