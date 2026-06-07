@@ -1022,6 +1022,11 @@ impl DirigentApp {
         if self.git.deleting_bookmark {
             return;
         }
+        // Never delete the main bookmark — it is the repository's trunk.
+        if name == "main" || name == "master" {
+            self.set_status_message(format!("Refusing to delete protected bookmark '{}'", name));
+            return;
+        }
         self.git.deleting_bookmark = true;
         let (tx, rx) = mpsc::channel();
         self.git.delete_bookmark_rx = Some(rx);

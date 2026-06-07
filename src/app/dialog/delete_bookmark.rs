@@ -36,11 +36,21 @@ impl DirigentApp {
                     .max_height(250.0)
                     .show(ui, |ui| {
                         for branch in &self.git.available_branches {
+                            let is_protected = branch == "main" || branch == "master";
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(branch).monospace());
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
+                                        if is_protected {
+                                            ui.label(
+                                                egui::RichText::new("protected")
+                                                    .small()
+                                                    .italics()
+                                                    .color(self.semantic.tertiary_text),
+                                            );
+                                            return;
+                                        }
                                         let enabled = !self.git.deleting_bookmark;
                                         if ui
                                             .add_enabled(enabled, egui::Button::new("Delete"))
