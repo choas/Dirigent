@@ -142,12 +142,17 @@ impl DirigentApp {
             return;
         }
 
-        // Check if all cues in this step are done (no longer in Ready status)
+        // Check if all cues in this step are done. A cue is done once it leaves
+        // Ready status, EXCEPT when it's blocked on a pending question: a run can
+        // make changes (moving the cue to Review) and still end by asking the
+        // user something. Treating that as complete would start dependent
+        // workflow steps before the answer is provided, so a cue with an
+        // unanswered question is held back until it's resolved.
         let all_done = plan.steps[step_idx].cue_ids.iter().all(|&id| {
             self.cues
                 .iter()
                 .find(|c| c.id == id)
-                .map(|c| c.status != CueStatus::Ready)
+                .map(|c| c.status != CueStatus::Ready && !c.has_question)
                 .unwrap_or(true)
         });
 
