@@ -12,12 +12,12 @@ impl DirigentApp {
         let mut delete_name: Option<String> = None;
         let mut delete_merged = false;
 
-        // Bookmarks fully merged into trunk, excluding protected names.
+        // Bookmarks fully merged into trunk, excluding the protected trunk bookmark.
         let merged_count = self
             .git
             .merged_bookmarks
             .iter()
-            .filter(|b| b.as_str() != "main" && b.as_str() != "master")
+            .filter(|b| !self.is_protected_bookmark(b))
             .count();
 
         egui::Window::new("Delete Bookmark")
@@ -66,7 +66,7 @@ impl DirigentApp {
                     .max_height(250.0)
                     .show(ui, |ui| {
                         for branch in &self.git.available_branches {
-                            let is_protected = branch == "main" || branch == "master";
+                            let is_protected = self.is_protected_bookmark(branch);
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(branch).monospace());
                                 ui.with_layout(

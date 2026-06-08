@@ -395,6 +395,39 @@ pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String
     }
 }
 
+/// Resolve the name(s) of the repository's trunk bookmark.
+///
+/// `trunk()` is jj's configured default branch (commonly `main`/`master`, but a
+/// repo can set it to anything, e.g. `develop`). This returns the local
+/// bookmark(s) pointing at that commit so callers can protect the actual trunk
+/// instead of hard-coding `main`/`master`. Returns an empty vec if jj cannot
+/// resolve `trunk()` (e.g. no such configured branch).
+pub(crate) fn jj_trunk_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            "bookmarks() & trunk()",
+            "-T",
+            r#"local_bookmarks ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            raw.split_whitespace()
+                .map(|s| s.trim_end_matches('*').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.
 #[allow(dead_code)]
 pub(crate) fn jj_bookmark_commit_count(repo_path: &Path, bookmark: &str, jj_path: &str) -> usize {

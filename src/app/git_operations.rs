@@ -1019,7 +1019,22 @@ impl DirigentApp {
         self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
         self.git.merged_bookmarks =
             jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
+        self.git.trunk_bookmarks =
+            jj::jj_trunk_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         self.git.show_delete_bookmark = true;
+    }
+
+    /// Whether a bookmark is the repository's trunk and must not be deleted.
+    ///
+    /// Prefers the trunk bookmark(s) resolved from jj's `trunk()` revset so a
+    /// repo whose trunk is not literally `main`/`master` (e.g. `develop`) is
+    /// still protected; falls back to the conventional names when `trunk()`
+    /// could not be resolved.
+    pub(in crate::app) fn is_protected_bookmark(&self, name: &str) -> bool {
+        if self.git.trunk_bookmarks.iter().any(|b| b == name) {
+            return true;
+        }
+        self.git.trunk_bookmarks.is_empty() && (name == "main" || name == "master")
     }
 
     /// Start an async delete-bookmark operation (jj only).
@@ -1027,8 +1042,8 @@ impl DirigentApp {
         if self.git.deleting_bookmark {
             return;
         }
-        // Never delete the main bookmark — it is the repository's trunk.
-        if name == "main" || name == "master" {
+        // Never delete the repository's trunk bookmark.
+        if self.is_protected_bookmark(name) {
             self.set_status_message(format!("Refusing to delete protected bookmark '{}'", name));
             return;
         }
@@ -1049,8 +1064,8 @@ impl DirigentApp {
 
     /// Start an async delete of every bookmark fully merged into trunk (jj only).
     ///
-    /// Protected bookmarks (`main`/`master`) are never deleted, even though the
-    /// trunk bookmark itself is reported as merged.
+    /// The repository's trunk bookmark is never deleted, even though it is
+    /// itself reported as merged into `trunk()`.
     pub(super) fn start_delete_merged_bookmarks(&mut self) {
         if self.git.deleting_bookmark {
             return;
@@ -1059,7 +1074,7 @@ impl DirigentApp {
             .git
             .merged_bookmarks
             .iter()
-            .filter(|b| b.as_str() != "main" && b.as_str() != "master")
+            .filter(|b| !self.is_protected_bookmark(b))
             .cloned()
             .collect();
         if merged.is_empty() {

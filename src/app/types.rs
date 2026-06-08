@@ -655,6 +655,10 @@ pub(crate) struct GitState {
     /// Names of bookmarks fully merged into trunk, shown in the Delete Bookmark
     /// dialog so they can be flagged and bulk-deleted (jj only).
     pub(super) merged_bookmarks: Vec<String>,
+    /// Names of the repository's actual trunk bookmark(s), resolved from jj's
+    /// `trunk()` revset. Protected from deletion so a repo whose trunk is not
+    /// literally `main`/`master` (e.g. `develop`) cannot lose it (jj only).
+    pub(super) trunk_bookmarks: Vec<String>,
     /// Whether the Merge Bookmark dialog is open (jj only).
     pub(super) show_merge_bookmark: bool,
     /// Whether a merge-bookmark operation is in progress (jj only).
