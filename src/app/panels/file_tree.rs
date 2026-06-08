@@ -292,6 +292,10 @@ impl DirigentApp {
     }
 
     fn open_graph_view(&mut self) {
+        // Clear competing central overlays first; the dispatch in
+        // should_render_central_overlay checks show_graph_view last, so an active
+        // settings/log/diff/agent/workflow overlay would otherwise preempt it.
+        self.dismiss_central_overlays();
         self.git.show_graph_view = true;
         self.git.graph_view_limit = 100;
         self.reload_graph_view_history();
