@@ -51,6 +51,22 @@ impl DirigentApp {
             CueAction::RevertReview(cue_id) => {
                 self.process_revert_review(cue_id);
             }
+            CueAction::MarkReviewDone(cue_id) => {
+                // Clear any pending question first: a run can change files
+                // (moving the cue to Review) and still end by asking the user
+                // something. on_workflow_cue_completed holds back a cue with an
+                // unanswered question, so accepting it via Done without clearing
+                // the flag would leave the workflow step permanently blocked.
+                let was_blocked = self.cues.iter().any(|c| c.id == cue_id && c.has_question);
+                let _ = self.db.update_cue_has_question(cue_id, false);
+                self.process_move_to(cue_id, CueStatus::Done);
+                if was_blocked && self.workflow_plan.is_some() {
+                    // process_move_to only reloads cues when moving to Ready,
+                    // so refresh in-memory state before re-checking the step.
+                    self.reload_cues();
+                    self.on_workflow_cue_completed(cue_id);
+                }
+            }
             CueAction::ReplyReview(cue_id, reply_text) => {
                 self.reply_inputs.remove(&cue_id);
                 let _ = self.db.update_cue_has_question(cue_id, false);

@@ -78,6 +78,9 @@ pub(super) enum CueAction {
     ShowDiff(i64),
     CommitReview(i64),
     RevertReview(i64),
+    /// Mark a Review cue done without committing, clearing any pending question
+    /// so a question-blocked workflow step can proceed.
+    MarkReviewDone(i64),
     ReplyReview(i64, String),
     ShowRunningLog(i64),
     ShowAgentRuns(i64),

@@ -232,7 +232,7 @@ impl DirigentApp {
             .on_hover_text("Mark done without committing (move out of Review)")
             .clicked()
         {
-            actions.push((cue.id, CueAction::MoveTo(CueStatus::Done)));
+            actions.push((cue.id, CueAction::MarkReviewDone(cue.id)));
         }
         if ui
             .small_button(icon("\u{21BA} Revert", fs))
