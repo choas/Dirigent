@@ -1290,11 +1290,14 @@ impl DirigentApp {
         // can answer instead of the question being lost behind the diff; on the
         // PTY this is the only signal the user gets that Claude is blocked.
         if self.run_has_question(result) {
+            // Claude is blocked waiting for an answer — flag it and stop here.
+            // Skipping the auto-commit/AfterRun path keeps the in-progress work
+            // from being committed before the user resolves the question.
             self.flag_pending_question(result.cue_id);
-        } else {
-            let _ = self.db.update_cue_has_question(result.cue_id, false);
-            self.notify_review_ready(result.cue_id);
+            return;
         }
+        let _ = self.db.update_cue_has_question(result.cue_id, false);
+        self.notify_review_ready(result.cue_id);
 
         let cue_prompt = self
             .cues
