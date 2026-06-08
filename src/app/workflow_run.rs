@@ -293,6 +293,10 @@ impl DirigentApp {
             if is_ready {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             }
+            // Clear the persisted workflow/auto-commit flags so a later manual
+            // run of this cue is not treated as part of a (now-cancelled)
+            // workflow and silently auto-committed.
+            let _ = self.db.update_cue_workflow_flags(cue_id, false, false);
             let _ = self.db.log_activity(cue_id, "Workflow cancelled");
         }
         self.workflow_plan = None;

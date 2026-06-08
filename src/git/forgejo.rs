@@ -112,7 +112,8 @@ pub(crate) fn codeberg_remote(repo_path: &Path) -> Option<RemoteInfo> {
 /// Dirigent's own environment.
 pub(crate) fn token(project_root: &Path) -> Option<String> {
     for key in ["CODEBERG_TOKEN", "FORGEJO_TOKEN"] {
-        let from_file = crate::claude::load_env_var_with_dirigent_fallback(project_root, key);
+        let from_file = crate::claude::load_env_var_with_dirigent_fallback(project_root, key)
+            .filter(|s| !s.trim().is_empty());
         let resolved = from_file.or_else(|| std::env::var(key).ok());
         if let Some(v) = resolved.filter(|t| !t.trim().is_empty()) {
             return Some(v);

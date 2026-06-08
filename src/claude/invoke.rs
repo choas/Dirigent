@@ -110,9 +110,7 @@ fn invoke_pty(
     let mut builder = ClaudeCode::builder()
         .cwd(project_root)
         .pty_size(PTY_ROWS, PTY_COLS);
-    if !cli_path.is_empty() {
-        builder = builder.binary(cli_path);
-    }
+    builder = builder.binary(resolve_claude_binary(cli_path)?);
     if !model.is_empty() {
         builder = builder.model(model);
     }
