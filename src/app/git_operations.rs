@@ -1113,21 +1113,19 @@ impl DirigentApp {
         self.git.deleting_bookmark = false;
         self.git.delete_bookmark_rx = None;
         match result {
-            Ok(msg) => {
-                self.set_status_message(msg);
-                // Refresh the branch list in the dialog if still open.
-                if self.git.show_delete_bookmark {
-                    let infos = jj::jj_list_bookmarks_with_status(
-                        &self.project_root,
-                        &self.settings.jj_cli_path,
-                    )
-                    .unwrap_or_default();
-                    self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
-                    self.git.merged_bookmarks =
-                        jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
-                }
-            }
+            Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Delete failed: {}", e)),
+        }
+        // Refresh the branch list in the dialog if still open. This must run for
+        // both success and failure: a partial-success deletion returns an Err but
+        // still removes some bookmarks, so the list would otherwise stay stale.
+        if self.git.show_delete_bookmark {
+            let infos =
+                jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
+                    .unwrap_or_default();
+            self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+            self.git.merged_bookmarks =
+                jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         }
         self.git.history_cache_key = (String::new(), 0);
         self.reload_git_info();

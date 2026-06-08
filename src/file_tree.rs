@@ -233,6 +233,41 @@ mod tests {
         assert_eq!(collapsed[0].children.len(), 2);
     }
 
+    fn symlink_file(name: &str) -> FileEntry {
+        FileEntry {
+            is_symlink: true,
+            ..file(name)
+        }
+    }
+
+    #[test]
+    fn collapse_preserves_symlink_flag_when_flattening() {
+        // src -> link.txt (a symlinked file)  =>  src/link.txt, still a symlink.
+        // Guards the flatten branch that sets is_symlink = child.is_symlink.
+        let tree = vec![dir("src", vec![symlink_file("link.txt")])];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].name, "src/link.txt");
+        assert!(!collapsed[0].is_dir);
+        assert!(
+            collapsed[0].is_symlink,
+            "collapsing a single symlinked file must preserve is_symlink"
+        );
+    }
+
+    #[test]
+    fn collapse_does_not_invent_symlink_flag_when_flattening() {
+        // Parallel negative case: a plain file child must not become a symlink.
+        let tree = vec![dir("src", vec![file("plain.txt")])];
+        let collapsed = collapse_single_child_dirs(tree);
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].name, "src/plain.txt");
+        assert!(
+            !collapsed[0].is_symlink,
+            "collapsing a plain file must not set is_symlink"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn scan_marks_symlinks() {
