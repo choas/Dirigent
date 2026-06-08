@@ -363,13 +363,13 @@ pub(crate) fn jj_delete_bookmark(
     Ok(())
 }
 
-/// List local bookmarks that are fully merged into `trunk()`.
+/// Run `jj log` for `revset` and return the local bookmark names it resolves to.
 ///
-/// A bookmark counts as merged when its target commit is an ancestor of (or
-/// equal to) `trunk()` — i.e. it has no commits of its own ahead of trunk and
-/// is therefore safe to delete. The revset includes the trunk bookmark itself
-/// (e.g. `main`/`master`), so callers should filter out protected names.
-pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+/// Shared by [`jj_merged_bookmarks`] and [`jj_trunk_bookmarks`]: both ask jj for
+/// the `local_bookmarks` of a revset and parse the whitespace-separated output
+/// (stripping the `*` that marks bookmarks with unpushed changes). Returns an
+/// empty vec if jj fails or resolves nothing.
+fn bookmarks_matching_revset(repo_path: &Path, jj_path: &str, revset: &str) -> Vec<String> {
     let output = super::jj_cmd(jj_path)
         .args([
             "log",
@@ -377,7 +377,7 @@ pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String
             "--color",
             "never",
             "-r",
-            "bookmarks() & ::trunk()",
+            revset,
             "-T",
             r#"local_bookmarks ++ "\n""#,
         ])
@@ -395,6 +395,16 @@ pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String
     }
 }
 
+/// List local bookmarks that are fully merged into `trunk()`.
+///
+/// A bookmark counts as merged when its target commit is an ancestor of (or
+/// equal to) `trunk()` — i.e. it has no commits of its own ahead of trunk and
+/// is therefore safe to delete. The revset includes the trunk bookmark itself
+/// (e.g. `main`/`master`), so callers should filter out protected names.
+pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+    bookmarks_matching_revset(repo_path, jj_path, "bookmarks() & ::trunk()")
+}
+
 /// Resolve the name(s) of the repository's trunk bookmark.
 ///
 /// `trunk()` is jj's configured default branch (commonly `main`/`master`, but a
@@ -403,29 +413,7 @@ pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String
 /// instead of hard-coding `main`/`master`. Returns an empty vec if jj cannot
 /// resolve `trunk()` (e.g. no such configured branch).
 pub(crate) fn jj_trunk_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
-    let output = super::jj_cmd(jj_path)
-        .args([
-            "log",
-            "--no-graph",
-            "--color",
-            "never",
-            "-r",
-            "bookmarks() & trunk()",
-            "-T",
-            r#"local_bookmarks ++ "\n""#,
-        ])
-        .current_dir(repo_path)
-        .output();
-    match output {
-        Ok(o) if o.status.success() => {
-            let raw = String::from_utf8_lossy(&o.stdout);
-            raw.split_whitespace()
-                .map(|s| s.trim_end_matches('*').to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        }
-        _ => Vec::new(),
-    }
+    bookmarks_matching_revset(repo_path, jj_path, "bookmarks() & trunk()")
 }
 
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.
