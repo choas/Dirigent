@@ -371,6 +371,23 @@ impl DirigentApp {
             })
         })
     }
+
+    /// True when `cue_id` belongs to a step of the current workflow plan that
+    /// is actively executing (Running or paused awaiting review). The
+    /// persisted `auto_commit` flag is only ever cleared on cancellation, so a
+    /// cue that completed as part of a workflow keeps the flag set. Gating the
+    /// auto-commit path on this membership prevents a later *manual* rerun of
+    /// such a cue from being silently auto-committed.
+    pub(super) fn is_cue_in_active_workflow(&self, cue_id: i64) -> bool {
+        self.workflow_plan.as_ref().is_some_and(|p| {
+            p.steps.iter().any(|s| {
+                matches!(
+                    s.status,
+                    WorkflowStepStatus::Running | WorkflowStepStatus::PausedAwaitingReview
+                ) && s.cue_ids.contains(&cue_id)
+            })
+        })
+    }
 }
 
 /// Run the workflow analysis using the configured provider.

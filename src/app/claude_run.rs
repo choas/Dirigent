@@ -1311,10 +1311,16 @@ impl DirigentApp {
         let agents_started =
             self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
 
+        // Auto-commit only when the cue is still part of an actively executing
+        // workflow. The persisted `auto_commit` flag is only cleared on
+        // cancellation, so a completed workflow cue keeps it set; without this
+        // gate, a later manual rerun of that cue would still be silently
+        // auto-committed even though it is no longer driven by a workflow.
         let cue_auto_commit = self
             .cues
             .iter()
-            .any(|c| c.id == result.cue_id && c.auto_commit);
+            .any(|c| c.id == result.cue_id && c.auto_commit)
+            && self.is_cue_in_active_workflow(result.cue_id);
         if cue_auto_commit {
             if self.claude.show_log == Some(result.cue_id) {
                 // User is watching the log — defer so they can review.
