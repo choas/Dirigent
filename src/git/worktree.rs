@@ -109,7 +109,7 @@ pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String
     let output = Command::new("git")
         .args([
             "for-each-ref",
-            "--format=%(refname:short)\t%(authoremail)",
+            "--format=%(refname)\t%(authoremail)",
             "refs/heads/",
             "refs/remotes/",
         ])
@@ -120,7 +120,7 @@ pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String
         _ => return own,
     };
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some((name, author)) = line.split_once('\t') else {
+        let Some((refname, author)) = line.split_once('\t') else {
             continue;
         };
         let author_clean = author
@@ -128,15 +128,26 @@ pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String
             .trim_matches('<')
             .trim_matches('>')
             .to_lowercase();
-        if author_clean == email {
-            // Local branches: refname:short is just the name.
-            // Remote branches: refname:short is "origin/name" — strip to match available_branches.
-            let short = match name.find('/') {
-                Some(pos) => &name[pos + 1..],
-                None => name,
-            };
-            own.insert(short.to_string());
+        if author_clean != email {
+            continue;
         }
+        // Normalize the full refname to match the names in available_branches.
+        // Local branches keep their full name (incl. any slashes); remote
+        // branches have only the remote prefix stripped.
+        //   refs/heads/feature/foo          -> feature/foo
+        //   refs/remotes/origin/feature/foo -> feature/foo
+        let short = if let Some(local) = refname.strip_prefix("refs/heads/") {
+            local
+        } else if let Some(remote) = refname.strip_prefix("refs/remotes/") {
+            // Drop the remote name (first path component); skip HEAD pointers.
+            match remote.split_once('/') {
+                Some((_, branch)) if branch != "HEAD" => branch,
+                _ => continue,
+            }
+        } else {
+            continue;
+        };
+        own.insert(short.to_string());
     }
     own
 }

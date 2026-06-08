@@ -20,10 +20,16 @@ pub(crate) fn resolve_in_path(name: &str) -> Option<String> {
     // Reject names with shell metacharacters to prevent command injection.
     // `name` may originate from deserialized settings.json which could be
     // attacker-controlled (e.g. a malicious .Dirigent/settings.json in a repo).
+    //
+    // Absolute / path-like names (containing '/') are filesystem paths and may
+    // legitimately contain spaces (e.g. "/Applications/Claude Code.app/...").
+    // Spaces are not a command-injection vector on their own, so we permit them
+    // for paths while keeping the stricter allowlist for bare command names.
+    let is_path = name.contains('/');
     if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+        || !name.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/') || (is_path && c == ' ')
+        })
     {
         return None;
     }

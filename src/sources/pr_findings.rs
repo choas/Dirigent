@@ -244,26 +244,25 @@ fn fetch_pr_findings_codeberg(
     }
 
     // PR reviews, plus the inline code comments attached to each review.
-    if let Ok(reviews) = forgejo_get_all(
+    let reviews = forgejo_get_all(
         &client,
         token,
         &format!("{}/pulls/{}/reviews", base, pr_number),
-    ) {
-        findings.extend(process_body_comments(&reviews, pr_number, "review", true));
-        for review in &reviews {
-            let Some(review_id) = review.get("id").and_then(|v| v.as_u64()) else {
-                continue;
-            };
-            if let Ok(comments) = forgejo_get_all(
-                &client,
-                token,
-                &format!(
-                    "{}/pulls/{}/reviews/{}/comments",
-                    base, pr_number, review_id
-                ),
-            ) {
-                findings.extend(process_inline_comments(&comments, pr_number));
-            }
+    )?;
+    findings.extend(process_body_comments(&reviews, pr_number, "review", true));
+    for review in &reviews {
+        let Some(review_id) = review.get("id").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        if let Ok(comments) = forgejo_get_all(
+            &client,
+            token,
+            &format!(
+                "{}/pulls/{}/reviews/{}/comments",
+                base, pr_number, review_id
+            ),
+        ) {
+            findings.extend(process_inline_comments(&comments, pr_number));
         }
     }
 

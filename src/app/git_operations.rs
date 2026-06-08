@@ -122,6 +122,9 @@ impl DirigentApp {
                     .map(|b| (b.name.clone(), b.push_status))
                     .collect();
                 self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+                // Git ownership doesn't apply to JJ bookmarks; clear any stale
+                // Git-only names so render_switch_branch_body doesn't highlight them.
+                self.git.own_branches.clear();
             }
             VcsBackend::Git => {
                 self.git.available_branches =

@@ -244,10 +244,17 @@ impl DirigentApp {
             );
         }
         if refresh_models {
-            self.opencode_models.clear();
-            self.spawn_opencode_models_fetch();
-            self.gemini_models.clear();
-            self.spawn_gemini_models_fetch();
+            match self.settings.cli_provider {
+                CliProvider::OpenCode => {
+                    self.opencode_models.clear();
+                    self.spawn_opencode_models_fetch();
+                }
+                CliProvider::Gemini => {
+                    self.gemini_models.clear();
+                    self.spawn_gemini_models_fetch();
+                }
+                CliProvider::Claude | CliProvider::Codex => {}
+            }
         }
         if let Some(idx) = fetch_idx {
             self.trigger_source_fetch(idx);
