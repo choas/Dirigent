@@ -17,7 +17,7 @@ This guide shows how the `cues` table is structured and how to insert rows safel
 Dirigent creates one database **per project**, inside a hidden `.Dirigent`
 folder at the root of the repository you opened:
 
-```
+```text
 <project-root>/.Dirigent/Dirigent.db
 ```
 
@@ -198,4 +198,3 @@ the Cue Pool under the column matching their `status`.
   `executions`, or `agent_runs` must reference an existing `cues.id`.
 - **Don't set `id` manually** unless you know it's free — let AUTOINCREMENT
   handle it.
-```
