@@ -58,7 +58,15 @@ impl DirigentApp {
                 // unanswered question, so accepting it via Done without clearing
                 // the flag would leave the workflow step permanently blocked.
                 let was_blocked = self.cues.iter().any(|c| c.id == cue_id && c.has_question);
-                let _ = self.db.update_cue_has_question(cue_id, false);
+                // The DB flag must be cleared before moving to Done: if this
+                // write fails and we proceed anyway, on_workflow_cue_completed
+                // would still see has_question and block the step permanently.
+                // Abort the move and surface the error so the state stays
+                // consistent and the user can retry.
+                if let Err(e) = self.db.update_cue_has_question(cue_id, false) {
+                    self.set_status_message(format!("Failed to clear question flag: {}", e));
+                    return;
+                }
                 self.process_move_to(cue_id, CueStatus::Done);
                 if was_blocked && self.workflow_plan.is_some() {
                     // process_move_to only reloads cues when moving to Ready,
