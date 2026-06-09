@@ -973,7 +973,7 @@ fn render_reveal_open_terminal_items(
 }
 
 /// Open the system file manager to reveal the given path.
-fn spawn_reveal(path: &Path) -> std::io::Result<std::process::Child> {
+pub(super) fn spawn_reveal(path: &Path) -> std::io::Result<std::process::Child> {
     if cfg!(target_os = "macos") {
         if path.is_file() {
             std::process::Command::new("open")
