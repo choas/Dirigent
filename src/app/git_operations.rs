@@ -1288,6 +1288,7 @@ impl DirigentApp {
                 if let Some(id) = pending_cue {
                     let _ = self.db.update_cue_status(id, CueStatus::Done);
                     let _ = self.db.log_activity(id, "Committed");
+                    self.clear_review_question_and_recheck_workflow(id);
                 }
                 self.set_status_message(msg);
             }
