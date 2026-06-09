@@ -53,6 +53,10 @@ pub(crate) struct ClaudeRunState {
     /// Per-cue timeline of recent log-arrival instants, used to draw the
     /// heartbeat strip beneath the running conversation view.
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
+    /// Per-cue instant of the most recent log line ("ping") received from the
+    /// CLI/PTY. Unlike `log_heartbeats` this is never pruned, so it can report
+    /// how long it has been since Claude last sent anything.
+    pub(super) last_message_times: HashMap<i64, Instant>,
     /// Consecutive auto-continue count per cue (reset on normal completion).
     pub(super) auto_continue_count: HashMap<i64, u32>,
     /// Spawn-failure retry count per cue for auto-continues.
@@ -79,6 +83,7 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             log_heartbeats: HashMap::new(),
+            last_message_times: HashMap::new(),
             auto_continue_count: HashMap::new(),
             auto_continue_spawn_retries: HashMap::new(),
             workspace_paths: HashMap::new(),
@@ -691,6 +696,7 @@ impl DirigentApp {
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
+                self.claude.last_message_times.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
                 return false;
             }
@@ -762,6 +768,7 @@ impl DirigentApp {
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
+                self.claude.last_message_times.remove(&cue_id);
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
@@ -812,6 +819,12 @@ impl DirigentApp {
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
         let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
+
+        // Remember the raw follow-up text so a later commit can use it as the
+        // commit message basis instead of the original cue text.
+        if !reply.trim().is_empty() {
+            self.last_follow_up.insert(cue_id, reply.trim().to_string());
+        }
 
         let mut all_images = cue.attached_images.clone();
         all_images.extend_from_slice(reply_images);
@@ -1039,6 +1052,16 @@ impl DirigentApp {
         self.refresh_conversation_history(result.cue_id);
         self.reload_cues();
 
+        // Dispatch a queued follow-up now that the completed run's tracking
+        // state has been cleared. Doing this earlier (inside
+        // `handle_successful_run`) would let `flush_and_clear_tracking` wipe
+        // the follow-up's freshly inserted `running_logs`/`exec_ids`/
+        // `start_times` — leaving the resumed run with no `current_exec_id`,
+        // so its live output never rendered in the conversation view.
+        if !is_error {
+            self.try_dispatch_follow_up(result.cue_id);
+        }
+
         // Dispatch pending auto-continues now that tracking state is cleared.
         let auto_continues = std::mem::take(&mut self.pending_auto_continues);
         for cue_id in auto_continues {
@@ -1057,6 +1080,7 @@ impl DirigentApp {
         self.claude.exec_ids.remove(&result.cue_id);
         self.claude.start_times.remove(&result.cue_id);
         self.claude.log_heartbeats.remove(&result.cue_id);
+        self.claude.last_message_times.remove(&result.cue_id);
     }
 
     /// Detect usage-limit messages in the response or log.
@@ -1102,8 +1126,10 @@ impl DirigentApp {
         }
     }
 
-    /// Post-processing after a successful (non-error) run: refresh git state,
-    /// open tabs, and dispatch any queued follow-ups.
+    /// Post-processing after a successful (non-error) run: refresh git state
+    /// and open tabs. Queued follow-ups are dispatched separately, *after*
+    /// `flush_and_clear_tracking`, so the new run's tracking state survives —
+    /// see `process_single_result`.
     fn handle_successful_run(&mut self, result: &ClaudeResult) {
         let plan_path = self
             .claude
@@ -1117,7 +1143,6 @@ impl DirigentApp {
         let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
         self.reload_commit_history();
-        self.try_dispatch_follow_up(result.cue_id);
     }
 
     /// Finalize a stale execution in the DB without touching live state.
@@ -1215,16 +1240,16 @@ impl DirigentApp {
 
     fn handle_run_error(&mut self, result: &ClaudeResult, error: &str) {
         let preview = self.cue_preview(result.cue_id);
-        self.set_status_message(format!("Claude error for \"{}\": {}", preview, error));
-        let _ = self.db.fail_execution(result.exec_id, error);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(result.cue_id, "Run failed");
         let provider_name = self
             .claude
             .running_logs
             .get(&result.cue_id)
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
+        self.set_status_message(format!("{provider_name} error for \"{preview}\": {error}"));
+        let _ = self.db.fail_execution(result.exec_id, error);
+        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+        let _ = self.db.log_activity(result.cue_id, "Run failed");
         telemetry::emit_execution_failed(
             &self.project_name(),
             result.cue_id,
@@ -1267,6 +1292,19 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(result.cue_id, "Run completed — review ready");
+
+        // Claude can make changes AND still end by asking the user something
+        // (e.g. "I updated X — should I also do Y?"). Surface that so the user
+        // can answer instead of the question being lost behind the diff; on the
+        // PTY this is the only signal the user gets that Claude is blocked.
+        if self.run_has_question(result) {
+            // Claude is blocked waiting for an answer — flag it and stop here.
+            // Skipping the auto-commit/AfterRun path keeps the in-progress work
+            // from being committed before the user resolves the question.
+            self.flag_pending_question(result.cue_id);
+            return;
+        }
+        let _ = self.db.update_cue_has_question(result.cue_id, false);
         self.notify_review_ready(result.cue_id);
 
         let cue_prompt = self
@@ -1281,7 +1319,17 @@ impl DirigentApp {
         let agents_started =
             self.trigger_agents_for(&AgentTrigger::AfterRun, Some(result.cue_id), &cue_prompt);
 
-        if self.settings.auto_commit {
+        // Auto-commit only when the cue is still part of an actively executing
+        // workflow. The persisted `auto_commit` flag is only cleared on
+        // cancellation, so a completed workflow cue keeps it set; without this
+        // gate, a later manual rerun of that cue would still be silently
+        // auto-committed even though it is no longer driven by a workflow.
+        let cue_auto_commit = self
+            .cues
+            .iter()
+            .any(|c| c.id == result.cue_id && c.auto_commit)
+            && self.is_cue_in_active_workflow(result.cue_id);
+        if cue_auto_commit {
             if self.claude.show_log == Some(result.cue_id) {
                 // User is watching the log — defer so they can review.
                 // If they close the log without explicitly accepting,
@@ -1365,6 +1413,40 @@ impl DirigentApp {
         self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
     }
 
+    /// Detect whether a completed run ended with a question for the user.
+    ///
+    /// Checks the captured response first, then falls back to the live
+    /// PTY/provider log: under the Claude PTY the trailing question is rendered
+    /// to the interactive TUI and may only survive in the streamed screen
+    /// output, not in `result.response`. Without this fallback Claude can ask a
+    /// question and silently wait while the cue looks finished.
+    fn run_has_question(&self, result: &ClaudeResult) -> bool {
+        if claude::response_has_question(&result.response) {
+            return true;
+        }
+        self.claude
+            .running_logs
+            .get(&result.cue_id)
+            .map(|(log, _)| claude::response_has_question(log))
+            .unwrap_or(false)
+    }
+
+    /// Flag that Claude is blocked on a question for `cue_id`: mark the cue,
+    /// open its reply box so the user can answer immediately, notify, and log.
+    fn flag_pending_question(&mut self, cue_id: i64) {
+        self.claude.auto_continue_count.remove(&cue_id);
+        let preview = self.cue_preview(cue_id);
+        self.set_status_message(format!(
+            "Claude is waiting for your answer about \"{preview}\""
+        ));
+        let _ = self.db.update_cue_has_question(cue_id, true);
+        let _ = self
+            .db
+            .log_activity(cue_id, "Run completed — question pending");
+        self.reply_inputs.entry(cue_id).or_insert_with(String::new);
+        self.notify_run_complete(cue_id, true);
+    }
+
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {
         let (m_cost, m_dur, m_turns) = (
             Some(result.metrics.cost_usd),
@@ -1379,19 +1461,11 @@ impl DirigentApp {
             m_dur,
             m_turns,
         );
-        let has_question = claude::response_has_question(&result.response);
+        let has_question = self.run_has_question(result);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
-            self.claude.auto_continue_count.remove(&result.cue_id);
-            self.set_status_message(format!("Claude is asking a question about \"{}\"", preview));
-            let _ = self.db.update_cue_has_question(result.cue_id, true);
             let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(result.cue_id, "Run completed — question pending");
-            self.reply_inputs
-                .entry(result.cue_id)
-                .or_insert_with(String::new);
+            self.flag_pending_question(result.cue_id);
         } else if self.should_auto_continue(result.cue_id) {
             let count = self
                 .claude
@@ -1488,6 +1562,7 @@ impl DirigentApp {
             // from the visible output.
             if total_beats > 0 {
                 let now = Instant::now();
+                self.claude.last_message_times.insert(cue_id, now);
                 let beats = self.claude.log_heartbeats.entry(cue_id).or_default();
                 for _ in 0..total_beats {
                     beats.push_back(now);
@@ -1561,6 +1636,13 @@ impl DirigentApp {
     }
 
     fn notify_review_ready(&self, cue_id: i64) {
+        self.notify_run_complete(cue_id, false);
+    }
+
+    /// Play the completion sound and (optionally) post a desktop notification.
+    /// When `question` is set, the popup makes clear Claude is blocked waiting
+    /// for the user to answer, rather than just announcing a ready review.
+    fn notify_run_complete(&self, cue_id: i64, question: bool) {
         if self.settings.notify_sound {
             std::thread::spawn(|| {
                 // Play the embedded Glass sound via `afplay` (a separate process).
@@ -1589,7 +1671,12 @@ impl DirigentApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-            send_macos_notification("Dirigent", &project_name, &preview);
+            let subtitle = if question {
+                format!("{project_name} — Claude is waiting for your answer")
+            } else {
+                project_name
+            };
+            send_macos_notification("Dirigent", &subtitle, &preview);
         }
     }
 }

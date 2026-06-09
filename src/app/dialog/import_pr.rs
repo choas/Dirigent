@@ -57,7 +57,7 @@ impl DirigentApp {
         if is_refresh {
             ui.label("Re-fetch findings from the PR to check for new review comments (e.g. after CodeRabbit re-reviews).");
         } else {
-            ui.label("Import actionable findings from a GitHub Pull Request review (e.g. CodeRabbit) as cues.");
+            ui.label("Import actionable findings from a GitHub or Codeberg Pull Request review (e.g. CodeRabbit) as cues.");
         }
         ui.add_space(SPACE_SM);
 

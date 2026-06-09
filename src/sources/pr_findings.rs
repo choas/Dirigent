@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::DirigentError;
+use crate::git::forgejo::{self, RemoteInfo};
 
 use super::custom::{output_with_timeout, parse_paginated_json, SUBPROCESS_TIMEOUT_SECS};
 use super::finding_text::extract_finding_text;
@@ -168,12 +169,119 @@ fn process_body_comments(
     findings
 }
 
-/// Fetch PR review comments using `gh` CLI and parse actionable findings.
-/// Returns findings from inline review comments (e.g. CodeRabbit).
+/// GET a paginated Forgejo (Codeberg) list endpoint and return all JSON items.
+///
+/// `url` is the endpoint without paging params; this walks `?page=N` until a
+/// short page signals the end. A token is sent when available so private repos
+/// and rate limits work, but public repos read fine without one.
+fn forgejo_get_all(
+    client: &reqwest::blocking::Client,
+    token: Option<&str>,
+    url: &str,
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    const LIMIT: usize = 50;
+    let mut all = Vec::new();
+    for page in 1..=100u32 {
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let paged = format!("{}{}page={}&limit={}", url, sep, page, LIMIT);
+        let mut req = client.get(&paged).header("Accept", "application/json");
+        if let Some(t) = token {
+            req = req.header("Authorization", format!("token {}", t));
+        }
+        let resp = req
+            .send()
+            .map_err(|e| DirigentError::Source(format!("Codeberg API request failed: {}", e)))?;
+        let status = resp.status();
+        let text = resp.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(DirigentError::Source(format!(
+                "Codeberg API GET {} failed (HTTP {}): {}",
+                url,
+                status.as_u16(),
+                text.trim()
+            )));
+        }
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| DirigentError::Source(format!("invalid Codeberg API response: {}", e)))?;
+        let batch = json.as_array().cloned().unwrap_or_default();
+        let n = batch.len();
+        all.extend(batch);
+        if n < LIMIT {
+            break;
+        }
+    }
+    Ok(all)
+}
+
+/// Fetch PR review findings from Codeberg via the Forgejo REST API.
+///
+/// Forgejo exposes inline comments per-review (rather than a single flat
+/// `pulls/{n}/comments` list like GitHub), so this walks each review's comments
+/// in addition to the review bodies and issue-level comments.
+fn fetch_pr_findings_codeberg(
+    project_root: &Path,
+    remote: &RemoteInfo,
+    pr_number: u32,
+) -> crate::error::Result<Vec<PrFinding>> {
+    let client = forgejo::client(SUBPROCESS_TIMEOUT_SECS)?;
+    let token = forgejo::token(project_root);
+    let token = token.as_deref();
+    let base = remote.api_base();
+    let mut findings = Vec::new();
+
+    // Issue-level comments (general PR discussion, e.g. bot summaries).
+    if let Ok(issue_comments) = forgejo_get_all(
+        &client,
+        token,
+        &format!("{}/issues/{}/comments", base, pr_number),
+    ) {
+        findings.extend(process_body_comments(
+            &issue_comments,
+            pr_number,
+            "issue_comment",
+            false,
+        ));
+    }
+
+    // PR reviews, plus the inline code comments attached to each review.
+    let reviews = forgejo_get_all(
+        &client,
+        token,
+        &format!("{}/pulls/{}/reviews", base, pr_number),
+    )?;
+    findings.extend(process_body_comments(&reviews, pr_number, "review", true));
+    for review in &reviews {
+        let Some(review_id) = review.get("id").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        if let Ok(comments) = forgejo_get_all(
+            &client,
+            token,
+            &format!(
+                "{}/pulls/{}/reviews/{}/comments",
+                base, pr_number, review_id
+            ),
+        ) {
+            findings.extend(process_inline_comments(&comments, pr_number));
+        }
+    }
+
+    Ok(findings)
+}
+
+/// Fetch PR review comments and parse actionable findings.
+///
+/// GitHub remotes use the `gh` CLI; Codeberg (Forgejo) remotes use the Forgejo
+/// REST API directly. Returns findings from inline review comments (e.g. CodeRabbit).
 pub(crate) fn fetch_pr_findings(
     project_root: &Path,
     pr_number: u32,
 ) -> crate::error::Result<Vec<PrFinding>> {
+    // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
+    if let Some(remote) = forgejo::codeberg_remote(project_root) {
+        return fetch_pr_findings_codeberg(project_root, &remote, pr_number);
+    }
+
     let mut findings = Vec::new();
 
     // Fetch inline review comments (code-level comments, e.g. from CodeRabbit)

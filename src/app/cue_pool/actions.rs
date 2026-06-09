@@ -51,6 +51,22 @@ impl DirigentApp {
             CueAction::RevertReview(cue_id) => {
                 self.process_revert_review(cue_id);
             }
+            CueAction::MarkReviewDone(cue_id) => {
+                // Clear any pending question first: a run can change files
+                // (moving the cue to Review) and still end by asking the user
+                // something. on_workflow_cue_completed holds back a cue with an
+                // unanswered question, so accepting it via Done without clearing
+                // the flag would leave the workflow step permanently blocked.
+                let was_blocked = self.cues.iter().any(|c| c.id == cue_id && c.has_question);
+                let _ = self.db.update_cue_has_question(cue_id, false);
+                self.process_move_to(cue_id, CueStatus::Done);
+                if was_blocked && self.workflow_plan.is_some() {
+                    // process_move_to only reloads cues when moving to Ready,
+                    // so refresh in-memory state before re-checking the step.
+                    self.reload_cues();
+                    self.on_workflow_cue_completed(cue_id);
+                }
+            }
             CueAction::ReplyReview(cue_id, reply_text) => {
                 self.reply_inputs.remove(&cue_id);
                 let _ = self.db.update_cue_has_question(cue_id, false);
@@ -197,6 +213,7 @@ impl DirigentApp {
         self.cancel_cue_task(id);
         self.run_queue.retain(|&cid| cid != id);
         self.follow_up_queue.remove(&id);
+        self.last_follow_up.remove(&id);
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
         self.reply_inputs.remove(&id);
@@ -208,6 +225,7 @@ impl DirigentApp {
         self.claude.exec_ids.remove(&id);
         self.claude.start_times.remove(&id);
         self.claude.log_heartbeats.remove(&id);
+        self.claude.last_message_times.remove(&id);
         self.notion_done_cache.remove(&id);
         self.conversation_replies.remove(&id);
         self.conversation_reply_images.remove(&id);
@@ -324,12 +342,21 @@ impl DirigentApp {
         match self.db.get_latest_execution(cue_id) {
             Ok(Some(exec)) => {
                 if exec.diff.is_some() {
+                    // Prefer the most recent follow-up prompt as the commit
+                    // message basis — it reflects the latest instruction that
+                    // produced these changes. Fall back to the original cue text.
                     let cue_text = self
-                        .cues
-                        .iter()
-                        .find(|c| c.id == cue_id)
-                        .map(|c| c.text.clone())
-                        .unwrap_or_default();
+                        .last_follow_up
+                        .get(&cue_id)
+                        .filter(|t| !t.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            self.cues
+                                .iter()
+                                .find(|c| c.id == cue_id)
+                                .map(|c| c.text.clone())
+                                .unwrap_or_default()
+                        });
                     let extracted = exec
                         .response
                         .as_deref()

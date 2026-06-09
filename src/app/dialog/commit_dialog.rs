@@ -29,6 +29,19 @@ impl DirigentApp {
                 ui.add_space(SPACE_XS);
 
                 if let Some(ref info) = self.git.info {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Branch:")
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        );
+                        ui.label(
+                            egui::RichText::new(&info.branch)
+                                .small()
+                                .strong()
+                                .color(self.semantic.secondary_text),
+                        );
+                    });
                     let summary = crate::git::format_status_summary(info);
                     if !summary.is_empty() {
                         ui.label(
@@ -36,8 +49,8 @@ impl DirigentApp {
                                 .small()
                                 .color(self.semantic.tertiary_text),
                         );
-                        ui.add_space(SPACE_XS);
                     }
+                    ui.add_space(SPACE_XS);
                 }
 
                 ui.label(egui::RichText::new("Commit message").strong());

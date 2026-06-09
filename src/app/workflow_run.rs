@@ -95,6 +95,7 @@ impl DirigentApp {
         // Collect cue IDs to trigger (can't borrow self mutably while iterating plan)
         let cue_ids: Vec<i64> = plan.steps[0].cue_ids.clone();
 
+        let auto_commit = self.settings.auto_commit;
         for &cue_id in &cue_ids {
             // Only move cues that are still in Inbox — skip already-completed ones.
             let is_inbox = self
@@ -104,6 +105,7 @@ impl DirigentApp {
             if !is_inbox {
                 continue;
             }
+            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
             let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
             let _ = self.db.log_activity(cue_id, "Workflow: started (step 0)");
             self.cue_move_flash
@@ -140,12 +142,17 @@ impl DirigentApp {
             return;
         }
 
-        // Check if all cues in this step are done (no longer in Ready status)
+        // Check if all cues in this step are done. A cue is done once it leaves
+        // Ready status, EXCEPT when it's blocked on a pending question: a run can
+        // make changes (moving the cue to Review) and still end by asking the
+        // user something. Treating that as complete would start dependent
+        // workflow steps before the answer is provided, so a cue with an
+        // unanswered question is held back until it's resolved.
         let all_done = plan.steps[step_idx].cue_ids.iter().all(|&id| {
             self.cues
                 .iter()
                 .find(|c| c.id == id)
-                .map(|c| c.status != CueStatus::Ready)
+                .map(|c| c.status != CueStatus::Ready && !c.has_question)
                 .unwrap_or(true)
         });
 
@@ -201,6 +208,7 @@ impl DirigentApp {
                 plan.steps[idx].status = WorkflowStepStatus::Running;
                 let cue_ids: Vec<i64> = plan.steps[idx].cue_ids.clone();
 
+                let auto_commit = self.settings.auto_commit;
                 for &cue_id in &cue_ids {
                     // Only move cues that are still in Inbox — skip already-completed ones.
                     let is_inbox = self
@@ -210,6 +218,7 @@ impl DirigentApp {
                     if !is_inbox {
                         continue;
                     }
+                    let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
                     let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
                     let _ = self
                         .db
@@ -289,6 +298,10 @@ impl DirigentApp {
             if is_ready {
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
             }
+            // Clear the persisted workflow/auto-commit flags so a later manual
+            // run of this cue is not treated as part of a (now-cancelled)
+            // workflow and silently auto-committed.
+            let _ = self.db.update_cue_workflow_flags(cue_id, false, false);
             let _ = self.db.log_activity(cue_id, "Workflow cancelled");
         }
         self.workflow_plan = None;
@@ -355,6 +368,22 @@ impl DirigentApp {
                     s.status,
                     WorkflowStepStatus::Running | WorkflowStepStatus::PausedAwaitingReview
                 )
+            })
+        })
+    }
+
+    /// True when `cue_id` belongs to a step of the current workflow plan that
+    /// is actively executing (Running only). The persisted `auto_commit` flag
+    /// is only ever cleared on cancellation, so a cue that completed as part of
+    /// a workflow keeps the flag set. Gating the auto-commit path on this
+    /// membership prevents a later *manual* rerun of such a cue from being
+    /// silently auto-committed. A step that is `PausedAwaitingReview` has
+    /// already finished running and is waiting on the user, so reruns during
+    /// that pause are treated as manual and excluded here.
+    pub(super) fn is_cue_in_active_workflow(&self, cue_id: i64) -> bool {
+        self.workflow_plan.as_ref().is_some_and(|p| {
+            p.steps.iter().any(|s| {
+                matches!(s.status, WorkflowStepStatus::Running) && s.cue_ids.contains(&cue_id)
             })
         })
     }

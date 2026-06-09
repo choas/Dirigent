@@ -13,6 +13,7 @@ pub(crate) enum OpenCodeError {
     NotFound,
     SpawnFailed(std::io::Error),
     StreamReadError(std::io::Error),
+    WaitFailed(std::io::Error),
     Cancelled,
     NonZeroExit(std::process::ExitStatus),
     InvalidExtraArgs(String),
@@ -28,6 +29,7 @@ impl std::fmt::Display for OpenCodeError {
             OpenCodeError::StreamReadError(e) => {
                 write!(f, "failed to read opencode stdout: {e}")
             }
+            OpenCodeError::WaitFailed(e) => write!(f, "failed to wait for opencode: {e}"),
             OpenCodeError::Cancelled => write!(f, "cancelled"),
             OpenCodeError::InvalidExtraArgs(args) => {
                 write!(f, "failed to parse extra_args (unmatched quote?): {args}")
@@ -286,14 +288,21 @@ pub(crate) struct OpenCodeRunConfig<'a> {
     pub post_run_script: &'a str,
 }
 
-/// Resolve the opencode binary name and verify it exists on PATH.
+/// Resolve the opencode binary to an absolute, currently-existing executable.
+///
+/// A configured `cli_path` is tried first; if it is stale we fall back to
+/// resolving `opencode` from PATH (including the login-shell PATH that macOS
+/// `.app` bundles need) so the run still works. Only when nothing resolves do
+/// we return [`OpenCodeError::NotFound`].
 fn resolve_opencode_bin(cli_path: &str) -> Result<PathBuf, OpenCodeError> {
-    let bin = if cli_path.is_empty() {
-        "opencode"
-    } else {
-        cli_path
-    };
-    which::which(bin).map_err(|_| OpenCodeError::NotFound)
+    if !cli_path.is_empty() {
+        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    crate::settings::resolve_in_path("opencode")
+        .map(PathBuf::from)
+        .ok_or(OpenCodeError::NotFound)
 }
 
 /// Build the opencode Command with arguments and environment variables.
@@ -461,23 +470,37 @@ fn dispatch_event(
 }
 
 /// Wait for the child process to exit (handles poisoned mutex).
-/// Returns the exit status, or `None` if waiting failed.
-fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) -> Option<std::process::ExitStatus> {
+fn wait_for_child(
+    child: &Arc<Mutex<std::process::Child>>,
+) -> std::io::Result<std::process::ExitStatus> {
     match child.lock() {
-        Ok(mut c) => c.wait().ok(),
-        Err(poisoned) => poisoned.into_inner().wait().ok(),
+        Ok(mut c) => c.wait(),
+        Err(poisoned) => poisoned.into_inner().wait(),
+    }
+}
+
+/// Kill the child process (handles poisoned mutex).
+fn kill_child(child: &Arc<Mutex<std::process::Child>>) {
+    match child.lock() {
+        Ok(mut c) => {
+            let _ = c.kill();
+        }
+        Err(poisoned) => {
+            let _ = poisoned.into_inner().kill();
+        }
     }
 }
 
 /// Check the child process exit status and log stderr on failure.
 fn check_exit_status<F: FnMut(&str)>(
-    exit_status: Option<std::process::ExitStatus>,
+    exit_status: std::process::ExitStatus,
     stderr: &str,
     on_log: &Arc<Mutex<F>>,
 ) -> Result<(), OpenCodeError> {
-    let Some(status) = exit_status.filter(|s| !s.success()) else {
+    if exit_status.success() {
         return Ok(());
-    };
+    }
+    let status = exit_status;
     if !stderr.is_empty() {
         let mut log = on_log.lock().unwrap_or_else(|e| {
             log::error!(
@@ -576,17 +599,30 @@ pub(crate) fn invoke_opencode_streaming(
     });
 
     done.store(true, Ordering::Relaxed);
+
+    // If the stdout stream errored, the child may still be running. Kill it
+    // first so the subsequent `wait` cannot block indefinitely, then drain the
+    // helper threads before surfacing the read error.
+    let (final_result, edited_files, stream_metrics) = match stream_result {
+        Ok(result) => result,
+        Err(error) => {
+            kill_child(&child);
+            let _ = watchdog.join();
+            let _ = wait_for_child(&child);
+            let _ = stderr_thread.join();
+            return Err(OpenCodeError::StreamReadError(error));
+        }
+    };
+
     let _ = watchdog.join();
     let exit_status = wait_for_child(&child);
-
-    let (final_result, edited_files, stream_metrics) =
-        stream_result.map_err(OpenCodeError::StreamReadError)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
         return Err(OpenCodeError::Cancelled);
     }
 
+    let exit_status = exit_status.map_err(OpenCodeError::WaitFailed)?;
     check_exit_status(exit_status, &stderr, &on_log)?;
 
     if final_result.is_empty() && !stderr.is_empty() {

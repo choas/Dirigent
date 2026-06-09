@@ -59,6 +59,10 @@ impl DirigentApp {
             self.render_workflow_graph_central(ui);
             return true;
         }
+        if self.git.show_graph_view {
+            self.render_graph_view_central(ui);
+            return true;
+        }
         false
     }
 

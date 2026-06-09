@@ -64,7 +64,7 @@ impl DirigentApp {
             .to_string_lossy()
             .to_string();
 
-        let tab_resp = frame.show(ui, |ui| {
+        frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 let label_resp = ui
                     .add(egui::Label::new(text).sense(egui::Sense::click()))
@@ -72,7 +72,7 @@ impl DirigentApp {
 
                 ui.add_space(4.0);
 
-                let close_clicked = ui
+                let close_resp = ui
                     .add(
                         egui::Button::new(
                             crate::app::icon_small("\u{2715}", self.settings.font_size)
@@ -80,23 +80,21 @@ impl DirigentApp {
                         )
                         .frame(false),
                     )
-                    .on_hover_text("Close tab")
-                    .clicked();
+                    .on_hover_text("Close tab");
 
-                if close_clicked {
+                if close_resp.clicked() {
                     *action = TabBarAction::CloseOne(i);
                 } else if label_resp.clicked() {
                     *action = TabBarAction::Activate(i);
                 }
-            })
-        });
 
-        let tab_interact = ui.interact(
-            tab_resp.response.rect,
-            tab_resp.response.id.with("ctx"),
-            egui::Sense::click(),
-        );
-        self.render_tab_context_menu(&tab_interact, i, action);
+                // Attach the context menu directly to the tab's responses so it
+                // doesn't sit as an overlay that swallows left-clicks on the
+                // close button.
+                self.render_tab_context_menu(&label_resp, i, action);
+                self.render_tab_context_menu(&close_resp, i, action);
+            });
+        });
     }
 
     /// Show the right-click context menu on a tab.

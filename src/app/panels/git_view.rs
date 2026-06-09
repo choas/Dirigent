@@ -198,6 +198,12 @@ impl DirigentApp {
                     self.git.selected_files.insert(rel_path);
                 }
             }
+            Some(GitViewAction::Reveal(rel_path)) => {
+                let abs_path = self.project_root.join(&rel_path);
+                if let Err(e) = super::file_tree::spawn_reveal(&abs_path) {
+                    self.set_status_message(format!("Failed to reveal: {e}"));
+                }
+            }
             None => {}
         }
     }
@@ -223,6 +229,19 @@ impl DirigentApp {
                 .clicked()
             {
                 self.create_commit_cue();
+            }
+            if has_selection {
+                ui.add_space(SPACE_SM);
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 0.0],
+                        egui::Button::new("Reset Selected"),
+                    )
+                    .on_hover_text("Clear the current file selection")
+                    .clicked()
+                {
+                    self.git.selected_files.clear();
+                }
             }
             ui.add_space(SPACE_SM);
         });
@@ -316,6 +335,18 @@ enum GitViewAction {
     AddToGitignore(String),
     Restore(String),
     ToggleSelect(String),
+    Reveal(String),
+}
+
+/// Platform-specific label for the "reveal in file manager" menu item.
+fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Reveal in Explorer"
+    } else {
+        "Reveal in File Manager"
+    }
 }
 
 fn render_dirty_tree_children(
@@ -368,6 +399,13 @@ fn render_dirty_tree_children(
                     expanded.insert(node_path.clone());
                 }
             }
+
+            response.context_menu(|ui| {
+                if ui.button(reveal_label()).clicked() {
+                    *action = Some(GitViewAction::Reveal(node_path.clone()));
+                    ui.close();
+                }
+            });
 
             if is_expanded {
                 render_dirty_tree_children(
@@ -428,6 +466,10 @@ fn render_dirty_tree_children(
                 }
                 if ui.button("Restore").clicked() {
                     *action = Some(GitViewAction::Restore(rel_path.clone()));
+                    ui.close();
+                }
+                if ui.button(reveal_label()).clicked() {
+                    *action = Some(GitViewAction::Reveal(rel_path.clone()));
                     ui.close();
                 }
                 ui.separator();

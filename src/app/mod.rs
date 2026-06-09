@@ -9,6 +9,7 @@ mod dialog;
 mod dino;
 mod file_navigation;
 mod git_operations;
+mod graph_helpers;
 mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
@@ -334,6 +335,11 @@ pub struct DirigentApp {
 
     // Follow-up prompts queued for currently running cues (cue_id -> FIFO list of prompts)
     follow_up_queue: HashMap<i64, Vec<String>>,
+
+    // Most recent follow-up prompt text actually sent for a cue (cue_id -> text).
+    // Used as the basis for the commit message so the commit reflects the latest
+    // instruction rather than the original cue.
+    last_follow_up: HashMap<i64, String>,
 
     // Scheduled runs: cue_id -> when to trigger (wall-clock so sleep doesn't delay)
     scheduled_runs: HashMap<i64, SystemTime>,
@@ -768,6 +774,7 @@ impl DirigentApp {
                 new_worktree_name: String::new(),
                 show_worktree_panel: false,
                 available_branches: Vec::new(),
+                own_branches: HashSet::new(),
                 bookmark_push_statuses: HashMap::new(),
                 pushing: false,
                 push_rx: None,
@@ -835,6 +842,8 @@ impl DirigentApp {
                 show_delete_bookmark: false,
                 deleting_bookmark: false,
                 delete_bookmark_rx: None,
+                merged_bookmarks: Vec::new(),
+                trunk_bookmarks: Vec::new(),
                 show_merge_bookmark: false,
                 merging_bookmark: false,
                 merge_bookmark_rx: None,
@@ -850,6 +859,12 @@ impl DirigentApp {
                 pr_url: None,
                 pr_detect_rx: None,
                 pr_detect_branch: String::new(),
+                show_graph_view: false,
+                graph_view_commits: Vec::new(),
+                graph_view_rows: Vec::new(),
+                graph_view_max_lanes: 0,
+                graph_view_limit: 100,
+                graph_view_hovered_row: None,
             },
             settings,
             semantic,
@@ -918,6 +933,7 @@ impl DirigentApp {
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
             follow_up_queue: HashMap::new(),
+            last_follow_up: HashMap::new(),
             scheduled_runs: HashMap::new(),
             schedule_inputs: HashMap::new(),
             tag_inputs: HashMap::new(),
@@ -1067,6 +1083,22 @@ impl DirigentApp {
                 format!("{}s", secs)
             } else {
                 format!("{}:{:02}", secs / 60, secs % 60)
+            }
+        } else {
+            String::new()
+        }
+    }
+
+    /// How long ago the CLI/PTY last sent a log line ("ping") for this cue,
+    /// formatted as a short "Ns ago" / "M:SS ago" string. Empty if nothing has
+    /// arrived yet.
+    fn format_last_message(&self, cue_id: i64) -> String {
+        if let Some(last) = self.claude.last_message_times.get(&cue_id) {
+            let secs = last.elapsed().as_secs();
+            if secs < 60 {
+                format!("{}s ago", secs)
+            } else {
+                format!("{}:{:02} ago", secs / 60, secs % 60)
             }
         } else {
             String::new()

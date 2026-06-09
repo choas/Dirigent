@@ -13,7 +13,7 @@ pub(crate) use app_settings::{
 };
 pub(crate) use commands::{default_commands, CueCommand};
 pub(crate) use home_guard::sync_home_guard_hook;
-pub(crate) use io::{load_settings, save_settings};
+pub(crate) use io::{load_settings, resolve_in_path, save_settings};
 pub(crate) use playbook::{
     default_playbook, parse_play_variables, substitute_play_variables, Play, PlayVariable,
 };

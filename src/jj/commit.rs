@@ -11,6 +11,33 @@ fn is_stale_working_copy(output: &Output) -> bool {
     stderr.contains("working copy is stale")
 }
 
+/// Detect the rejection `jj git push` emits when a commit being pushed — or any
+/// of its ancestors — still contains a conflict. The tip bookmark can look
+/// perfectly resolved while an earlier commit in its history is conflicted, so
+/// the bare jj message ("Won't push commit <id> since it has conflicts") leaves
+/// the user staring at a clean tip with no idea where the conflict lives.
+fn is_conflicted_commit_rejection(stderr: &str) -> bool {
+    stderr.contains("since it has conflicts")
+        || (stderr.contains("Won't push commit") && stderr.contains("conflicts"))
+}
+
+/// Build a friendly error for the conflicted-ancestor push rejection that points
+/// the user at the exact commits to resolve.
+fn conflicted_ancestor_message(repo_path: &Path, jj_path: &str, stderr: &str) -> String {
+    let bookmark = bookmarks_for_rev(repo_path, "@-", jj_path)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "<bookmark>".to_string());
+    format!(
+        "jj git push refused: a commit in the history still has conflicts.\n\n\
+         The tip bookmark may look resolved, but jj won't push while any ancestor \
+         commit is conflicted. List the conflicted commits to resolve with:\n\n  \
+         jj log -r 'ancestors({bookmark}) & conflicts()'\n\n\
+         jj reported:\n{}",
+        stderr.trim()
+    )
+}
+
 fn update_stale_working_copy(repo_path: &Path, jj_path: &str) -> crate::error::Result<()> {
     let output = super::jj_cmd(jj_path)
         .args(["workspace", "update-stale"])
@@ -42,6 +69,11 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
             .output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if is_conflicted_commit_rejection(&stderr) {
+                return Err(DirigentError::JjCommand(conflicted_ancestor_message(
+                    repo_path, jj_path, &stderr,
+                )));
+            }
             return Err(DirigentError::JjCommand(format!(
                 "jj git push failed: {}",
                 stderr.trim()
@@ -54,6 +86,11 @@ pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<S
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_conflicted_commit_rejection(&stderr) {
+            return Err(DirigentError::JjCommand(conflicted_ancestor_message(
+                repo_path, jj_path, &stderr,
+            )));
+        }
         return Err(DirigentError::JjCommand(format!(
             "jj git push failed: {}",
             stderr.trim()
@@ -324,6 +361,100 @@ pub(crate) fn jj_delete_bookmark(
         )));
     }
     Ok(())
+}
+
+/// Run `jj log` for `revset` and return the local bookmark names it resolves to.
+///
+/// Shared by [`jj_merged_bookmarks`] and [`jj_trunk_bookmarks`]: both ask jj for
+/// the `local_bookmarks` of a revset and parse the whitespace-separated output
+/// (stripping the `*` that marks bookmarks with unpushed changes). Returns an
+/// empty vec if jj fails or resolves nothing.
+fn bookmarks_matching_revset(repo_path: &Path, jj_path: &str, revset: &str) -> Vec<String> {
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            revset,
+            "-T",
+            r#"local_bookmarks ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            raw.split_whitespace()
+                .map(|s| s.trim_end_matches('*').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// List local bookmarks that are fully merged into `trunk()`.
+///
+/// A bookmark counts as merged when its target commit is an ancestor of (or
+/// equal to) `trunk()` — i.e. it has no commits of its own ahead of trunk and
+/// is therefore safe to delete. The revset includes the trunk bookmark itself
+/// (e.g. `main`/`master`), so callers should filter out protected names.
+pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+    bookmarks_matching_revset(repo_path, jj_path, "bookmarks() & ::trunk()")
+}
+
+/// Resolve the name(s) of the repository's trunk bookmark.
+///
+/// `trunk()` is jj's configured default branch (commonly `main`/`master`, but a
+/// repo can override `revset-aliases."trunk()"` to anything, e.g. `develop`).
+/// Callers use this to protect the actual trunk instead of hard-coding
+/// `main`/`master`. Returns an empty vec if jj cannot resolve `trunk()` (it then
+/// falls back to `root()`, which carries no bookmarks).
+///
+/// Unlike [`bookmarks_matching_revset`], this templates `bookmarks` (local *and*
+/// remote) at the `trunk()` commit rather than `local_bookmarks` of
+/// `bookmarks() & trunk()`. `trunk()` usually resolves to the *remote* target
+/// (e.g. `develop@origin`), so once the local bookmark advances ahead of the
+/// remote there is no local bookmark sitting on that commit and a
+/// `local_bookmarks`-only query comes back empty — silently failing to protect
+/// the trunk. The `@remote` suffix is stripped so the local and remote forms
+/// collapse to the bare bookmark name.
+pub(crate) fn jj_trunk_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            "trunk()",
+            "-T",
+            r#"bookmarks ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            let mut names: Vec<String> = Vec::new();
+            for token in raw.split_whitespace() {
+                // Drop the `@remote` suffix (e.g. `develop@origin`) and any
+                // conflict/sync markers jj appends (`*`, `?`).
+                let name = token
+                    .split('@')
+                    .next()
+                    .unwrap_or(token)
+                    .trim_end_matches(['*', '?']);
+                if !name.is_empty() && !names.iter().any(|n| n == name) {
+                    names.push(name.to_string());
+                }
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.

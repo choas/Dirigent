@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::DirigentError;
+use crate::git::forgejo::{self, RemoteInfo};
 
 use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
 
@@ -54,6 +55,42 @@ fn gh_api_post(
     Ok(())
 }
 
+/// Post a comment to a Codeberg PR via the Forgejo REST API.
+///
+/// Forgejo cannot be reached by `gh`, and threaded replies to inline review
+/// comments need a richer payload, so for all finding types we post a single
+/// issue-level comment mentioning the fix.
+fn notify_pr_finding_fixed_codeberg(
+    project_root: &Path,
+    remote: &RemoteInfo,
+    pr_number: u32,
+    body: &str,
+) -> crate::error::Result<()> {
+    let token = forgejo::token(project_root)
+        .ok_or_else(|| DirigentError::Source(forgejo::TOKEN_HELP.into()))?;
+    let client = forgejo::client(SUBPROCESS_TIMEOUT_SECS)?;
+    let url = format!("{}/issues/{}/comments", remote.api_base(), pr_number);
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("token {}", token))
+        .header("Accept", "application/json")
+        .json(&serde_json::json!({ "body": body }))
+        .send()
+        .map_err(|e| DirigentError::Source(format!("Codeberg API request failed: {}", e)))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().unwrap_or_default();
+        return Err(DirigentError::Source(format!(
+            "Failed to comment on Codeberg PR (HTTP {}): {}",
+            status.as_u16(),
+            text.trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Notify a PR comment that a finding has been addressed.
 /// Returns Ok(true) if a reply was posted, Ok(false) if the source_ref was not a PR ref.
 pub(crate) fn notify_pr_finding_fixed(
@@ -70,6 +107,12 @@ pub(crate) fn notify_pr_finding_fixed(
         "Fixed in commit {}.\n\n*Automated reply from [Dirigent](https://github.com/choas/Dirigent)*",
         commit_hash
     );
+
+    // Route Codeberg (Forgejo) remotes through the Forgejo API; `gh` is GitHub-only.
+    if let Some(remote) = forgejo::codeberg_remote(project_root) {
+        notify_pr_finding_fixed_codeberg(project_root, &remote, pr_number, &body)?;
+        return Ok(true);
+    }
 
     match comment_type {
         "comment" => {

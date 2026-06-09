@@ -499,6 +499,13 @@ impl DirigentApp {
                     format!("\u{25CF} Running ({})", elapsed)
                 };
                 ui.label(icon(&status, fs).color(self.semantic.accent));
+                let last_msg = self.format_last_message(cue_id);
+                if !last_msg.is_empty() {
+                    ui.label(
+                        icon(&format!("\u{2022} last ping {}", last_msg), fs)
+                            .color(self.semantic.secondary_text),
+                    );
+                }
                 ui.ctx()
                     .request_repaint_after(super::super::ELAPSED_REPAINT);
             } else {

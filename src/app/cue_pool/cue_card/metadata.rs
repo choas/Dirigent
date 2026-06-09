@@ -16,12 +16,29 @@ impl DirigentApp {
             });
         }
 
-        let has_badge =
-            cue.source_label.is_some() || cue.tag.is_some() || !cue.attached_images.is_empty();
+        let has_badge = cue.source_label.is_some()
+            || cue.tag.is_some()
+            || !cue.attached_images.is_empty()
+            || cue.workflow
+            || cue.auto_commit;
         if !has_badge {
             return;
         }
         ui.horizontal(|ui| {
+            if cue.workflow {
+                let badge = egui::RichText::new("Workflow")
+                    .small()
+                    .background_color(egui::Color32::from_rgb(44, 138, 186))
+                    .color(self.semantic.badge_text);
+                ui.label(badge);
+            }
+            if cue.auto_commit {
+                let badge = egui::RichText::new("Auto-commit")
+                    .small()
+                    .background_color(egui::Color32::from_rgb(38, 154, 108))
+                    .color(self.semantic.badge_text);
+                ui.label(badge);
+            }
             if let Some(ref label) = cue.source_label {
                 let badge_color = source_label_color(label);
                 let badge = egui::RichText::new(label)

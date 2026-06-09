@@ -194,6 +194,10 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         let fs = self.settings.font_size;
+        if cue.has_question {
+            ui.label(icon("?", fs).color(self.semantic.warning).strong())
+                .on_hover_text("Claude is waiting for your answer — use Reply");
+        }
         if cue.plan_path.is_some() {
             self.render_plan_buttons(ui, cue, actions, fs);
         }
@@ -212,12 +216,23 @@ impl DirigentApp {
         {
             toggle_reply_input(&mut self.reply_inputs, cue.id);
         }
+        let commit_btn =
+            egui::Button::new(icon("\u{2713} Commit", fs).color(self.semantic.badge_text))
+                .fill(self.semantic.accent)
+                .small();
         if ui
-            .small_button(icon("\u{2713} Commit", fs))
+            .add(commit_btn)
             .on_hover_text("Commit the applied changes")
             .clicked()
         {
             actions.push((cue.id, CueAction::CommitReview(cue.id)));
+        }
+        if ui
+            .small_button(icon("\u{2713} Done", fs))
+            .on_hover_text("Mark done without committing (move out of Review)")
+            .clicked()
+        {
+            actions.push((cue.id, CueAction::MarkReviewDone(cue.id)));
         }
         if ui
             .small_button(icon("\u{21BA} Revert", fs))

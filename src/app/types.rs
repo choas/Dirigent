@@ -78,6 +78,9 @@ pub(super) enum CueAction {
     ShowDiff(i64),
     CommitReview(i64),
     RevertReview(i64),
+    /// Mark a Review cue done without committing, clearing any pending question
+    /// so a question-blocked workflow step can proceed.
+    MarkReviewDone(i64),
     ReplyReview(i64, String),
     ShowRunningLog(i64),
     ShowAgentRuns(i64),
@@ -532,6 +535,8 @@ pub(crate) struct GitState {
     pub(super) show_worktree_panel: bool,
     /// Branches available for worktree creation (local + remote, excluding checked-out).
     pub(super) available_branches: Vec<String>,
+    /// Branch names whose tip commit was authored by the current git user.
+    pub(super) own_branches: HashSet<String>,
     /// Per-bookmark push status (jj only): synced vs not-pushed for each bookmark name.
     pub(super) bookmark_push_statuses: HashMap<String, crate::jj::BookmarkPushStatus>,
     /// Whether a git push is currently in progress.
@@ -650,6 +655,13 @@ pub(crate) struct GitState {
     /// Whether a delete-bookmark operation is in progress (jj only).
     pub(super) deleting_bookmark: bool,
     pub(super) delete_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Names of bookmarks fully merged into trunk, shown in the Delete Bookmark
+    /// dialog so they can be flagged and bulk-deleted (jj only).
+    pub(super) merged_bookmarks: Vec<String>,
+    /// Names of the repository's actual trunk bookmark(s), resolved from jj's
+    /// `trunk()` revset. Protected from deletion so a repo whose trunk is not
+    /// literally `main`/`master` (e.g. `develop`) cannot lose it (jj only).
+    pub(super) trunk_bookmarks: Vec<String>,
     /// Whether the Merge Bookmark dialog is open (jj only).
     pub(super) show_merge_bookmark: bool,
     /// Whether a merge-bookmark operation is in progress (jj only).
@@ -679,6 +691,18 @@ pub(crate) struct GitState {
     pub(super) pr_detect_rx: Option<mpsc::Receiver<Option<(u32, String)>>>,
     /// Branch name when PR was last detected (to avoid re-detecting on every refresh).
     pub(super) pr_detect_branch: String,
+    /// Whether the full-project graph view is shown in the central panel.
+    pub(super) show_graph_view: bool,
+    /// Commit history loaded for the full graph view (separate from sidebar history).
+    pub(super) graph_view_commits: Vec<git::CommitInfo>,
+    /// Graph layout rows for the full graph view.
+    pub(super) graph_view_rows: Vec<git::graph::GraphRow>,
+    /// Max lanes in the full graph view.
+    pub(super) graph_view_max_lanes: usize,
+    /// Number of commits loaded in the graph view.
+    pub(super) graph_view_limit: usize,
+    /// Row hovered in the full graph view (previous frame).
+    pub(super) graph_view_hovered_row: Option<usize>,
 }
 
 impl GitState {

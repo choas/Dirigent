@@ -19,8 +19,22 @@ pub(crate) struct ParsedDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileDiff {
+    pub old_path: String,
     pub new_path: String,
     pub hunks: Vec<DiffHunk>,
+}
+
+impl FileDiff {
+    /// Path to display in the file header. For deleted files (`new_path` is
+    /// `/dev/null`) fall back to the previous name so the user can see which
+    /// file was removed instead of an opaque `/dev/null`.
+    pub fn display_path(&self) -> &str {
+        if self.new_path == "/dev/null" && !self.old_path.is_empty() {
+            &self.old_path
+        } else {
+            &self.new_path
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +76,11 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
             continue;
         }
 
+        let old_path = lines[i]
+            .strip_prefix("--- a/")
+            .or_else(|| lines[i].strip_prefix("--- "))
+            .unwrap_or("")
+            .to_string();
         let new_path = lines[i + 1]
             .strip_prefix("+++ b/")
             .or_else(|| lines[i + 1].strip_prefix("+++ "))
@@ -71,7 +90,11 @@ pub(crate) fn parse_unified_diff(diff_text: &str) -> ParsedDiff {
 
         let (hunks, next_i) = parse_file_hunks(&lines, i);
         i = next_i;
-        files.push(FileDiff { new_path, hunks });
+        files.push(FileDiff {
+            old_path,
+            new_path,
+            hunks,
+        });
     }
 
     ParsedDiff { files }
@@ -226,7 +249,7 @@ fn render_file_header(
         if ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new(format!("{} {}{}", arrow, file.new_path, stats))
+                    egui::RichText::new(format!("{} {}{}", arrow, file.display_path(), stats))
                         .strong()
                         .color(colors.diff_header()),
                 )
@@ -900,6 +923,7 @@ mod tests {
     #[test]
     fn count_file_changes_mixed() {
         let file = FileDiff {
+            old_path: "test.rs".into(),
             new_path: "test.rs".into(),
             hunks: {
                 let lines = vec![
@@ -944,6 +968,7 @@ mod tests {
     #[test]
     fn count_file_changes_empty() {
         let file = FileDiff {
+            old_path: "empty.rs".into(),
             new_path: "empty.rs".into(),
             hunks: vec![],
         };
@@ -1053,5 +1078,21 @@ index 0000000000..6178079822
         assert_eq!(parsed.files[1].hunks.len(), 1);
         assert_eq!(parsed.files[0].hunks[0].lines.len(), 2);
         assert_eq!(parsed.files[1].hunks[0].lines.len(), 1);
+    }
+
+    #[test]
+    fn deleted_file_display_path_uses_previous_name() {
+        let diff = "\
+--- a/old_name.rs
++++ /dev/null
+@@ -1,1 +0,0 @@
+-gone
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].new_path, "/dev/null");
+        assert_eq!(parsed.files[0].old_path, "old_name.rs");
+        // Header should show the previous name rather than /dev/null.
+        assert_eq!(parsed.files[0].display_path(), "old_name.rs");
     }
 }

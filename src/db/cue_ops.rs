@@ -103,6 +103,19 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_cue_workflow_flags(
+        &self,
+        id: i64,
+        workflow: bool,
+        auto_commit: bool,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cues SET workflow = ?1, auto_commit = ?2 WHERE id = ?3",
+            params![workflow as i64, auto_commit as i64, id],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_cue(&self, id: i64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(

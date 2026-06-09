@@ -39,6 +39,7 @@ impl DirigentApp {
                             self.claude.start_times.remove(&cue_id);
                             self.claude.exec_ids.remove(&cue_id);
                             self.claude.log_heartbeats.remove(&cue_id);
+                            self.claude.last_message_times.remove(&cue_id);
                             self.conversation_replies.remove(&cue_id);
                             self.conversation_reply_images.remove(&cue_id);
                             let preview = self.cue_preview(cue_id);

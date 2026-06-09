@@ -122,10 +122,14 @@ impl DirigentApp {
                     .map(|b| (b.name.clone(), b.push_status))
                     .collect();
                 self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+                // Git ownership doesn't apply to JJ bookmarks; clear any stale
+                // Git-only names so render_switch_branch_body doesn't highlight them.
+                self.git.own_branches.clear();
             }
             VcsBackend::Git => {
                 self.git.available_branches =
                     git::list_branches(&self.project_root).unwrap_or_default();
+                self.git.own_branches = git::own_branches(&self.project_root);
                 self.git.bookmark_push_statuses.clear();
             }
         }
@@ -1013,12 +1017,34 @@ impl DirigentApp {
             jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
                 .unwrap_or_default();
         self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+        self.git.merged_bookmarks =
+            jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
+        self.git.trunk_bookmarks =
+            jj::jj_trunk_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         self.git.show_delete_bookmark = true;
+    }
+
+    /// Whether a bookmark is the repository's trunk and must not be deleted.
+    ///
+    /// Prefers the trunk bookmark(s) resolved from jj's `trunk()` revset so a
+    /// repo whose trunk is not literally `main`/`master` (e.g. `develop`) is
+    /// still protected; falls back to the conventional names when `trunk()`
+    /// could not be resolved.
+    pub(in crate::app) fn is_protected_bookmark(&self, name: &str) -> bool {
+        if self.git.trunk_bookmarks.iter().any(|b| b == name) {
+            return true;
+        }
+        self.git.trunk_bookmarks.is_empty() && (name == "main" || name == "master")
     }
 
     /// Start an async delete-bookmark operation (jj only).
     pub(super) fn start_delete_bookmark(&mut self, name: &str) {
         if self.git.deleting_bookmark {
+            return;
+        }
+        // Never delete the repository's trunk bookmark.
+        if self.is_protected_bookmark(name) {
+            self.set_status_message(format!("Refusing to delete protected bookmark '{}'", name));
             return;
         }
         self.git.deleting_bookmark = true;
@@ -1032,6 +1058,53 @@ impl DirigentApp {
             let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
                 .map(|()| format!("Deleted bookmark '{}'", bm))
                 .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Start an async delete of every bookmark fully merged into trunk (jj only).
+    ///
+    /// The repository's trunk bookmark is never deleted, even though it is
+    /// itself reported as merged into `trunk()`.
+    pub(super) fn start_delete_merged_bookmarks(&mut self) {
+        if self.git.deleting_bookmark {
+            return;
+        }
+        let merged: Vec<String> = self
+            .git
+            .merged_bookmarks
+            .iter()
+            .filter(|b| !self.is_protected_bookmark(b))
+            .cloned()
+            .collect();
+        if merged.is_empty() {
+            self.set_status_message("No merged bookmarks to delete".to_string());
+            return;
+        }
+        self.git.deleting_bookmark = true;
+        let (tx, rx) = mpsc::channel();
+        self.git.delete_bookmark_rx = Some(rx);
+        let root = self.project_root.clone();
+        let jj_path = self.settings.jj_cli_path.clone();
+        self.set_status_message(format!("Deleting {} merged bookmark(s)...", merged.len()));
+        std::thread::spawn(move || {
+            let mut deleted = 0usize;
+            let mut errors: Vec<String> = Vec::new();
+            for bm in &merged {
+                match jj::jj_delete_bookmark(&root, bm, &jj_path) {
+                    Ok(()) => deleted += 1,
+                    Err(e) => errors.push(format!("{}: {}", bm, e)),
+                }
+            }
+            let result = if errors.is_empty() {
+                Ok(format!("Deleted {} merged bookmark(s)", deleted))
+            } else {
+                Err(format!(
+                    "Deleted {}; failed — {}",
+                    deleted,
+                    errors.join("; ")
+                ))
+            };
             let _ = tx.send(result);
         });
     }
@@ -1055,19 +1128,19 @@ impl DirigentApp {
         self.git.deleting_bookmark = false;
         self.git.delete_bookmark_rx = None;
         match result {
-            Ok(msg) => {
-                self.set_status_message(msg);
-                // Refresh the branch list in the dialog if still open.
-                if self.git.show_delete_bookmark {
-                    let infos = jj::jj_list_bookmarks_with_status(
-                        &self.project_root,
-                        &self.settings.jj_cli_path,
-                    )
-                    .unwrap_or_default();
-                    self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
-                }
-            }
+            Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Delete failed: {}", e)),
+        }
+        // Refresh the branch list in the dialog if still open. This must run for
+        // both success and failure: a partial-success deletion returns an Err but
+        // still removes some bookmarks, so the list would otherwise stay stale.
+        if self.git.show_delete_bookmark {
+            let infos =
+                jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
+                    .unwrap_or_default();
+            self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
+            self.git.merged_bookmarks =
+                jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         }
         self.git.history_cache_key = (String::new(), 0);
         self.reload_git_info();

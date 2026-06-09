@@ -97,10 +97,20 @@ fn invoke_pty(
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    let mut builder = ClaudeCode::builder().cwd(project_root);
-    if !cli_path.is_empty() {
-        builder = builder.binary(cli_path);
-    }
+    // Give the PTY a wide, tall terminal. Claude's TUI lays its output out to
+    // the terminal width: at the library's default 120 cols a wide multi-column
+    // table no longer fits, so the renderer collapses every column to its header
+    // width and drops the cell contents — the user sees an empty bordered table
+    // with no rows. A real terminal (via `claude --resume`) is far wider and
+    // renders the same table in full. Match that here so wide tables and other
+    // width-sensitive layouts survive capture. egui re-wraps prose to the panel
+    // width on display, so the extra width only benefits fixed-width layouts.
+    const PTY_ROWS: u16 = 50;
+    const PTY_COLS: u16 = 220;
+    let mut builder = ClaudeCode::builder()
+        .cwd(project_root)
+        .pty_size(PTY_ROWS, PTY_COLS);
+    builder = builder.binary(resolve_claude_binary(cli_path)?);
     if !model.is_empty() {
         builder = builder.model(model);
     }
@@ -137,13 +147,53 @@ fn invoke_pty(
     })?;
 
     let sentinel = done_hook.as_ref().map(|h| h.sentinel_path());
-    let state = consume_pty_events(&mut session, prompt, &cancel, on_log, sentinel);
+    let session_id = extract_session_id(extra_args_vec);
+    let state = consume_pty_events(
+        &mut session,
+        prompt,
+        &cancel,
+        on_log,
+        sentinel,
+        session_id.as_deref(),
+    );
     drop(done_hook);
 
     Ok(ClaudeResponse {
         stdout: state.response,
         metrics: Default::default(),
     })
+}
+
+/// Extract the Claude session id from the extra CLI args.
+///
+/// The caller injects either `--session-id <uuid>` (fresh run) or
+/// `--resume <uuid>` (continuation) into `extra_args_vec`; this returns the
+/// value following whichever flag appears so it can be surfaced in the live
+/// log when the run completes.
+fn extract_session_id(extra_args_vec: &[String]) -> Option<String> {
+    let mut iter = extra_args_vec.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--session-id" || arg == "--resume" {
+            return iter.next().filter(|v| !v.is_empty()).cloned();
+        }
+    }
+    None
+}
+
+/// Resolve the Claude binary to an absolute, currently-existing executable.
+///
+/// A configured `cli_path` is tried first, but if it is stale (e.g. the binary
+/// was moved or removed since it was auto-detected) we fall back to resolving
+/// `claude` from PATH so the run still works. Only when nothing resolves do we
+/// return [`ClaudeError::NotFound`], which surfaces a clear "configure path in
+/// Settings" message instead of a cryptic spawn ENOENT.
+fn resolve_claude_binary(cli_path: &str) -> Result<String, ClaudeError> {
+    if !cli_path.is_empty() {
+        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
+            return Ok(path);
+        }
+    }
+    crate::settings::resolve_in_path("claude").ok_or(ClaudeError::NotFound)
 }
 
 /// Headless path: spawn `claude -p <prompt>` with piped stdout/stderr,
@@ -161,14 +211,9 @@ fn invoke_headless(
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<ClaudeResponse, ClaudeError> {
-    let claude_bin = if cli_path.is_empty() {
-        "claude"
-    } else {
-        cli_path
-    };
-    which::which(claude_bin).map_err(|_| ClaudeError::NotFound)?;
+    let claude_bin = resolve_claude_binary(cli_path)?;
 
-    let mut cmd = Command::new(claude_bin);
+    let mut cmd = Command::new(&claude_bin);
     cmd.arg("-p").arg(prompt);
     if skip_permissions {
         cmd.arg("--dangerously-skip-permissions");
