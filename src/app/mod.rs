@@ -1089,6 +1089,22 @@ impl DirigentApp {
         }
     }
 
+    /// How long ago the CLI/PTY last sent a log line ("ping") for this cue,
+    /// formatted as a short "Ns ago" / "M:SS ago" string. Empty if nothing has
+    /// arrived yet.
+    fn format_last_message(&self, cue_id: i64) -> String {
+        if let Some(last) = self.claude.last_message_times.get(&cue_id) {
+            let secs = last.elapsed().as_secs();
+            if secs < 60 {
+                format!("{}s ago", secs)
+            } else {
+                format!("{}:{:02} ago", secs / 60, secs % 60)
+            }
+        } else {
+            String::new()
+        }
+    }
+
     fn reload_file_tree(&mut self) {
         if self.file_tree_scanning {
             return;

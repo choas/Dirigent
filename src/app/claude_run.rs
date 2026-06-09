@@ -53,6 +53,10 @@ pub(crate) struct ClaudeRunState {
     /// Per-cue timeline of recent log-arrival instants, used to draw the
     /// heartbeat strip beneath the running conversation view.
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
+    /// Per-cue instant of the most recent log line ("ping") received from the
+    /// CLI/PTY. Unlike `log_heartbeats` this is never pruned, so it can report
+    /// how long it has been since Claude last sent anything.
+    pub(super) last_message_times: HashMap<i64, Instant>,
     /// Consecutive auto-continue count per cue (reset on normal completion).
     pub(super) auto_continue_count: HashMap<i64, u32>,
     /// Spawn-failure retry count per cue for auto-continues.
@@ -79,6 +83,7 @@ impl ClaudeRunState {
             expand_running: false,
             conversation_history: Vec::new(),
             log_heartbeats: HashMap::new(),
+            last_message_times: HashMap::new(),
             auto_continue_count: HashMap::new(),
             auto_continue_spawn_retries: HashMap::new(),
             workspace_paths: HashMap::new(),
@@ -691,6 +696,7 @@ impl DirigentApp {
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
+                self.claude.last_message_times.remove(&cue_id);
                 self.set_status_message(format!("Failed to start run: {e}"));
                 return false;
             }
@@ -762,6 +768,7 @@ impl DirigentApp {
                 self.claude.running_logs.remove(&cue_id);
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
+                self.claude.last_message_times.remove(&cue_id);
                 let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
@@ -1073,6 +1080,7 @@ impl DirigentApp {
         self.claude.exec_ids.remove(&result.cue_id);
         self.claude.start_times.remove(&result.cue_id);
         self.claude.log_heartbeats.remove(&result.cue_id);
+        self.claude.last_message_times.remove(&result.cue_id);
     }
 
     /// Detect usage-limit messages in the response or log.
@@ -1554,6 +1562,7 @@ impl DirigentApp {
             // from the visible output.
             if total_beats > 0 {
                 let now = Instant::now();
+                self.claude.last_message_times.insert(cue_id, now);
                 let beats = self.claude.log_heartbeats.entry(cue_id).or_default();
                 for _ in 0..total_beats {
                     beats.push_back(now);
