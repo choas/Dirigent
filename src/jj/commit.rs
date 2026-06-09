@@ -408,12 +408,53 @@ pub(crate) fn jj_merged_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String
 /// Resolve the name(s) of the repository's trunk bookmark.
 ///
 /// `trunk()` is jj's configured default branch (commonly `main`/`master`, but a
-/// repo can set it to anything, e.g. `develop`). This returns the local
-/// bookmark(s) pointing at that commit so callers can protect the actual trunk
-/// instead of hard-coding `main`/`master`. Returns an empty vec if jj cannot
-/// resolve `trunk()` (e.g. no such configured branch).
+/// repo can override `revset-aliases."trunk()"` to anything, e.g. `develop`).
+/// Callers use this to protect the actual trunk instead of hard-coding
+/// `main`/`master`. Returns an empty vec if jj cannot resolve `trunk()` (it then
+/// falls back to `root()`, which carries no bookmarks).
+///
+/// Unlike [`bookmarks_matching_revset`], this templates `bookmarks` (local *and*
+/// remote) at the `trunk()` commit rather than `local_bookmarks` of
+/// `bookmarks() & trunk()`. `trunk()` usually resolves to the *remote* target
+/// (e.g. `develop@origin`), so once the local bookmark advances ahead of the
+/// remote there is no local bookmark sitting on that commit and a
+/// `local_bookmarks`-only query comes back empty — silently failing to protect
+/// the trunk. The `@remote` suffix is stripped so the local and remote forms
+/// collapse to the bare bookmark name.
 pub(crate) fn jj_trunk_bookmarks(repo_path: &Path, jj_path: &str) -> Vec<String> {
-    bookmarks_matching_revset(repo_path, jj_path, "bookmarks() & trunk()")
+    let output = super::jj_cmd(jj_path)
+        .args([
+            "log",
+            "--no-graph",
+            "--color",
+            "never",
+            "-r",
+            "trunk()",
+            "-T",
+            r#"bookmarks ++ "\n""#,
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            let mut names: Vec<String> = Vec::new();
+            for token in raw.split_whitespace() {
+                // Drop the `@remote` suffix (e.g. `develop@origin`) and any
+                // conflict/sync markers jj appends (`*`, `?`).
+                let name = token
+                    .split('@')
+                    .next()
+                    .unwrap_or(token)
+                    .trim_end_matches(['*', '?']);
+                if !name.is_empty() && !names.iter().any(|n| n == name) {
+                    names.push(name.to_string());
+                }
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Count how many non-empty commits sit between `trunk()` and a bookmark.
