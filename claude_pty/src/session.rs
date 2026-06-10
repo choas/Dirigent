@@ -306,6 +306,19 @@ fn delta_lines(prev: &[String], next: &[String]) -> Vec<String> {
     next[common..].to_vec()
 }
 
+/// A box-drawing table *bottom* border, e.g. `└─────┴─────┘`.
+fn is_table_bottom_border(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('└') && t.ends_with('┘')
+}
+
+/// A box-drawing table *header rule* (the line between the header and the
+/// body), e.g. `├─────┼─────┤`.
+fn is_table_mid_rule(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('├') && t.ends_with('┤')
+}
+
 fn is_spinner_or_status(line: &str) -> bool {
     let t = line.trim();
     if t.is_empty() {
@@ -500,13 +513,24 @@ fn read_tui(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Event>, rows: u16, co
                     .zip(chat_plain.iter())
                     .take_while(|(a, b)| a == b)
                     .count();
-                let new_plain: Vec<String> = chat_plain[common..].to_vec();
-                let new_ansi: Vec<String> = chat_ansi[common..].to_vec();
-                let meaningful: Vec<(String, String)> = new_plain
-                    .into_iter()
-                    .zip(new_ansi)
-                    .filter(|(p, _)| !is_spinner_or_status(p))
-                    .filter(|(p, _)| p.trim().is_empty() || !emitted_lines.contains(p))
+                let meaningful: Vec<(String, String)> = (common..chat_plain.len())
+                    .filter(|&idx| !is_spinner_or_status(&chat_plain[idx]))
+                    // Suppress the closing border of an *empty* table: a
+                    // `└──┘` bottom rule immediately after a `├──┤` header
+                    // rule means Claude rendered the table skeleton before any
+                    // body rows arrived. Emitting it would both show an empty
+                    // table and (by entering `emitted_lines`) prevent the real
+                    // footer from rendering once the rows do appear.
+                    .filter(|&idx| {
+                        !(is_table_bottom_border(&chat_plain[idx])
+                            && idx > 0
+                            && is_table_mid_rule(&chat_plain[idx - 1]))
+                    })
+                    .filter(|&idx| {
+                        let p = &chat_plain[idx];
+                        p.trim().is_empty() || !emitted_lines.contains(p)
+                    })
+                    .map(|idx| (chat_plain[idx].clone(), chat_ansi[idx].clone()))
                     .collect();
                 if !meaningful.is_empty() {
                     let (lines, lines_ansi): (Vec<String>, Vec<String>) =
@@ -771,6 +795,86 @@ mod tests {
                 vec!["first line".to_string()],
                 vec!["second line".to_string()],
             ],
+        );
+    }
+
+    #[test]
+    fn read_tui_keeps_table_body_after_empty_skeleton() {
+        // Claude's TUI first paints the table skeleton (header + rule + a
+        // closing border, no body), then repaints it with the body rows. The
+        // empty closing border must NOT be emitted, otherwise it (a) shows an
+        // empty table and (b) poisons the dedup set so the real footer is
+        // dropped once the rows arrive.
+        let reader = ChunkedReader {
+            chunks: vec![
+                concat!(
+                    "┌─────────────┬────────┐\r\n",
+                    "│ Requirement │ Status │\r\n",
+                    "├─────────────┼────────┤\r\n",
+                    "└─────────────┴────────┘\r\n",
+                )
+                .as_bytes()
+                .to_vec(),
+                concat!(
+                    "\x1b[2J\x1b[H",
+                    "┌─────────────┬────────┐\r\n",
+                    "│ Requirement │ Status │\r\n",
+                    "├─────────────┼────────┤\r\n",
+                    "│ ADR present │ ✓      │\r\n",
+                    "│ Title       │ ✓      │\r\n",
+                    "└─────────────┴────────┘\r\n",
+                )
+                .as_bytes()
+                .to_vec(),
+            ]
+            .into(),
+        };
+        let rt = Runtime::new().unwrap();
+        let _g = rt.enter();
+        let (tx, mut rx) = mpsc::channel::<Event>(64);
+        let handle = std::thread::spawn(move || {
+            let reader: Box<dyn Read + Send> = Box::new(reader);
+            read_tui(reader, tx, 24, 80);
+        });
+        let mut screens: Vec<Vec<String>> = Vec::new();
+        rt.block_on(async {
+            while let Some(evt) = rx.recv().await {
+                if let Event::TuiScreen { lines, .. } = evt {
+                    screens.push(lines);
+                }
+            }
+        });
+        handle.join().unwrap();
+        let all_lines: Vec<String> = screens.into_iter().flatten().collect();
+
+        // The body rows must survive.
+        assert!(
+            all_lines.iter().any(|l| l.contains("ADR present")),
+            "table body row missing; saw {all_lines:?}"
+        );
+        assert!(
+            all_lines.iter().any(|l| l.contains("Title")),
+            "table body row missing; saw {all_lines:?}"
+        );
+        // Exactly one closing border, and it must come *after* the body rows.
+        let footer_idxs: Vec<usize> = all_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| is_table_bottom_border(l))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            footer_idxs.len(),
+            1,
+            "expected one closing border; saw {all_lines:?}"
+        );
+        let body_idx = all_lines
+            .iter()
+            .position(|l| l.contains("ADR present"))
+            .unwrap();
+        assert!(
+            footer_idxs[0] > body_idx,
+            "closing border must follow the body; saw {all_lines:?}"
         );
     }
 
