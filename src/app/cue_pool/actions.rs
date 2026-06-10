@@ -58,13 +58,20 @@ impl DirigentApp {
                 // unanswered question, so accepting it via Done without clearing
                 // the flag would leave the workflow step permanently blocked.
                 let was_blocked = self.cues.iter().any(|c| c.id == cue_id && c.has_question);
-                let _ = self.db.update_cue_has_question(cue_id, false);
+                // The DB flag must be cleared before moving to Done: if this
+                // write fails and we proceed anyway, on_workflow_cue_completed
+                // would still see has_question and block the step permanently.
+                // Abort the move and surface the error so the state stays
+                // consistent and the user can retry.
+                if let Err(e) = self.db.update_cue_has_question(cue_id, false) {
+                    self.set_status_message(format!("Failed to clear question flag: {}", e));
+                    return;
+                }
                 self.process_move_to(cue_id, CueStatus::Done);
-                if was_blocked && self.workflow_plan.is_some() {
+                if was_blocked {
                     // process_move_to only reloads cues when moving to Ready,
                     // so refresh in-memory state before re-checking the step.
-                    self.reload_cues();
-                    self.on_workflow_cue_completed(cue_id);
+                    self.reload_and_recheck_workflow(cue_id);
                 }
             }
             CueAction::ReplyReview(cue_id, reply_text) => {
@@ -334,6 +341,7 @@ impl DirigentApp {
             let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
             let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
+            self.clear_review_question_and_recheck_workflow(cue_id);
             self.reload_git_info();
             self.reload_commit_history();
             return;
@@ -405,6 +413,7 @@ impl DirigentApp {
                 let _ = self
                     .db
                     .log_activity(cue_id, &format!("Committed ({})", short));
+                self.clear_review_question_and_recheck_workflow(cue_id);
                 let dirty_count = vcs_dispatch::get_dirty_files(
                     &self.settings.vcs_backend,
                     &self.settings.jj_cli_path,
@@ -425,10 +434,47 @@ impl DirigentApp {
                     let _ = self
                         .db
                         .log_activity(cue_id, "Moved to Done (already committed)");
+                    self.clear_review_question_and_recheck_workflow(cue_id);
                 } else {
                     self.set_status_message(format!("Commit failed: {}", e));
                 }
             }
+        }
+    }
+
+    /// After a review-commit has moved a cue to Done, clear any pending
+    /// question and re-check the owning workflow step. A run can change files
+    /// (moving the cue to Review) and still end by asking the user something;
+    /// `on_workflow_cue_completed` holds back a cue with an unanswered question.
+    /// Committing the changed files without clearing the flag would otherwise
+    /// leave the workflow step permanently blocked even though the cue is no
+    /// longer actionable. Call this *after* the cue has reached Done.
+    pub(in crate::app) fn clear_review_question_and_recheck_workflow(&mut self, cue_id: i64) {
+        let was_blocked = self.cues.iter().any(|c| c.id == cue_id && c.has_question);
+        if !was_blocked {
+            return;
+        }
+        // If clearing the flag fails, abort: proceeding would leave the DB
+        // still flagged while in-memory state is recomputed, so the workflow
+        // step could be (re)blocked inconsistently. Surface the error instead.
+        if let Err(e) = self.db.update_cue_has_question(cue_id, false) {
+            self.set_status_message(format!("Failed to clear question flag: {}", e));
+            return;
+        }
+        self.reload_and_recheck_workflow(cue_id);
+    }
+
+    /// Refresh in-memory cue state and re-check the active workflow step.
+    ///
+    /// Shared by the inline `MarkReviewDone` path and
+    /// `clear_review_question_and_recheck_workflow`: both clear a pending
+    /// question and then need the re-check to see the cleared flag and the
+    /// Done status before deciding whether the step is complete. No-op when
+    /// no workflow is running.
+    fn reload_and_recheck_workflow(&mut self, cue_id: i64) {
+        if self.workflow_plan.is_some() {
+            self.reload_cues();
+            self.on_workflow_cue_completed(cue_id);
         }
     }
 
