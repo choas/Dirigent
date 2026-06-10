@@ -455,7 +455,13 @@ impl DirigentApp {
         if !was_blocked {
             return;
         }
-        let _ = self.db.update_cue_has_question(cue_id, false);
+        // If clearing the flag fails, abort: proceeding would leave the DB
+        // still flagged while in-memory state is recomputed, so the workflow
+        // step could be (re)blocked inconsistently. Surface the error instead.
+        if let Err(e) = self.db.update_cue_has_question(cue_id, false) {
+            self.set_status_message(format!("Failed to clear question flag: {}", e));
+            return;
+        }
         if self.workflow_plan.is_some() {
             // Refresh in-memory state so the re-check sees the cleared flag and
             // the Done status before deciding whether the step is complete.
