@@ -854,6 +854,8 @@ impl DirigentApp {
                 committing: false,
                 commit_rx: None,
                 commit_pending_cue_id: None,
+                commit_suggesting: false,
+                commit_suggest_rx: None,
                 active_bookmark: None,
                 pr_number: None,
                 pr_url: None,

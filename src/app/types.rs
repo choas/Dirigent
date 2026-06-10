@@ -679,6 +679,10 @@ pub(crate) struct GitState {
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
     pub(super) commit_pending_cue_id: Option<i64>,
+    /// Whether a Fast-LLM commit-message suggestion is currently being generated.
+    pub(super) commit_suggesting: bool,
+    /// Receiver for an async Fast-LLM commit-message suggestion.
+    pub(super) commit_suggest_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// The bookmark the user is actively working on (jj only).
     /// Only this bookmark is advanced when committing, preventing unrelated
     /// bookmarks on the same parent commit from being dragged forward.
