@@ -1,4 +1,5 @@
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, Arc};
 
 use eframe::egui;
 
@@ -20,7 +21,7 @@ impl DirigentApp {
                         self.git.commit_message_input = msg;
                         self.git.commit_needs_focus = true;
                     }
-                    Err(e) => self.set_status_message(format!("Fast LLM: {e}")),
+                    Err(e) => self.set_status_message(format!("Summarize: {e}")),
                 }
             }
         }
@@ -81,15 +82,22 @@ impl DirigentApp {
                                     .small()
                                     .color(self.semantic.tertiary_text),
                             );
-                        } else if self.settings.fast_llm_enabled
-                            && ui
-                                .small_button(icon("\u{2728} Generate", fs))
-                                .on_hover_text(
-                                    "Draft a commit message from the diff using the Fast LLM",
-                                )
+                        } else {
+                            // The button is always available: it drafts a message
+                            // from the diff using the Fast LLM when configured, and
+                            // otherwise falls back to the coding-agent CLI.
+                            let hover = if self.settings.fast_llm_enabled {
+                                "Draft a commit message from the diff using the Fast LLM"
+                            } else {
+                                "Draft a commit message from the diff using the CLI"
+                            };
+                            if ui
+                                .small_button(icon("\u{2728} Summarize", fs))
+                                .on_hover_text(hover)
                                 .clicked()
-                        {
-                            generate = true;
+                            {
+                                generate = true;
+                            }
                         }
                     });
                 });
@@ -154,19 +162,13 @@ impl DirigentApp {
         }
     }
 
-    /// Spawn a background Fast-LLM call that drafts a commit message from the
-    /// current working-copy diff. The result is delivered via
+    /// Spawn a background call that drafts a commit message from the current
+    /// working-copy diff. When the Fast LLM is configured it is used; otherwise
+    /// the coding-agent CLI is invoked headlessly with a summarization prompt.
+    /// The result is delivered via
     /// [`GitState::commit_suggest_rx`](super::super::types::GitState) and applied
     /// to the message field on the next frame.
     fn spawn_commit_message_suggestion(&mut self) {
-        let Some(config) = crate::fast_llm::FastLlmConfig::from_settings(&self.settings) else {
-            self.set_status_message(
-                "Fast LLM is disabled \u{2014} enable it in Settings to generate commit messages."
-                    .to_string(),
-            );
-            return;
-        };
-
         let files: Vec<String> = self.git.dirty_files.keys().cloned().collect();
         let diff = crate::app::vcs_dispatch::get_working_diff(
             &self.settings.vcs_backend,
@@ -183,12 +185,39 @@ impl DirigentApp {
         self.git.commit_suggest_rx = Some(rx);
         self.git.commit_suggesting = true;
         let ctx = self.egui_ctx.clone();
-        std::thread::spawn(move || {
-            let result = crate::fast_llm::summarize_commit_message(&config, &diff);
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+
+        if let Some(config) = crate::fast_llm::FastLlmConfig::from_settings(&self.settings) {
+            // Fast LLM path: a quick, local OpenAI-compatible completion.
+            std::thread::spawn(move || {
+                let result = crate::fast_llm::summarize_commit_message(&config, &diff);
+                let _ = tx.send(result);
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            });
+        } else {
+            // CLI fallback: run the Claude CLI headlessly with a summary prompt.
+            let project_root = self.project_root.clone();
+            let model = self.settings.claude_model.clone();
+            let cli_path = self.settings.claude_cli_path.clone();
+            let extra_args = self.settings.claude_extra_args.clone();
+            let env_vars = self.settings.claude_env_vars.clone();
+            std::thread::spawn(move || {
+                let cancel = Arc::new(AtomicBool::new(false));
+                let result = crate::claude::summarize_commit_message_via_cli(
+                    &diff,
+                    &project_root,
+                    &model,
+                    &cli_path,
+                    &extra_args,
+                    &env_vars,
+                    cancel,
+                );
+                let _ = tx.send(result);
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            });
+        }
     }
 }

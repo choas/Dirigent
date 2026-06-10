@@ -83,6 +83,64 @@ pub(crate) fn invoke_claude_streaming(
     result
 }
 
+/// Draft a commit message from `diff` by invoking the Claude CLI headlessly.
+///
+/// This is the fallback path for the Commit dialog's "Generate" button when the
+/// Fast LLM is not configured: it runs `claude -p <prompt>` (no PTY, no
+/// lifecycle scripts, no tools), captures stdout, and extracts the message from
+/// the `<commit-message>` block the prompt asks Claude to emit. Returns a
+/// human-readable error string on failure so the dialog can surface it.
+pub(crate) fn summarize_commit_message_via_cli(
+    diff: &str,
+    project_root: &Path,
+    model: &str,
+    cli_path: &str,
+    extra_args: &str,
+    env_vars: &str,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    // Cap the diff so a huge change set doesn't blow past the model's context.
+    let trimmed: String = diff.chars().take(12_000).collect();
+    let prompt = format!(
+        "Summarize the following git diff as a commit message. Respond with a \
+         single concise subject line in imperative mood (no more than 72 \
+         characters). Wrap the commit message in <commit-message> and \
+         </commit-message> tags and output nothing else.\n\n{trimmed}"
+    );
+
+    let response = invoke_claude_streaming(
+        &prompt,
+        project_root,
+        model,
+        cli_path,
+        extra_args,
+        &[],
+        env_vars,
+        "",
+        "",
+        false,
+        false,
+        |_| {},
+        cancel,
+    )
+    .map_err(|e| e.to_string())?
+    .stdout;
+
+    // Prefer the tagged block; fall back to the first non-empty output line so a
+    // model that ignores the tag instruction still yields something usable.
+    let message = super::prompt::extract_commit_message(&response).or_else(|| {
+        response
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_matches('"').to_string())
+    });
+    match message {
+        Some(m) if !m.trim().is_empty() => Ok(m.trim().to_string()),
+        _ => Err("CLI returned an empty commit message".to_string()),
+    }
+}
+
 /// PTY path: launch Claude's interactive TUI via `claude_pty` and drive it.
 #[allow(clippy::too_many_arguments)]
 fn invoke_pty(
