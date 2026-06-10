@@ -68,11 +68,10 @@ impl DirigentApp {
                     return;
                 }
                 self.process_move_to(cue_id, CueStatus::Done);
-                if was_blocked && self.workflow_plan.is_some() {
+                if was_blocked {
                     // process_move_to only reloads cues when moving to Ready,
                     // so refresh in-memory state before re-checking the step.
-                    self.reload_cues();
-                    self.on_workflow_cue_completed(cue_id);
+                    self.reload_and_recheck_workflow(cue_id);
                 }
             }
             CueAction::ReplyReview(cue_id, reply_text) => {
@@ -462,9 +461,18 @@ impl DirigentApp {
             self.set_status_message(format!("Failed to clear question flag: {}", e));
             return;
         }
+        self.reload_and_recheck_workflow(cue_id);
+    }
+
+    /// Refresh in-memory cue state and re-check the active workflow step.
+    ///
+    /// Shared by the inline `MarkReviewDone` path and
+    /// `clear_review_question_and_recheck_workflow`: both clear a pending
+    /// question and then need the re-check to see the cleared flag and the
+    /// Done status before deciding whether the step is complete. No-op when
+    /// no workflow is running.
+    fn reload_and_recheck_workflow(&mut self, cue_id: i64) {
         if self.workflow_plan.is_some() {
-            // Refresh in-memory state so the re-check sees the cleared flag and
-            // the Done status before deciding whether the step is complete.
             self.reload_cues();
             self.on_workflow_cue_completed(cue_id);
         }
