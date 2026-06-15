@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Instant;
 
 use eframe::egui;
@@ -561,6 +562,41 @@ impl DirigentApp {
         Self::render_indented_frame(ui, |ui| {
             self.render_response_content(ui, is_current_running, current_running_log, &exec.log);
         });
+
+        // Once a completed Claude run reports its session id (shown as
+        // "— session <id>" at the end of the PTY log), offer a one-click link
+        // to resume that conversation in a real terminal.
+        if !is_current_running && exec.provider == CliProvider::Claude {
+            if let Some(session_id) = exec.session_id.as_deref().filter(|s| !s.is_empty()) {
+                self.render_resume_in_terminal_link(ui, session_id);
+            }
+        }
+    }
+
+    /// Render a clickable "Resume in Terminal" link that opens a terminal in the
+    /// project directory and runs `claude --resume <session_id>`, appending
+    /// `--dangerously-skip-permissions` when the Yolo setting is enabled.
+    fn render_resume_in_terminal_link(&self, ui: &mut egui::Ui, session_id: &str) {
+        let mut resume_cmd = format!("claude --resume {}", session_id);
+        if self.settings.allow_dangerous_skip_permissions {
+            resume_cmd.push_str(" --dangerously-skip-permissions");
+        }
+        Self::render_indented_frame(ui, |ui| {
+            let link = ui
+                .link(
+                    egui::RichText::new("\u{2197} Resume in Terminal")
+                        .small()
+                        .color(ui.visuals().hyperlink_color),
+                )
+                .on_hover_text(format!(
+                    "cd {} && {}",
+                    self.project_root.display(),
+                    resume_cmd
+                ));
+            if link.clicked() {
+                let _ = spawn_terminal_with_command(&self.project_root, &resume_cmd);
+            }
+        });
     }
 
     /// Render the currently running execution that hasn't been saved to history yet.
@@ -699,4 +735,61 @@ fn ecg_waveform(dt: f32) -> f32 {
     // T wave – broad recovery bump
     let tw = 0.18 * (-(((t - 0.11) / 0.045).powi(2))).exp();
     p + q + r + s + tw
+}
+
+/// Quote a string for safe interpolation into a POSIX shell command line.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Open a terminal emulator in `dir` and run `command` inside it, keeping the
+/// shell open afterwards so the user can interact with the resumed session.
+fn spawn_terminal_with_command(dir: &Path, command: &str) -> std::io::Result<std::process::Child> {
+    if cfg!(target_os = "macos") {
+        // Terminal.app can't take a working directory + command directly, so
+        // build a shell command and drive it via AppleScript.
+        let shell_cmd = format!("cd {} && {}", shell_quote(&dir.to_string_lossy()), command);
+        // Escape for embedding inside an AppleScript double-quoted string.
+        let escaped = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"Terminal\" to activate\n\
+             tell application \"Terminal\" to do script \"{escaped}\""
+        );
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+    } else if cfg!(target_os = "windows") {
+        // Try Windows Terminal first, fall back to a detached cmd.exe window.
+        std::process::Command::new("wt")
+            .arg("-d")
+            .arg(dir)
+            .args(["cmd", "/K", command])
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("cmd.exe")
+                    .args(["/C", "start", "cmd.exe", "/K", command])
+                    .current_dir(dir)
+                    .spawn()
+            })
+    } else {
+        // Linux: keep the shell alive after the command exits via `exec $SHELL`.
+        let hold = format!("{command}; exec $SHELL");
+        std::process::Command::new("gnome-terminal")
+            .arg(format!("--working-directory={}", dir.display()))
+            .args(["--", "bash", "-c", &hold])
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("konsole")
+                    .arg(format!("--workdir={}", dir.display()))
+                    .args(["-e", "bash", "-c", &hold])
+                    .spawn()
+            })
+            .or_else(|_| {
+                std::process::Command::new("x-terminal-emulator")
+                    .current_dir(dir)
+                    .args(["-e", "bash", "-c", &hold])
+                    .spawn()
+            })
+    }
 }
