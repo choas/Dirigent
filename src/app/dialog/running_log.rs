@@ -559,43 +559,22 @@ impl DirigentApp {
                     .color(exec_provider_color),
             );
         });
-        Self::render_indented_frame(ui, |ui| {
-            self.render_response_content(ui, is_current_running, current_running_log, &exec.log);
-        });
-
         // Once a completed Claude run reports its session id (shown as
-        // "— session <id>" at the end of the PTY log), offer a one-click link
-        // to resume that conversation in a real terminal.
-        if !is_current_running && exec.provider == CliProvider::Claude {
-            if let Some(session_id) = exec.session_id.as_deref().filter(|s| !s.is_empty()) {
-                self.render_resume_in_terminal_link(ui, session_id);
-            }
-        }
-    }
-
-    /// Render a clickable "Resume in Terminal" link that opens a terminal in the
-    /// project directory and runs `claude --resume <session_id>`, appending
-    /// `--dangerously-skip-permissions` when the Yolo setting is enabled.
-    fn render_resume_in_terminal_link(&self, ui: &mut egui::Ui, session_id: &str) {
-        let mut resume_cmd = format!("claude --resume {}", session_id);
-        if self.settings.allow_dangerous_skip_permissions {
-            resume_cmd.push_str(" --dangerously-skip-permissions");
-        }
+        // "— session <id>" at the end of the PTY log), append an external-link
+        // icon to that line so the conversation can be resumed in a terminal.
+        let resume_session_id = if !is_current_running && exec.provider == CliProvider::Claude {
+            exec.session_id.as_deref().filter(|s| !s.is_empty())
+        } else {
+            None
+        };
         Self::render_indented_frame(ui, |ui| {
-            let link = ui
-                .link(
-                    egui::RichText::new("\u{2197} Resume in Terminal")
-                        .small()
-                        .color(ui.visuals().hyperlink_color),
-                )
-                .on_hover_text(format!(
-                    "cd {} && {}",
-                    self.project_root.display(),
-                    resume_cmd
-                ));
-            if link.clicked() {
-                let _ = spawn_terminal_with_command(&self.project_root, &resume_cmd);
-            }
+            self.render_response_content(
+                ui,
+                is_current_running,
+                current_running_log,
+                &exec.log,
+                resume_session_id,
+            );
         });
     }
 
@@ -620,17 +599,22 @@ impl DirigentApp {
                 .color(current_provider_color),
         );
         Self::render_indented_frame(ui, |ui| {
-            self.render_response_content(ui, true, current_running_log, &None);
+            self.render_response_content(ui, true, current_running_log, &None, None);
         });
     }
 
     /// Render response content for an execution, handling running/completed/empty states.
+    ///
+    /// When `resume_session_id` is `Some`, an external-link icon is appended to
+    /// the log line that reports the session id, opening that conversation in a
+    /// terminal via `claude --resume`.
     fn render_response_content(
         &self,
         ui: &mut egui::Ui,
         is_current_running: bool,
         current_running_log: &str,
         log: &Option<String>,
+        resume_session_id: Option<&str>,
     ) {
         if is_current_running {
             // Show live streaming log for the currently running execution
@@ -645,7 +629,10 @@ impl DirigentApp {
             }
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
-                self.render_ansi_log(ui, log_text);
+                match resume_session_id {
+                    Some(sid) => self.render_ansi_log_with_resume(ui, log_text, sid),
+                    None => self.render_ansi_log(ui, log_text),
+                }
             } else {
                 ui.label(
                     egui::RichText::new("(no output)")
@@ -679,6 +666,57 @@ impl DirigentApp {
         };
         let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
         ui.label(job);
+    }
+
+    /// Like [`render_ansi_log`], but appends an external-link icon to the line
+    /// that reports the Claude session id. Clicking it resumes the conversation
+    /// in a terminal (`claude --resume <session_id>`).
+    fn render_ansi_log_with_resume(&self, ui: &mut egui::Ui, text: &str, session_id: &str) {
+        let marker = format!("session {session_id}");
+        let lines: Vec<&str> = text.lines().collect();
+        let Some(idx) = lines.iter().position(|l| l.contains(&marker)) else {
+            // Session line not present (yet); render the log unchanged.
+            self.render_ansi_log(ui, text);
+            return;
+        };
+
+        let before = lines[..idx].join("\n");
+        if !before.is_empty() {
+            self.render_ansi_log(ui, &before);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_XS;
+            self.render_ansi_log(ui, lines[idx]);
+            self.render_resume_icon(ui, session_id);
+        });
+        let after = lines[(idx + 1)..].join("\n");
+        if !after.is_empty() {
+            self.render_ansi_log(ui, &after);
+        }
+    }
+
+    /// Render the external-link icon that opens a terminal in the project
+    /// directory and runs `claude --resume <session_id>`, appending
+    /// `--dangerously-skip-permissions` when the Yolo setting is enabled.
+    fn render_resume_icon(&self, ui: &mut egui::Ui, session_id: &str) {
+        let mut resume_cmd = format!("claude --resume {}", session_id);
+        if self.settings.allow_dangerous_skip_permissions {
+            resume_cmd.push_str(" --dangerously-skip-permissions");
+        }
+        let link = ui
+            .link(
+                egui::RichText::new("\u{2197}")
+                    .small()
+                    .color(ui.visuals().hyperlink_color),
+            )
+            .on_hover_text(format!(
+                "Resume in Terminal:\ncd {} && {}",
+                self.project_root.display(),
+                resume_cmd
+            ));
+        if link.clicked() {
+            let _ = spawn_terminal_with_command(&self.project_root, &resume_cmd);
+        }
     }
 
     /// Open a file picker dialog and add selected files to the reply attachments.
