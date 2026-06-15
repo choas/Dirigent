@@ -824,6 +824,8 @@ impl DirigentApp {
                 move_to_branch_name: String::new(),
                 moving_to_branch: false,
                 move_to_branch_rx: None,
+                show_move_to_branch_error: false,
+                move_to_branch_error_message: String::new(),
                 show_create_bookmark: false,
                 create_bookmark_name: String::new(),
                 create_bookmark_needs_focus: false,

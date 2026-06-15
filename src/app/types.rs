@@ -627,6 +627,10 @@ pub(crate) struct GitState {
     /// Whether a move-to-branch operation is in progress.
     pub(super) moving_to_branch: bool,
     pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Move to Branch error dialog is open.
+    pub(super) show_move_to_branch_error: bool,
+    /// The error message from the last failed move-to-branch operation.
+    pub(super) move_to_branch_error_message: String,
     /// Whether the Create Bookmark dialog is open (jj only).
     pub(super) show_create_bookmark: bool,
     /// Bookmark name input for the Create Bookmark dialog.
@@ -790,6 +794,11 @@ impl GitState {
         }
         if self.show_create_bookmark {
             self.show_create_bookmark = false;
+            return true;
+        }
+        if self.show_move_to_branch_error {
+            self.show_move_to_branch_error = false;
+            self.move_to_branch_error_message.clear();
             return true;
         }
         if self.show_move_to_branch {

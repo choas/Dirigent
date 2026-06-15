@@ -815,7 +815,9 @@ impl DirigentApp {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.moving_to_branch = false;
                 self.git.move_to_branch_rx = None;
-                self.set_status_message("Move to branch failed unexpectedly".into());
+                self.show_move_to_branch_error(
+                    "The move operation ended unexpectedly before reporting a result.".into(),
+                );
                 // The operation is non-atomic: the new branch may have been
                 // created before the failure, so refresh state.
                 self.reload_git_info();
@@ -834,13 +836,21 @@ impl DirigentApp {
                 ));
             }
             Err(e) => {
-                self.set_status_message(format!("Move to branch failed: {}", e));
+                self.show_move_to_branch_error(e);
             }
         }
         // Always refresh: the operation is non-atomic (branch created before
         // reset), so even failures may have changed repo state.
         self.reload_git_info();
         self.reload_commit_history();
+    }
+
+    /// Surface a move-to-branch failure in a dialog (not just a toast), so the
+    /// user can read the error and any suggested remedy instead of missing it.
+    pub(super) fn show_move_to_branch_error(&mut self, message: String) {
+        self.set_status_message(format!("Move to branch failed: {}", message));
+        self.git.move_to_branch_error_message = message;
+        self.git.show_move_to_branch_error = true;
     }
 
     /// Open the Create Bookmark dialog (jj only).

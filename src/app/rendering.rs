@@ -70,6 +70,7 @@ impl DirigentApp {
             || self.git.show_import_pr
             || self.git.show_pr_filter
             || self.git.show_move_to_branch
+            || self.git.show_move_to_branch_error
             || self.git.show_switch_branch
             || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
@@ -243,6 +244,7 @@ impl DirigentApp {
         self.render_play_variables_dialog(ctx);
         self.render_git_init_dialog(ctx);
         self.render_create_pr_dialog(ctx);
+        self.render_move_to_branch_error_dialog(ctx);
         self.render_push_error_dialog(ctx);
         self.render_pr_error_dialog(ctx);
         self.render_pull_diverged_dialog(ctx);
