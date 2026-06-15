@@ -19,11 +19,18 @@ pub(super) struct PtyResult {
 /// exits when:
 ///
 /// 1. The `done_sentinel` file appears (Claude Code `Stop` hook fired).
-/// 2. A second `TuiPrompt` arrives (fallback heuristic) — triggers
-///    [`graceful_exit`].
+/// 2. A second `TuiPrompt` arrives *and no `done_sentinel` is configured*
+///    (fallback heuristic) — triggers [`graceful_exit`]. When a sentinel is
+///    active this heuristic is ignored: the underlying library emits a second
+///    `TuiPrompt` after only a few seconds of PTY silence, which Claude
+///    routinely produces *mid-task* (slow tool, network/rate-limit stall,
+///    extended thinking). Acting on it would `Ctrl-C` Claude prematurely, so
+///    the sentinel — the authoritative end-of-turn signal — wins instead.
 /// 3. The session ends (`LibDone`).
-/// 4. `done_sentinel` is `None` and no PTY events arrive for 120 s after the
-///    prompt is submitted (idle timeout) — triggers [`graceful_exit`].
+/// 4. No PTY events arrive for 120 s after the prompt is submitted (idle
+///    timeout) — triggers [`graceful_exit`]. This is a safety net for both
+///    paths: without a sentinel it bounds the no-output case, and with a
+///    sentinel it guards against a `Stop` hook that never fired.
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
@@ -67,10 +74,17 @@ pub(super) fn consume_pty_events(
                                 break;
                             }
                             prompt_sent = true;
-                        } else {
+                        } else if done_sentinel.is_none() {
+                            // No Stop hook installed: a second prompt is the
+                            // only signal we have that Claude's turn ended.
                             graceful_exit(session);
                             break;
                         }
+                        // With a sentinel active, ignore the second-prompt
+                        // heuristic — it misfires whenever Claude pauses
+                        // mid-task for longer than the library's idle window,
+                        // and would interrupt the run. The sentinel/grace
+                        // logic in the `Pending` branch drives the real exit.
                     }
                     Event::TuiScreen {
                         ref lines,
@@ -122,7 +136,12 @@ pub(super) fn consume_pty_events(
                             graceful_exit(session);
                             break;
                         }
-                    } else if done_sentinel.is_none() && last_event_time.elapsed() >= IDLE_TIMEOUT {
+                    } else if last_event_time.elapsed() >= IDLE_TIMEOUT {
+                        // Safety net: 120 s of complete PTY silence means
+                        // Claude is genuinely idle (its live spinner keeps the
+                        // stream active while it works), so even when a Stop
+                        // hook was expected but never fired, we exit instead of
+                        // hanging forever.
                         on_log("\n⚠ No PTY events for 120 s — exiting to avoid stall.\n");
                         graceful_exit(session);
                         break;
