@@ -117,6 +117,18 @@ fn commit_to_info(
     })
 }
 
+/// Look up a single commit by hash (full or abbreviated) and return its
+/// subject line (first line) together with the full trimmed message body.
+/// Returns `None` if the repository or commit cannot be resolved.
+pub(crate) fn get_commit_message(path: &Path, hash: &str) -> Option<(String, String)> {
+    let repo = Repository::discover(path).ok()?;
+    let commit = repo.revparse_single(hash).ok()?.peel_to_commit().ok()?;
+    let full_message = commit.message().unwrap_or("");
+    let subject = full_message.lines().next().unwrap_or("").trim().to_string();
+    let body = full_message.trim().to_string();
+    Some((subject, body))
+}
+
 fn format_time_ago(diff: i64) -> String {
     if diff <= 0 {
         return "just now".to_string();

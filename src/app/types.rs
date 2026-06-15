@@ -133,6 +133,8 @@ pub(super) enum CueAction {
     SplitCue,
     /// Squash all commits on this cue's bookmark into a single commit (jj only).
     SquashBookmark,
+    /// Save this cue's commit as a reusable Play in the Dirigent Playbook.
+    SaveAsPlay,
 }
 
 /// State for a single open file tab.

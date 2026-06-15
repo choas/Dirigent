@@ -29,7 +29,9 @@ pub(crate) use commit::{
     move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
 };
 pub(crate) use diff::{get_working_diff, parse_diff_file_paths_for_repo};
-pub(crate) use history::{count_commits, get_commit_diff, read_commit_history, CommitInfo};
+pub(crate) use history::{
+    count_commits, get_commit_diff, get_commit_message, read_commit_history, CommitInfo,
+};
 pub(crate) use merge::{
     detect_merge_operation, get_conflicted_files, merge_abort, merge_continue, rebase_abort,
     rebase_continue, stage_files, MergeOperation,

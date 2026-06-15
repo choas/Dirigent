@@ -180,8 +180,74 @@ impl DirigentApp {
             CueAction::SquashBookmark => {
                 self.process_squash_bookmark(id);
             }
+            CueAction::SaveAsPlay => {
+                self.process_save_as_play(id);
+            }
         }
         self.reload_cues();
+    }
+
+    /// Extract the commit hash recorded in a cue's activity log, if any.
+    /// Activity is logged as `Committed (abc1234)` when a cue's work is committed.
+    pub(in crate::app) fn cue_commit_hash(&self, id: i64) -> Option<String> {
+        self.db
+            .get_last_activity_matching(id, "Committed")
+            .ok()
+            .flatten()
+            .and_then(|event| {
+                event
+                    .strip_prefix("Committed (")
+                    .and_then(|s| s.strip_suffix(')'))
+                    .map(|s| s.to_string())
+            })
+    }
+
+    /// Turn a cue's commit into a reusable Play and append it to the Playbook.
+    /// The commit subject becomes the Play name and the cue's text becomes the
+    /// Play prompt, so the same directive can be replayed later.
+    fn process_save_as_play(&mut self, id: i64) {
+        let Some(cue) = self.cues.iter().find(|c| c.id == id).cloned() else {
+            return;
+        };
+        let commit_hash = match self.cue_commit_hash(id) {
+            Some(h) => h,
+            None => {
+                self.set_status_message("Cue has no commit to save as a Play".to_string());
+                return;
+            }
+        };
+
+        // Prefer the commit subject as the Play name; fall back to the cue text.
+        let name = git::get_commit_message(&self.project_root, &commit_hash)
+            .map(|(subject, _body)| subject)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                cue.text
+                    .lines()
+                    .next()
+                    .unwrap_or(&cue.text)
+                    .chars()
+                    .take(60)
+                    .collect()
+            });
+
+        let prompt = cue.text.trim().to_string();
+        if prompt.is_empty() {
+            self.set_status_message("Cue has no text to save as a Play".to_string());
+            return;
+        }
+
+        self.settings.playbook.push(crate::settings::Play {
+            name: name.clone(),
+            prompt,
+            command: None,
+        });
+        if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
+            self.set_status_message(format!("Failed to save Play: {}", e));
+            return;
+        }
+        let _ = self.db.log_activity(id, "Saved as Play");
+        self.set_status_message(format!("Added \"{}\" to Playbook", name));
     }
 
     fn process_move_to(&mut self, id: i64, new_status: CueStatus) {

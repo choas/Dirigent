@@ -19,6 +19,7 @@ impl DirigentApp {
                 self.render_overflow_activity_toggle(ui, cue);
                 self.render_overflow_tag_items(ui, cue, actions);
                 self.render_overflow_create_pr(ui, cue, actions);
+                self.render_overflow_save_as_play(ui, cue, actions);
                 ui.separator();
                 let split_enabled = !self.split_cue_generating
                     && matches!(
@@ -71,6 +72,25 @@ impl DirigentApp {
         }
         if cue.tag.is_some() && ui.button("\u{2715} Remove Tag").clicked() {
             actions.push((cue.id, CueAction::SetTag(None)));
+        }
+    }
+
+    /// Offer to capture this cue's resulting commit as a reusable Play.
+    /// Only shown when the cue actually produced a commit.
+    fn render_overflow_save_as_play(
+        &self,
+        ui: &mut egui::Ui,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
+        let fs = self.settings.font_size;
+        if self.cue_commit_hash(cue.id).is_some()
+            && ui
+                .button(icon("\u{1F4D2} Save as Play", fs))
+                .on_hover_text("Add this cue's commit to the Dirigent Playbook")
+                .clicked()
+        {
+            actions.push((cue.id, CueAction::SaveAsPlay));
         }
     }
 
