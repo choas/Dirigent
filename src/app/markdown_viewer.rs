@@ -30,9 +30,11 @@ impl DirigentApp {
             .viewer
             .active()
             .and_then(|t| t.markdown_blocks.as_ref());
+        let mut clicked_diagram: Option<String> = None;
         if let Some(blocks) = blocks_ref {
             let mut heading_counter = 0usize;
             let anchor_click: RefCell<Option<String>> = RefCell::new(None);
+            let mermaid_click: RefCell<Option<String>> = RefCell::new(None);
             let ctx = RenderCtx {
                 font_size: self.settings.font_size,
                 syntax_theme: &self.viewer.syntax_theme,
@@ -41,6 +43,7 @@ impl DirigentApp {
                 anchor_click: &anchor_click,
                 mermaid: &self.mermaid,
                 dark,
+                mermaid_click: &mermaid_click,
             };
             render_blocks(ui, blocks, &ctx, scroll_target, &mut heading_counter);
 
@@ -50,6 +53,12 @@ impl DirigentApp {
                     self.viewer.scroll_to_heading = Some(idx);
                 }
             }
+            clicked_diagram = mermaid_click.into_inner();
+        }
+
+        // A clicked diagram opens the enlarged viewer dialog.
+        if let Some(source) = clicked_diagram {
+            self.mermaid_dialog = Some(super::mermaid::MermaidDialog::new(source, dark));
         }
     }
 }
@@ -66,6 +75,8 @@ struct RenderCtx<'a> {
     mermaid: &'a MermaidCache,
     /// Whether the active theme is dark (used to pick the Mermaid theme).
     dark: bool,
+    /// Set to a diagram's source when its rendered image is clicked.
+    mermaid_click: &'a RefCell<Option<String>>,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -82,6 +93,7 @@ impl<'a> RenderCtx<'a> {
             anchor_click: self.anchor_click,
             mermaid: self.mermaid,
             dark: self.dark,
+            mermaid_click: self.mermaid_click,
         }
     }
 }
@@ -197,7 +209,7 @@ fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx:
     if language == Some("mermaid") {
         match ctx.mermaid.get(code, ctx.dark) {
             Some(MermaidState::Ready(texture)) => {
-                render_mermaid_image(ui, texture, ctx);
+                render_mermaid_image(ui, texture, code, ctx);
                 return;
             }
             Some(MermaidState::Loading) | None => {
@@ -297,7 +309,13 @@ fn collect_mermaid_sources(blocks: &[MarkdownBlock], out: &mut Vec<String>) {
 }
 
 /// Draw a rendered Mermaid diagram, scaled down to fit the available width.
-fn render_mermaid_image(ui: &mut egui::Ui, texture: &egui::TextureHandle, ctx: &RenderCtx) {
+/// Clicking it opens the enlarged viewer dialog.
+fn render_mermaid_image(
+    ui: &mut egui::Ui,
+    texture: &egui::TextureHandle,
+    code: &str,
+    ctx: &RenderCtx,
+) {
     let indent = ctx.indent();
     ui.add_space(SPACE_XS);
     let size = texture.size_vec2();
@@ -308,7 +326,13 @@ fn render_mermaid_image(ui: &mut egui::Ui, texture: &egui::TextureHandle, ctx: &
         if indent > 0.0 {
             ui.add_space(indent);
         }
-        ui.add(egui::Image::new((texture.id(), display)));
+        let resp = ui
+            .add(egui::Image::new((texture.id(), display)).sense(egui::Sense::click()))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Click to enlarge");
+        if resp.clicked() {
+            *ctx.mermaid_click.borrow_mut() = Some(code.to_string());
+        }
     });
     ui.add_space(SPACE_SM);
 }
@@ -507,6 +531,7 @@ fn render_block_quote(
                     anchor_click: ctx.anchor_click,
                     mermaid: ctx.mermaid,
                     dark: ctx.dark,
+                    mermaid_click: ctx.mermaid_click,
                 },
                 heading_counter,
             );

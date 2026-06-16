@@ -212,6 +212,8 @@ pub struct DirigentApp {
 
     // Mermaid diagram render cache (for the Markdown viewer)
     mermaid: mermaid::MermaidCache,
+    // Enlarged Mermaid diagram viewer (opened by clicking a diagram)
+    mermaid_dialog: Option<mermaid::MermaidDialog>,
 
     // Cue pool
     cues: Vec<Cue>,
@@ -1021,6 +1023,7 @@ impl DirigentApp {
             last_render_cue_pool_time: Duration::ZERO,
             last_render_code_viewer_time: Duration::ZERO,
             mermaid: mermaid::MermaidCache::default(),
+            mermaid_dialog: None,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
         if !skip_scan {

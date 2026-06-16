@@ -256,6 +256,7 @@ impl DirigentApp {
         self.render_filter_pr_dialog(ctx);
         self.render_custom_theme_dialog(ctx);
         self.render_log_viewer(ctx);
+        self.render_mermaid_dialog(ctx);
     }
 
     /// Render the circular send button, vertically centered next to a text input.

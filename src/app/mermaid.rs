@@ -16,6 +16,26 @@ use eframe::egui;
 /// Name of the external CLI used to render Mermaid diagrams.
 const MERMAN_BIN: &str = "merman-cli";
 
+/// State for the enlarged Mermaid diagram viewer dialog.
+pub(super) struct MermaidDialog {
+    /// The diagram source (used to look up the texture and re-render for export).
+    pub source: String,
+    /// Theme the diagram was rendered with (light/dark).
+    pub dark: bool,
+    /// Current zoom factor (1.0 = native pixel size).
+    pub zoom: f32,
+}
+
+impl MermaidDialog {
+    pub(super) fn new(source: String, dark: bool) -> Self {
+        Self {
+            source,
+            dark,
+            zoom: 1.0,
+        }
+    }
+}
+
 /// Per-diagram render state.
 pub(super) enum MermaidState {
     /// A background render is in progress.
@@ -118,7 +138,7 @@ impl MermaidCache {
 /// Render Mermaid `source` to a PNG via `merman-cli` and decode it into an
 /// egui [`ColorImage`]. Runs on a background thread.
 fn render_color_image(source: &str, dark: bool) -> Result<egui::ColorImage, String> {
-    let png = render_png(source, dark)?;
+    let png = render_to_bytes(source, dark, "png")?;
     let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
         .map_err(|e| format!("failed to decode rendered diagram: {e}"))?;
     let rgba = decoded.to_rgba8();
@@ -129,16 +149,17 @@ fn render_color_image(source: &str, dark: bool) -> Result<egui::ColorImage, Stri
     ))
 }
 
-/// Invoke `merman-cli` to render the diagram source to PNG bytes.
+/// Invoke `merman-cli` to render the diagram source to bytes in the format
+/// implied by `ext` (e.g. `"png"` or `"svg"`).
 ///
 /// Writes the source and reads the output through a temp directory rather than
-/// stdin/stdout so the output format is unambiguously inferred from the `.png`
+/// stdin/stdout so the output format is unambiguously inferred from the file
 /// extension.
-fn render_png(source: &str, dark: bool) -> Result<Vec<u8>, String> {
+pub(super) fn render_to_bytes(source: &str, dark: bool, ext: &str) -> Result<Vec<u8>, String> {
     let bin = which::which(MERMAN_BIN).map_err(|_| format!("`{MERMAN_BIN}` not found in PATH"))?;
     let dir = tempfile::tempdir().map_err(|e| format!("could not create temp dir: {e}"))?;
     let input = dir.path().join("diagram.mmd");
-    let output = dir.path().join("diagram.png");
+    let output = dir.path().join(format!("diagram.{ext}"));
     std::fs::write(&input, source).map_err(|e| format!("could not write diagram source: {e}"))?;
 
     let theme = if dark { "dark" } else { "default" };

@@ -15,6 +15,7 @@ mod import_pr;
 mod log_viewer;
 mod merge_bookmark;
 mod merge_conflicts;
+mod mermaid_view;
 mod move_to_branch;
 mod move_to_branch_error;
 mod play_variables;
