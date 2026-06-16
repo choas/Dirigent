@@ -14,6 +14,7 @@ mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
 mod markdown_viewer;
+mod mermaid;
 mod notifications;
 mod panels;
 mod rendering;
@@ -208,6 +209,9 @@ pub struct DirigentApp {
 
     // Code viewer
     pub(super) viewer: CodeViewerState,
+
+    // Mermaid diagram render cache (for the Markdown viewer)
+    mermaid: mermaid::MermaidCache,
 
     // Cue pool
     cues: Vec<Cue>,
@@ -1016,6 +1020,7 @@ impl DirigentApp {
             last_render_file_tree_time: Duration::ZERO,
             last_render_cue_pool_time: Duration::ZERO,
             last_render_code_viewer_time: Duration::ZERO,
+            mermaid: mermaid::MermaidCache::default(),
         };
         app.git.recompute_dirty_dirs(&app.project_root);
         if !skip_scan {
@@ -1308,6 +1313,9 @@ impl eframe::App for DirigentApp {
 
         // Poll background results (file tree, search, go-to-definition)
         self.poll_background_results();
+
+        // Poll for finished Mermaid diagram renders
+        self.mermaid.poll(ctx);
 
         // Poll for Claude results
         self.process_claude_results();

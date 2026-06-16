@@ -3,12 +3,29 @@ use std::cell::RefCell;
 use eframe::egui;
 
 use super::markdown_parser::{MarkdownBlock, TextSegment};
+use super::mermaid::{MermaidCache, MermaidState};
 use super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     /// Render the parsed markdown blocks for the currently open file.
     pub(super) fn render_markdown_content(&mut self, ui: &mut egui::Ui) {
         let scroll_target = self.viewer.scroll_to_heading.take();
+        let dark = self.semantic.is_dark();
+
+        // Pre-pass: kick off (or refresh) background renders for any Mermaid
+        // diagrams in the active document before they are drawn.
+        let mut mermaid_sources: Vec<String> = Vec::new();
+        if let Some(blocks) = self
+            .viewer
+            .active()
+            .and_then(|t| t.markdown_blocks.as_ref())
+        {
+            collect_mermaid_sources(blocks, &mut mermaid_sources);
+        }
+        for source in &mermaid_sources {
+            self.mermaid.ensure(source, dark, ui.ctx());
+        }
+
         let blocks_ref = self
             .viewer
             .active()
@@ -22,6 +39,8 @@ impl DirigentApp {
                 semantic: &self.semantic,
                 indent_level: 0,
                 anchor_click: &anchor_click,
+                mermaid: &self.mermaid,
+                dark,
             };
             render_blocks(ui, blocks, &ctx, scroll_target, &mut heading_counter);
 
@@ -43,6 +62,10 @@ struct RenderCtx<'a> {
     indent_level: usize,
     /// Set when an internal `#anchor` link is clicked during rendering.
     anchor_click: &'a RefCell<Option<String>>,
+    /// Cache of rendered Mermaid diagrams.
+    mermaid: &'a MermaidCache,
+    /// Whether the active theme is dark (used to pick the Mermaid theme).
+    dark: bool,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -57,6 +80,8 @@ impl<'a> RenderCtx<'a> {
             semantic: self.semantic,
             indent_level: self.indent_level + 1,
             anchor_click: self.anchor_click,
+            mermaid: self.mermaid,
+            dark: self.dark,
         }
     }
 }
@@ -167,6 +192,25 @@ fn render_paragraph(ui: &mut egui::Ui, segments: &[TextSegment], ctx: &RenderCtx
 }
 
 fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str, ctx: &RenderCtx) {
+    // Mermaid blocks are rendered as diagrams. On failure we fall through to
+    // showing the raw source like any other code block.
+    if language == Some("mermaid") {
+        match ctx.mermaid.get(code, ctx.dark) {
+            Some(MermaidState::Ready(texture)) => {
+                render_mermaid_image(ui, texture, ctx);
+                return;
+            }
+            Some(MermaidState::Loading) | None => {
+                render_mermaid_pending(ui, ctx);
+                return;
+            }
+            Some(MermaidState::Error(message)) => {
+                render_mermaid_error(ui, message, ctx);
+                // fall through to render the diagram source below
+            }
+        }
+    }
+
     let indent = ctx.indent();
     ui.add_space(SPACE_XS);
     let frame_fill = code_block_fill(ctx.semantic);
@@ -223,6 +267,86 @@ fn render_code_block_body(ui: &mut egui::Ui, language: Option<&str>, code: &str,
     } else {
         ui.label(egui::RichText::new(code).monospace().size(ctx.font_size));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Mermaid diagram rendering
+// ---------------------------------------------------------------------------
+
+/// Recursively gather the source of every ```` ```mermaid ```` code block so
+/// their renders can be kicked off before drawing.
+fn collect_mermaid_sources(blocks: &[MarkdownBlock], out: &mut Vec<String>) {
+    for block in blocks {
+        match block {
+            MarkdownBlock::CodeBlock { language, code }
+                if language.as_deref() == Some("mermaid") =>
+            {
+                out.push(code.clone());
+            }
+            MarkdownBlock::List { items, .. } => {
+                for item in items {
+                    collect_mermaid_sources(item, out);
+                }
+            }
+            MarkdownBlock::BlockQuote { blocks } => {
+                collect_mermaid_sources(blocks, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Draw a rendered Mermaid diagram, scaled down to fit the available width.
+fn render_mermaid_image(ui: &mut egui::Ui, texture: &egui::TextureHandle, ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    let size = texture.size_vec2();
+    let max_width = (ui.available_width() - indent - SPACE_SM).max(64.0);
+    let scale = (max_width / size.x).min(1.0);
+    let display = egui::vec2(size.x * scale, size.y * scale);
+    ui.horizontal(|ui| {
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        ui.add(egui::Image::new((texture.id(), display)));
+    });
+    ui.add_space(SPACE_SM);
+}
+
+/// Placeholder shown while a Mermaid diagram is still rendering.
+fn render_mermaid_pending(ui: &mut egui::Ui, ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    ui.horizontal(|ui| {
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        ui.spinner();
+        ui.add_space(SPACE_XS);
+        ui.label(
+            egui::RichText::new("Rendering Mermaid diagram\u{2026}")
+                .size(ctx.font_size * 0.9)
+                .color(ctx.semantic.secondary_text),
+        );
+    });
+    ui.add_space(SPACE_XS);
+}
+
+/// Note shown above the raw source when a Mermaid diagram fails to render.
+fn render_mermaid_error(ui: &mut egui::Ui, message: &str, ctx: &RenderCtx) {
+    let indent = ctx.indent();
+    ui.add_space(SPACE_XS);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        ui.label(
+            egui::RichText::new(format!("\u{26A0} Mermaid: {message}"))
+                .size(ctx.font_size * 0.9)
+                .color(ctx.semantic.warning),
+        );
+    });
 }
 
 fn render_list(
@@ -381,6 +505,8 @@ fn render_block_quote(
                     semantic: ctx.semantic,
                     indent_level: 0,
                     anchor_click: ctx.anchor_click,
+                    mermaid: ctx.mermaid,
+                    dark: ctx.dark,
                 },
                 heading_counter,
             );
@@ -855,4 +981,36 @@ fn find_heading_in_blocks(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::markdown_parser::parse_markdown;
+
+    #[test]
+    fn collects_top_level_mermaid_block() {
+        let blocks = parse_markdown("```mermaid\nflowchart TD\nA --> B\n```");
+        let mut sources = Vec::new();
+        collect_mermaid_sources(&blocks, &mut sources);
+        assert_eq!(sources.len(), 1);
+        assert!(sources[0].contains("flowchart TD"));
+    }
+
+    #[test]
+    fn ignores_non_mermaid_code_blocks() {
+        let blocks = parse_markdown("```rust\nfn main() {}\n```");
+        let mut sources = Vec::new();
+        collect_mermaid_sources(&blocks, &mut sources);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn collects_mermaid_nested_in_list_and_quote() {
+        let md = "- item\n\n  ```mermaid\n  graph LR\n  X --> Y\n  ```\n\n> ```mermaid\n> sequenceDiagram\n> A->>B: hi\n> ```";
+        let blocks = parse_markdown(md);
+        let mut sources = Vec::new();
+        collect_mermaid_sources(&blocks, &mut sources);
+        assert_eq!(sources.len(), 2);
+    }
 }
