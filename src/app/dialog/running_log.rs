@@ -664,8 +664,39 @@ impl DirigentApp {
             addition_bg: Some(self.semantic.addition_bg()),
             deletion_bg: Some(self.semantic.deletion_bg()),
         };
-        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
-        ui.label(job);
+        // Lay the log out in bounded chunks rather than as a single galley.
+        // egui's `Context::fonts()` holds the context write lock for the entire
+        // duration of a galley layout; a multi-megabyte streaming log laid out
+        // in one shot can hold that lock long enough that a background thread
+        // calling `ctx.request_repaint()` (which takes a read lock) times out
+        // and trips epaint's "Failed to acquire RwLock read after 10s.
+        // Deadlock?" panic. Splitting at line boundaries keeps each lock hold
+        // brief; ANSI state is threaded across chunks so color runs survive.
+        const MAX_CHUNK_BYTES: usize = 16 * 1024;
+        if text.len() <= MAX_CHUNK_BYTES {
+            let job =
+                crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
+            ui.label(job);
+            return;
+        }
+
+        // Stack chunks with no inter-label gap so the result is visually
+        // identical to a single galley (each label's rows abut the next).
+        let saved_spacing = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut state: Option<egui::TextFormat> = None;
+        for range in ansi_log_chunk_ranges(text, MAX_CHUNK_BYTES) {
+            let (job, next) = crate::app::ansi::ansi_to_layout_job_resumable(
+                &text[range],
+                font_id.clone(),
+                default_color,
+                &overrides,
+                state.take(),
+            );
+            ui.label(job);
+            state = Some(next);
+        }
+        ui.spacing_mut().item_spacing.y = saved_spacing;
     }
 
     /// Like [`render_ansi_log`], but appends an external-link icon to the line
@@ -758,6 +789,26 @@ impl DirigentApp {
     }
 }
 
+/// Split `text` into byte ranges of at most ~`max_bytes`, cutting only at
+/// newline boundaries. The newline at each cut point is dropped (the boundary
+/// between two stacked, zero-gap labels reproduces it), while interior and
+/// trailing newlines are preserved, so concatenating the rendered chunks looks
+/// identical to laying the whole text out as one galley.
+fn ansi_log_chunk_ranges(text: &str, max_bytes: usize) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (i, _) in text.match_indices('\n') {
+        // Cut once the accumulated chunk (including this newline) would exceed
+        // the budget, splitting just before the newline at `i`.
+        if i + 1 - start > max_bytes && i > start {
+            ranges.push(start..i);
+            start = i + 1;
+        }
+    }
+    ranges.push(start..text.len());
+    ranges
+}
+
 /// ECG-style waveform: maps a time offset `dt` (seconds from beat centre) to a
 /// vertical deflection in [-0.25, 1.0].  The shape approximates P–QRS–T.
 fn ecg_waveform(dt: f32) -> f32 {
@@ -829,5 +880,52 @@ fn spawn_terminal_with_command(dir: &Path, command: &str) -> std::io::Result<std
                     .args(["-e", "bash", "-c", &hold])
                     .spawn()
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ansi_log_chunk_ranges;
+
+    /// Re-join chunk ranges the way the renderer stacks them: each non-final
+    /// chunk is followed by the boundary newline that was dropped at the cut.
+    fn rejoin(text: &str, max: usize) -> String {
+        let ranges = ansi_log_chunk_ranges(text, max);
+        // Every range must land on valid char boundaries.
+        for r in &ranges {
+            assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+        }
+        let mut out = String::new();
+        for (idx, r) in ranges.iter().enumerate() {
+            out.push_str(&text[r.clone()]);
+            if idx + 1 < ranges.len() {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn chunks_reconstruct_original_lines() {
+        let text = "alpha\nbeta\ngamma\ndelta\n";
+        // Force a split: budget smaller than the whole text.
+        assert_eq!(rejoin(text, 8), text);
+        // A budget large enough for the whole text yields a single range.
+        assert_eq!(ansi_log_chunk_ranges(text, 4096).len(), 1);
+        assert_eq!(rejoin(text, 4096), text);
+    }
+
+    #[test]
+    fn chunks_handle_no_trailing_newline_and_unicode() {
+        let text = "héllo\nwörld\n☃ snowman\nlast line";
+        assert_eq!(rejoin(text, 4), text);
+    }
+
+    #[test]
+    fn oversized_single_line_is_not_dropped() {
+        // A single line longer than the budget must still survive intact.
+        let line = "x".repeat(100);
+        let text = format!("{line}\nshort\n");
+        assert_eq!(rejoin(&text, 16), text);
     }
 }
