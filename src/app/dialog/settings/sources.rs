@@ -138,6 +138,19 @@ impl DirigentApp {
                 if ui.small_button("Fetch Now").clicked() {
                     *fetch_idx = Some(i);
                 }
+                if ui
+                    .small_button("Curl")
+                    .on_hover_text(
+                        "Copy an equivalent curl command for this source to the clipboard",
+                    )
+                    .clicked()
+                {
+                    let cmd = crate::sources::build_source_curl(
+                        &self.settings.sources[i],
+                        &self.project_root,
+                    );
+                    ui.ctx().copy_text(cmd);
+                }
             });
         });
     }

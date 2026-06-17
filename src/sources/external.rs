@@ -1663,3 +1663,155 @@ fn extract_notion_page_id(id_or_url: &str) -> String {
 pub(crate) fn load_env_var(project_root: &Path, key: &str) -> Option<String> {
     crate::claude::load_env_var_with_dirigent_fallback(project_root, key)
 }
+
+/// Single-quote a value for safe use in a POSIX shell command.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Return `value` if non-empty, otherwise a `$ENV_VAR` placeholder so the
+/// generated command stays runnable (and free of leaked secrets) when the
+/// token/key has not been entered in Dirigent.
+fn token_or_env(value: &str, env: &str) -> String {
+    if value.is_empty() {
+        format!("${env}")
+    } else {
+        value.to_string()
+    }
+}
+
+/// Return `value` if non-empty, otherwise a literal placeholder.
+fn nonempty_or<'a>(value: &'a str, placeholder: &'a str) -> &'a str {
+    if value.is_empty() {
+        placeholder
+    } else {
+        value
+    }
+}
+
+/// Build a copy-pasteable shell command that reproduces the request this
+/// source's "Fetch Now" performs.  HTTP-backed sources yield a `curl`
+/// invocation; the `gh`-based GitHub source and shell-command sources yield
+/// the underlying CLI command.  Secrets are filled in when known, otherwise a
+/// `$ENV_VAR` placeholder is emitted so the command is safe to paste anywhere.
+pub(crate) fn build_source_curl(
+    source: &crate::settings::SourceConfig,
+    project_root: &Path,
+) -> String {
+    use crate::settings::SourceKind;
+
+    let token = crate::sources::resolve_source_token(source, project_root);
+
+    match source.kind {
+        SourceKind::GitHubIssues => {
+            let mut cmd =
+                String::from("gh issue list --json number,title,body,url --limit 50 --state open");
+            if !source.filter.is_empty() {
+                cmd.push_str(&format!(" --label {}", sh_quote(&source.filter)));
+            }
+            cmd
+        }
+        SourceKind::Slack => {
+            let tok = token_or_env(&token, "SLACK_BOT_TOKEN");
+            let channel = nonempty_or(&source.channel, "CHANNEL_ID");
+            format!(
+                "curl -G {url} \\\n  --data-urlencode {ch} \\\n  --data-urlencode 'limit=50' \\\n  -H {auth}",
+                url = sh_quote("https://slack.com/api/conversations.history"),
+                ch = sh_quote(&format!("channel={channel}")),
+                auth = sh_quote(&format!("Authorization: Bearer {tok}")),
+            )
+        }
+        SourceKind::SonarQube => {
+            let base = nonempty_or(&source.host_url, "http://localhost:9000").trim_end_matches('/');
+            let key = nonempty_or(&source.project_key, "PROJECT_KEY");
+            let tok = token_or_env(&token, "SONAR_TOKEN");
+            let url = format!(
+                "{base}/api/issues/search?componentKeys={}&resolved=false&ps=100",
+                url_encode(key),
+            );
+            format!(
+                "curl -u {auth} {url}",
+                auth = sh_quote(&format!("{tok}:")),
+                url = sh_quote(&url),
+            )
+        }
+        SourceKind::Trello => {
+            let api_key = if source.api_key.is_empty() {
+                std::env::var("TRELLO_API_KEY")
+                    .ok()
+                    .or_else(|| load_env_var(project_root, "TRELLO_API_KEY"))
+                    .unwrap_or_default()
+            } else {
+                source.api_key.clone()
+            };
+            let api_key = token_or_env(&api_key, "TRELLO_API_KEY");
+            let tok = token_or_env(&token, "TRELLO_TOKEN");
+            let board = nonempty_or(&source.project_key, "BOARD_ID");
+            format!(
+                "curl -G {url} \\\n  --data-urlencode {key} \\\n  --data-urlencode {tok} \\\n  --data-urlencode 'fields=name,desc,shortUrl,idList' \\\n  --data-urlencode 'limit=100'",
+                url = sh_quote(&format!("https://api.trello.com/1/boards/{board}/cards")),
+                key = sh_quote(&format!("key={api_key}")),
+                tok = sh_quote(&format!("token={tok}")),
+            )
+        }
+        SourceKind::Asana => {
+            let tok = token_or_env(&token, "ASANA_TOKEN");
+            let gid = nonempty_or(&source.project_key, "PROJECT_GID");
+            let url = format!(
+                "https://app.asana.com/api/1.0/projects/{gid}/tasks?opt_fields=name,notes,permalink_url,completed&limit=100",
+            );
+            format!(
+                "curl {url} \\\n  -H {auth}",
+                url = sh_quote(&url),
+                auth = sh_quote(&format!("Authorization: Bearer {tok}")),
+            )
+        }
+        SourceKind::Sentry => {
+            let tok = token_or_env(&token, "SENTRY_AUTH_TOKEN");
+            let org = nonempty_or(&source.channel, "ORG");
+            let project = nonempty_or(&source.project_key, "PROJECT");
+            let template = if source.host_url.is_empty() {
+                "https://<org>.sentry.io".to_string()
+            } else {
+                source.host_url.trim_end_matches('/').to_string()
+            };
+            let base = template.replace("<org>", org);
+            let url = format!(
+                "{base}/api/0/projects/{}/{}/issues/?query={}&limit=50",
+                url_encode(org),
+                url_encode(project),
+                url_encode("is:unresolved"),
+            );
+            format!(
+                "curl {url} \\\n  -H {auth}",
+                url = sh_quote(&url),
+                auth = sh_quote(&format!("Authorization: Bearer {tok}")),
+            )
+        }
+        SourceKind::Notion => {
+            let tok = token_or_env(&token, "NOTION_TOKEN");
+            let db = nonempty_or(&source.project_key, "DATABASE_ID");
+            let inbox = (!source.filter.is_empty()).then_some(source.filter.as_str());
+            let filter = build_notion_query_filter(
+                &source.notion_page_type,
+                inbox,
+                &source.notion_done_value,
+                &source.notion_status_property,
+            );
+            let body = serde_json::to_string(&filter).unwrap_or_else(|_| "{}".to_string());
+            format!(
+                "curl -X POST {url} \\\n  -H {auth} \\\n  -H 'Notion-Version: 2022-06-28' \\\n  -H 'Content-Type: application/json' \\\n  -d {body}",
+                url = sh_quote(&format!("https://api.notion.com/v1/databases/{db}/query")),
+                auth = sh_quote(&format!("Authorization: Bearer {tok}")),
+                body = sh_quote(&body),
+            )
+        }
+        SourceKind::Custom | SourceKind::Mcp => {
+            if source.command.is_empty() {
+                "# No command configured for this source".to_string()
+            } else {
+                source.command.clone()
+            }
+        }
+    }
+}
