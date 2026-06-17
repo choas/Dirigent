@@ -1,7 +1,7 @@
 use eframe::egui;
 use std::sync::mpsc;
 
-use crate::app::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
 fn notion_type_icon(object_type: &str) -> &'static str {
@@ -145,7 +145,7 @@ impl DirigentApp {
     fn render_settings_source_fields(&mut self, ui: &mut egui::Ui, i: usize) {
         egui::Grid::new(format!("source_grid_{}", i))
             .num_columns(2)
-            .spacing([SPACE_SM, SPACE_XS])
+            .spacing([SPACE_MD, SPACE_SM])
             .show(ui, |ui| {
                 ui.label("Kind:");
                 self.render_source_kind_selector(ui, i);
