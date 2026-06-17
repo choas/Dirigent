@@ -797,11 +797,15 @@ pub(crate) fn fetch_sentry_issues(
         ));
     }
 
-    let base = if host_url.is_empty() {
-        "https://sentry.io"
+    // Default to the org's region subdomain (e.g. https://my-org.sentry.io).
+    // A configured host may use `<org>` as a placeholder for the slug, so
+    // substitute it in either case.
+    let template = if host_url.is_empty() {
+        "https://<org>.sentry.io"
     } else {
         host_url.trim_end_matches('/')
     };
+    let base = template.replace("<org>", organization);
 
     let client = http_client()?;
 

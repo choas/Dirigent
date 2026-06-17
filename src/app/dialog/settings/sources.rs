@@ -318,7 +318,7 @@ impl DirigentApp {
             ui,
             "Host URL:",
             &mut self.settings.sources[i].host_url,
-            "https://sentry.io (or self-hosted)",
+            "https://<org>.sentry.io (default) or self-hosted",
             200.0,
         );
         source_text_field(
