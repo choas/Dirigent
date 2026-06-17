@@ -59,6 +59,32 @@ pub(crate) enum DiffLineKind {
     Deletion,
 }
 
+/// Maximum number of bytes of a single diff line we hand to egui for layout.
+///
+/// egui lays out each line as one unwrapped galley, and text-layout cost grows
+/// with the line length. A single very long line (minified JS, a lockfile, an
+/// embedded data URI, …) can make `epaint::text::layout` spin for tens of
+/// seconds and hang the whole UI. Capping the displayed text keeps per-frame
+/// layout bounded regardless of how pathological the diff is.
+const MAX_DISPLAY_LINE_BYTES: usize = 2000;
+
+/// Return a display-safe version of a diff line, truncated on a char boundary
+/// if it exceeds [`MAX_DISPLAY_LINE_BYTES`]. Short lines are borrowed unchanged.
+fn display_line(content: &str) -> std::borrow::Cow<'_, str> {
+    if content.len() <= MAX_DISPLAY_LINE_BYTES {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let mut end = MAX_DISPLAY_LINE_BYTES;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!(
+        "{}… [line truncated, {} chars]",
+        &content[..end],
+        content.chars().count()
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -442,6 +468,7 @@ fn render_inline_line(
         !ctx.query_lower.is_empty() && line.content.to_lowercase().contains(ctx.query_lower);
     let is_current = ctx.current_match == Some((ctx.file_idx, ctx.hunk_idx, line_idx));
 
+    let display = display_line(&line.content);
     let response = ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
@@ -449,10 +476,10 @@ fn render_inline_line(
                 .color(ctx.dc.gutter_color),
         );
         if is_search {
-            render_highlighted_text(ui, &line.content, ctx.query_lower, text_color, ctx.colors);
+            render_highlighted_text(ui, &display, ctx.query_lower, text_color, ctx.colors);
         } else {
             ui.label(
-                egui::RichText::new(&line.content)
+                egui::RichText::new(display.as_ref())
                     .monospace()
                     .color(text_color),
             );
@@ -629,7 +656,11 @@ fn render_sbs_content_cell(
         (style.context_text, None)
     };
     let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
-    let resp = ui.label(egui::RichText::new(&line.content).monospace().color(color));
+    let resp = ui.label(
+        egui::RichText::new(display_line(&line.content))
+            .monospace()
+            .color(color),
+    );
 
     if let Some(bg) = effective_background(side_is_current, is_match, bg, colors) {
         ui.painter().rect_filled(resp.rect, 0, bg);
@@ -863,6 +894,29 @@ mod tests {
         // Addition at new:7
         assert_eq!(lines[3].old_lineno, None);
         assert_eq!(lines[3].new_lineno, Some(7));
+    }
+
+    #[test]
+    fn display_line_passes_short_lines_through() {
+        let s = "fn main() {}";
+        assert!(matches!(display_line(s), std::borrow::Cow::Borrowed(b) if b == s));
+    }
+
+    #[test]
+    fn display_line_truncates_pathologically_long_lines() {
+        let long = "x".repeat(MAX_DISPLAY_LINE_BYTES * 3);
+        let out = display_line(&long);
+        assert!(matches!(out, std::borrow::Cow::Owned(_)));
+        // Truncated text stays small enough that egui layout is bounded.
+        assert!(out.len() < MAX_DISPLAY_LINE_BYTES + 64);
+        assert!(out.contains("line truncated"));
+    }
+
+    #[test]
+    fn display_line_truncates_on_char_boundary() {
+        // Multi-byte chars right at the cap must not panic or split a char.
+        let s = "é".repeat(MAX_DISPLAY_LINE_BYTES);
+        let _ = display_line(&s); // must not panic on a non-char-boundary cut
     }
 
     #[test]
