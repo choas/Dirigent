@@ -74,15 +74,21 @@ impl DirigentApp {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            let items = fetch_source_items(&source, &project_root, &error_tx);
+            let result = fetch_source_items(&source, &project_root);
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            if items.is_empty() {
-                let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
-            } else {
-                for item in items {
-                    let _ = source_tx.send(item);
+            match result {
+                Ok(items) if items.is_empty() => {
+                    let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
+                }
+                Ok(items) => {
+                    for item in items {
+                        let _ = source_tx.send(item);
+                    }
+                }
+                Err(e) => {
+                    let _ = error_tx.send(format!("Source \"{}\": {}", source_name, e));
                 }
             }
             if let Some(c) = ctx.get() {
@@ -229,17 +235,12 @@ fn strip_runnable_marker(text: &str) -> String {
 fn fetch_source_items(
     source: &settings::SourceConfig,
     project_root: &Path,
-    error_tx: &mpsc::Sender<String>,
-) -> Vec<SourceItem> {
-    let err = |e: crate::error::DirigentError| {
-        let _ = error_tx.send(format!("Source '{}': {}", source.name, e));
-        Vec::new()
-    };
-    let mut items = fetch_by_kind(source, project_root).unwrap_or_else(err);
+) -> crate::error::Result<Vec<SourceItem>> {
+    let mut items = fetch_by_kind(source, project_root)?;
     for item in &mut items {
         item.source_id = source.id.clone().unwrap_or_default();
     }
-    items
+    Ok(items)
 }
 
 fn non_empty_or<'a>(value: &'a str, default: &'a str) -> &'a str {
