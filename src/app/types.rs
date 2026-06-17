@@ -222,6 +222,56 @@ impl TabState {
     }
 }
 
+/// Maximum number of bytes read from a file into the code viewer. Files larger
+/// than this are truncated at load. A 100MB+ file (a minified bundle, a data
+/// dump, a vendored blob) would otherwise be read fully into a `String` and then
+/// duplicated into per-line `String`s, exhausting memory and crashing the app.
+const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Maximum number of bytes kept for any single line. A file with one enormous
+/// line (minified JS, a single-line JSON blob) is the worst case: row
+/// virtualization (`show_rows`) bounds the *number* of lines rendered, but a
+/// single multi-megabyte line is laid out by egui as one giant galley, which
+/// balloons the galley cache and hangs/aborts the UI. Truncating each line keeps
+/// per-frame layout bounded regardless of how pathological the file is.
+const MAX_LINE_BYTES: usize = 5000;
+
+/// Return a display-safe version of a line, truncated on a char boundary if it
+/// exceeds [`MAX_LINE_BYTES`]. Short lines are taken unchanged.
+fn truncate_line(line: &str) -> String {
+    if line.len() <= MAX_LINE_BYTES {
+        return line.to_string();
+    }
+    let mut end = MAX_LINE_BYTES;
+    while end > 0 && !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\u{2026} [line truncated, {} chars]",
+        &line[..end],
+        line.chars().count()
+    )
+}
+
+/// Read a file into a string, capping the amount read at [`MAX_FILE_BYTES`] so a
+/// pathologically large file cannot exhaust memory. Returns the (possibly
+/// truncated) UTF-8 contents and whether truncation occurred. Invalid UTF-8 in
+/// the truncated case is replaced lossily rather than failing the open.
+fn read_capped(path: &PathBuf) -> Option<(String, bool)> {
+    use std::io::Read;
+    let len = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
+    if (len as u64) <= MAX_FILE_BYTES as u64 {
+        return std::fs::read_to_string(path).ok().map(|c| (c, false));
+    }
+    let mut buf = Vec::with_capacity(MAX_FILE_BYTES);
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_FILE_BYTES as u64)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some((String::from_utf8_lossy(&buf).into_owned(), true))
+}
+
 /// Check if a file extension corresponds to a supported image format.
 fn is_image_extension(ext: &str) -> bool {
     matches!(
@@ -271,7 +321,7 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
     }
 
     let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
-    let content = std::fs::read_to_string(path).ok()?;
+    let (content, file_truncated) = read_capped(path)?;
     let is_md = path
         .extension()
         .and_then(|e| e.to_str())
@@ -282,7 +332,15 @@ pub(super) fn create_tab_state(path: &PathBuf) -> Option<TabState> {
     } else {
         None
     };
-    let lines: Vec<String> = content.lines().map(String::from).collect();
+    // Cap each line's length so a single multi-megabyte line cannot blow up
+    // egui's galley cache (see `MAX_LINE_BYTES`).
+    let mut lines: Vec<String> = content.lines().map(truncate_line).collect();
+    if file_truncated {
+        lines.push(format!(
+            "\u{2026} [file truncated at {} MB to keep the viewer responsive]",
+            MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
     let file_symbols = symbols::parse_symbols(&lines, &ext);
     Some(TabState {
         file_path: path.clone(),
