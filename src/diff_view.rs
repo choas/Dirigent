@@ -68,6 +68,21 @@ pub(crate) enum DiffLineKind {
 /// layout bounded regardless of how pathological the diff is.
 const MAX_DISPLAY_LINE_BYTES: usize = 2000;
 
+/// Maximum number of diff lines we lay out in a single render pass.
+///
+/// [`MAX_DISPLAY_LINE_BYTES`] bounds the cost of any *single* line, but a diff
+/// with a huge *number* of lines (a regenerated lockfile, a vendored bundle, a
+/// mass reformat) is just as fatal: the diff view has no row virtualization, so
+/// every line becomes a galley every frame. Hundreds of thousands of galleys
+/// balloon epaint's galley cache to tens of GB and make a single frame take
+/// long enough that a background thread's `ctx.request_repaint()` read-lock
+/// exceeds epaint's 10s deadlock detector. That panic is raised inside the
+/// objc/winit `extern "C"` callback that drives the frame, where it cannot
+/// unwind, so the process aborts ("panic in a function that cannot unwind").
+/// Capping the rendered line count keeps each frame bounded; the remainder is
+/// hidden behind a notice.
+const MAX_RENDERED_DIFF_LINES: usize = 20_000;
+
 /// Return a display-safe version of a diff line, truncated on a char boundary
 /// if it exceeds [`MAX_DISPLAY_LINE_BYTES`]. Short lines are borrowed unchanged.
 fn display_line(content: &str) -> std::borrow::Cow<'_, str> {
@@ -311,14 +326,19 @@ fn toggle_collapsed(collapsed_files: &mut HashSet<usize>, file_idx: usize) {
 /// Iterate over files, rendering collapsible headers and calling `render_hunks`
 /// for each expanded file. Shared by inline and side-by-side modes.
 /// Returns `Some((path, line))` if the user clicked the open button on a file.
+///
+/// `render_hunks` receives a shared line budget and must return `true` when it
+/// stopped early because the budget ran out (see [`MAX_RENDERED_DIFF_LINES`]).
 fn render_diff_files(
     ui: &mut egui::Ui,
     diff: &ParsedDiff,
     collapsed_files: &mut HashSet<usize>,
     colors: &SemanticColors,
-    mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize),
+    mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize, &mut usize) -> bool,
 ) -> Option<(String, usize)> {
     let mut open_request = None;
+    let mut budget = MAX_RENDERED_DIFF_LINES;
+    let mut truncated = false;
 
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
@@ -336,8 +356,24 @@ fn render_diff_files(
         }
 
         ui.add_space(SPACE_XS);
-        render_hunks(ui, file, file_idx);
+        let hit_limit = render_hunks(ui, file, file_idx, &mut budget);
         ui.separator();
+        if hit_limit {
+            truncated = true;
+            break;
+        }
+    }
+
+    if truncated {
+        ui.add_space(SPACE_SM);
+        ui.label(
+            egui::RichText::new(format!(
+                "\u{26A0} Diff too large to display fully \u{2014} showing the first {} lines to keep the UI responsive.",
+                MAX_RENDERED_DIFF_LINES
+            ))
+            .italics()
+            .color(colors.secondary_text),
+        );
     }
 
     open_request
@@ -416,19 +452,28 @@ pub(crate) fn render_inline_diff(
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
 ) -> Option<(String, usize)> {
-    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
-        render_inline_file_hunks(ui, file, file_idx, search, colors);
-    })
+    render_diff_files(
+        ui,
+        diff,
+        collapsed_files,
+        colors,
+        |ui, file, file_idx, budget| {
+            render_inline_file_hunks(ui, file, file_idx, search, colors, budget)
+        },
+    )
 }
 
-/// Render all hunks for a single file in inline mode.
+/// Render all hunks for a single file in inline mode, consuming from the shared
+/// line `budget`. Returns `true` if it stopped before rendering every line
+/// because the budget ran out.
 fn render_inline_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
     file_idx: usize,
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
-) {
+    budget: &mut usize,
+) -> bool {
     let dc = DiffColors::from_semantic(colors);
 
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
@@ -441,10 +486,15 @@ fn render_inline_file_hunks(
             dc: &dc,
         };
         for (line_idx, line) in hunk.lines.iter().enumerate() {
+            if *budget == 0 {
+                return true;
+            }
             render_inline_line(ui, line, line_idx, &ctx);
+            *budget -= 1;
         }
         ui.add_space(SPACE_SM);
     }
+    false
 }
 
 /// Render a single inline diff line.
@@ -564,12 +614,20 @@ pub(crate) fn render_side_by_side_diff(
     let dc = DiffColors::from_semantic(colors);
     let sep_color = colors.separator;
 
-    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
-        render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color);
-    })
+    render_diff_files(
+        ui,
+        diff,
+        collapsed_files,
+        colors,
+        |ui, file, file_idx, budget| {
+            render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color, budget)
+        },
+    )
 }
 
-/// Render all hunks for a single file in side-by-side mode.
+/// Render all hunks for a single file in side-by-side mode, consuming from the
+/// shared line `budget`. Returns `true` if it stopped before rendering every
+/// row because the budget ran out.
 fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
@@ -578,8 +636,13 @@ fn render_sbs_file_hunks(
     colors: &SemanticColors,
     dc: &DiffColors,
     sep_color: egui::Color32,
-) {
+    budget: &mut usize,
+) -> bool {
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+        if *budget == 0 {
+            return true;
+        }
+        let mut hit_limit = false;
         egui::Grid::new(format!(
             "sbs_{}_{}_{}",
             file.new_path, hunk_idx, hunk.new_start
@@ -598,15 +661,24 @@ fn render_sbs_file_hunks(
             };
 
             for (left_idx, right_idx) in &hunk.sbs_pairs {
+                if *budget == 0 {
+                    hit_limit = true;
+                    break;
+                }
                 let left = left_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 let right = right_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 render_sbs_row(ui, left, right, &ctx, sep_color);
                 ui.end_row();
+                *budget -= 1;
             }
         });
 
         ui.add_space(SPACE_SM);
+        if hit_limit {
+            return true;
+        }
     }
+    false
 }
 
 /// Check if one side of a pair is the current search match.
