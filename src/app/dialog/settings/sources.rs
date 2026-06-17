@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::path::Path;
 use std::sync::mpsc;
 
 use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM};
@@ -24,16 +25,33 @@ fn source_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &
     ui.end_row();
 }
 
-/// Render a labeled password field row in a grid.
-fn source_password_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
+/// Render a labeled password field row in a grid for an auth token/key.
+///
+/// When the field is empty but `env_var` resolves to a value in the
+/// environment or `.env`, a green check mark is shown after the field to
+/// signal the token will be picked up automatically.
+fn source_password_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    hint: &str,
+    env_var: &str,
+    project_root: &Path,
+) {
     ui.label(label);
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .desired_width(200.0)
-            .hint_text(hint)
-            .password(true)
-            .font(egui::TextStyle::Monospace),
-    );
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(200.0)
+                .hint_text(hint)
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        if value.is_empty() && crate::sources::env_token_available(project_root, env_var) {
+            ui.label(egui::RichText::new("\u{2714}").color(egui::Color32::from_rgb(76, 175, 80)))
+                .on_hover_text(format!("{env_var} found in the environment"));
+        }
+    });
     ui.end_row();
 }
 
@@ -248,6 +266,8 @@ impl DirigentApp {
             "Bot Token:",
             &mut self.settings.sources[i].token,
             "from env SLACK_BOT_TOKEN or .env",
+            "SLACK_BOT_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -278,6 +298,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env SONAR_TOKEN or .env",
+            "SONAR_TOKEN",
+            &self.project_root,
         );
     }
 
@@ -287,12 +309,16 @@ impl DirigentApp {
             "API Key:",
             &mut self.settings.sources[i].api_key,
             "from env TRELLO_API_KEY or .env",
+            "TRELLO_API_KEY",
+            &self.project_root,
         );
         source_password_field(
             ui,
             "Token:",
             &mut self.settings.sources[i].token,
             "from env TRELLO_TOKEN or .env",
+            "TRELLO_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -316,6 +342,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env ASANA_TOKEN or .env",
+            "ASANA_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -353,6 +381,8 @@ impl DirigentApp {
             "Auth Token:",
             &mut self.settings.sources[i].token,
             "from env SENTRY_AUTH_TOKEN or .env",
+            "SENTRY_AUTH_TOKEN",
+            &self.project_root,
         );
     }
 
@@ -362,6 +392,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env NOTION_TOKEN or .env",
+            "NOTION_TOKEN",
+            &self.project_root,
         );
         self.render_notion_object_selector(ui, i);
         self.render_notion_page_type_fields(ui, i);

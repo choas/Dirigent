@@ -43,3 +43,15 @@ pub(crate) fn resolve_source_token(source: &SourceConfig, project_root: &Path) -
         .or_else(|| load_env_var(project_root, env_key))
         .unwrap_or_default()
 }
+
+/// Return `true` if `env_key` resolves to a non-empty value in the process
+/// environment or in `.Dirigent/.env` (preferred) / `.env` (fallback).
+///
+/// Used by the settings UI to show whether an auth token is already available
+/// from the environment, so the user need not paste it into the field.
+pub(crate) fn env_token_available(project_root: &Path, env_key: &str) -> bool {
+    if std::env::var(env_key).is_ok_and(|v| !v.is_empty()) {
+        return true;
+    }
+    load_env_var(project_root, env_key).is_some_and(|v| !v.is_empty())
+}
