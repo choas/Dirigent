@@ -425,6 +425,12 @@ pub struct DirigentApp {
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
 
+    // Result of the last manual "Fetch Now" per source (settings dialog).
+    // `Ok(count)` on success, `Err(message)` on failure — shown inline next to
+    // the button so the user sees feedback without hunting in the status bar.
+    source_fetch_rx: Option<(usize, mpsc::Receiver<Result<usize, String>>)>,
+    source_fetch_status: HashMap<usize, Result<usize, String>>,
+
     // Workflow plan state
     workflow_plan: Option<crate::workflow::WorkflowPlan>,
     workflow_generating: bool,
@@ -987,6 +993,8 @@ impl DirigentApp {
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
             notion_objects_error: HashMap::new(),
+            source_fetch_rx: None,
+            source_fetch_status: HashMap::new(),
 
             workflow_plan: None,
             workflow_generating: false,
@@ -1378,6 +1386,7 @@ impl eframe::App for DirigentApp {
         // Poll external sources for new cues
         self.poll_sources();
         self.process_source_results();
+        self.process_source_fetch_status();
 
         // Sync logs and periodic cleanup
         self.sync_logs_and_cleanup();

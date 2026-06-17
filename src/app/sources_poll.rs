@@ -62,6 +62,17 @@ impl DirigentApp {
     }
 
     fn trigger_source_fetch_config(&mut self, source: settings::SourceConfig) {
+        self.trigger_source_fetch_config_inner(source, None);
+    }
+
+    /// Spawn a background fetch for `source`. When `status_tx` is provided
+    /// (manual "Fetch Now"), the outcome is also reported there as
+    /// `Ok(item_count)` / `Err(message)` so the settings dialog can show it inline.
+    fn trigger_source_fetch_config_inner(
+        &mut self,
+        source: settings::SourceConfig,
+        status_tx: Option<mpsc::Sender<Result<usize, String>>>,
+    ) {
         let project_root = self.project_root.clone();
         let source_tx = self.sources.tx.clone();
         let error_tx = self.sources.error_tx.clone();
@@ -78,18 +89,24 @@ impl DirigentApp {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            match result {
+            match &result {
                 Ok(items) if items.is_empty() => {
                     let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
                 }
                 Ok(items) => {
-                    for item in items {
+                    for item in items.iter().cloned() {
                         let _ = source_tx.send(item);
                     }
                 }
                 Err(e) => {
                     let _ = error_tx.send(format!("Source \"{}\": {}", source_name, e));
                 }
+            }
+            if let Some(tx) = status_tx {
+                let _ = tx.send(match result {
+                    Ok(items) => Ok(items.len()),
+                    Err(e) => Err(e.to_string()),
+                });
             }
             if let Some(c) = ctx.get() {
                 c.request_repaint();
@@ -111,9 +128,33 @@ impl DirigentApp {
                 .last_poll
                 .insert(source.name.clone(), Instant::now());
             let msg = format!("Fetching from \"{}\"...", source.name);
-            self.trigger_source_fetch_config(source);
+            let (tx, rx) = mpsc::channel();
+            self.source_fetch_status.remove(&idx);
+            self.source_fetch_rx = Some((idx, rx));
+            self.trigger_source_fetch_config_inner(source, Some(tx));
             self.set_status_message(msg);
         }
+    }
+
+    /// Drain the result of a manual "Fetch Now" into `source_fetch_status` so the
+    /// settings dialog can render it inline. Called from the update loop.
+    pub(super) fn process_source_fetch_status(&mut self) {
+        let (idx, result) = match &self.source_fetch_rx {
+            Some((idx, rx)) => match rx.try_recv() {
+                Ok(result) => (*idx, result),
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    let idx = *idx;
+                    self.source_fetch_rx = None;
+                    self.source_fetch_status
+                        .insert(idx, Err("fetch failed unexpectedly".to_string()));
+                    return;
+                }
+            },
+            None => return,
+        };
+        self.source_fetch_rx = None;
+        self.source_fetch_status.insert(idx, result);
     }
 
     pub(super) fn process_source_results(&mut self) {

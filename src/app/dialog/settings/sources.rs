@@ -170,7 +170,42 @@ impl DirigentApp {
                     ui.ctx().copy_text(cmd);
                 }
             });
+
+            self.render_source_fetch_status(ui, i);
         });
+    }
+
+    /// Show the result of the most recent manual "Fetch Now" for source `i`,
+    /// in green for success or red for an error message.
+    fn render_source_fetch_status(&self, ui: &mut egui::Ui, i: usize) {
+        let in_flight = self
+            .source_fetch_rx
+            .as_ref()
+            .is_some_and(|(idx, _)| *idx == i);
+        if in_flight {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Fetching\u{2026}")
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+            });
+            return;
+        }
+
+        let Some(status) = self.source_fetch_status.get(&i) else {
+            return;
+        };
+        let (text, color) = match status {
+            Ok(0) => ("Fetched 0 items".to_string(), self.semantic.tertiary_text),
+            Ok(n) => (
+                format!("Fetched {} item(s)", n),
+                egui::Color32::from_rgb(60, 160, 60),
+            ),
+            Err(e) => (e.clone(), egui::Color32::from_rgb(220, 50, 50)),
+        };
+        ui.label(egui::RichText::new(text).small().color(color));
     }
 
     fn render_settings_source_fields(&mut self, ui: &mut egui::Ui, i: usize) {
