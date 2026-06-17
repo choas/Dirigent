@@ -844,11 +844,12 @@ pub(crate) fn fetch_sentry_issues(
                 .and_then(|p| p.as_str())
                 .unwrap_or("");
 
-            let external_id = if permalink.is_empty() {
-                format!("sentry:{}", id)
-            } else {
-                permalink.to_string()
-            };
+            // Dedup on the stable Sentry issue id, never the permalink.
+            // The `permalink` field can be absent or differ between responses
+            // (e.g. self-hosted vs SaaS, or when the API omits it), which used
+            // to flip the source_ref and re-import an already-fetched issue.
+            // The permalink is kept in the cue text so the link stays available.
+            let external_id = format!("sentry:{}", id);
 
             let location = if culprit.is_empty() {
                 String::new()
@@ -856,12 +857,19 @@ pub(crate) fn fetch_sentry_issues(
                 format!(" in {}", culprit)
             };
 
+            let link = if permalink.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", permalink)
+            };
+
             let text = format!(
-                "[{}] {}{} ({}x)",
+                "[{}] {}{} ({}x){}",
                 level.to_uppercase(),
                 title,
                 location,
-                count
+                count,
+                link
             );
 
             let mut item = SourceItem::new(external_id, text, source_label);
