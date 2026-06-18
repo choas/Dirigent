@@ -6,7 +6,7 @@ use crate::claude;
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
 use crate::git;
-use crate::settings::{SourceKind, VcsBackend};
+use crate::settings::SourceKind;
 use crate::telemetry;
 
 use super::super::vcs_dispatch;
@@ -437,7 +437,7 @@ impl DirigentApp {
                         .and_then(claude::extract_commit_message);
                     let commit_msg = git::generate_commit_message(&cue_text, extracted.as_deref());
 
-                    if show_dialog && self.settings.vcs_backend == VcsBackend::Jj {
+                    if show_dialog {
                         self.git.commit_message_input = commit_msg;
                         self.git.commit_review_cue_id = Some(cue_id);
                         self.git.commit_needs_focus = true;

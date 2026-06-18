@@ -1,7 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use claude_pty::{Event, ExitStatus, PollEvent, Session};
+use claude_pty::{Event, ExitStatus, PermissionDialogKind, PollEvent, Session, SessionState};
+
+use super::done_hook::DoneHook;
+use super::types::ClaudeRunMetadata;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SENTINEL_GRACE: Duration = Duration::from_secs(3);
@@ -10,6 +13,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
     pub response: String,
+    pub metadata: ClaudeRunMetadata,
 }
 
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
@@ -36,48 +40,115 @@ pub(super) fn consume_pty_events(
     prompt: &str,
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
-    done_sentinel: Option<&std::path::Path>,
+    done_hook: Option<&DoneHook>,
     session_id: Option<&str>,
+    skip_permissions: bool,
 ) -> PtyResult {
     let mut state = PtyResult {
         response: String::new(),
+        metadata: ClaudeRunMetadata::default(),
     };
     let mut prompt_sent = false;
     let start_time = Instant::now();
     let mut last_event_time = Instant::now();
     let mut sentinel_seen: Option<Instant> = None;
+    let mut waiting_for_permission = false;
+    let mut saw_filtered_line = false;
+    let done_sentinel = done_hook.map(|h| h.sentinel_path());
 
     loop {
         if cancel.load(Ordering::Relaxed) {
             on_log("\n⚠ Run cancelled.\n");
-            let _ = session.kill();
+            state.metadata.completion_reason = Some("cancelled".to_string());
+            let _ = session.close_gracefully(Duration::from_secs(2));
             break;
         }
 
         match session.poll_event() {
             PollEvent::Ready(event) => {
                 last_event_time = Instant::now();
+                let elapsed_ms = start_time.elapsed().as_millis() as u64;
+                state.metadata.first_output_ms.get_or_insert(elapsed_ms);
+                state.metadata.last_output_ms = Some(elapsed_ms);
                 match event {
+                    Event::FilteredLine {
+                        ref text, ref ansi, ..
+                    } => {
+                        saw_filtered_line = true;
+                        on_log(ansi);
+                        on_log("\n");
+                        state.response.push_str(text);
+                        state.response.push('\n');
+                    }
+                    Event::PtyActivity { .. } => {
+                        on_log("\0");
+                    }
+                    Event::ParserWarning { ref message } => {
+                        state.metadata.parser_warnings.push(message.clone());
+                    }
+                    Event::SessionStateChanged {
+                        state: session_state,
+                    } => {
+                        if session_state == SessionState::WaitingForPermission {
+                            waiting_for_permission = true;
+                        }
+                    }
+                    Event::PermissionDialogDetected { ref dialog } => {
+                        let summary = format!(
+                            "{:?}: {}{}",
+                            dialog.kind,
+                            dialog.title,
+                            dialog
+                                .path_or_command
+                                .as_ref()
+                                .map(|s| format!(" — {s}"))
+                                .unwrap_or_default()
+                        );
+                        state.metadata.permission_summaries.push(summary.clone());
+                        match dialog.kind {
+                            PermissionDialogKind::TrustFolder => {
+                                on_log(&format!("\n⏎ Permission: {summary} — accepted\n"));
+                                let _ = session.confirm_permission_option();
+                                waiting_for_permission = false;
+                            }
+                            PermissionDialogKind::ToolUse if skip_permissions => {
+                                on_log(&format!(
+                                    "\n⏎ Permission: {summary} — accepted by policy\n"
+                                ));
+                                let _ = session.confirm_permission_option();
+                                waiting_for_permission = false;
+                            }
+                            _ => {
+                                on_log(&format!("\n⚠ Waiting for permission: {summary}\n"));
+                                state.metadata.completion_reason =
+                                    Some("waiting_for_permission".to_string());
+                            }
+                        }
+                    }
                     Event::TuiToolConfirmation { .. } => {
-                        let _ = session.write_raw(b"\r");
+                        if skip_permissions {
+                            let _ = session.confirm_permission_option();
+                        } else {
+                            waiting_for_permission = true;
+                            on_log("\n⚠ Waiting for permission.\n");
+                        }
                     }
                     Event::TuiPrompt => {
                         if !prompt_sent {
-                            std::thread::sleep(Duration::from_millis(300));
-                            if let Err(e) = session.write_raw(prompt.as_bytes()) {
+                            if let Err(e) = session.send_prompt(prompt) {
                                 on_log(&format!("\n⚠ Failed to send prompt: {e}\n"));
+                                state.metadata.completion_reason =
+                                    Some("prompt_send_failed".to_string());
                                 break;
                             }
-                            std::thread::sleep(Duration::from_millis(200));
-                            if let Err(e) = session.write_raw(b"\r") {
-                                on_log(&format!("\n⚠ Failed to submit prompt: {e}\n"));
-                                break;
-                            }
+                            state.metadata.prompt_submitted_ms =
+                                Some(start_time.elapsed().as_millis() as u64);
                             prompt_sent = true;
                         } else if done_sentinel.is_none() {
                             // No Stop hook installed: a second prompt is the
                             // only signal we have that Claude's turn ended.
-                            graceful_exit(session);
+                            state.metadata.completion_reason = Some("prompt_returned".to_string());
+                            let _ = session.close_gracefully(Duration::from_secs(5));
                             break;
                         }
                         // With a sentinel active, ignore the second-prompt
@@ -91,6 +162,11 @@ pub(super) fn consume_pty_events(
                         ref lines_ansi,
                         ..
                     } => {
+                        // Compatibility fallback for older `claude_pty` event
+                        // streams. New streams emit `FilteredLine` first.
+                        if saw_filtered_line {
+                            continue;
+                        }
                         for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
                             if plain.trim().is_empty() {
                                 // Drop the empty line from the visible log
@@ -114,6 +190,7 @@ pub(super) fn consume_pty_events(
                     Event::LibDone => break,
                     Event::LibError { ref message } => {
                         on_log(&format!("error: {}\n", message));
+                        state.metadata.completion_reason = Some("pty_error".to_string());
                         break;
                     }
                     _ => {}
@@ -124,6 +201,19 @@ pub(super) fn consume_pty_events(
                     if let Some(sentinel) = done_sentinel {
                         if sentinel_seen.is_none() && sentinel.exists() {
                             sentinel_seen = Some(Instant::now());
+                            state.metadata.completion_reason = Some("stop_hook".to_string());
+                            if let Some(hook) = done_hook {
+                                if let Some(summary) = hook.read_summary() {
+                                    if let Some(last) = summary.last_assistant_message.as_ref() {
+                                        state.response = format!("{}\n", last.trim_end());
+                                    }
+                                    state.metadata.stop_hook = Some(summary.clone());
+                                    on_log(&format!(
+                                        "\n⏎ Stop hook payload captured: {}\n",
+                                        hook.payload_path().display()
+                                    ));
+                                }
+                            }
                             on_log("\n⏎ Stop hook fired — draining remaining output…\n");
                         }
                     }
@@ -133,9 +223,11 @@ pub(super) fn consume_pty_events(
                         if since_sentinel >= SENTINEL_GRACE || since_event >= Duration::from_secs(1)
                         {
                             on_log("\n⏎ Grace period done — exiting.\n");
-                            graceful_exit(session);
+                            let _ = session.close_gracefully(Duration::from_secs(5));
                             break;
                         }
+                    } else if waiting_for_permission {
+                        std::thread::sleep(POLL_INTERVAL);
                     } else if last_event_time.elapsed() >= IDLE_TIMEOUT {
                         // Safety net: 120 s of complete PTY silence means
                         // Claude is genuinely idle (its live spinner keeps the
@@ -143,7 +235,8 @@ pub(super) fn consume_pty_events(
                         // hook was expected but never fired, we exit instead of
                         // hanging forever.
                         on_log("\n⚠ No PTY events for 120 s — exiting to avoid stall.\n");
-                        graceful_exit(session);
+                        state.metadata.completion_reason = Some("idle_timeout".to_string());
+                        let _ = session.close_gracefully(Duration::from_secs(5));
                         break;
                     }
                 }
@@ -151,6 +244,7 @@ pub(super) fn consume_pty_events(
             }
             PollEvent::Closed => {
                 on_log("\n⚠ PTY session closed unexpectedly.\n");
+                state.metadata.completion_reason = Some("pty_closed".to_string());
                 break;
             }
         }
@@ -174,26 +268,6 @@ pub(super) fn consume_pty_events(
     report_exit_status(session, prompt_sent, &state.response, on_log);
 
     state
-}
-
-/// End the Claude TUI cleanly: Ctrl-C twice (first interrupts the current
-/// operation, second requests exit), drain events for up to 5 s waiting for
-/// `LibDone`, then fall back to a hard kill.
-fn graceful_exit(session: &mut Session) {
-    let _ = session.write_raw(b"\x03");
-    std::thread::sleep(Duration::from_millis(500));
-    let _ = session.write_raw(b"\x03");
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        match session.poll_event() {
-            PollEvent::Ready(Event::LibDone) => return,
-            PollEvent::Ready(_) => {}
-            PollEvent::Pending => std::thread::sleep(POLL_INTERVAL),
-            PollEvent::Closed => return,
-        }
-    }
-    let _ = session.kill();
 }
 
 fn report_exit_status(

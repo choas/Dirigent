@@ -21,4 +21,4 @@ pub(crate) use stream::{
     detect_stopped_early, detect_usage_limit, extract_plan_path, filter_opencode_log_line,
     response_has_question,
 };
-pub(crate) use types::{ClaudeError, RunMetrics};
+pub(crate) use types::{ClaudeError, ClaudeRunMetadata, RunMetrics};

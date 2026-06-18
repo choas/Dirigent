@@ -238,6 +238,15 @@ impl Database {
                 finished_at   TEXT
             );",
         )?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS execution_events (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id  INTEGER NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
+                event_type    TEXT NOT NULL,
+                payload       TEXT NOT NULL,
+                created_at    TEXT NOT NULL
+            );",
+        )?;
         // PR filter patterns – reusable ignore rules for PR findings
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS pr_filter_patterns (
@@ -264,6 +273,9 @@ impl Database {
         )?;
         self.conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_cue ON agent_runs(cue_id);",
+        )?;
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_execution_events_execution ON execution_events(execution_id);",
         )?;
         // Settings migrations tracker
         self.conn.execute_batch(

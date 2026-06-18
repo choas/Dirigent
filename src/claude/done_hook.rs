@@ -1,10 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use claude_pty::StopHookSummary;
+
 const HOOK_MARKER: &str = "dirigent-pty-done";
 
 pub(super) struct DoneHook {
     sentinel: PathBuf,
+    payload: PathBuf,
     settings_path: PathBuf,
 }
 
@@ -21,6 +24,7 @@ impl DoneHook {
                 .unwrap_or_default()
                 .as_millis()
         ));
+        let payload = sentinel.with_extension("json");
 
         let claude_dir = project_root.join(".claude");
         let settings_path = claude_dir.join("settings.local.json");
@@ -28,12 +32,13 @@ impl DoneHook {
         if std::fs::create_dir_all(&claude_dir).is_err() {
             return None;
         }
-        if upsert_stop_hook(&settings_path, &sentinel).is_err() {
+        if upsert_stop_hook(&settings_path, &sentinel, &payload).is_err() {
             return None;
         }
 
         Some(Self {
             sentinel,
+            payload,
             settings_path,
         })
     }
@@ -41,16 +46,25 @@ impl DoneHook {
     pub fn sentinel_path(&self) -> &Path {
         &self.sentinel
     }
+
+    pub fn payload_path(&self) -> &Path {
+        &self.payload
+    }
+
+    pub fn read_summary(&self) -> Option<StopHookSummary> {
+        read_stop_hook_summary(&self.payload)
+    }
 }
 
 impl Drop for DoneHook {
     fn drop(&mut self) {
         let _ = remove_stop_hook(&self.settings_path);
         let _ = std::fs::remove_file(&self.sentinel);
+        let _ = std::fs::remove_file(&self.payload);
     }
 }
 
-fn upsert_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()> {
+fn upsert_stop_hook(settings_path: &Path, sentinel: &Path, payload: &Path) -> anyhow::Result<()> {
     let mut root = read_json_object(settings_path);
     if !root.is_object() {
         root = serde_json::json!({});
@@ -76,7 +90,12 @@ fn upsert_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()>
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": format!("touch {}", shell_escape(sentinel))
+                "command": format!(
+                    "sh -c 'cat > \"$1\"; touch \"$2\"' {} {} {}",
+                    HOOK_MARKER,
+                    shell_escape(payload),
+                    shell_escape(sentinel),
+                )
             }]
         }));
     }
@@ -123,6 +142,50 @@ fn shell_escape(path: &Path) -> String {
     }
 }
 
+fn read_stop_hook_summary(path: &Path) -> Option<StopHookSummary> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_stop_hook_summary(&raw)
+}
+
+pub(super) fn parse_stop_hook_summary(raw: &str) -> Option<StopHookSummary> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let event_name = value
+        .get("hook_event_name")
+        .or_else(|| value.get("event_name"))
+        .or_else(|| value.get("event"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let last_assistant_message = value
+        .get("last_assistant_message")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let failure = value
+        .get("stop_failure")
+        .or_else(|| value.get("StopFailure"))
+        .or_else(|| value.get("error"))
+        .map(|v| match v.as_str() {
+            Some(s) => s.to_string(),
+            None => v.to_string(),
+        });
+    let session_id = value
+        .get("session_id")
+        .or_else(|| value.get("sessionId"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let timestamp = value
+        .get("timestamp")
+        .or_else(|| value.get("created_at"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    Some(StopHookSummary {
+        event_name,
+        last_assistant_message,
+        failure,
+        session_id,
+        timestamp,
+    })
+}
+
 fn atomic_write(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     let dir = path.parent().unwrap_or(path);
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
@@ -140,5 +203,44 @@ fn read_json_object(path: &Path) -> serde_json::Value {
             .unwrap_or_else(|| serde_json::json!({}))
     } else {
         serde_json::json!({})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_stop_hook_summary_reads_last_message_and_failure() {
+        let summary = parse_stop_hook_summary(
+            r#"{
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Done. Anything else?",
+                "stop_failure": {"message": "tool failed"},
+                "session_id": "abc",
+                "timestamp": "2026-06-18T10:00:00Z"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(summary.event_name.as_deref(), Some("Stop"));
+        assert_eq!(
+            summary.last_assistant_message.as_deref(),
+            Some("Done. Anything else?")
+        );
+        assert!(summary.failure.as_deref().unwrap().contains("tool failed"));
+        assert_eq!(summary.session_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn upsert_stop_hook_writes_payload_capture_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+        let sentinel = tmp.path().join("sentinel");
+        let payload = tmp.path().join("payload.json");
+        upsert_stop_hook(&settings, &sentinel, &payload).unwrap();
+        let json = std::fs::read_to_string(settings).unwrap();
+        assert!(json.contains("cat >"));
+        assert!(json.contains(payload.to_str().unwrap()));
+        assert!(json.contains(sentinel.to_str().unwrap()));
     }
 }

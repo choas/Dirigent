@@ -204,21 +204,22 @@ fn invoke_pty(
         }
     })?;
 
-    let sentinel = done_hook.as_ref().map(|h| h.sentinel_path());
     let session_id = extract_session_id(extra_args_vec);
     let state = consume_pty_events(
         &mut session,
         prompt,
         &cancel,
         on_log,
-        sentinel,
+        done_hook.as_ref(),
         session_id.as_deref(),
+        skip_permissions,
     );
     drop(done_hook);
 
     Ok(ClaudeResponse {
         stdout: state.response,
         metrics: Default::default(),
+        metadata: Some(state.metadata),
     })
 }
 
@@ -334,6 +335,7 @@ fn invoke_headless(
     Ok(ClaudeResponse {
         stdout: response,
         metrics: Default::default(),
+        metadata: None,
     })
 }
 

@@ -26,6 +26,7 @@ struct ClaudeResult {
     response: String,
     error: Option<String>,
     metrics: claude::RunMetrics,
+    metadata: Option<claude::ClaudeRunMetadata>,
 }
 
 /// A log message from a running Claude worker thread.
@@ -318,6 +319,7 @@ struct ProviderRunOutcome {
     stdout: String,
     edited_files: Vec<String>,
     metrics: claude::RunMetrics,
+    metadata: Option<claude::ClaudeRunMetadata>,
     parse_diff: fn(&str) -> Option<String>,
 }
 
@@ -367,6 +369,7 @@ fn finalize_run<E: std::fmt::Display>(
                 response: outcome.stdout,
                 error: None,
                 metrics: outcome.metrics,
+                metadata: outcome.metadata,
             }
         }
         Err(e) => ClaudeResult {
@@ -376,6 +379,7 @@ fn finalize_run<E: std::fmt::Display>(
             response: String::new(),
             error: Some(e.to_string()),
             metrics: claude::RunMetrics::default(),
+            metadata: None,
         },
     }
 }
@@ -406,6 +410,7 @@ fn run_claude_provider(
         stdout: response.stdout,
         edited_files: Vec::new(),
         metrics: response.metrics,
+        metadata: response.metadata,
         parse_diff: claude::parse_diff_from_response,
     });
     finalize_run(req, &baseline, res)
@@ -509,6 +514,7 @@ fn run_gemini_provider(
             num_turns: response.num_turns.unwrap_or(0),
             ..claude::RunMetrics::default()
         },
+        metadata: None,
         parse_diff: gemini::parse_diff_from_response,
     });
     finalize_run(req, &baseline, res)
@@ -543,6 +549,7 @@ fn run_codex_provider(
                     num_turns: response.num_turns.unwrap_or(0),
                     ..claude::RunMetrics::default()
                 },
+                metadata: None,
                 parse_diff: codex::parse_diff_from_response,
             });
     finalize_run(req, &baseline, res)
@@ -581,6 +588,7 @@ fn run_opencode_provider(
             num_turns: response.num_turns.unwrap_or(0),
             ..claude::RunMetrics::default()
         },
+        metadata: None,
         parse_diff: opencode::parse_diff_from_response,
     });
     finalize_run(req, &baseline, res)
@@ -1022,6 +1030,7 @@ impl DirigentApp {
             result.metrics.input_tokens,
             result.metrics.output_tokens,
         );
+        self.persist_execution_metadata(&result);
 
         // Detect usage limits and emit telemetry BEFORE flushing tracking
         // state, because both need data from running_logs.
@@ -1069,6 +1078,38 @@ impl DirigentApp {
         }
 
         self.on_workflow_cue_completed(result.cue_id);
+    }
+
+    fn persist_execution_metadata(&self, result: &ClaudeResult) {
+        let Some(metadata) = result.metadata.as_ref() else {
+            return;
+        };
+        if let Ok(payload) = serde_json::to_value(metadata) {
+            let _ = self
+                .db
+                .insert_execution_event(result.exec_id, "pty_metadata", &payload);
+        }
+        for summary in &metadata.permission_summaries {
+            let _ = self.db.insert_execution_event(
+                result.exec_id,
+                "permission",
+                &serde_json::json!({ "summary": summary }),
+            );
+        }
+        for warning in &metadata.parser_warnings {
+            let _ = self.db.insert_execution_event(
+                result.exec_id,
+                "parser_warning",
+                &serde_json::json!({ "message": warning }),
+            );
+        }
+        if let Some(reason) = metadata.completion_reason.as_ref() {
+            let _ = self.db.insert_execution_event(
+                result.exec_id,
+                "completion",
+                &serde_json::json!({ "reason": reason }),
+            );
+        }
     }
 
     /// Flush the running log to DB and remove tracking state for a completed result.

@@ -49,9 +49,12 @@ pub mod event;
 pub mod session;
 
 pub use builder::{ClaudeCode, ClaudeCodeBuilder, PermissionMode};
-pub use event::{Event, PollEvent};
+pub use event::{
+    ActivitySource, Event, LineSource, PermissionDialog, PermissionDialogKind, PollEvent,
+    SessionState, StopHookSummary, TerminalMode,
+};
 pub use portable_pty::ExitStatus;
-pub use session::Session;
+pub use session::{replay_chunks, RecordingConfig, RecordingEvent, Session};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
