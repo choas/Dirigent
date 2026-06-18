@@ -42,8 +42,10 @@ impl DirigentApp {
             .show(ctx, |ui| {
                 if self.git.commit_review_cue_id.is_some() {
                     ui.label("Commit the reviewed changes with a message.");
-                } else {
+                } else if self.settings.vcs_backend == crate::settings::VcsBackend::Jj {
                     ui.label("Describe the current working-copy commit and start a new change.");
+                } else {
+                    ui.label("Commit all working-copy changes with a message.");
                 }
                 ui.add_space(SPACE_XS);
 
@@ -152,7 +154,7 @@ impl DirigentApp {
             });
 
         if do_commit {
-            self.start_jj_commit();
+            self.start_commit();
         } else if dismiss {
             self.git.show_commit_dialog = false;
             self.git.commit_review_cue_id = None;

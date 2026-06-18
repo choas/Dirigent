@@ -840,9 +840,17 @@ fn spawn_terminal_with_command(dir: &Path, command: &str) -> std::io::Result<std
         let shell_cmd = format!("cd {} && {}", shell_quote(&dir.to_string_lossy()), command);
         // Escape for embedding inside an AppleScript double-quoted string.
         let escaped = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        // Run `do script` *before* `activate`. If Terminal isn't already
+        // running, `activate` would launch it and create a window whose shell
+        // is still initializing; the subsequent `do script` then types into
+        // that not-ready shell and the first character gets dropped (e.g. "cd"
+        // arrives as "d"). Letting `do script` create the window first avoids
+        // the race.
         let script = format!(
-            "tell application \"Terminal\" to activate\n\
-             tell application \"Terminal\" to do script \"{escaped}\""
+            "tell application \"Terminal\"\n\
+             \tdo script \"{escaped}\"\n\
+             \tactivate\n\
+             end tell"
         );
         std::process::Command::new("osascript")
             .arg("-e")

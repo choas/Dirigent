@@ -1227,8 +1227,13 @@ impl DirigentApp {
         self.git.show_commit_dialog = true;
     }
 
-    /// Commit the jj working copy with the user's message (runs off the UI thread).
-    pub(super) fn start_jj_commit(&mut self) {
+    /// Commit the working copy with the user's message (runs off the UI thread).
+    ///
+    /// Backend-aware: routes through [`vcs_dispatch`](super::vcs_dispatch) so the
+    /// editable commit dialog works for both git and jj. When a review cue is
+    /// pending its execution diff is committed directly; otherwise the whole
+    /// working copy is committed.
+    pub(super) fn start_commit(&mut self) {
         let msg = self.git.commit_message_input.trim().to_string();
         if msg.is_empty() {
             self.set_status_message("Commit message cannot be empty".into());
@@ -1253,13 +1258,27 @@ impl DirigentApp {
         let (tx, rx) = mpsc::channel();
         self.git.commit_rx = Some(rx);
         let root = self.project_root.clone();
+        let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let active_bm = self.git.active_bookmark.clone();
         std::thread::spawn(move || {
             let result = if let Some(ref diff) = diff_text {
-                jj::jj_commit_diff(&root, diff, &msg, &jj_path, active_bm.as_deref())
+                super::vcs_dispatch::commit_diff(
+                    &backend,
+                    &jj_path,
+                    &root,
+                    diff,
+                    &msg,
+                    active_bm.as_deref(),
+                )
             } else {
-                jj::jj_commit_all(&root, &msg, &jj_path, true, active_bm.as_deref())
+                super::vcs_dispatch::commit_all(
+                    &backend,
+                    &jj_path,
+                    &root,
+                    &msg,
+                    active_bm.as_deref(),
+                )
             };
             let result = result
                 .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))
