@@ -261,6 +261,23 @@ impl Session {
     }
 
     pub fn close_gracefully(&mut self, timeout: Duration) -> Result<(), Error> {
+        self.close_gracefully_draining(timeout, |_| {})
+    }
+
+    /// Like [`close_gracefully`](Self::close_gracefully) but forwards every
+    /// event polled while draining to `on_event`.
+    ///
+    /// Interrupting Claude's turn (the `Ctrl-C` sent by [`request_exit`]) makes
+    /// Claude Code print an "Interrupted · What should Claude do instead?" line
+    /// and record it in the session transcript. The plain `close_gracefully`
+    /// discards those drained events, so embedders never see that line until
+    /// they `--resume` the session in a real terminal. This variant lets the
+    /// caller surface them in its own log instead.
+    pub fn close_gracefully_draining(
+        &mut self,
+        timeout: Duration,
+        mut on_event: impl FnMut(&Event),
+    ) -> Result<(), Error> {
         emit_critical(
             &self.events_tx,
             self.recorder.as_ref(),
@@ -272,11 +289,11 @@ impl Session {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match self.poll_event() {
-                PollEvent::Ready(Event::LibDone)
-                | PollEvent::Ready(Event::ProcessExited { .. }) => {
+                PollEvent::Ready(event @ (Event::LibDone | Event::ProcessExited { .. })) => {
+                    on_event(&event);
                     return Ok(());
                 }
-                PollEvent::Ready(_) => {}
+                PollEvent::Ready(event) => on_event(&event),
                 PollEvent::Pending => std::thread::sleep(Duration::from_millis(50)),
                 PollEvent::Closed => return Ok(()),
             }

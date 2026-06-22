@@ -16,6 +16,23 @@ pub(super) struct PtyResult {
     pub metadata: ClaudeRunMetadata,
 }
 
+/// Close the session while forwarding the lines Claude emits during shutdown.
+///
+/// Triggering the exit sends `Ctrl-C`, which cuts an in-progress turn short and
+/// makes Claude Code print an "Interrupted · What should Claude do instead?"
+/// line (also written to the session transcript). The plain `close_gracefully`
+/// discards those drained events, so the line was invisible in Dirigent and
+/// only reappeared when the session was later opened with `claude --resume`.
+/// Draining forwards it to `on_log` so it shows up live instead.
+fn graceful_close(session: &mut Session, timeout: Duration, on_log: &mut dyn FnMut(&str)) {
+    let _ = session.close_gracefully_draining(timeout, |event| {
+        if let Event::FilteredLine { ansi, .. } = event {
+            on_log(ansi);
+            on_log("\n");
+        }
+    });
+}
+
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
 ///
 /// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
@@ -60,7 +77,7 @@ pub(super) fn consume_pty_events(
         if cancel.load(Ordering::Relaxed) {
             on_log("\n⚠ Run cancelled.\n");
             state.metadata.completion_reason = Some("cancelled".to_string());
-            let _ = session.close_gracefully(Duration::from_secs(2));
+            graceful_close(session, Duration::from_secs(2), on_log);
             break;
         }
 
@@ -148,7 +165,7 @@ pub(super) fn consume_pty_events(
                             // No Stop hook installed: a second prompt is the
                             // only signal we have that Claude's turn ended.
                             state.metadata.completion_reason = Some("prompt_returned".to_string());
-                            let _ = session.close_gracefully(Duration::from_secs(5));
+                            graceful_close(session, Duration::from_secs(5), on_log);
                             break;
                         }
                         // With a sentinel active, ignore the second-prompt
@@ -223,7 +240,7 @@ pub(super) fn consume_pty_events(
                         if since_sentinel >= SENTINEL_GRACE || since_event >= Duration::from_secs(1)
                         {
                             on_log("\n⏎ Grace period done — exiting.\n");
-                            let _ = session.close_gracefully(Duration::from_secs(5));
+                            graceful_close(session, Duration::from_secs(5), on_log);
                             break;
                         }
                     } else if waiting_for_permission {
@@ -236,7 +253,7 @@ pub(super) fn consume_pty_events(
                         // hanging forever.
                         on_log("\n⚠ No PTY events for 120 s — exiting to avoid stall.\n");
                         state.metadata.completion_reason = Some("idle_timeout".to_string());
-                        let _ = session.close_gracefully(Duration::from_secs(5));
+                        graceful_close(session, Duration::from_secs(5), on_log);
                         break;
                     }
                 }
