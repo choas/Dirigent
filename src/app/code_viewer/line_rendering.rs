@@ -112,14 +112,9 @@ pub(crate) fn render_code_line(
                 .color(app.semantic.tertiary_text),
         );
 
-        let layout_job = crate::syntax::highlight(
-            ui.ctx(),
-            ui.style(),
-            &app.viewer.syntax_theme,
-            line_text,
-            ctx.ext,
-        );
-        let code_resp = ui.label(layout_job);
+        let galley =
+            crate::syntax::highlight_galley(ui, &app.viewer.syntax_theme, line_text, ctx.ext);
+        let code_resp = ui.label(galley);
 
         let rect = code_resp.rect.union(ui.available_rect_before_wrap());
         let line_response = ui.interact(
