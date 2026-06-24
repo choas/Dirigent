@@ -86,7 +86,7 @@ impl DirigentApp {
             ui.separator();
 
             // Conversation scroll area
-            egui::ScrollArea::vertical()
+            let output = egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -99,6 +99,10 @@ impl DirigentApp {
                         &current_provider,
                     );
                 });
+
+            // Floating "jump to end" button, shown only when the log is scrolled
+            // up and away from the bottom. Clicking it snaps to the latest output.
+            self.render_jump_to_bottom_button(ui, fs, &output);
         });
 
         if close {
@@ -162,6 +166,46 @@ impl DirigentApp {
                 current_provider,
                 current_running_log,
             );
+        }
+    }
+
+    /// Render a circular "jump to end" button overlaid at the bottom of the
+    /// conversation scroll area. It is hidden whenever the log is already
+    /// scrolled to the bottom (where `stick_to_bottom` keeps it pinned), and
+    /// appears once the user scrolls up so they can return to the latest output
+    /// in one click.
+    fn render_jump_to_bottom_button(
+        &self,
+        ui: &mut egui::Ui,
+        fs: f32,
+        output: &egui::scroll_area::ScrollAreaOutput<()>,
+    ) {
+        // Distance from the current scroll offset to the very bottom. A small
+        // tolerance avoids the button flickering due to sub-pixel rounding.
+        let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        let remaining = max_offset - output.state.offset.y;
+        if remaining <= 2.0 {
+            return;
+        }
+
+        let btn_size = fs + 16.0;
+        let margin = SPACE_SM;
+        let center = egui::pos2(
+            output.inner_rect.center().x,
+            output.inner_rect.bottom() - margin - btn_size / 2.0,
+        );
+        let rect = egui::Rect::from_center_size(center, egui::vec2(btn_size, btn_size));
+
+        let button = egui::Button::new(icon("\u{2193}", fs).color(self.semantic.accent_text()))
+            .fill(self.semantic.accent)
+            .corner_radius(btn_size as u8 / 2)
+            .min_size(egui::vec2(btn_size, btn_size));
+        let resp = ui.put(rect, button).on_hover_text("Jump to latest output");
+        if resp.clicked() {
+            let mut state = output.state;
+            state.offset.y = output.content_size.y;
+            state.store(ui.ctx(), output.id);
+            ui.ctx().request_repaint();
         }
     }
 
