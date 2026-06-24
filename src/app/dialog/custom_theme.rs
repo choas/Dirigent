@@ -187,6 +187,13 @@ impl DirigentApp {
                             "Accent",
                             &mut edit.theme.accent,
                         );
+                        color_row(
+                            ui,
+                            "Warning/Badge",
+                            &mut edit.theme.warning,
+                            "Badge Text",
+                            &mut edit.theme.badge_text,
+                        );
                     });
 
                 ui.add_space(SPACE_SM);
@@ -472,7 +479,9 @@ Return ONLY a JSON object (no markdown, no explanation) with these exact fields,
   "hovered": [R, G, B],
   "active": [R, G, B],
   "hyperlink": [R, G, B],
-  "accent": [R, G, B]
+  "accent": [R, G, B],
+  "warning": [R, G, B],
+  "badge_text": [R, G, B]
 }}
 
 For a {dark_light} theme:
@@ -480,6 +489,8 @@ For a {dark_light} theme:
 - text should be {text_desc}
 - selection, noninteractive, inactive, hovered should be subtle variations of the background
 - active, hyperlink, accent should be vibrant accent colors matching the description
+- warning should be an attention color (used for badges like the non-default branch indicator)
+- badge_text should be a readable text color drawn on top of the warning/accent badge backgrounds
 
 Return ONLY the JSON object."#,
         bg_desc = if is_dark {
@@ -611,6 +622,14 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         Ok(rgb)
     };
 
+    // Warning / badge text are optional in the AI response: fall back to
+    // theme-appropriate defaults if the model omits them.
+    let (default_warning, default_badge_text) = if is_dark {
+        ([200u8, 165, 60], [220u8, 220, 220])
+    } else {
+        ([160u8, 110, 0], [255u8, 255, 255])
+    };
+
     Ok(CustomTheme {
         name: String::new(),
         is_dark,
@@ -626,5 +645,7 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         active: get_rgb("active")?,
         hyperlink: get_rgb("hyperlink")?,
         accent: get_rgb("accent")?,
+        warning: get_rgb("warning").unwrap_or(default_warning),
+        badge_text: get_rgb("badge_text").unwrap_or(default_badge_text),
     })
 }
