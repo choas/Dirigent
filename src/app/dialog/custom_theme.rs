@@ -414,6 +414,7 @@ impl DirigentApp {
         edit.ai_rx = Some(rx);
 
         let is_dark = edit.theme.is_dark;
+        let current_theme = edit.theme.clone();
         let provider = self.settings.cli_provider.clone();
         let settings = self.settings.clone();
         let project_root = self.project_root.clone();
@@ -427,6 +428,7 @@ impl DirigentApp {
                 &project_root,
                 &prompt_text,
                 is_dark,
+                &current_theme,
                 cancel.clone(),
             );
             let _ = tx.send(result);
@@ -452,6 +454,32 @@ fn color_row(
     ui.end_row();
 }
 
+/// Format the theme's current colors as a `field: [R, G, B]` list for the AI prompt,
+/// so the model can tweak specific colors instead of always regenerating from scratch.
+fn current_theme_colors(t: &CustomTheme) -> String {
+    let fields: [(&str, [u8; 3]); 14] = [
+        ("panel_fill", t.panel_fill),
+        ("window_fill", t.window_fill),
+        ("extreme_bg", t.extreme_bg),
+        ("faint_bg", t.faint_bg),
+        ("text", t.text),
+        ("selection", t.selection),
+        ("noninteractive", t.noninteractive),
+        ("inactive", t.inactive),
+        ("hovered", t.hovered),
+        ("active", t.active),
+        ("hyperlink", t.hyperlink),
+        ("accent", t.accent),
+        ("warning", t.warning),
+        ("badge_text", t.badge_text),
+    ];
+    fields
+        .iter()
+        .map(|(name, [r, g, b])| format!("  {name}: [{r}, {g}, {b}]"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Call the selected code generator CLI to generate theme palette colors from a description.
 fn generate_theme_via_cli(
     provider: &CliProvider,
@@ -459,11 +487,23 @@ fn generate_theme_via_cli(
     project_root: &std::path::Path,
     description: &str,
     is_dark: bool,
+    current: &CustomTheme,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<CustomTheme, String> {
     let dark_light = if is_dark { "dark" } else { "light" };
+    let current_colors = current_theme_colors(current);
     let prompt = format!(
         r#"Generate a {dark_light} color theme for a code editor based on this description: "{description}"
+
+The theme currently has these colors (field: [R, G, B]):
+
+{current_colors}
+
+Treat the description as a request to modify this existing palette. If it names a
+specific color or aspect (e.g. "make the accent more blue", "warmer background",
+"only change the warning color"), keep every other field at its current value and
+adjust only what the description asks for. If the description calls for a complete
+new look, you may change all of them.
 
 Return ONLY a JSON object (no markdown, no explanation) with these exact fields, each being an array of 3 integers [R, G, B] (0-255):
 
