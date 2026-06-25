@@ -71,6 +71,7 @@ pub(super) fn consume_pty_events(
     let mut sentinel_seen: Option<Instant> = None;
     let mut waiting_for_permission = false;
     let mut saw_filtered_line = false;
+    let mut survey_answered = false;
     let done_sentinel = done_hook.map(|h| h.sentinel_path());
 
     loop {
@@ -96,6 +97,10 @@ pub(super) fn consume_pty_events(
                         on_log("\n");
                         state.response.push_str(text);
                         state.response.push('\n');
+                        if !survey_answered && is_session_rating_prompt(text) {
+                            answer_session_rating(session, on_log);
+                            survey_answered = true;
+                        }
                     }
                     Event::PtyActivity { .. } => {
                         on_log("\0");
@@ -202,6 +207,10 @@ pub(super) fn consume_pty_events(
                             on_log("\n");
                             state.response.push_str(plain);
                             state.response.push('\n');
+                            if !survey_answered && is_session_rating_prompt(plain) {
+                                answer_session_rating(session, on_log);
+                                survey_answered = true;
+                            }
                         }
                     }
                     Event::LibDone => break,
@@ -480,6 +489,36 @@ pub(crate) fn detect_stopped_early(log: &str) -> bool {
     }
 }
 
+// ── Session-rating survey auto-answer ───────────────────────────────
+
+/// Detect Claude Code's optional end-of-session rating prompt, e.g.:
+///
+/// ```text
+/// ● How is Claude doing this session? (optional)
+///   1: Bad    2: Fine   3: Good   0: Dismiss
+/// ```
+///
+/// This is an interactive question Claude routinely emits in the TUI; left
+/// unanswered it can hold the PTY open. We match the distinctive question text
+/// so Dirigent can answer it automatically and let the run finish.
+fn is_session_rating_prompt(line: &str) -> bool {
+    line.contains("How is Claude doing this session")
+}
+
+/// Answer the session-rating survey by selecting option `3` (Good).
+///
+/// The survey is a single-key selection (like the permission-option picker), so
+/// writing the digit `3` chooses "Good" and dismisses the prompt; no Enter is
+/// needed.
+fn answer_session_rating(session: &Session, on_log: &mut dyn FnMut(&str)) {
+    match session.send_key(b"3") {
+        Ok(()) => on_log("\n⏎ Session rating prompt — answered 3 (Good)\n"),
+        Err(e) => on_log(&format!(
+            "\n⚠ Failed to answer session rating prompt: {e}\n"
+        )),
+    }
+}
+
 // ── Usage limit & question detection ────────────────────────────────
 
 /// Detect a usage-limit / hard rate-limit message in Claude output.
@@ -572,6 +611,19 @@ mod tests {
         assert!(!response_has_question(""));
         assert!(!response_has_question("   "));
         assert!(!response_has_question("ok?"));
+    }
+
+    #[test]
+    fn session_rating_prompt_detected() {
+        assert!(is_session_rating_prompt(
+            "● How is Claude doing this session? (optional)"
+        ));
+        assert!(is_session_rating_prompt("How is Claude doing this session"));
+        assert!(!is_session_rating_prompt(
+            "  1: Bad    2: Fine   3: Good   0: Dismiss"
+        ));
+        assert!(!is_session_rating_prompt("How are you doing today?"));
+        assert!(!is_session_rating_prompt(""));
     }
 
     #[test]
