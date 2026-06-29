@@ -14,7 +14,13 @@ pub(super) struct DoneHook {
 impl DoneHook {
     /// Install a Claude Code `Stop` hook that writes a sentinel file when
     /// Claude's turn ends. Returns a guard that removes the hook on drop.
-    pub fn install(project_root: &Path) -> Option<Self> {
+    ///
+    /// `session_id` scopes the hook to a single run: Claude Code fires *all*
+    /// matching `Stop` hooks in parallel, so when two runs overlap in the same
+    /// project the command must only touch its own sentinel when the triggering
+    /// session matches. When the id is unknown (`None`) the hook fires
+    /// unconditionally, which is safe for the common single-run case.
+    pub fn install(project_root: &Path, session_id: Option<&str>) -> Option<Self> {
         let sentinel = std::env::temp_dir().join(format!(
             "{}-{}-{}",
             HOOK_MARKER,
@@ -32,7 +38,7 @@ impl DoneHook {
         if std::fs::create_dir_all(&claude_dir).is_err() {
             return None;
         }
-        if upsert_stop_hook(&settings_path, &sentinel, &payload).is_err() {
+        if upsert_stop_hook(&settings_path, &sentinel, &payload, session_id).is_err() {
             return None;
         }
 
@@ -64,7 +70,12 @@ impl Drop for DoneHook {
     }
 }
 
-fn upsert_stop_hook(settings_path: &Path, sentinel: &Path, payload: &Path) -> anyhow::Result<()> {
+fn upsert_stop_hook(
+    settings_path: &Path,
+    sentinel: &Path,
+    payload: &Path,
+    session_id: Option<&str>,
+) -> anyhow::Result<()> {
     let mut root = read_json_object(settings_path);
     if !root.is_object() {
         root = serde_json::json!({});
@@ -93,18 +104,43 @@ fn upsert_stop_hook(settings_path: &Path, sentinel: &Path, payload: &Path) -> an
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": format!(
-                    "sh -c 'cat > \"$1\"; touch \"$2\"' {} {} {}",
-                    HOOK_MARKER,
-                    shell_escape(payload),
-                    shell_escape(sentinel),
-                )
+                "command": stop_hook_command(sentinel, payload, session_id),
             }]
         }));
     }
 
     let json = serde_json::to_string_pretty(&root)?;
     atomic_write(settings_path, json.as_bytes())
+}
+
+/// Build the shell command Claude Code runs for this run's `Stop` hook.
+///
+/// Claude fires every matching `Stop` hook in parallel and feeds each the same
+/// JSON on stdin. When `session_id` is known we gate the side effects on that id
+/// appearing in the payload, so a sibling run finishing first does not touch
+/// *this* run's sentinel and trip its still-running consume loop. Without an id
+/// we fall back to the unconditional capture, which is correct when only one run
+/// is active.
+fn stop_hook_command(sentinel: &Path, payload: &Path, session_id: Option<&str>) -> String {
+    match session_id {
+        Some(id) if !id.is_empty() => format!(
+            // $1 payload, $2 sentinel, $3 session id. Capture stdin once, then
+            // only persist it when the triggering session matches ours.
+            "sh -c 'input=$(cat); printf %s \"$input\" | grep -Eq \
+             \"\\\"session_id\\\"[[:space:]]*:[[:space:]]*\\\"$3\\\"\" || exit 0; \
+             printf %s \"$input\" > \"$1\"; touch \"$2\"' {} {} {} {}",
+            HOOK_MARKER,
+            shell_escape(payload),
+            shell_escape(sentinel),
+            shell_escape(Path::new(id)),
+        ),
+        _ => format!(
+            "sh -c 'cat > \"$1\"; touch \"$2\"' {} {} {}",
+            HOOK_MARKER,
+            shell_escape(payload),
+            shell_escape(sentinel),
+        ),
+    }
 }
 
 fn remove_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()> {
@@ -242,11 +278,27 @@ mod tests {
         let settings = tmp.path().join("settings.local.json");
         let sentinel = tmp.path().join("sentinel");
         let payload = tmp.path().join("payload.json");
-        upsert_stop_hook(&settings, &sentinel, &payload).unwrap();
+        upsert_stop_hook(&settings, &sentinel, &payload, None).unwrap();
         let json = std::fs::read_to_string(settings).unwrap();
         assert!(json.contains("cat >"));
         assert!(json.contains(payload.to_str().unwrap()));
         assert!(json.contains(sentinel.to_str().unwrap()));
+    }
+
+    #[test]
+    fn upsert_stop_hook_scopes_command_to_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+        let sentinel = tmp.path().join("sentinel");
+        let payload = tmp.path().join("payload.json");
+        upsert_stop_hook(&settings, &sentinel, &payload, Some("sess-123")).unwrap();
+        let json = std::fs::read_to_string(settings).unwrap();
+        // The command only touches the sentinel when the triggering session's id
+        // appears in the hook payload, so a sibling run cannot trip this one.
+        assert!(json.contains("session_id"));
+        assert!(json.contains("sess-123"));
+        assert!(json.contains("grep -Eq"));
+        assert!(json.contains("|| exit 0"));
     }
 
     fn stop_hook_count(settings: &Path) -> usize {
@@ -265,8 +317,8 @@ mod tests {
         let payload_b = sentinel_b.with_extension("json");
 
         // Two overlapping runs install their hooks.
-        upsert_stop_hook(&settings, &sentinel_a, &payload_a).unwrap();
-        upsert_stop_hook(&settings, &sentinel_b, &payload_b).unwrap();
+        upsert_stop_hook(&settings, &sentinel_a, &payload_a, Some("sess-a")).unwrap();
+        upsert_stop_hook(&settings, &sentinel_b, &payload_b, Some("sess-b")).unwrap();
 
         // Both hooks must coexist; installing B must not drop A. Match on the
         // quoted argument tokens since A's sentinel is a string prefix of B's.

@@ -192,7 +192,9 @@ fn invoke_pty(
     // `std::process::Command`, which also overwrites — see `invoke_headless`.
     builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
 
-    let done_hook = DoneHook::install(project_root);
+    let session_id = extract_session_id(extra_args_vec);
+
+    let done_hook = DoneHook::install(project_root, session_id.as_deref());
     if done_hook.is_some() {
         on_log("⏎ Stop hook installed\n");
     }
@@ -203,8 +205,6 @@ fn invoke_pty(
             ClaudeError::SpawnFailed(std::io::Error::other(msg))
         }
     })?;
-
-    let session_id = extract_session_id(extra_args_vec);
     let state = consume_pty_events(
         &mut session,
         prompt,
