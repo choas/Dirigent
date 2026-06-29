@@ -217,6 +217,27 @@ mod tests {
     }
 
     #[test]
+    fn insert_execution_event_keeps_execution_loading_compatible() {
+        let db = test_db();
+        let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();
+        let exec_id = db
+            .insert_execution(cue_id, "prompt", &CliProvider::Claude)
+            .unwrap();
+        db.insert_execution_event(
+            exec_id,
+            "completion",
+            &serde_json::json!({"completion_reason": "stop_hook"}),
+        )
+        .unwrap();
+        let exec = db.get_latest_execution(cue_id).unwrap().unwrap();
+        assert_eq!(exec.id, exec_id);
+        let events = db.get_execution_events(exec_id).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "completion");
+        assert!(events[0].1.contains("stop_hook"));
+    }
+
+    #[test]
     fn get_latest_execution_returns_most_recent() {
         let db = test_db();
         let cue_id = db.insert_cue("task", "f.rs", 1, None, &[]).unwrap();

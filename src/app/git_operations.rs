@@ -110,6 +110,15 @@ impl DirigentApp {
 
     /// Open the "Switch Branch" dialog with available branches populated.
     pub(super) fn open_switch_branch_dialog(&mut self) {
+        self.refresh_branch_list();
+        self.git.new_branch_name.clear();
+        self.git.show_switch_branch = true;
+    }
+
+    /// (Re)populate the list of available branches/bookmarks used by the
+    /// Switch Branch dialog. Call after operations that change the set of
+    /// branches (e.g. creating a new one).
+    pub(super) fn refresh_branch_list(&mut self) {
         match self.settings.vcs_backend {
             VcsBackend::Jj => {
                 let infos = jj::jj_list_bookmarks_with_status(
@@ -133,7 +142,6 @@ impl DirigentApp {
                 self.git.bookmark_push_statuses.clear();
             }
         }
-        self.git.show_switch_branch = true;
     }
 
     /// Open the Create PR dialog with pre-filled fields.
@@ -815,7 +823,9 @@ impl DirigentApp {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.git.moving_to_branch = false;
                 self.git.move_to_branch_rx = None;
-                self.set_status_message("Move to branch failed unexpectedly".into());
+                self.show_move_to_branch_error(
+                    "The move operation ended unexpectedly before reporting a result.".into(),
+                );
                 // The operation is non-atomic: the new branch may have been
                 // created before the failure, so refresh state.
                 self.reload_git_info();
@@ -834,13 +844,21 @@ impl DirigentApp {
                 ));
             }
             Err(e) => {
-                self.set_status_message(format!("Move to branch failed: {}", e));
+                self.show_move_to_branch_error(e);
             }
         }
         // Always refresh: the operation is non-atomic (branch created before
         // reset), so even failures may have changed repo state.
         self.reload_git_info();
         self.reload_commit_history();
+    }
+
+    /// Surface a move-to-branch failure in a dialog (not just a toast), so the
+    /// user can read the error and any suggested remedy instead of missing it.
+    pub(super) fn show_move_to_branch_error(&mut self, message: String) {
+        self.set_status_message(format!("Move to branch failed: {}", message));
+        self.git.move_to_branch_error_message = message;
+        self.git.show_move_to_branch_error = true;
     }
 
     /// Open the Create Bookmark dialog (jj only).
@@ -1217,8 +1235,13 @@ impl DirigentApp {
         self.git.show_commit_dialog = true;
     }
 
-    /// Commit the jj working copy with the user's message (runs off the UI thread).
-    pub(super) fn start_jj_commit(&mut self) {
+    /// Commit the working copy with the user's message (runs off the UI thread).
+    ///
+    /// Backend-aware: routes through [`vcs_dispatch`](super::vcs_dispatch) so the
+    /// editable commit dialog works for both git and jj. When a review cue is
+    /// pending its execution diff is committed directly; otherwise the whole
+    /// working copy is committed.
+    pub(super) fn start_commit(&mut self) {
         let msg = self.git.commit_message_input.trim().to_string();
         if msg.is_empty() {
             self.set_status_message("Commit message cannot be empty".into());
@@ -1229,27 +1252,63 @@ impl DirigentApp {
         }
 
         let cue_id = self.git.commit_review_cue_id.take();
+        let selected_files = std::mem::take(&mut self.git.commit_files);
 
-        let diff_text = cue_id.and_then(|id| {
+        // Resolve the diff to commit:
+        // - a reviewed cue commits its stored execution diff;
+        // - a Git-view selection commits only those files (path-scoped diff);
+        // - otherwise the whole working copy is committed (`commit_all`).
+        let diff_text = if let Some(id) = cue_id {
             self.db
                 .get_latest_execution(id)
                 .ok()
                 .flatten()
                 .and_then(|e| e.diff)
-        });
+        } else if !selected_files.is_empty() {
+            let diff = super::vcs_dispatch::get_working_diff(
+                &self.settings.vcs_backend,
+                &self.settings.jj_cli_path,
+                &self.project_root,
+                &selected_files,
+            )
+            .filter(|d| !d.trim().is_empty());
+            match diff {
+                Some(d) => Some(d),
+                None => {
+                    self.set_status_message("No changes to commit for the selected files".into());
+                    return;
+                }
+            }
+        } else {
+            None
+        };
 
         self.git.show_commit_dialog = false;
         self.git.committing = true;
         let (tx, rx) = mpsc::channel();
         self.git.commit_rx = Some(rx);
         let root = self.project_root.clone();
+        let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let active_bm = self.git.active_bookmark.clone();
         std::thread::spawn(move || {
             let result = if let Some(ref diff) = diff_text {
-                jj::jj_commit_diff(&root, diff, &msg, &jj_path, active_bm.as_deref())
+                super::vcs_dispatch::commit_diff(
+                    &backend,
+                    &jj_path,
+                    &root,
+                    diff,
+                    &msg,
+                    active_bm.as_deref(),
+                )
             } else {
-                jj::jj_commit_all(&root, &msg, &jj_path, true, active_bm.as_deref())
+                super::vcs_dispatch::commit_all(
+                    &backend,
+                    &jj_path,
+                    &root,
+                    &msg,
+                    active_bm.as_deref(),
+                )
             };
             let result = result
                 .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))
@@ -1287,8 +1346,29 @@ impl DirigentApp {
             Ok(msg) => {
                 if let Some(id) = pending_cue {
                     let _ = self.db.update_cue_status(id, CueStatus::Done);
-                    let _ = self.db.log_activity(id, "Committed");
+                    // The worker reports success as "Committed: <hash>"; record it
+                    // as "Committed (<hash>)" so cue_commit_hash can recover the
+                    // hash and offer "Save as Play" on the cue.
+                    let activity = match msg.strip_prefix("Committed: ") {
+                        Some(hash) => format!("Committed ({})", hash),
+                        None => "Committed".to_string(),
+                    };
+                    let _ = self.db.log_activity(id, &activity);
                     self.clear_review_question_and_recheck_workflow(id);
+                    // Run configured AfterCommit agents (format/lint/build/test)
+                    // for changes committed via the diff-review dialog, matching
+                    // the old direct-commit path's behavior.
+                    let cue_prompt = self
+                        .cues
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default();
+                    self.trigger_agents_for(
+                        &crate::agents::AgentTrigger::AfterCommit,
+                        Some(id),
+                        &cue_prompt,
+                    );
                 }
                 self.set_status_message(msg);
             }

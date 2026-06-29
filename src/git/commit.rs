@@ -253,8 +253,11 @@ pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Max length for including a log message in the commit body.
-const MAX_LOG_MESSAGE_LEN: usize = 500;
+/// Upper bound for the CLI message we include in the commit body. This is a
+/// sanity guard against a corrupted PTY capture bloating the commit, not a
+/// quality filter: a detailed multi-sentence message is perfectly valid, so a
+/// message longer than this is truncated rather than discarded.
+const MAX_LOG_MESSAGE_LEN: usize = 2000;
 
 /// Generate a conventional commit message from the CLI-generated commit
 /// message and/or cue text.
@@ -265,9 +268,7 @@ const MAX_LOG_MESSAGE_LEN: usize = 500;
 ///
 /// Format: `type: title\n\n[cli body]\n\nCue: cue_text\n\nDirigent: …`
 pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>) -> String {
-    let cli_body = cli_message
-        .map(|m| m.trim())
-        .filter(|t| !t.is_empty() && t.len() <= MAX_LOG_MESSAGE_LEN);
+    let cli_body = cli_message.map(|m| m.trim()).filter(|t| !t.is_empty());
 
     let (subject, body_parts) = if let Some(cli) = cli_body {
         let first_line = cli.lines().next().unwrap_or(cli);
@@ -288,8 +289,15 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let subject = format!("{}{}", prefix, subject_desc);
 
         let mut parts = Vec::new();
-        // Include the full CLI message in the body.
-        parts.push(cli.to_string());
+        // Include the CLI message in the body. Only an over-long message
+        // (likely a garbled capture) is truncated — a normal detailed
+        // message is kept in full rather than thrown away.
+        let body = if cli.len() > MAX_LOG_MESSAGE_LEN {
+            format!("{}…", crate::app::truncate_str(cli, MAX_LOG_MESSAGE_LEN))
+        } else {
+            cli.to_string()
+        };
+        parts.push(body);
         parts.push(format!("Cue: {}", cue_text));
 
         (subject, parts)
@@ -668,12 +676,31 @@ mod tests {
     }
 
     #[test]
-    fn generate_commit_message_skips_large_cli() {
-        let large_cli = "x".repeat(501);
-        let msg = generate_commit_message("Fix typo", Some(&large_cli));
-        assert!(!msg.contains(&large_cli));
-        let parts: Vec<&str> = msg.split("\n\n").collect();
-        assert_eq!(parts.len(), 2); // subject + footer only, no cli body
+    fn generate_commit_message_keeps_detailed_cli() {
+        // A long but legitimate message (e.g. 765 chars from a real run) must be
+        // used, not discarded in favour of the raw cue text.
+        let detailed = format!("Add a feature.\n\n{}", "Detail sentence. ".repeat(40));
+        let detailed = detailed.trim();
+        assert!(detailed.len() > 500 && detailed.len() <= MAX_LOG_MESSAGE_LEN);
+        let msg = generate_commit_message("add a feature", Some(detailed));
+        assert!(msg.starts_with("feat: add a feature"));
+        assert!(msg.contains(detailed)); // full message preserved
+        assert!(msg.contains("Cue: add a feature"));
+    }
+
+    #[test]
+    fn generate_commit_message_truncates_oversized_cli() {
+        // Only an absurdly long (likely garbled) capture is truncated — and even
+        // then the message is still used rather than dropped to the cue text.
+        let huge_cli = format!(
+            "Add a feature.\n\n{}",
+            "x".repeat(MAX_LOG_MESSAGE_LEN + 500)
+        );
+        let msg = generate_commit_message("Fix typo", Some(&huge_cli));
+        assert!(msg.starts_with("feat: add a feature"));
+        assert!(!msg.contains(&huge_cli)); // truncated
+        assert!(msg.contains("…"));
+        assert!(msg.contains("Cue: Fix typo"));
     }
 
     // --- lint_commit_message ---

@@ -14,6 +14,7 @@ mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
 mod markdown_viewer;
+mod mermaid;
 mod notifications;
 mod panels;
 mod rendering;
@@ -25,6 +26,7 @@ mod ssh_operations;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
+mod thunderdome;
 mod types;
 pub(crate) mod util;
 mod vcs_dispatch;
@@ -193,6 +195,9 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
     }
 }
 
+/// Cached `lines_with_cues` for the code viewer: (file path, cue generation, line→has-cue map).
+type LinesWithCuesCache = (String, u64, std::sync::Arc<HashMap<usize, bool>>);
+
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
@@ -208,6 +213,11 @@ pub struct DirigentApp {
 
     // Code viewer
     pub(super) viewer: CodeViewerState,
+
+    // Mermaid diagram render cache (for the Markdown viewer)
+    mermaid: mermaid::MermaidCache,
+    // Enlarged Mermaid diagram viewer (opened by clicking a diagram)
+    mermaid_dialog: Option<mermaid::MermaidDialog>,
 
     // Cue pool
     cues: Vec<Cue>,
@@ -383,7 +393,7 @@ pub struct DirigentApp {
     /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
     cue_generation: u64,
     /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
-    cached_lines_with_cues: Option<(String, u64, std::sync::Arc<HashMap<usize, bool>>)>,
+    cached_lines_with_cues: Option<LinesWithCuesCache>,
 
     // Prompt history search
     prompt_history_query: String,
@@ -418,6 +428,12 @@ pub struct DirigentApp {
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
+
+    // Result of the last manual "Fetch Now" per source (settings dialog).
+    // `Ok(count)` on success, `Err(message)` on failure — shown inline next to
+    // the button so the user sees feedback without hunting in the status bar.
+    source_fetch_rx: Option<(usize, mpsc::Receiver<Result<usize, String>>)>,
+    source_fetch_status: HashMap<usize, Result<usize, String>>,
 
     // Workflow plan state
     workflow_plan: Option<crate::workflow::WorkflowPlan>,
@@ -807,6 +823,7 @@ impl DirigentApp {
                 notifying_pr: false,
                 pr_notify_rx: None,
                 show_switch_branch: false,
+                new_branch_name: String::new(),
                 archived_dbs: Vec::new(),
                 show_archived_dbs: false,
                 pending_force_remove: None,
@@ -824,6 +841,8 @@ impl DirigentApp {
                 move_to_branch_name: String::new(),
                 moving_to_branch: false,
                 move_to_branch_rx: None,
+                show_move_to_branch_error: false,
+                move_to_branch_error_message: String::new(),
                 show_create_bookmark: false,
                 create_bookmark_name: String::new(),
                 create_bookmark_needs_focus: false,
@@ -854,6 +873,13 @@ impl DirigentApp {
                 committing: false,
                 commit_rx: None,
                 commit_pending_cue_id: None,
+                commit_suggesting: false,
+                commit_suggest_rx: None,
+                commit_files: Vec::new(),
+                commit_in_background: false,
+                commit_suggest_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                    false,
+                )),
                 active_bookmark: None,
                 pr_number: None,
                 pr_url: None,
@@ -977,6 +1003,8 @@ impl DirigentApp {
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
             notion_objects_error: HashMap::new(),
+            source_fetch_rx: None,
+            source_fetch_status: HashMap::new(),
 
             workflow_plan: None,
             workflow_generating: false,
@@ -1012,6 +1040,8 @@ impl DirigentApp {
             last_render_file_tree_time: Duration::ZERO,
             last_render_cue_pool_time: Duration::ZERO,
             last_render_code_viewer_time: Duration::ZERO,
+            mermaid: mermaid::MermaidCache::default(),
+            mermaid_dialog: None,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
         if !skip_scan {
@@ -1305,6 +1335,9 @@ impl eframe::App for DirigentApp {
         // Poll background results (file tree, search, go-to-definition)
         self.poll_background_results();
 
+        // Poll for finished Mermaid diagram renders
+        self.mermaid.poll(ctx);
+
         // Poll for Claude results
         self.process_claude_results();
 
@@ -1332,6 +1365,7 @@ impl eframe::App for DirigentApp {
         self.process_squash_result();
         self.process_undo_result();
         self.process_commit_result();
+        self.process_commit_suggestion();
         self.process_merge_bookmark_result();
         self.process_delete_bookmark_result();
         self.process_abandon_empty_result();
@@ -1363,6 +1397,7 @@ impl eframe::App for DirigentApp {
         // Poll external sources for new cues
         self.poll_sources();
         self.process_source_results();
+        self.process_source_fetch_status();
 
         // Sync logs and periodic cleanup
         self.sync_logs_and_cleanup();

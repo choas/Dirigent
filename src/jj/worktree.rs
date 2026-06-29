@@ -297,7 +297,7 @@ pub(crate) struct SuspiciousBookmark {
 /// (e.g. "ffiixx" → "fix"). Returns the decoded string if so.
 fn decode_doubled(name: &str) -> Option<String> {
     let chars: Vec<char> = name.chars().collect();
-    if chars.len() < 4 || chars.len() % 2 != 0 {
+    if chars.len() < 4 || !chars.len().is_multiple_of(2) {
         return None;
     }
     let mut decoded = String::with_capacity(chars.len() / 2);

@@ -7,6 +7,7 @@ mod codex;
 mod db;
 mod diff_view;
 mod error;
+mod fast_llm;
 mod file_tree;
 mod gemini;
 mod git;

@@ -47,17 +47,16 @@ impl DirigentApp {
                     ui.horizontal(|ui| {
                         let _ = ui.selectable_label(true, egui::RichText::new("Files").size(fs));
                         let n = self.git.dirty_files.len();
-                        if n > 0 {
-                            if ui
+                        if n > 0
+                            && ui
                                 .selectable_label(
                                     false,
                                     egui::RichText::new(format!("Changes ({n})")).size(fs),
                                 )
                                 .clicked()
-                            {
-                                self.git.show_git_view = true;
-                                self.expand_git_view_dirs();
-                            }
+                        {
+                            self.git.show_git_view = true;
+                            self.expand_git_view_dirs();
                         }
                     });
                 }

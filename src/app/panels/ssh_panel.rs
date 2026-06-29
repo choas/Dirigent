@@ -137,7 +137,7 @@ impl DirigentApp {
                     ui.painter().text(
                         text_pos,
                         egui::Align2::LEFT_CENTER,
-                        &format!("{}{}", icon_str, entry.name),
+                        format!("{}{}", icon_str, entry.name),
                         egui::FontId::proportional(self.settings.font_size),
                         name_color,
                     );

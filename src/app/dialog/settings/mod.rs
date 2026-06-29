@@ -113,6 +113,8 @@ impl DirigentApp {
 
                     self.render_settings_smart_ai_section(ui);
 
+                    self.render_settings_fast_llm_section(ui);
+
                     self.render_settings_sources_section(ui, fs, &mut fetch_idx);
 
                     self.render_settings_agents_section(ui, fs, &mut close);
@@ -170,6 +172,78 @@ impl DirigentApp {
                         ui.add(egui::DragValue::new(&mut self.settings.auto_continue_max).range(1..=10));
                     }
                 });
+                ui.end_row();
+            });
+    }
+
+    fn render_settings_fast_llm_section(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(SPACE_MD);
+        ui.separator();
+        ui.add_space(SPACE_SM);
+        ui.strong("Fast LLM");
+        ui.add_space(SPACE_XS);
+        ui.label(
+            egui::RichText::new(
+                "A lightweight, OpenAI-compatible model for simple helper calls \
+                 (e.g. summarizing a commit message). Defaults to a local Ollama endpoint.",
+            )
+            .small()
+            .color(self.semantic.secondary_text),
+        );
+        ui.add_space(SPACE_XS);
+
+        egui::Grid::new("fast_llm_grid")
+            .num_columns(2)
+            .spacing([SPACE_MD, SPACE_SM])
+            .show(ui, |ui| {
+                ui.label("Enabled:");
+                ui.checkbox(
+                    &mut self.settings.fast_llm_enabled,
+                    "Use a fast LLM for simple calls",
+                )
+                .on_hover_text(
+                    "When off, features that can use the fast LLM fall back to manual input.",
+                );
+                ui.end_row();
+
+                ui.label("Provider:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.fast_llm_provider)
+                        .desired_width(250.0)
+                        .hint_text("e.g. Ollama, OpenAI")
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text("Display name only — the Base URL determines the endpoint.");
+                ui.end_row();
+
+                ui.label("Base URL:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.fast_llm_base_url)
+                        .desired_width(250.0)
+                        .hint_text("http://localhost:11434/v1")
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text("OpenAI-compatible base URL. `/chat/completions` is appended.");
+                ui.end_row();
+
+                ui.label("API Key:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.fast_llm_api_key)
+                        .desired_width(250.0)
+                        .hint_text("optional \u{2014} not needed for local Ollama")
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text("Sent as a Bearer token. Leave empty for local providers.");
+                ui.end_row();
+
+                ui.label("Model:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.fast_llm_model)
+                        .desired_width(250.0)
+                        .hint_text("gemma4:26b-mlx")
+                        .font(egui::TextStyle::Monospace),
+                );
                 ui.end_row();
             });
     }

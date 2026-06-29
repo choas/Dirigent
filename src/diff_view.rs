@@ -59,6 +59,47 @@ pub(crate) enum DiffLineKind {
     Deletion,
 }
 
+/// Maximum number of bytes of a single diff line we hand to egui for layout.
+///
+/// egui lays out each line as one unwrapped galley, and text-layout cost grows
+/// with the line length. A single very long line (minified JS, a lockfile, an
+/// embedded data URI, …) can make `epaint::text::layout` spin for tens of
+/// seconds and hang the whole UI. Capping the displayed text keeps per-frame
+/// layout bounded regardless of how pathological the diff is.
+const MAX_DISPLAY_LINE_BYTES: usize = 2000;
+
+/// Maximum number of diff lines we lay out in a single render pass.
+///
+/// [`MAX_DISPLAY_LINE_BYTES`] bounds the cost of any *single* line, but a diff
+/// with a huge *number* of lines (a regenerated lockfile, a vendored bundle, a
+/// mass reformat) is just as fatal: the diff view has no row virtualization, so
+/// every line becomes a galley every frame. Hundreds of thousands of galleys
+/// balloon epaint's galley cache to tens of GB and make a single frame take
+/// long enough that a background thread's `ctx.request_repaint()` read-lock
+/// exceeds epaint's 10s deadlock detector. That panic is raised inside the
+/// objc/winit `extern "C"` callback that drives the frame, where it cannot
+/// unwind, so the process aborts ("panic in a function that cannot unwind").
+/// Capping the rendered line count keeps each frame bounded; the remainder is
+/// hidden behind a notice.
+const MAX_RENDERED_DIFF_LINES: usize = 20_000;
+
+/// Return a display-safe version of a diff line, truncated on a char boundary
+/// if it exceeds [`MAX_DISPLAY_LINE_BYTES`]. Short lines are borrowed unchanged.
+fn display_line(content: &str) -> std::borrow::Cow<'_, str> {
+    if content.len() <= MAX_DISPLAY_LINE_BYTES {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let mut end = MAX_DISPLAY_LINE_BYTES;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!(
+        "{}… [line truncated, {} chars]",
+        &content[..end],
+        content.chars().count()
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -259,14 +300,13 @@ fn render_file_header(
         {
             toggled = true;
         }
-        if file.new_path != "/dev/null" {
-            if ui
+        if file.new_path != "/dev/null"
+            && ui
                 .small_button("\u{2197}")
                 .on_hover_text("Open file at first change")
                 .clicked()
-            {
-                open = true;
-            }
+        {
+            open = true;
         }
     });
 
@@ -285,14 +325,19 @@ fn toggle_collapsed(collapsed_files: &mut HashSet<usize>, file_idx: usize) {
 /// Iterate over files, rendering collapsible headers and calling `render_hunks`
 /// for each expanded file. Shared by inline and side-by-side modes.
 /// Returns `Some((path, line))` if the user clicked the open button on a file.
+///
+/// `render_hunks` receives a shared line budget and must return `true` when it
+/// stopped early because the budget ran out (see [`MAX_RENDERED_DIFF_LINES`]).
 fn render_diff_files(
     ui: &mut egui::Ui,
     diff: &ParsedDiff,
     collapsed_files: &mut HashSet<usize>,
     colors: &SemanticColors,
-    mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize),
+    mut render_hunks: impl FnMut(&mut egui::Ui, &FileDiff, usize, &mut usize) -> bool,
 ) -> Option<(String, usize)> {
     let mut open_request = None;
+    let mut budget = MAX_RENDERED_DIFF_LINES;
+    let mut truncated = false;
 
     for (file_idx, file) in diff.files.iter().enumerate() {
         let is_collapsed = collapsed_files.contains(&file_idx);
@@ -310,8 +355,24 @@ fn render_diff_files(
         }
 
         ui.add_space(SPACE_XS);
-        render_hunks(ui, file, file_idx);
+        let hit_limit = render_hunks(ui, file, file_idx, &mut budget);
         ui.separator();
+        if hit_limit {
+            truncated = true;
+            break;
+        }
+    }
+
+    if truncated {
+        ui.add_space(SPACE_SM);
+        ui.label(
+            egui::RichText::new(format!(
+                "\u{26A0} Diff too large to display fully \u{2014} showing the first {} lines to keep the UI responsive.",
+                MAX_RENDERED_DIFF_LINES
+            ))
+            .italics()
+            .color(colors.secondary_text),
+        );
     }
 
     open_request
@@ -390,19 +451,28 @@ pub(crate) fn render_inline_diff(
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
 ) -> Option<(String, usize)> {
-    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
-        render_inline_file_hunks(ui, file, file_idx, search, colors);
-    })
+    render_diff_files(
+        ui,
+        diff,
+        collapsed_files,
+        colors,
+        |ui, file, file_idx, budget| {
+            render_inline_file_hunks(ui, file, file_idx, search, colors, budget)
+        },
+    )
 }
 
-/// Render all hunks for a single file in inline mode.
+/// Render all hunks for a single file in inline mode, consuming from the shared
+/// line `budget`. Returns `true` if it stopped before rendering every line
+/// because the budget ran out.
 fn render_inline_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
     file_idx: usize,
     search: Option<&DiffSearchHighlight<'_>>,
     colors: &SemanticColors,
-) {
+    budget: &mut usize,
+) -> bool {
     let dc = DiffColors::from_semantic(colors);
 
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
@@ -415,10 +485,15 @@ fn render_inline_file_hunks(
             dc: &dc,
         };
         for (line_idx, line) in hunk.lines.iter().enumerate() {
+            if *budget == 0 {
+                return true;
+            }
             render_inline_line(ui, line, line_idx, &ctx);
+            *budget -= 1;
         }
         ui.add_space(SPACE_SM);
     }
+    false
 }
 
 /// Render a single inline diff line.
@@ -442,6 +517,7 @@ fn render_inline_line(
         !ctx.query_lower.is_empty() && line.content.to_lowercase().contains(ctx.query_lower);
     let is_current = ctx.current_match == Some((ctx.file_idx, ctx.hunk_idx, line_idx));
 
+    let display = display_line(&line.content);
     let response = ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} {} {}", old_num, new_num, prefix))
@@ -449,10 +525,10 @@ fn render_inline_line(
                 .color(ctx.dc.gutter_color),
         );
         if is_search {
-            render_highlighted_text(ui, &line.content, ctx.query_lower, text_color, ctx.colors);
+            render_highlighted_text(ui, &display, ctx.query_lower, text_color, ctx.colors);
         } else {
             ui.label(
-                egui::RichText::new(&line.content)
+                egui::RichText::new(display.as_ref())
                     .monospace()
                     .color(text_color),
             );
@@ -537,22 +613,48 @@ pub(crate) fn render_side_by_side_diff(
     let dc = DiffColors::from_semantic(colors);
     let sep_color = colors.separator;
 
-    render_diff_files(ui, diff, collapsed_files, colors, |ui, file, file_idx| {
-        render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color);
-    })
+    render_diff_files(
+        ui,
+        diff,
+        collapsed_files,
+        colors,
+        |ui, file, file_idx, budget| {
+            let style = SbsStyle {
+                colors,
+                dc: &dc,
+                sep_color,
+            };
+            render_sbs_file_hunks(ui, file, file_idx, search, &style, budget)
+        },
+    )
 }
 
-/// Render all hunks for a single file in side-by-side mode.
+/// Render all hunks for a single file in side-by-side mode, consuming from the
+/// shared line `budget`. Returns `true` if it stopped before rendering every
+/// row because the budget ran out.
+/// Styling shared across side-by-side hunk rendering.
+struct SbsStyle<'a> {
+    colors: &'a SemanticColors,
+    dc: &'a DiffColors,
+    sep_color: egui::Color32,
+}
+
 fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
     file_idx: usize,
     search: Option<&DiffSearchHighlight<'_>>,
-    colors: &SemanticColors,
-    dc: &DiffColors,
-    sep_color: egui::Color32,
-) {
+    style: &SbsStyle<'_>,
+    budget: &mut usize,
+) -> bool {
+    let colors = style.colors;
+    let dc = style.dc;
+    let sep_color = style.sep_color;
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+        if *budget == 0 {
+            return true;
+        }
+        let mut hit_limit = false;
         egui::Grid::new(format!(
             "sbs_{}_{}_{}",
             file.new_path, hunk_idx, hunk.new_start
@@ -571,15 +673,24 @@ fn render_sbs_file_hunks(
             };
 
             for (left_idx, right_idx) in &hunk.sbs_pairs {
+                if *budget == 0 {
+                    hit_limit = true;
+                    break;
+                }
                 let left = left_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 let right = right_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 render_sbs_row(ui, left, right, &ctx, sep_color);
                 ui.end_row();
+                *budget -= 1;
             }
         });
 
         ui.add_space(SPACE_SM);
+        if hit_limit {
+            return true;
+        }
     }
+    false
 }
 
 /// Check if one side of a pair is the current search match.
@@ -629,7 +740,11 @@ fn render_sbs_content_cell(
         (style.context_text, None)
     };
     let is_match = !query_lower.is_empty() && line.content.to_lowercase().contains(query_lower);
-    let resp = ui.label(egui::RichText::new(&line.content).monospace().color(color));
+    let resp = ui.label(
+        egui::RichText::new(display_line(&line.content))
+            .monospace()
+            .color(color),
+    );
 
     if let Some(bg) = effective_background(side_is_current, is_match, bg, colors) {
         ui.painter().rect_filled(resp.rect, 0, bg);
@@ -863,6 +978,29 @@ mod tests {
         // Addition at new:7
         assert_eq!(lines[3].old_lineno, None);
         assert_eq!(lines[3].new_lineno, Some(7));
+    }
+
+    #[test]
+    fn display_line_passes_short_lines_through() {
+        let s = "fn main() {}";
+        assert!(matches!(display_line(s), std::borrow::Cow::Borrowed(b) if b == s));
+    }
+
+    #[test]
+    fn display_line_truncates_pathologically_long_lines() {
+        let long = "x".repeat(MAX_DISPLAY_LINE_BYTES * 3);
+        let out = display_line(&long);
+        assert!(matches!(out, std::borrow::Cow::Owned(_)));
+        // Truncated text stays small enough that egui layout is bounded.
+        assert!(out.len() < MAX_DISPLAY_LINE_BYTES + 64);
+        assert!(out.contains("line truncated"));
+    }
+
+    #[test]
+    fn display_line_truncates_on_char_boundary() {
+        // Multi-byte chars right at the cap must not panic or split a char.
+        let s = "é".repeat(MAX_DISPLAY_LINE_BYTES);
+        let _ = display_line(&s); // must not panic on a non-char-boundary cut
     }
 
     #[test]

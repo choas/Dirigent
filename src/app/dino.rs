@@ -192,7 +192,7 @@ fn active_stones(t: f32) -> Vec<Stone> {
         let spawn_t = bucket as f32 * STONE_SPACING + jitter;
         let age = t - spawn_t;
         let col_f = STONE_SPAWN_COL - age * STONE_SPEED;
-        if col_f < -4.0 || col_f > STONE_SPAWN_COL + 0.5 {
+        if !(-4.0..=STONE_SPAWN_COL + 0.5).contains(&col_f) {
             continue;
         }
         let height = if (h >> 8) & 0b11 == 0 { 3 } else { 2 };
@@ -211,7 +211,7 @@ fn jump_offset(t: f32, stones: &[Stone]) -> f32 {
     for stone in stones {
         let jump_start = stone.collide_t - JUMP_DURATION * 0.5;
         let elapsed = t - jump_start;
-        if elapsed >= 0.0 && elapsed < JUMP_DURATION {
+        if (0.0..JUMP_DURATION).contains(&elapsed) {
             let p = elapsed / JUMP_DURATION;
             return JUMP_HEIGHT * 4.0 * p * (1.0 - p);
         }
@@ -264,6 +264,7 @@ pub fn paint_at(
     grid[DINO_BASE_ROWS] = legs[0];
     grid[DINO_BASE_ROWS + 1] = legs[1];
 
+    #[allow(clippy::needless_range_loop)]
     for row in 0..TOTAL_ROWS {
         for col in 0..DINO_W {
             let cell = grid[row][col];

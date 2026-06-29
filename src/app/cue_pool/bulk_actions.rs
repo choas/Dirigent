@@ -183,14 +183,13 @@ impl DirigentApp {
             return;
         }
         ui.horizontal(|ui| {
-            if show_archive_all {
-                if ui
+            if show_archive_all
+                && ui
                     .small_button(icon("\u{1F4E6} Archive All", self.settings.font_size))
                     .on_hover_text("Move all Done cues to Archived")
                     .clicked()
-                {
-                    actions.push((0, CueAction::ArchiveAllDone));
-                }
+            {
+                actions.push((0, CueAction::ArchiveAllDone));
             }
             if has_pr_cues {
                 self.render_push_and_notify_button(ui, actions);

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Instant;
 
 use eframe::egui;
@@ -85,7 +86,7 @@ impl DirigentApp {
             ui.separator();
 
             // Conversation scroll area
-            egui::ScrollArea::vertical()
+            let output = egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -98,6 +99,10 @@ impl DirigentApp {
                         &current_provider,
                     );
                 });
+
+            // Floating "jump to end" button, shown only when the log is scrolled
+            // up and away from the bottom. Clicking it snaps to the latest output.
+            self.render_jump_to_bottom_button(ui, fs, &output);
         });
 
         if close {
@@ -161,6 +166,46 @@ impl DirigentApp {
                 current_provider,
                 current_running_log,
             );
+        }
+    }
+
+    /// Render a circular "jump to end" button overlaid at the bottom of the
+    /// conversation scroll area. It is hidden whenever the log is already
+    /// scrolled to the bottom (where `stick_to_bottom` keeps it pinned), and
+    /// appears once the user scrolls up so they can return to the latest output
+    /// in one click.
+    fn render_jump_to_bottom_button(
+        &self,
+        ui: &mut egui::Ui,
+        fs: f32,
+        output: &egui::scroll_area::ScrollAreaOutput<()>,
+    ) {
+        // Distance from the current scroll offset to the very bottom. A small
+        // tolerance avoids the button flickering due to sub-pixel rounding.
+        let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        let remaining = max_offset - output.state.offset.y;
+        if remaining <= 2.0 {
+            return;
+        }
+
+        let btn_size = fs + 16.0;
+        let margin = SPACE_SM;
+        let center = egui::pos2(
+            output.inner_rect.center().x,
+            output.inner_rect.bottom() - margin - btn_size / 2.0,
+        );
+        let rect = egui::Rect::from_center_size(center, egui::vec2(btn_size, btn_size));
+
+        let button = egui::Button::new(icon("\u{2193}", fs).color(self.semantic.accent_text()))
+            .fill(self.semantic.accent)
+            .corner_radius(btn_size as u8 / 2)
+            .min_size(egui::vec2(btn_size, btn_size));
+        let resp = ui.put(rect, button).on_hover_text("Jump to latest output");
+        if resp.clicked() {
+            let mut state = output.state;
+            state.offset.y = output.content_size.y;
+            state.store(ui.ctx(), output.id);
+            ui.ctx().request_repaint();
         }
     }
 
@@ -558,8 +603,22 @@ impl DirigentApp {
                     .color(exec_provider_color),
             );
         });
+        // Once a completed Claude run reports its session id (shown as
+        // "— session <id>" at the end of the PTY log), append an external-link
+        // icon to that line so the conversation can be resumed in a terminal.
+        let resume_session_id = if !is_current_running && exec.provider == CliProvider::Claude {
+            exec.session_id.as_deref().filter(|s| !s.is_empty())
+        } else {
+            None
+        };
         Self::render_indented_frame(ui, |ui| {
-            self.render_response_content(ui, is_current_running, current_running_log, &exec.log);
+            self.render_response_content(
+                ui,
+                is_current_running,
+                current_running_log,
+                &exec.log,
+                resume_session_id,
+            );
         });
     }
 
@@ -584,17 +643,22 @@ impl DirigentApp {
                 .color(current_provider_color),
         );
         Self::render_indented_frame(ui, |ui| {
-            self.render_response_content(ui, true, current_running_log, &None);
+            self.render_response_content(ui, true, current_running_log, &None, None);
         });
     }
 
     /// Render response content for an execution, handling running/completed/empty states.
+    ///
+    /// When `resume_session_id` is `Some`, an external-link icon is appended to
+    /// the log line that reports the session id, opening that conversation in a
+    /// terminal via `claude --resume`.
     fn render_response_content(
         &self,
         ui: &mut egui::Ui,
         is_current_running: bool,
         current_running_log: &str,
         log: &Option<String>,
+        resume_session_id: Option<&str>,
     ) {
         if is_current_running {
             // Show live streaming log for the currently running execution
@@ -609,7 +673,10 @@ impl DirigentApp {
             }
         } else if let Some(ref log_text) = log {
             if !log_text.is_empty() {
-                self.render_ansi_log(ui, log_text);
+                match resume_session_id {
+                    Some(sid) => self.render_ansi_log_with_resume(ui, log_text, sid),
+                    None => self.render_ansi_log(ui, log_text),
+                }
             } else {
                 ui.label(
                     egui::RichText::new("(no output)")
@@ -641,8 +708,90 @@ impl DirigentApp {
             addition_bg: Some(self.semantic.addition_bg()),
             deletion_bg: Some(self.semantic.deletion_bg()),
         };
-        let job = crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
-        ui.label(job);
+        // Lay the log out in bounded chunks rather than as a single galley.
+        // egui's `Context::fonts()` holds the context write lock for the entire
+        // duration of a galley layout; a multi-megabyte streaming log laid out
+        // in one shot can hold that lock long enough that a background thread
+        // calling `ctx.request_repaint()` (which takes a read lock) times out
+        // and trips epaint's "Failed to acquire RwLock read after 10s.
+        // Deadlock?" panic. Splitting at line boundaries keeps each lock hold
+        // brief; ANSI state is threaded across chunks so color runs survive.
+        const MAX_CHUNK_BYTES: usize = 16 * 1024;
+        if text.len() <= MAX_CHUNK_BYTES {
+            let job =
+                crate::app::ansi::ansi_to_layout_job(text, font_id, default_color, &overrides);
+            ui.label(job);
+            return;
+        }
+
+        // Stack chunks with no inter-label gap so the result is visually
+        // identical to a single galley (each label's rows abut the next).
+        let saved_spacing = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut state: Option<egui::TextFormat> = None;
+        for range in ansi_log_chunk_ranges(text, MAX_CHUNK_BYTES) {
+            let (job, next) = crate::app::ansi::ansi_to_layout_job_resumable(
+                &text[range],
+                font_id.clone(),
+                default_color,
+                &overrides,
+                state.take(),
+            );
+            ui.label(job);
+            state = Some(next);
+        }
+        ui.spacing_mut().item_spacing.y = saved_spacing;
+    }
+
+    /// Like [`render_ansi_log`], but appends an external-link icon to the line
+    /// that reports the Claude session id. Clicking it resumes the conversation
+    /// in a terminal (`claude --resume <session_id>`).
+    fn render_ansi_log_with_resume(&self, ui: &mut egui::Ui, text: &str, session_id: &str) {
+        let marker = format!("session {session_id}");
+        let lines: Vec<&str> = text.lines().collect();
+        let Some(idx) = lines.iter().position(|l| l.contains(&marker)) else {
+            // Session line not present (yet); render the log unchanged.
+            self.render_ansi_log(ui, text);
+            return;
+        };
+
+        let before = lines[..idx].join("\n");
+        if !before.is_empty() {
+            self.render_ansi_log(ui, &before);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_XS;
+            self.render_ansi_log(ui, lines[idx]);
+            self.render_resume_icon(ui, session_id);
+        });
+        let after = lines[(idx + 1)..].join("\n");
+        if !after.is_empty() {
+            self.render_ansi_log(ui, &after);
+        }
+    }
+
+    /// Render the external-link icon that opens a terminal in the project
+    /// directory and runs `claude --resume <session_id>`, appending
+    /// `--dangerously-skip-permissions` when the Yolo setting is enabled.
+    fn render_resume_icon(&self, ui: &mut egui::Ui, session_id: &str) {
+        let mut resume_cmd = format!("claude --resume {}", session_id);
+        if self.settings.allow_dangerous_skip_permissions {
+            resume_cmd.push_str(" --dangerously-skip-permissions");
+        }
+        let link = ui
+            .link(
+                egui::RichText::new("\u{2197}")
+                    .small()
+                    .color(ui.visuals().hyperlink_color),
+            )
+            .on_hover_text(format!(
+                "Resume in Terminal:\ncd {} && {}",
+                self.project_root.display(),
+                resume_cmd
+            ));
+        if link.clicked() {
+            let _ = spawn_terminal_with_command(&self.project_root, &resume_cmd);
+        }
     }
 
     /// Open a file picker dialog and add selected files to the reply attachments.
@@ -684,6 +833,26 @@ impl DirigentApp {
     }
 }
 
+/// Split `text` into byte ranges of at most ~`max_bytes`, cutting only at
+/// newline boundaries. The newline at each cut point is dropped (the boundary
+/// between two stacked, zero-gap labels reproduces it), while interior and
+/// trailing newlines are preserved, so concatenating the rendered chunks looks
+/// identical to laying the whole text out as one galley.
+fn ansi_log_chunk_ranges(text: &str, max_bytes: usize) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (i, _) in text.match_indices('\n') {
+        // Cut once the accumulated chunk (including this newline) would exceed
+        // the budget, splitting just before the newline at `i`.
+        if i + 1 - start > max_bytes && i > start {
+            ranges.push(start..i);
+            start = i + 1;
+        }
+    }
+    ranges.push(start..text.len());
+    ranges
+}
+
 /// ECG-style waveform: maps a time offset `dt` (seconds from beat centre) to a
 /// vertical deflection in [-0.25, 1.0].  The shape approximates P–QRS–T.
 fn ecg_waveform(dt: f32) -> f32 {
@@ -699,4 +868,116 @@ fn ecg_waveform(dt: f32) -> f32 {
     // T wave – broad recovery bump
     let tw = 0.18 * (-(((t - 0.11) / 0.045).powi(2))).exp();
     p + q + r + s + tw
+}
+
+/// Quote a string for safe interpolation into a POSIX shell command line.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Open a terminal emulator in `dir` and run `command` inside it, keeping the
+/// shell open afterwards so the user can interact with the resumed session.
+fn spawn_terminal_with_command(dir: &Path, command: &str) -> std::io::Result<std::process::Child> {
+    if cfg!(target_os = "macos") {
+        // Terminal.app can't take a working directory + command directly, so
+        // build a shell command and drive it via AppleScript.
+        let shell_cmd = format!("cd {} && {}", shell_quote(&dir.to_string_lossy()), command);
+        // Escape for embedding inside an AppleScript double-quoted string.
+        let escaped = shell_cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        // Run `do script` *before* `activate`. If Terminal isn't already
+        // running, `activate` would launch it and create a window whose shell
+        // is still initializing; the subsequent `do script` then types into
+        // that not-ready shell and the first character gets dropped (e.g. "cd"
+        // arrives as "d"). Letting `do script` create the window first avoids
+        // the race.
+        let script = format!(
+            "tell application \"Terminal\"\n\
+             \tdo script \"{escaped}\"\n\
+             \tactivate\n\
+             end tell"
+        );
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+    } else if cfg!(target_os = "windows") {
+        // Try Windows Terminal first, fall back to a detached cmd.exe window.
+        std::process::Command::new("wt")
+            .arg("-d")
+            .arg(dir)
+            .args(["cmd", "/K", command])
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("cmd.exe")
+                    .args(["/C", "start", "cmd.exe", "/K", command])
+                    .current_dir(dir)
+                    .spawn()
+            })
+    } else {
+        // Linux: keep the shell alive after the command exits via `exec $SHELL`.
+        let hold = format!("{command}; exec $SHELL");
+        std::process::Command::new("gnome-terminal")
+            .arg(format!("--working-directory={}", dir.display()))
+            .args(["--", "bash", "-c", &hold])
+            .spawn()
+            .or_else(|_| {
+                std::process::Command::new("konsole")
+                    .arg(format!("--workdir={}", dir.display()))
+                    .args(["-e", "bash", "-c", &hold])
+                    .spawn()
+            })
+            .or_else(|_| {
+                std::process::Command::new("x-terminal-emulator")
+                    .current_dir(dir)
+                    .args(["-e", "bash", "-c", &hold])
+                    .spawn()
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ansi_log_chunk_ranges;
+
+    /// Re-join chunk ranges the way the renderer stacks them: each non-final
+    /// chunk is followed by the boundary newline that was dropped at the cut.
+    fn rejoin(text: &str, max: usize) -> String {
+        let ranges = ansi_log_chunk_ranges(text, max);
+        // Every range must land on valid char boundaries.
+        for r in &ranges {
+            assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+        }
+        let mut out = String::new();
+        for (idx, r) in ranges.iter().enumerate() {
+            out.push_str(&text[r.clone()]);
+            if idx + 1 < ranges.len() {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn chunks_reconstruct_original_lines() {
+        let text = "alpha\nbeta\ngamma\ndelta\n";
+        // Force a split: budget smaller than the whole text.
+        assert_eq!(rejoin(text, 8), text);
+        // A budget large enough for the whole text yields a single range.
+        assert_eq!(ansi_log_chunk_ranges(text, 4096).len(), 1);
+        assert_eq!(rejoin(text, 4096), text);
+    }
+
+    #[test]
+    fn chunks_handle_no_trailing_newline_and_unicode() {
+        let text = "héllo\nwörld\n☃ snowman\nlast line";
+        assert_eq!(rejoin(text, 4), text);
+    }
+
+    #[test]
+    fn oversized_single_line_is_not_dropped() {
+        // A single line longer than the budget must still survive intact.
+        let line = "x".repeat(100);
+        let text = format!("{line}\nshort\n");
+        assert_eq!(rejoin(&text, 16), text);
+    }
 }

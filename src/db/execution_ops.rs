@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::Local;
 use rusqlite::params;
 
 use crate::settings::CliProvider;
@@ -142,6 +143,34 @@ impl Database {
             params![session_id, id],
         )?;
         Ok(())
+    }
+
+    pub fn insert_execution_event(
+        &self,
+        execution_id: i64,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
+        let created_at = Local::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO execution_events (execution_id, event_type, payload, created_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![execution_id, event_type, payload.to_string(), created_at],
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn get_execution_events(&self, execution_id: i64) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT event_type, payload FROM execution_events WHERE execution_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![execution_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
     }
 
     /// Get all executions for a cue, ordered by id (oldest first).

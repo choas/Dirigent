@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::session::RecordingConfig;
 use crate::session::Session;
 use crate::Error;
 
@@ -38,6 +39,7 @@ pub struct ClaudeCodeBuilder {
     env_vars: Vec<(String, String)>,
     rows: u16,
     cols: u16,
+    recording: Option<RecordingConfig>,
 }
 
 impl Default for ClaudeCodeBuilder {
@@ -53,6 +55,7 @@ impl Default for ClaudeCodeBuilder {
             env_vars: Vec::new(),
             rows: 40,
             cols: 120,
+            recording: None,
         }
     }
 }
@@ -131,6 +134,11 @@ impl ClaudeCodeBuilder {
         self
     }
 
+    pub fn record_to(mut self, path: impl Into<PathBuf>) -> Self {
+        self.recording = Some(RecordingConfig { path: path.into() });
+        self
+    }
+
     pub(crate) fn resolve(&self) -> Result<ResolvedSpec, Error> {
         let binary = match &self.binary {
             Some(p) => p.clone(),
@@ -165,6 +173,7 @@ impl ClaudeCodeBuilder {
             cwd: self.cwd.clone(),
             rows: self.rows,
             cols: self.cols,
+            recording: self.recording.clone(),
         })
     }
 
@@ -182,6 +191,7 @@ pub(crate) struct ResolvedSpec {
     pub cwd: Option<PathBuf>,
     pub rows: u16,
     pub cols: u16,
+    pub recording: Option<RecordingConfig>,
 }
 
 /// Entry point: `ClaudeCode::builder()` -> [`ClaudeCodeBuilder`].

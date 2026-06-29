@@ -91,8 +91,8 @@ impl DirigentApp {
                 self.settings.font_size,
             );
             let branch_label = if !is_default_branch {
-                let bg = egui::Color32::from_rgb(255, 165, 0);
-                let fg = ui.visuals().widgets.noninteractive.bg_fill;
+                let bg = self.semantic.warning;
+                let fg = self.semantic.badge_text;
                 let font = egui::FontId::monospace(self.settings.font_size * 0.85);
                 let text = format!("\u{25CF} {}", info.branch);
                 let galley = ui.painter().layout_no_wrap(text, font, fg);

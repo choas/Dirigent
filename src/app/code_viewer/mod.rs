@@ -315,6 +315,16 @@ impl DirigentApp {
             ui.add_space(SPACE_SM);
             ui.heading("Dirigent");
             ui.label(format!("Version {}", env!("BUILD_VERSION")));
+            ui.add_space(SPACE_SM);
+            let provider = &self.settings.cli_provider;
+            let model = self.settings.provider_fields(provider).model;
+            let provider_color = self.semantic.provider_color(provider);
+            let label = if model.is_empty() {
+                provider.display_name().to_string()
+            } else {
+                format!("{}  \u{2022}  {}", provider.display_name(), model)
+            };
+            ui.label(egui::RichText::new(label).color(provider_color).strong());
             ui.add_space(SPACE_MD);
             ui.label(
                 egui::RichText::new(

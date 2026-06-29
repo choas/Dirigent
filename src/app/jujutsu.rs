@@ -176,6 +176,7 @@ pub fn paint_at(
     }
 
     // Pixel figure
+    #[allow(clippy::needless_range_loop)]
     for row in 0..H {
         for col in 0..W {
             let cell = stance[row][col];

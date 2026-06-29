@@ -539,7 +539,7 @@ impl DirigentApp {
         cue_text: &str,
     ) {
         if actions.accept {
-            self.handle_diff_accept(cue_id, diff_text, cue_text);
+            self.handle_diff_accept(cue_id, cue_text);
         } else if actions.reject {
             self.handle_diff_reject(cue_id, diff_text);
         } else if let Some(reply) = actions.reply_send {
@@ -559,7 +559,7 @@ impl DirigentApp {
         }
     }
 
-    fn handle_diff_accept(&mut self, cue_id: i64, diff_text: &str, cue_text: &str) {
+    fn handle_diff_accept(&mut self, cue_id: i64, cue_text: &str) {
         if self.claude.workspace_paths.contains_key(&cue_id)
             && !self.claude.workspace_commit_failed.contains(&cue_id)
         {
@@ -590,42 +590,14 @@ impl DirigentApp {
             .and_then(|r| claude::extract_commit_message(&r));
         let commit_msg = git::generate_commit_message(cue_text, extracted.as_deref());
 
-        if self.settings.vcs_backend == crate::settings::VcsBackend::Jj {
-            self.git.commit_message_input = commit_msg;
-            self.git.commit_review_cue_id = Some(cue_id);
-            self.git.commit_needs_focus = true;
-            self.git.show_commit_dialog = true;
-            self.diff_review = None;
-        } else {
-            match vcs_dispatch::commit_diff(
-                &self.settings.vcs_backend,
-                &self.settings.jj_cli_path,
-                &self.project_root,
-                diff_text,
-                &commit_msg,
-                self.git.active_bookmark.as_deref(),
-            ) {
-                Ok(hash) => {
-                    let short = &hash[..7.min(hash.len())];
-                    self.set_status_message(format!("Committed: {}", short));
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                    let cue_prompt = self
-                        .cues
-                        .iter()
-                        .find(|c| c.id == cue_id)
-                        .map(|c| c.text.clone())
-                        .unwrap_or_default();
-                    self.trigger_agents_for(&AgentTrigger::AfterCommit, Some(cue_id), &cue_prompt);
-                    self.reload_cues();
-                    self.reload_git_info();
-                    self.reload_commit_history();
-                    self.diff_review = None;
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Commit failed: {}", e));
-                }
-            }
-        }
+        // Open the editable commit dialog for both backends so the user can
+        // review and edit the generated message before committing. The dialog's
+        // commit action routes through the backend-aware `start_commit`.
+        self.git.commit_message_input = commit_msg;
+        self.git.commit_review_cue_id = Some(cue_id);
+        self.git.commit_needs_focus = true;
+        self.git.show_commit_dialog = true;
+        self.diff_review = None;
     }
 
     fn handle_diff_reject(&mut self, cue_id: i64, diff_text: &str) {

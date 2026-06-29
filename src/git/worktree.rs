@@ -376,6 +376,23 @@ pub(crate) fn checkout_branch(repo_path: &Path, branch: &str) -> crate::error::R
     Ok(())
 }
 
+/// Create a new branch and switch to it (`git checkout -b <branch>`).
+pub(crate) fn create_branch(repo_path: &Path, branch: &str) -> crate::error::Result<()> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .args(["checkout", "-b", branch])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn remove_worktree(
     repo_path: &Path,
     wt_path: &Path,

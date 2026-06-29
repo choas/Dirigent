@@ -1,7 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use claude_pty::{Event, ExitStatus, PollEvent, Session};
+use claude_pty::{Event, ExitStatus, PermissionDialogKind, PollEvent, Session, SessionState};
+
+use super::done_hook::DoneHook;
+use super::types::ClaudeRunMetadata;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SENTINEL_GRACE: Duration = Duration::from_secs(3);
@@ -10,6 +13,24 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
     pub response: String,
+    pub metadata: ClaudeRunMetadata,
+}
+
+/// Close the session while forwarding the lines Claude emits during shutdown.
+///
+/// Triggering the exit sends `Ctrl-C`, which cuts an in-progress turn short and
+/// makes Claude Code print an "Interrupted · What should Claude do instead?"
+/// line (also written to the session transcript). The plain `close_gracefully`
+/// discards those drained events, so the line was invisible in Dirigent and
+/// only reappeared when the session was later opened with `claude --resume`.
+/// Draining forwards it to `on_log` so it shows up live instead.
+fn graceful_close(session: &mut Session, timeout: Duration, on_log: &mut dyn FnMut(&str)) {
+    let _ = session.close_gracefully_draining(timeout, |event| {
+        if let Event::FilteredLine { ansi, .. } = event {
+            on_log(ansi);
+            on_log("\n");
+        }
+    });
 }
 
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
@@ -19,64 +40,155 @@ pub(super) struct PtyResult {
 /// exits when:
 ///
 /// 1. The `done_sentinel` file appears (Claude Code `Stop` hook fired).
-/// 2. A second `TuiPrompt` arrives (fallback heuristic) — triggers
-///    [`graceful_exit`].
+/// 2. A second `TuiPrompt` arrives *and no `done_sentinel` is configured*
+///    (fallback heuristic) — triggers [`graceful_exit`]. When a sentinel is
+///    active this heuristic is ignored: the underlying library emits a second
+///    `TuiPrompt` after only a few seconds of PTY silence, which Claude
+///    routinely produces *mid-task* (slow tool, network/rate-limit stall,
+///    extended thinking). Acting on it would `Ctrl-C` Claude prematurely, so
+///    the sentinel — the authoritative end-of-turn signal — wins instead.
 /// 3. The session ends (`LibDone`).
-/// 4. `done_sentinel` is `None` and no PTY events arrive for 120 s after the
-///    prompt is submitted (idle timeout) — triggers [`graceful_exit`].
+/// 4. No PTY events arrive for 120 s after the prompt is submitted (idle
+///    timeout) — triggers [`graceful_exit`]. This is a safety net for both
+///    paths: without a sentinel it bounds the no-output case, and with a
+///    sentinel it guards against a `Stop` hook that never fired.
 pub(super) fn consume_pty_events(
     session: &mut Session,
     prompt: &str,
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
-    done_sentinel: Option<&std::path::Path>,
+    done_hook: Option<&DoneHook>,
     session_id: Option<&str>,
+    skip_permissions: bool,
 ) -> PtyResult {
     let mut state = PtyResult {
         response: String::new(),
+        metadata: ClaudeRunMetadata::default(),
     };
     let mut prompt_sent = false;
     let start_time = Instant::now();
     let mut last_event_time = Instant::now();
     let mut sentinel_seen: Option<Instant> = None;
+    let mut waiting_for_permission = false;
+    let mut saw_filtered_line = false;
+    let mut survey_answered = false;
+    let done_sentinel = done_hook.map(|h| h.sentinel_path());
 
     loop {
         if cancel.load(Ordering::Relaxed) {
             on_log("\n⚠ Run cancelled.\n");
-            let _ = session.kill();
+            state.metadata.completion_reason = Some("cancelled".to_string());
+            graceful_close(session, Duration::from_secs(2), on_log);
             break;
         }
 
         match session.poll_event() {
             PollEvent::Ready(event) => {
                 last_event_time = Instant::now();
+                let elapsed_ms = start_time.elapsed().as_millis() as u64;
+                state.metadata.first_output_ms.get_or_insert(elapsed_ms);
+                state.metadata.last_output_ms = Some(elapsed_ms);
                 match event {
+                    Event::FilteredLine {
+                        ref text, ref ansi, ..
+                    } => {
+                        saw_filtered_line = true;
+                        on_log(ansi);
+                        on_log("\n");
+                        state.response.push_str(text);
+                        state.response.push('\n');
+                        if !survey_answered && is_session_rating_prompt(text) {
+                            answer_session_rating(session, on_log);
+                            survey_answered = true;
+                        }
+                    }
+                    Event::PtyActivity { .. } => {
+                        on_log("\0");
+                    }
+                    Event::ParserWarning { ref message } => {
+                        state.metadata.parser_warnings.push(message.clone());
+                    }
+                    Event::SessionStateChanged {
+                        state: session_state,
+                    } => {
+                        if session_state == SessionState::WaitingForPermission {
+                            waiting_for_permission = true;
+                        }
+                    }
+                    Event::PermissionDialogDetected { ref dialog } => {
+                        let summary = format!(
+                            "{:?}: {}{}",
+                            dialog.kind,
+                            dialog.title,
+                            dialog
+                                .path_or_command
+                                .as_ref()
+                                .map(|s| format!(" — {s}"))
+                                .unwrap_or_default()
+                        );
+                        state.metadata.permission_summaries.push(summary.clone());
+                        match dialog.kind {
+                            PermissionDialogKind::TrustFolder => {
+                                on_log(&format!("\n⏎ Permission: {summary} — accepted\n"));
+                                let _ = session.confirm_permission_option();
+                                waiting_for_permission = false;
+                            }
+                            PermissionDialogKind::ToolUse if skip_permissions => {
+                                on_log(&format!(
+                                    "\n⏎ Permission: {summary} — accepted by policy\n"
+                                ));
+                                let _ = session.confirm_permission_option();
+                                waiting_for_permission = false;
+                            }
+                            _ => {
+                                on_log(&format!("\n⚠ Waiting for permission: {summary}\n"));
+                                state.metadata.completion_reason =
+                                    Some("waiting_for_permission".to_string());
+                            }
+                        }
+                    }
                     Event::TuiToolConfirmation { .. } => {
-                        let _ = session.write_raw(b"\r");
+                        if skip_permissions {
+                            let _ = session.confirm_permission_option();
+                        } else {
+                            waiting_for_permission = true;
+                            on_log("\n⚠ Waiting for permission.\n");
+                        }
                     }
                     Event::TuiPrompt => {
                         if !prompt_sent {
-                            std::thread::sleep(Duration::from_millis(300));
-                            if let Err(e) = session.write_raw(prompt.as_bytes()) {
+                            if let Err(e) = session.send_prompt(prompt) {
                                 on_log(&format!("\n⚠ Failed to send prompt: {e}\n"));
+                                state.metadata.completion_reason =
+                                    Some("prompt_send_failed".to_string());
                                 break;
                             }
-                            std::thread::sleep(Duration::from_millis(200));
-                            if let Err(e) = session.write_raw(b"\r") {
-                                on_log(&format!("\n⚠ Failed to submit prompt: {e}\n"));
-                                break;
-                            }
+                            state.metadata.prompt_submitted_ms =
+                                Some(start_time.elapsed().as_millis() as u64);
                             prompt_sent = true;
-                        } else {
-                            graceful_exit(session);
+                        } else if done_sentinel.is_none() {
+                            // No Stop hook installed: a second prompt is the
+                            // only signal we have that Claude's turn ended.
+                            state.metadata.completion_reason = Some("prompt_returned".to_string());
+                            graceful_close(session, Duration::from_secs(5), on_log);
                             break;
                         }
+                        // With a sentinel active, ignore the second-prompt
+                        // heuristic — it misfires whenever Claude pauses
+                        // mid-task for longer than the library's idle window,
+                        // and would interrupt the run. The sentinel/grace
+                        // logic in the `Pending` branch drives the real exit.
                     }
                     Event::TuiScreen {
                         ref lines,
                         ref lines_ansi,
                         ..
                     } => {
+                        // Compatibility fallback for older `claude_pty` event
+                        // streams. New streams emit `FilteredLine` first.
+                        if saw_filtered_line {
+                            continue;
+                        }
                         for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
                             if plain.trim().is_empty() {
                                 // Drop the empty line from the visible log
@@ -95,11 +207,16 @@ pub(super) fn consume_pty_events(
                             on_log("\n");
                             state.response.push_str(plain);
                             state.response.push('\n');
+                            if !survey_answered && is_session_rating_prompt(plain) {
+                                answer_session_rating(session, on_log);
+                                survey_answered = true;
+                            }
                         }
                     }
                     Event::LibDone => break,
                     Event::LibError { ref message } => {
                         on_log(&format!("error: {}\n", message));
+                        state.metadata.completion_reason = Some("pty_error".to_string());
                         break;
                     }
                     _ => {}
@@ -110,6 +227,19 @@ pub(super) fn consume_pty_events(
                     if let Some(sentinel) = done_sentinel {
                         if sentinel_seen.is_none() && sentinel.exists() {
                             sentinel_seen = Some(Instant::now());
+                            state.metadata.completion_reason = Some("stop_hook".to_string());
+                            if let Some(hook) = done_hook {
+                                if let Some(summary) = hook.read_summary() {
+                                    if let Some(last) = summary.last_assistant_message.as_ref() {
+                                        state.response = format!("{}\n", last.trim_end());
+                                    }
+                                    state.metadata.stop_hook = Some(summary.clone());
+                                    on_log(&format!(
+                                        "\n⏎ Stop hook payload captured: {}\n",
+                                        hook.payload_path().display()
+                                    ));
+                                }
+                            }
                             on_log("\n⏎ Stop hook fired — draining remaining output…\n");
                         }
                     }
@@ -119,12 +249,20 @@ pub(super) fn consume_pty_events(
                         if since_sentinel >= SENTINEL_GRACE || since_event >= Duration::from_secs(1)
                         {
                             on_log("\n⏎ Grace period done — exiting.\n");
-                            graceful_exit(session);
+                            graceful_close(session, Duration::from_secs(5), on_log);
                             break;
                         }
-                    } else if done_sentinel.is_none() && last_event_time.elapsed() >= IDLE_TIMEOUT {
+                    } else if waiting_for_permission {
+                        std::thread::sleep(POLL_INTERVAL);
+                    } else if last_event_time.elapsed() >= IDLE_TIMEOUT {
+                        // Safety net: 120 s of complete PTY silence means
+                        // Claude is genuinely idle (its live spinner keeps the
+                        // stream active while it works), so even when a Stop
+                        // hook was expected but never fired, we exit instead of
+                        // hanging forever.
                         on_log("\n⚠ No PTY events for 120 s — exiting to avoid stall.\n");
-                        graceful_exit(session);
+                        state.metadata.completion_reason = Some("idle_timeout".to_string());
+                        graceful_close(session, Duration::from_secs(5), on_log);
                         break;
                     }
                 }
@@ -132,6 +270,7 @@ pub(super) fn consume_pty_events(
             }
             PollEvent::Closed => {
                 on_log("\n⚠ PTY session closed unexpectedly.\n");
+                state.metadata.completion_reason = Some("pty_closed".to_string());
                 break;
             }
         }
@@ -155,26 +294,6 @@ pub(super) fn consume_pty_events(
     report_exit_status(session, prompt_sent, &state.response, on_log);
 
     state
-}
-
-/// End the Claude TUI cleanly: Ctrl-C twice (first interrupts the current
-/// operation, second requests exit), drain events for up to 5 s waiting for
-/// `LibDone`, then fall back to a hard kill.
-fn graceful_exit(session: &mut Session) {
-    let _ = session.write_raw(b"\x03");
-    std::thread::sleep(Duration::from_millis(500));
-    let _ = session.write_raw(b"\x03");
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        match session.poll_event() {
-            PollEvent::Ready(Event::LibDone) => return,
-            PollEvent::Ready(_) => {}
-            PollEvent::Pending => std::thread::sleep(POLL_INTERVAL),
-            PollEvent::Closed => return,
-        }
-    }
-    let _ = session.kill();
 }
 
 fn report_exit_status(
@@ -370,6 +489,36 @@ pub(crate) fn detect_stopped_early(log: &str) -> bool {
     }
 }
 
+// ── Session-rating survey auto-answer ───────────────────────────────
+
+/// Detect Claude Code's optional end-of-session rating prompt, e.g.:
+///
+/// ```text
+/// ● How is Claude doing this session? (optional)
+///   1: Bad    2: Fine   3: Good   0: Dismiss
+/// ```
+///
+/// This is an interactive question Claude routinely emits in the TUI; left
+/// unanswered it can hold the PTY open. We match the distinctive question text
+/// so Dirigent can answer it automatically and let the run finish.
+fn is_session_rating_prompt(line: &str) -> bool {
+    line.contains("How is Claude doing this session")
+}
+
+/// Answer the session-rating survey by selecting option `3` (Good).
+///
+/// The survey is a single-key selection (like the permission-option picker), so
+/// writing the digit `3` chooses "Good" and dismisses the prompt; no Enter is
+/// needed.
+fn answer_session_rating(session: &Session, on_log: &mut dyn FnMut(&str)) {
+    match session.send_key(b"3") {
+        Ok(()) => on_log("\n⏎ Session rating prompt — answered 3 (Good)\n"),
+        Err(e) => on_log(&format!(
+            "\n⚠ Failed to answer session rating prompt: {e}\n"
+        )),
+    }
+}
+
 // ── Usage limit & question detection ────────────────────────────────
 
 /// Detect a usage-limit / hard rate-limit message in Claude output.
@@ -462,6 +611,19 @@ mod tests {
         assert!(!response_has_question(""));
         assert!(!response_has_question("   "));
         assert!(!response_has_question("ok?"));
+    }
+
+    #[test]
+    fn session_rating_prompt_detected() {
+        assert!(is_session_rating_prompt(
+            "● How is Claude doing this session? (optional)"
+        ));
+        assert!(is_session_rating_prompt("How is Claude doing this session"));
+        assert!(!is_session_rating_prompt(
+            "  1: Bad    2: Fine   3: Good   0: Dismiss"
+        ));
+        assert!(!is_session_rating_prompt("How are you doing today?"));
+        assert!(!is_session_rating_prompt(""));
     }
 
     #[test]

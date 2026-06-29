@@ -413,12 +413,61 @@ pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let rest = &search_region[content_start..];
     let end = rest.find(end_tag)?;
     let msg = rest[..end].replace("\\n", "\n");
-    let msg = msg.trim();
+    let msg = reflow_commit_message(msg.trim());
     if msg.is_empty() {
         None
     } else {
-        Some(msg.to_string())
+        Some(msg)
     }
+}
+
+/// Undo the soft word-wrapping the Claude TUI applies when it renders prose to
+/// the (fixed-width) terminal that the PTY captures. That wrapping inserts
+/// newlines in the middle of sentences, which would otherwise end up baked into
+/// the committed message. We rejoin lines within each paragraph back into a
+/// single line while preserving blank-line paragraph breaks and Markdown list
+/// items (so intentional structure survives).
+fn reflow_commit_message(text: &str) -> String {
+    let mut paragraphs: Vec<String> = Vec::new();
+    for paragraph in text.split("\n\n") {
+        let mut joined = String::new();
+        for line in paragraph.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if joined.is_empty() {
+                joined.push_str(trimmed);
+            } else if is_list_item(trimmed) {
+                // A new list item starts its own line.
+                joined.push('\n');
+                joined.push_str(trimmed);
+            } else {
+                // A soft-wrapped continuation: rejoin with a single space.
+                joined.push(' ');
+                joined.push_str(trimmed);
+            }
+        }
+        if !joined.is_empty() {
+            paragraphs.push(joined);
+        }
+    }
+    paragraphs.join("\n\n")
+}
+
+/// Whether a (trimmed) line looks like the start of a Markdown list item, e.g.
+/// `- foo`, `* foo`, `+ foo`, `1. foo`, or `2) foo`.
+fn is_list_item(line: &str) -> bool {
+    if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+        return !rest.is_empty();
+    }
+    if line.starts_with("+ ") {
+        return true;
+    }
+    if let Some((num, _)) = line.split_once(['.', ')']) {
+        return !num.is_empty() && num.chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 #[cfg(test)]
@@ -612,6 +661,25 @@ mod tests {
         let msg = extract_commit_message(response).unwrap();
         assert!(msg.contains("Refactored auth middleware."));
         assert!(msg.contains("added expiry checks."));
+    }
+
+    #[test]
+    fn extract_commit_message_reflows_soft_wrapped_lines() {
+        // The TUI hard-wraps prose mid-sentence; the extractor must rejoin it.
+        let response = "<commit-message>\nFixed the auth bug by validating tokens\nbefore checking permissions so expired\ntokens can no longer bypass access controls.\n</commit-message>";
+        assert_eq!(
+            extract_commit_message(response).unwrap(),
+            "Fixed the auth bug by validating tokens before checking permissions so expired tokens can no longer bypass access controls.",
+        );
+    }
+
+    #[test]
+    fn extract_commit_message_preserves_paragraphs_and_lists() {
+        let response = "<commit-message>\nRefactor the parser into\nseparate stages.\n\nChanges:\n- split the lexer out\n- add error recovery\n</commit-message>";
+        assert_eq!(
+            extract_commit_message(response).unwrap(),
+            "Refactor the parser into separate stages.\n\nChanges:\n- split the lexer out\n- add error recovery",
+        );
     }
 
     #[test]

@@ -20,6 +20,22 @@ pub(crate) struct CustomTheme {
     pub active: [u8; 3],
     pub hyperlink: [u8; 3],
     pub accent: [u8; 3],
+    /// Attention/badge background color (e.g. the non-default branch badge).
+    #[serde(default = "default_warning")]
+    pub warning: [u8; 3],
+    /// Text color drawn on top of badge backgrounds.
+    #[serde(default = "default_badge_text")]
+    pub badge_text: [u8; 3],
+}
+
+/// Default warning color for custom themes saved before it was configurable.
+fn default_warning() -> [u8; 3] {
+    [200, 165, 60]
+}
+
+/// Default badge-text color for custom themes saved before it was configurable.
+fn default_badge_text() -> [u8; 3] {
+    [220, 220, 220]
 }
 
 impl Default for CustomTheme {
@@ -39,6 +55,8 @@ impl Default for CustomTheme {
             active: [100, 180, 255],
             hyperlink: [100, 180, 255],
             accent: [100, 180, 255],
+            warning: default_warning(),
+            badge_text: default_badge_text(),
         }
     }
 }
@@ -152,9 +170,9 @@ impl ThemeChoice {
     /// Convert this theme's palette into a `CustomTheme`, suitable as a starting point.
     pub fn to_custom_theme(&self) -> CustomTheme {
         let p = self.palette();
-        let accent = self
-            .semantic_colors_with_diff_scheme(super::app_settings::DiffColorScheme::default())
-            .accent;
+        let semantic =
+            self.semantic_colors_with_diff_scheme(super::app_settings::DiffColorScheme::default());
+        let accent = semantic.accent;
         let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
         CustomTheme {
             name: String::new(),
@@ -171,6 +189,8 @@ impl ThemeChoice {
             active: rgb(p.active),
             hyperlink: rgb(p.hyperlink),
             accent: rgb(accent),
+            warning: rgb(semantic.warning),
+            badge_text: rgb(semantic.badge_text),
         }
     }
 
@@ -614,16 +634,35 @@ impl ThemeChoice {
             Custom(ct) => egui::Color32::from_rgb(ct.accent[0], ct.accent[1], ct.accent[2]),
         };
 
+        // Warning (badge background) and badge text default to theme-generic values,
+        // but a custom theme can override them explicitly.
+        let (mut warning, mut badge_text) = if dark {
+            (
+                egui::Color32::from_rgb(200, 165, 60),
+                egui::Color32::from_gray(220),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(160, 110, 0),
+                egui::Color32::from_gray(255),
+            )
+        };
+        if let Custom(ct) = self {
+            warning = egui::Color32::from_rgb(ct.warning[0], ct.warning[1], ct.warning[2]);
+            badge_text =
+                egui::Color32::from_rgb(ct.badge_text[0], ct.badge_text[1], ct.badge_text[2]);
+        }
+
         if dark {
             SemanticColors {
                 accent,
                 success: egui::Color32::from_rgb(80, 190, 110),
-                warning: egui::Color32::from_rgb(200, 165, 60),
+                warning,
                 danger: egui::Color32::from_rgb(210, 95, 95),
                 secondary_text: egui::Color32::from_gray(160),
                 tertiary_text: egui::Color32::from_gray(120),
                 separator: egui::Color32::from_gray(60),
-                badge_text: egui::Color32::from_gray(220),
+                badge_text,
                 is_dark: true,
                 diff_color_scheme,
             }
@@ -631,12 +670,12 @@ impl ThemeChoice {
             SemanticColors {
                 accent,
                 success: egui::Color32::from_rgb(10, 100, 10),
-                warning: egui::Color32::from_rgb(160, 110, 0),
+                warning,
                 danger: egui::Color32::from_rgb(200, 50, 50),
                 secondary_text: egui::Color32::from_gray(100),
                 tertiary_text: egui::Color32::from_gray(150),
                 separator: egui::Color32::from_gray(200),
-                badge_text: egui::Color32::from_gray(255),
+                badge_text,
                 is_dark: false,
                 diff_color_scheme,
             }

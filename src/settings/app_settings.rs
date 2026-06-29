@@ -75,6 +75,7 @@ pub(crate) enum RunningAnimation {
     ClaudeCodeName,
     Dino,
     Jujutsu,
+    Thunderdome,
 }
 
 impl RunningAnimation {
@@ -85,6 +86,7 @@ impl RunningAnimation {
             RunningAnimation::ClaudeCodeName => "Claude Code",
             RunningAnimation::Dino => "Desert Dino",
             RunningAnimation::Jujutsu => "Jujutsu",
+            RunningAnimation::Thunderdome => "Thunderdome",
         }
     }
 
@@ -95,6 +97,7 @@ impl RunningAnimation {
             RunningAnimation::ClaudeCodeName,
             RunningAnimation::Dino,
             RunningAnimation::Jujutsu,
+            RunningAnimation::Thunderdome,
         ]
     }
 }
@@ -307,6 +310,26 @@ pub(crate) struct Settings {
     /// `.Dirigent/Dirigent.db`, this path is used instead.
     #[serde(default)]
     pub dirigent_mcp_db_path: String,
+    /// Enable the Fast LLM for lightweight, local helper calls (e.g. summarizing
+    /// a commit message). Independent of the main coding-agent CLI provider.
+    #[serde(default)]
+    pub fast_llm_enabled: bool,
+    /// Display name of the Fast LLM provider (e.g. "Ollama", "OpenAI").
+    /// Purely cosmetic — the [`fast_llm_base_url`](Self::fast_llm_base_url)
+    /// determines the actual endpoint.
+    #[serde(default = "default_fast_llm_provider")]
+    pub fast_llm_provider: String,
+    /// OpenAI-compatible base URL for the Fast LLM. Defaults to the local
+    /// Ollama endpoint. `/chat/completions` is appended at call time.
+    #[serde(default = "default_fast_llm_base_url")]
+    pub fast_llm_base_url: String,
+    /// API key sent as a Bearer token to the Fast LLM. Optional — local
+    /// providers such as Ollama ignore it.
+    #[serde(default)]
+    pub fast_llm_api_key: String,
+    /// Model identifier passed to the Fast LLM (e.g. `gemma4:26b-mlx`).
+    #[serde(default = "default_fast_llm_model")]
+    pub fast_llm_model: String,
 }
 
 /// Common per-provider fields extracted from [`Settings`].
@@ -375,6 +398,18 @@ fn default_font_size() -> f32 {
     13.0
 }
 
+fn default_fast_llm_provider() -> String {
+    "Ollama".to_string()
+}
+
+fn default_fast_llm_base_url() -> String {
+    "http://localhost:11434/v1".to_string()
+}
+
+fn default_fast_llm_model() -> String {
+    "gemma4:26b-mlx".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -439,6 +474,11 @@ impl Default for Settings {
             custom_dock_icon_path: String::new(),
             dirigent_mcp_server_path: String::new(),
             dirigent_mcp_db_path: String::new(),
+            fast_llm_enabled: false,
+            fast_llm_provider: default_fast_llm_provider(),
+            fast_llm_base_url: default_fast_llm_base_url(),
+            fast_llm_api_key: String::new(),
+            fast_llm_model: default_fast_llm_model(),
         }
     }
 }

@@ -65,6 +65,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 - **Rust** (1.75+ recommended) — [rustup.rs](https://rustup.rs)
 - **Claude Code CLI** — Must be installed and available on your `PATH` (or configured via Settings). See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code).
+- **`merman-cli`** _(optional)_ — Enables rendering of `mermaid` code blocks as diagrams in the Markdown viewer. Install with `cargo install merman-cli`; without it, Mermaid blocks fall back to showing their source.
 - **System dependencies** for your platform:
   - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
   - **Linux**: `libgtk-3-dev`, `libxcb-shape0-dev`, `libxcb-xfixes0-dev`, and OpenSSL dev headers. On Debian/Ubuntu:
@@ -202,6 +203,7 @@ src/
 │   ├── lava_lamp.rs          — Retro pixelated lava lamp animation overlay
 │   ├── markdown_parser.rs    — Markdown-to-block parsing (headings, code, tables, lists)
 │   ├── markdown_viewer.rs    — Rendered Markdown display with syntax-highlighted code
+│   ├── mermaid.rs            — Mermaid diagram rendering via the merman-cli tool
 │   ├── notifications.rs      — macOS notification delivery (UNUserNotificationCenter fallback)
 │   ├── rendering.rs          — Drag-and-drop handling, global keyboard shortcuts
 │   ├── repo_management.rs    — Repository switching and management

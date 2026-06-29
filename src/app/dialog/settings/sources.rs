@@ -1,7 +1,8 @@
 use eframe::egui;
+use std::path::Path;
 use std::sync::mpsc;
 
-use crate::app::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
 fn notion_type_icon(object_type: &str) -> &'static str {
@@ -24,16 +25,33 @@ fn source_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &
     ui.end_row();
 }
 
-/// Render a labeled password field row in a grid.
-fn source_password_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
+/// Render a labeled password field row in a grid for an auth token/key.
+///
+/// When the field is empty but `env_var` resolves to a value in the
+/// environment or `.env`, a green check mark is shown after the field to
+/// signal the token will be picked up automatically.
+fn source_password_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    hint: &str,
+    env_var: &str,
+    project_root: &Path,
+) {
     ui.label(label);
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .desired_width(200.0)
-            .hint_text(hint)
-            .password(true)
-            .font(egui::TextStyle::Monospace),
-    );
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(200.0)
+                .hint_text(hint)
+                .password(true)
+                .font(egui::TextStyle::Monospace),
+        );
+        if value.is_empty() && crate::sources::env_token_available(project_root, env_var) {
+            ui.label(egui::RichText::new("\u{2714}").color(egui::Color32::from_rgb(76, 175, 80)))
+                .on_hover_text(format!("{env_var} found in the environment"));
+        }
+    });
     ui.end_row();
 }
 
@@ -138,14 +156,62 @@ impl DirigentApp {
                 if ui.small_button("Fetch Now").clicked() {
                     *fetch_idx = Some(i);
                 }
+                if ui
+                    .small_button("Curl")
+                    .on_hover_text(
+                        "Copy an equivalent curl command for this source to the clipboard",
+                    )
+                    .clicked()
+                {
+                    let cmd = crate::sources::build_source_curl(
+                        &self.settings.sources[i],
+                        &self.project_root,
+                    );
+                    ui.ctx().copy_text(cmd);
+                }
             });
+
+            self.render_source_fetch_status(ui, i);
         });
+    }
+
+    /// Show the result of the most recent manual "Fetch Now" for source `i`,
+    /// in green for success or red for an error message.
+    fn render_source_fetch_status(&self, ui: &mut egui::Ui, i: usize) {
+        let in_flight = self
+            .source_fetch_rx
+            .as_ref()
+            .is_some_and(|(idx, _)| *idx == i);
+        if in_flight {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Fetching\u{2026}")
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+            });
+            return;
+        }
+
+        let Some(status) = self.source_fetch_status.get(&i) else {
+            return;
+        };
+        let (text, color) = match status {
+            Ok(0) => ("Fetched 0 items".to_string(), self.semantic.tertiary_text),
+            Ok(n) => (
+                format!("Fetched {} item(s)", n),
+                egui::Color32::from_rgb(60, 160, 60),
+            ),
+            Err(e) => (e.clone(), egui::Color32::from_rgb(220, 50, 50)),
+        };
+        ui.label(egui::RichText::new(text).small().color(color));
     }
 
     fn render_settings_source_fields(&mut self, ui: &mut egui::Ui, i: usize) {
         egui::Grid::new(format!("source_grid_{}", i))
             .num_columns(2)
-            .spacing([SPACE_SM, SPACE_XS])
+            .spacing([SPACE_MD, SPACE_SM])
             .show(ui, |ui| {
                 ui.label("Kind:");
                 self.render_source_kind_selector(ui, i);
@@ -235,6 +301,8 @@ impl DirigentApp {
             "Bot Token:",
             &mut self.settings.sources[i].token,
             "from env SLACK_BOT_TOKEN or .env",
+            "SLACK_BOT_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -265,6 +333,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env SONAR_TOKEN or .env",
+            "SONAR_TOKEN",
+            &self.project_root,
         );
     }
 
@@ -274,12 +344,16 @@ impl DirigentApp {
             "API Key:",
             &mut self.settings.sources[i].api_key,
             "from env TRELLO_API_KEY or .env",
+            "TRELLO_API_KEY",
+            &self.project_root,
         );
         source_password_field(
             ui,
             "Token:",
             &mut self.settings.sources[i].token,
             "from env TRELLO_TOKEN or .env",
+            "TRELLO_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -303,6 +377,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env ASANA_TOKEN or .env",
+            "ASANA_TOKEN",
+            &self.project_root,
         );
         source_text_field(
             ui,
@@ -318,7 +394,7 @@ impl DirigentApp {
             ui,
             "Host URL:",
             &mut self.settings.sources[i].host_url,
-            "https://sentry.io (or self-hosted)",
+            "https://<org>.sentry.io (default) or self-hosted",
             200.0,
         );
         source_text_field(
@@ -340,6 +416,8 @@ impl DirigentApp {
             "Auth Token:",
             &mut self.settings.sources[i].token,
             "from env SENTRY_AUTH_TOKEN or .env",
+            "SENTRY_AUTH_TOKEN",
+            &self.project_root,
         );
     }
 
@@ -349,6 +427,8 @@ impl DirigentApp {
             "Token:",
             &mut self.settings.sources[i].token,
             "from env NOTION_TOKEN or .env",
+            "NOTION_TOKEN",
+            &self.project_root,
         );
         self.render_notion_object_selector(ui, i);
         self.render_notion_page_type_fields(ui, i);

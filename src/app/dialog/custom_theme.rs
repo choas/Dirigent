@@ -37,7 +37,7 @@ impl From<std::io::Error> for ExportThemeError {
 fn export_theme(theme: &CustomTheme) -> Result<String, ExportThemeError> {
     let path = rfd::FileDialog::new()
         .set_title("Export Theme")
-        .set_file_name(&format!("{}.json", theme.name.trim()))
+        .set_file_name(format!("{}.json", theme.name.trim()))
         .add_filter("JSON", &["json"])
         .save_file()
         .ok_or(ExportThemeError::Cancelled)?;
@@ -187,6 +187,13 @@ impl DirigentApp {
                             "Accent",
                             &mut edit.theme.accent,
                         );
+                        color_row(
+                            ui,
+                            "Warning/Badge",
+                            &mut edit.theme.warning,
+                            "Badge Text",
+                            &mut edit.theme.badge_text,
+                        );
                     });
 
                 ui.add_space(SPACE_SM);
@@ -239,16 +246,15 @@ impl DirigentApp {
                 let is_editing = edit.editing_index.is_some();
                 let name_valid = !edit.theme.name.trim().is_empty();
                 ui.horizontal(|ui| {
-                    if is_editing {
-                        if ui
+                    if is_editing
+                        && ui
                             .button(
                                 egui::RichText::new("Delete")
                                     .color(egui::Color32::from_rgb(210, 95, 95)),
                             )
                             .clicked()
-                        {
-                            delete = true;
-                        }
+                    {
+                        delete = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -407,6 +413,7 @@ impl DirigentApp {
         edit.ai_rx = Some(rx);
 
         let is_dark = edit.theme.is_dark;
+        let current_theme = edit.theme.clone();
         let provider = self.settings.cli_provider.clone();
         let settings = self.settings.clone();
         let project_root = self.project_root.clone();
@@ -420,6 +427,7 @@ impl DirigentApp {
                 &project_root,
                 &prompt_text,
                 is_dark,
+                &current_theme,
                 cancel.clone(),
             );
             let _ = tx.send(result);
@@ -445,6 +453,32 @@ fn color_row(
     ui.end_row();
 }
 
+/// Format the theme's current colors as a `field: [R, G, B]` list for the AI prompt,
+/// so the model can tweak specific colors instead of always regenerating from scratch.
+fn current_theme_colors(t: &CustomTheme) -> String {
+    let fields: [(&str, [u8; 3]); 14] = [
+        ("panel_fill", t.panel_fill),
+        ("window_fill", t.window_fill),
+        ("extreme_bg", t.extreme_bg),
+        ("faint_bg", t.faint_bg),
+        ("text", t.text),
+        ("selection", t.selection),
+        ("noninteractive", t.noninteractive),
+        ("inactive", t.inactive),
+        ("hovered", t.hovered),
+        ("active", t.active),
+        ("hyperlink", t.hyperlink),
+        ("accent", t.accent),
+        ("warning", t.warning),
+        ("badge_text", t.badge_text),
+    ];
+    fields
+        .iter()
+        .map(|(name, [r, g, b])| format!("  {name}: [{r}, {g}, {b}]"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Call the selected code generator CLI to generate theme palette colors from a description.
 fn generate_theme_via_cli(
     provider: &CliProvider,
@@ -452,11 +486,23 @@ fn generate_theme_via_cli(
     project_root: &std::path::Path,
     description: &str,
     is_dark: bool,
+    current: &CustomTheme,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<CustomTheme, String> {
     let dark_light = if is_dark { "dark" } else { "light" };
+    let current_colors = current_theme_colors(current);
     let prompt = format!(
         r#"Generate a {dark_light} color theme for a code editor based on this description: "{description}"
+
+The theme currently has these colors (field: [R, G, B]):
+
+{current_colors}
+
+Treat the description as a request to modify this existing palette. If it names a
+specific color or aspect (e.g. "make the accent more blue", "warmer background",
+"only change the warning color"), keep every other field at its current value and
+adjust only what the description asks for. If the description calls for a complete
+new look, you may change all of them.
 
 Return ONLY a JSON object (no markdown, no explanation) with these exact fields, each being an array of 3 integers [R, G, B] (0-255):
 
@@ -472,7 +518,9 @@ Return ONLY a JSON object (no markdown, no explanation) with these exact fields,
   "hovered": [R, G, B],
   "active": [R, G, B],
   "hyperlink": [R, G, B],
-  "accent": [R, G, B]
+  "accent": [R, G, B],
+  "warning": [R, G, B],
+  "badge_text": [R, G, B]
 }}
 
 For a {dark_light} theme:
@@ -480,6 +528,8 @@ For a {dark_light} theme:
 - text should be {text_desc}
 - selection, noninteractive, inactive, hovered should be subtle variations of the background
 - active, hyperlink, accent should be vibrant accent colors matching the description
+- warning should be an attention color (used for badges like the non-default branch indicator)
+- badge_text should be a readable text color drawn on top of the warning/accent badge backgrounds
 
 Return ONLY the JSON object."#,
         bg_desc = if is_dark {
@@ -611,6 +661,14 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         Ok(rgb)
     };
 
+    // Warning / badge text are optional in the AI response: fall back to
+    // theme-appropriate defaults if the model omits them.
+    let (default_warning, default_badge_text) = if is_dark {
+        ([200u8, 165, 60], [220u8, 220, 220])
+    } else {
+        ([160u8, 110, 0], [255u8, 255, 255])
+    };
+
     Ok(CustomTheme {
         name: String::new(),
         is_dark,
@@ -626,5 +684,7 @@ fn parse_theme_json(text: &str, is_dark: bool) -> Result<CustomTheme, String> {
         active: get_rgb("active")?,
         hyperlink: get_rgb("hyperlink")?,
         accent: get_rgb("accent")?,
+        warning: get_rgb("warning").unwrap_or(default_warning),
+        badge_text: get_rgb("badge_text").unwrap_or(default_badge_text),
     })
 }

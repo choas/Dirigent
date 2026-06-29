@@ -34,13 +34,37 @@ pub fn ansi_to_layout_job(
     default_color: egui::Color32,
     overrides: &DiffAnsiOverrides,
 ) -> egui::text::LayoutJob {
+    ansi_to_layout_job_resumable(text, font_id, default_color, overrides, None).0
+}
+
+/// Resumable variant of [`ansi_to_layout_job`].
+///
+/// `start` carries the active [`egui::TextFormat`] left over from a previous
+/// chunk so a color/style run spanning a chunk boundary survives intact; the
+/// returned `TextFormat` is the active state at the end of `text`, ready to
+/// feed into the next chunk.
+///
+/// This lets callers split a very large log into several smaller galleys
+/// instead of laying it out as one. That matters for more than performance:
+/// egui's `Context::fonts()` holds the context **write** lock for the whole
+/// duration of a galley layout, and a multi-megabyte galley can hold it long
+/// enough that a background thread calling `ctx.request_repaint()` (which
+/// takes a **read** lock) times out, tripping epaint's
+/// "Failed to acquire RwLock read after 10s. Deadlock?" panic.
+pub fn ansi_to_layout_job_resumable(
+    text: &str,
+    font_id: egui::FontId,
+    default_color: egui::Color32,
+    overrides: &DiffAnsiOverrides,
+    start: Option<egui::TextFormat>,
+) -> (egui::text::LayoutJob, egui::TextFormat) {
     let mut job = egui::text::LayoutJob::default();
     let base = egui::TextFormat {
         font_id: font_id.clone(),
         color: default_color,
         ..Default::default()
     };
-    let mut current = base.clone();
+    let mut current = start.unwrap_or_else(|| base.clone());
     let mut buf = String::new();
     let mut chars = text.chars().peekable();
 
@@ -86,9 +110,9 @@ pub fn ansi_to_layout_job(
         }
     }
     if !buf.is_empty() {
-        job.append(&buf, 0.0, current);
+        job.append(&buf, 0.0, current.clone());
     }
-    job
+    (job, current)
 }
 
 fn apply_sgr(

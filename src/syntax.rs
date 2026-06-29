@@ -12,6 +12,11 @@ struct CacheEntry {
     generation: u64,
 }
 
+struct GalleyEntry {
+    galley: std::sync::Arc<egui::Galley>,
+    generation: u64,
+}
+
 /// Custom `SyntectSettings` that extends syntect's defaults with extra languages
 /// (e.g. Kotlin) that are not shipped in the default Sublime Text syntax pack.
 pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| {
@@ -37,12 +42,23 @@ pub(crate) static SYNTAX_SETTINGS: LazyLock<SyntectSettings> = LazyLock::new(|| 
 thread_local! {
     static HIGHLIGHT_CACHE: RefCell<(HashMap<u64, CacheEntry>, u64)> =
         RefCell::new((HashMap::with_capacity(MAX_CACHE_ENTRIES), 0));
+    // Laid-out, non-wrapping galleys keyed by (code, language). Caching the
+    // galley (not just the `LayoutJob`) lets the code viewer paint each visible
+    // line without re-cloning the job or re-running egui's galley layout/hash
+    // every frame — the dominant per-frame cost when a large file is open.
+    static GALLEY_CACHE: RefCell<(HashMap<u64, GalleyEntry>, u64)> =
+        RefCell::new((HashMap::with_capacity(MAX_CACHE_ENTRIES), 0));
 }
 
 const MAX_CACHE_ENTRIES: usize = 10_000;
 
 pub(crate) fn clear_highlight_cache() {
     HIGHLIGHT_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        inner.0.clear();
+        inner.1 = 0;
+    });
+    GALLEY_CACHE.with(|c| {
         let mut inner = c.borrow_mut();
         inner.0.clear();
         inner.1 = 0;
@@ -115,6 +131,58 @@ pub(crate) fn highlight(
     });
 
     job
+}
+
+/// Like [`highlight`], but returns a fully laid-out, non-wrapping `Galley`
+/// cached across frames. Intended for the code viewer, which scrolls
+/// horizontally so lines extend rather than wrap. Laying out with an infinite
+/// wrap width makes the galley independent of the available width, so the same
+/// cached galley is valid every frame and across panel resizes. Cleared by
+/// [`clear_highlight_cache`] on theme or font changes.
+pub(crate) fn highlight_galley(
+    ui: &egui::Ui,
+    theme: &egui_extras::syntax_highlighting::CodeTheme,
+    code: &str,
+    language: &str,
+) -> std::sync::Arc<egui::Galley> {
+    let key = cache_key(code, language);
+
+    let cached = GALLEY_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        let gen = inner.1;
+        if let Some(entry) = inner.0.get_mut(&key) {
+            entry.generation = gen;
+            return Some(entry.galley.clone());
+        }
+        None
+    });
+    if let Some(galley) = cached {
+        return galley;
+    }
+
+    let mut job = highlight(ui.ctx(), ui.style(), theme, code, language);
+    job.wrap.max_width = f32::INFINITY;
+    job.break_on_newline = false;
+    let galley = ui.painter().layout_job(job);
+
+    GALLEY_CACHE.with(|c| {
+        let mut inner = c.borrow_mut();
+        let (cache, gen) = &mut *inner;
+        if cache.len() >= MAX_CACHE_ENTRIES {
+            let cutoff = gen.saturating_sub(*gen / 2);
+            cache.retain(|_, v| v.generation >= cutoff);
+        }
+        *gen += 1;
+        cache.insert(
+            key,
+            GalleyEntry {
+                galley: galley.clone(),
+                generation: *gen,
+            },
+        );
+    });
+
+    galley
 }
 
 // ---------------------------------------------------------------------------

@@ -146,14 +146,17 @@ impl DirigentApp {
                 }
                 ui.add_space(2.0);
 
+                let ctx = DirtyTreeRenderCtx {
+                    selected_files: &self.git.selected_files,
+                    semantic: &self.semantic,
+                    font_size: self.settings.font_size,
+                };
                 render_dirty_tree_children(
                     ui,
                     &tree,
                     0,
                     &mut self.git.git_view_expanded_dirs,
-                    &self.git.selected_files,
-                    &self.semantic,
-                    self.settings.font_size,
+                    &ctx,
                     "",
                     &mut action,
                 );
@@ -180,7 +183,7 @@ impl DirigentApp {
                     &self.settings.vcs_backend,
                     &self.settings.jj_cli_path,
                     &self.project_root,
-                    &[rel_path.clone()],
+                    std::slice::from_ref(&rel_path),
                 ) {
                     Ok(()) => {
                         self.git.selected_files.remove(&rel_path);
@@ -225,10 +228,10 @@ impl DirigentApp {
                     .fill(self.semantic.accent);
             if ui
                 .add_sized([ui.available_width(), 0.0], btn)
-                .on_hover_text("Create a Cue to commit with an AI-generated message")
+                .on_hover_text("Analyze the changes and commit with an AI-generated message")
                 .clicked()
             {
-                self.create_commit_cue();
+                self.open_commit_dialog_for_changes();
             }
             if has_selection {
                 ui.add_space(SPACE_SM);
@@ -305,27 +308,19 @@ impl DirigentApp {
         }
     }
 
-    fn create_commit_cue(&mut self) {
-        let text = if self.git.selected_files.is_empty() {
-            "Commit all uncommitted changes with a useful commit message describing the changes"
-                .to_string()
-        } else {
-            let mut files: Vec<&str> = self.git.selected_files.iter().map(|s| s.as_str()).collect();
-            files.sort_unstable();
-            format!(
-                "Commit only the following files with a useful commit message describing the changes: {}",
-                files.join(", ")
-            )
-        };
-        match self.db.insert_global_cue(&text) {
-            Ok(id) => {
-                self.reload_cues();
-                self.activate_inbox_cue(id, "Created from Git View");
-            }
-            Err(e) => {
-                self.set_status_message(format!("Failed to create commit cue: {e}"));
-            }
-        }
+    /// Open the Commit dialog for the working-copy changes (or the current
+    /// selection) and immediately start analyzing the diff to draft a commit
+    /// message via the configured CLI / Fast LLM.
+    fn open_commit_dialog_for_changes(&mut self) {
+        let mut files: Vec<String> = self.git.selected_files.iter().cloned().collect();
+        files.sort_unstable();
+        self.git.commit_files = files;
+        self.git.commit_review_cue_id = None;
+        self.git.commit_in_background = false;
+        self.git.commit_message_input.clear();
+        self.git.commit_needs_focus = true;
+        self.git.show_commit_dialog = true;
+        self.spawn_commit_message_suggestion();
     }
 }
 
@@ -349,17 +344,25 @@ fn reveal_label() -> &'static str {
     }
 }
 
+/// Read-only context shared across the recursive dirty-tree rendering.
+struct DirtyTreeRenderCtx<'a> {
+    selected_files: &'a HashSet<String>,
+    semantic: &'a SemanticColors,
+    font_size: f32,
+}
+
 fn render_dirty_tree_children(
     ui: &mut egui::Ui,
     node: &DirtyTreeNode,
     depth: usize,
     expanded: &mut HashSet<String>,
-    selected_files: &HashSet<String>,
-    semantic: &SemanticColors,
-    font_size: f32,
+    ctx: &DirtyTreeRenderCtx<'_>,
     parent_path: &str,
     action: &mut Option<GitViewAction>,
 ) {
+    let selected_files = ctx.selected_files;
+    let semantic = ctx.semantic;
+    let font_size = ctx.font_size;
     let indent = depth as f32 * 16.0;
 
     for (name, child) in &node.children {
@@ -408,17 +411,7 @@ fn render_dirty_tree_children(
             });
 
             if is_expanded {
-                render_dirty_tree_children(
-                    ui,
-                    child,
-                    depth + 1,
-                    expanded,
-                    selected_files,
-                    semantic,
-                    font_size,
-                    &node_path,
-                    action,
-                );
+                render_dirty_tree_children(ui, child, depth + 1, expanded, ctx, &node_path, action);
             }
         } else if let Some((rel_path, status)) = &child.file_status {
             let (row_rect, response) = allocate_tree_row(ui);
