@@ -1355,6 +1355,20 @@ impl DirigentApp {
                     };
                     let _ = self.db.log_activity(id, &activity);
                     self.clear_review_question_and_recheck_workflow(id);
+                    // Run configured AfterCommit agents (format/lint/build/test)
+                    // for changes committed via the diff-review dialog, matching
+                    // the old direct-commit path's behavior.
+                    let cue_prompt = self
+                        .cues
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| c.text.clone())
+                        .unwrap_or_default();
+                    self.trigger_agents_for(
+                        &crate::agents::AgentTrigger::AfterCommit,
+                        Some(id),
+                        &cue_prompt,
+                    );
                 }
                 self.set_status_message(msg);
             }
