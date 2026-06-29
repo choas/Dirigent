@@ -870,6 +870,11 @@ impl DirigentApp {
                 commit_pending_cue_id: None,
                 commit_suggesting: false,
                 commit_suggest_rx: None,
+                commit_files: Vec::new(),
+                commit_in_background: false,
+                commit_suggest_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                    false,
+                )),
                 active_bookmark: None,
                 pr_number: None,
                 pr_url: None,
@@ -1355,6 +1360,7 @@ impl eframe::App for DirigentApp {
         self.process_squash_result();
         self.process_undo_result();
         self.process_commit_result();
+        self.process_commit_suggestion();
         self.process_merge_bookmark_result();
         self.process_delete_bookmark_result();
         self.process_abandon_empty_result();

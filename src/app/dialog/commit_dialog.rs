@@ -11,24 +11,14 @@ impl DirigentApp {
             return;
         }
 
-        // Drain a completed Fast-LLM commit-message suggestion.
-        if let Some(rx) = &self.git.commit_suggest_rx {
-            if let Ok(result) = rx.try_recv() {
-                self.git.commit_suggesting = false;
-                self.git.commit_suggest_rx = None;
-                match result {
-                    Ok(msg) => {
-                        self.git.commit_message_input = msg;
-                        self.git.commit_needs_focus = true;
-                    }
-                    Err(e) => self.set_status_message(format!("Summarize: {e}")),
-                }
-            }
-        }
+        // The suggestion result is drained every frame in
+        // `process_commit_suggestion` so a backgrounded commit still completes
+        // after the dialog has been closed.
 
         let mut dismiss = false;
         let mut do_commit = false;
         let mut generate = false;
+        let mut background = false;
 
         let fs = self.settings.font_size;
 
@@ -42,6 +32,12 @@ impl DirigentApp {
             .show(ctx, |ui| {
                 if self.git.commit_review_cue_id.is_some() {
                     ui.label("Commit the reviewed changes with a message.");
+                } else if !self.git.commit_files.is_empty() {
+                    let n = self.git.commit_files.len();
+                    ui.label(format!(
+                        "Commit {n} selected file{} with a message.",
+                        if n == 1 { "" } else { "s" }
+                    ));
                 } else if self.settings.vcs_backend == crate::settings::VcsBackend::Jj {
                     ui.label("Describe the current working-copy commit and start a new change.");
                 } else {
@@ -148,6 +144,18 @@ impl DirigentApp {
                     if ui.button("Cancel").clicked() {
                         dismiss = true;
                     }
+                    // Backgrounding only applies to direct working-copy commits,
+                    // not to committing a reviewed cue's diff.
+                    if self.git.commit_review_cue_id.is_none()
+                        && ui
+                            .button("Background")
+                            .on_hover_text(
+                                "Close and commit in the background once the message is ready",
+                            )
+                            .clicked()
+                    {
+                        background = true;
+                    }
                 });
 
                 ui.add_space(SPACE_XS);
@@ -155,12 +163,81 @@ impl DirigentApp {
 
         if do_commit {
             self.start_commit();
+        } else if background {
+            self.background_commit();
         } else if dismiss {
-            self.git.show_commit_dialog = false;
-            self.git.commit_review_cue_id = None;
+            self.cancel_commit_dialog();
         }
         if generate {
             self.spawn_commit_message_suggestion();
+        }
+    }
+
+    /// Close the Commit dialog and arrange for the commit to happen in the
+    /// background. If a message has already been drafted the commit starts
+    /// immediately; otherwise analysis keeps running and the commit fires
+    /// automatically once the message is ready (see
+    /// [`process_commit_suggestion`](Self::process_commit_suggestion)).
+    fn background_commit(&mut self) {
+        self.git.show_commit_dialog = false;
+        if !self.git.commit_message_input.trim().is_empty() {
+            self.start_commit();
+        } else if self.git.commit_suggesting || self.git.commit_suggest_rx.is_some() {
+            self.git.commit_in_background = true;
+            self.set_status_message("Analyzing changes; will commit in background\u{2026}".into());
+        } else {
+            // Nothing drafted and nothing running: kick off analysis first.
+            self.git.commit_in_background = true;
+            self.spawn_commit_message_suggestion();
+            self.set_status_message("Analyzing changes; will commit in background\u{2026}".into());
+        }
+    }
+
+    /// Cancel the Commit dialog, aborting any in-flight message analysis.
+    fn cancel_commit_dialog(&mut self) {
+        self.git
+            .commit_suggest_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.git.commit_suggesting = false;
+        self.git.commit_suggest_rx = None;
+        self.git.commit_in_background = false;
+        self.git.commit_files.clear();
+        self.git.show_commit_dialog = false;
+        self.git.commit_review_cue_id = None;
+    }
+
+    /// Drain a completed commit-message suggestion. Runs every frame (not only
+    /// while the dialog is open) so a backgrounded commit completes after the
+    /// dialog has been closed.
+    pub(in crate::app) fn process_commit_suggestion(&mut self) {
+        let result = match &self.git.commit_suggest_rx {
+            Some(rx) => match rx.try_recv() {
+                Ok(r) => r,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.git.commit_suggesting = false;
+                    self.git.commit_suggest_rx = None;
+                    self.git.commit_in_background = false;
+                    return;
+                }
+            },
+            None => return,
+        };
+        self.git.commit_suggesting = false;
+        self.git.commit_suggest_rx = None;
+        match result {
+            Ok(msg) => {
+                self.git.commit_message_input = msg;
+                self.git.commit_needs_focus = true;
+                if self.git.commit_in_background {
+                    self.git.commit_in_background = false;
+                    self.start_commit();
+                }
+            }
+            Err(e) => {
+                self.git.commit_in_background = false;
+                self.set_status_message(format!("Summarize: {e}"));
+            }
         }
     }
 
@@ -170,8 +247,12 @@ impl DirigentApp {
     /// The result is delivered via
     /// [`GitState::commit_suggest_rx`](super::super::types::GitState) and applied
     /// to the message field on the next frame.
-    fn spawn_commit_message_suggestion(&mut self) {
-        let files: Vec<String> = self.git.dirty_files.keys().cloned().collect();
+    pub(in crate::app) fn spawn_commit_message_suggestion(&mut self) {
+        let files: Vec<String> = if self.git.commit_files.is_empty() {
+            self.git.dirty_files.keys().cloned().collect()
+        } else {
+            self.git.commit_files.clone()
+        };
         let diff = crate::app::vcs_dispatch::get_working_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
@@ -186,6 +267,9 @@ impl DirigentApp {
         let (tx, rx) = mpsc::channel();
         self.git.commit_suggest_rx = Some(rx);
         self.git.commit_suggesting = true;
+        // Fresh cancellation flag so a prior Cancel doesn't abort this run.
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.git.commit_suggest_cancel = cancel.clone();
         let ctx = self.egui_ctx.clone();
 
         if let Some(config) = crate::fast_llm::FastLlmConfig::from_settings(&self.settings) {
@@ -205,7 +289,6 @@ impl DirigentApp {
             let extra_args = self.settings.claude_extra_args.clone();
             let env_vars = self.settings.claude_env_vars.clone();
             std::thread::spawn(move || {
-                let cancel = Arc::new(AtomicBool::new(false));
                 let result = crate::claude::summarize_commit_message_via_cli(
                     &diff,
                     &project_root,

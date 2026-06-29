@@ -1244,14 +1244,36 @@ impl DirigentApp {
         }
 
         let cue_id = self.git.commit_review_cue_id.take();
+        let selected_files = std::mem::take(&mut self.git.commit_files);
 
-        let diff_text = cue_id.and_then(|id| {
+        // Resolve the diff to commit:
+        // - a reviewed cue commits its stored execution diff;
+        // - a Git-view selection commits only those files (path-scoped diff);
+        // - otherwise the whole working copy is committed (`commit_all`).
+        let diff_text = if let Some(id) = cue_id {
             self.db
                 .get_latest_execution(id)
                 .ok()
                 .flatten()
                 .and_then(|e| e.diff)
-        });
+        } else if !selected_files.is_empty() {
+            let diff = super::vcs_dispatch::get_working_diff(
+                &self.settings.vcs_backend,
+                &self.settings.jj_cli_path,
+                &self.project_root,
+                &selected_files,
+            )
+            .filter(|d| !d.trim().is_empty());
+            match diff {
+                Some(d) => Some(d),
+                None => {
+                    self.set_status_message("No changes to commit for the selected files".into());
+                    return;
+                }
+            }
+        } else {
+            None
+        };
 
         self.git.show_commit_dialog = false;
         self.git.committing = true;

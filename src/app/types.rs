@@ -747,6 +747,16 @@ pub(crate) struct GitState {
     pub(super) commit_suggesting: bool,
     /// Receiver for an async Fast-LLM commit-message suggestion.
     pub(super) commit_suggest_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Files to commit when the dialog was opened from the Git view with a
+    /// selection; empty means commit the whole working copy.
+    pub(super) commit_files: Vec<String>,
+    /// When set, the commit dialog has been backgrounded: once the
+    /// commit-message suggestion completes the commit runs automatically
+    /// without reopening the dialog.
+    pub(super) commit_in_background: bool,
+    /// Cancellation flag for an in-flight commit-message suggestion (CLI path),
+    /// flipped when the dialog is cancelled.
+    pub(super) commit_suggest_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The bookmark the user is actively working on (jj only).
     /// Only this bookmark is advanced when committing, preventing unrelated
     /// bookmarks on the same parent commit from being dragged forward.
@@ -834,6 +844,12 @@ impl GitState {
             return true;
         }
         if self.show_commit_dialog {
+            self.commit_suggest_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.commit_suggesting = false;
+            self.commit_suggest_rx = None;
+            self.commit_in_background = false;
+            self.commit_files.clear();
             self.show_commit_dialog = false;
             self.commit_review_cue_id = None;
             return true;

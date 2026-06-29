@@ -225,10 +225,10 @@ impl DirigentApp {
                     .fill(self.semantic.accent);
             if ui
                 .add_sized([ui.available_width(), 0.0], btn)
-                .on_hover_text("Create a Cue to commit with an AI-generated message")
+                .on_hover_text("Analyze the changes and commit with an AI-generated message")
                 .clicked()
             {
-                self.create_commit_cue();
+                self.open_commit_dialog_for_changes();
             }
             if has_selection {
                 ui.add_space(SPACE_SM);
@@ -305,27 +305,19 @@ impl DirigentApp {
         }
     }
 
-    fn create_commit_cue(&mut self) {
-        let text = if self.git.selected_files.is_empty() {
-            "Commit all uncommitted changes with a useful commit message describing the changes"
-                .to_string()
-        } else {
-            let mut files: Vec<&str> = self.git.selected_files.iter().map(|s| s.as_str()).collect();
-            files.sort_unstable();
-            format!(
-                "Commit only the following files with a useful commit message describing the changes: {}",
-                files.join(", ")
-            )
-        };
-        match self.db.insert_global_cue(&text) {
-            Ok(id) => {
-                self.reload_cues();
-                self.activate_inbox_cue(id, "Created from Git View");
-            }
-            Err(e) => {
-                self.set_status_message(format!("Failed to create commit cue: {e}"));
-            }
-        }
+    /// Open the Commit dialog for the working-copy changes (or the current
+    /// selection) and immediately start analyzing the diff to draft a commit
+    /// message via the configured CLI / Fast LLM.
+    fn open_commit_dialog_for_changes(&mut self) {
+        let mut files: Vec<String> = self.git.selected_files.iter().cloned().collect();
+        files.sort_unstable();
+        self.git.commit_files = files;
+        self.git.commit_review_cue_id = None;
+        self.git.commit_in_background = false;
+        self.git.commit_message_input.clear();
+        self.git.commit_needs_focus = true;
+        self.git.show_commit_dialog = true;
+        self.spawn_commit_message_suggestion();
     }
 }
 
