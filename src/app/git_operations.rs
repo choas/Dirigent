@@ -1231,6 +1231,7 @@ impl DirigentApp {
     pub(super) fn open_commit_dialog(&mut self) {
         self.git.commit_message_input.clear();
         self.git.commit_review_cue_id = None;
+        self.git.commit_change_set_cue_id = None;
         self.git.commit_needs_focus = true;
         self.git.show_commit_dialog = true;
     }
@@ -1251,14 +1252,16 @@ impl DirigentApp {
             return;
         }
 
-        let cue_id = self.git.commit_review_cue_id.take();
+        let review_cue_id = self.git.commit_review_cue_id.take();
+        let change_set_cue_id = self.git.commit_change_set_cue_id.take();
         let selected_files = std::mem::take(&mut self.git.commit_files);
 
         // Resolve the diff to commit:
         // - a reviewed cue commits its stored execution diff;
-        // - a Git-view selection commits only those files (path-scoped diff);
+        // - a Git-view selection or change-set group commits only those files
+        //   (path-scoped diff);
         // - otherwise the whole working copy is committed (`commit_all`).
-        let diff_text = if let Some(id) = cue_id {
+        let diff_text = if let Some(id) = review_cue_id {
             self.db
                 .get_latest_execution(id)
                 .ok()
@@ -1316,7 +1319,9 @@ impl DirigentApp {
             let _ = tx.send(result);
         });
 
-        self.git.commit_pending_cue_id = cue_id;
+        // A change-set commit has no review cue but should still mark its card
+        // done (and get cleaned up) when the commit succeeds.
+        self.git.commit_pending_cue_id = review_cue_id.or(change_set_cue_id);
         self.set_status_message("Committing...".into());
     }
 
@@ -1348,6 +1353,8 @@ impl DirigentApp {
                     let _ = self.db.update_cue_status(id, CueStatus::Done);
                     let _ = self.db.log_activity(id, "Committed");
                     self.clear_review_question_and_recheck_workflow(id);
+                    // Ephemeral change-set cards are done once committed.
+                    self.forget_change_set(id);
                 }
                 self.set_status_message(msg);
             }

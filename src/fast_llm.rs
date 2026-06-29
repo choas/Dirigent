@@ -137,6 +137,65 @@ pub fn complete(
     Ok(content)
 }
 
+/// One change-set group as returned by the model: a logical feature set with a
+/// short title, a one-line description, and the files it covers.
+///
+/// The schema is `{ "title", "description", "files": [{ "path", "hunks": [...] }] }`.
+/// In the whole-file v1 analyzer the per-hunk data is accepted but ignored, so the
+/// same schema extends unchanged to the partial (per-hunk) version later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChangeSetGroupRaw {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub files: Vec<ChangeSetFileRaw>,
+}
+
+/// One file within a [`ChangeSetGroupRaw`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChangeSetFileRaw {
+    #[serde(default)]
+    pub path: String,
+    /// Per-hunk selection accepted from the model but unused in whole-file v1.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub hunks: Vec<serde_json::Value>,
+}
+
+/// Ask the Fast LLM to group a working diff into logical, file-disjoint change
+/// sets. Returns the raw groups as parsed from the model; callers are expected
+/// to normalize them (merge overlaps, account for omitted files) before use.
+pub fn analyze_change_sets(
+    config: &FastLlmConfig,
+    diff: &str,
+) -> Result<Vec<ChangeSetGroupRaw>, String> {
+    const SYSTEM: &str = "You are a helpful assistant that organizes a messy git working tree. \
+        Given a unified diff, group the changed files into logical, self-describing \
+        feature sets. Respond with ONLY a JSON array, no markdown fences and no commentary, \
+        shaped like: \
+        [{\"title\": \"...\", \"description\": \"...\", \"files\": [{\"path\": \"...\", \"hunks\": []}]}]. \
+        Rules: put each changed file in exactly one group; cover every file in the diff; \
+        write a short imperative title (max ~50 chars) and a one-line description per group; \
+        use the file paths exactly as they appear in the diff.";
+
+    // Cap the diff so a huge change set doesn't blow past the model's context.
+    let trimmed: String = diff.chars().take(12_000).collect();
+    let prompt = format!("Group the changed files in the following diff:\n\n{trimmed}");
+    let result = complete(config, Some(SYSTEM), &prompt)?;
+    parse_change_sets(&result)
+}
+
+/// Defensively parse the model's change-set response into raw groups, tolerating
+/// markdown code fences and surrounding prose.
+fn parse_change_sets(response: &str) -> Result<Vec<ChangeSetGroupRaw>, String> {
+    let json = crate::util::json_extract::extract_json(response);
+    let groups: Vec<ChangeSetGroupRaw> =
+        serde_json::from_str(&json).map_err(|e| format!("parse change-set JSON: {e}"))?;
+    Ok(groups)
+}
+
 /// Summarize a git diff into a concise, conventional commit message subject line.
 pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<String, String> {
     const SYSTEM: &str = "You are a helpful assistant that writes git commit messages. \
@@ -160,4 +219,39 @@ pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<St
         return Err("model returned an empty commit message".to_string());
     }
     Ok(subject)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_change_sets_well_formed() {
+        let resp = r#"[
+            {"title": "Add login", "description": "auth flow", "files": [{"path": "src/auth.rs", "hunks": []}]},
+            {"title": "Docs", "description": "readme", "files": [{"path": "README.md"}]}
+        ]"#;
+        let groups = parse_change_sets(resp).expect("should parse");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].title, "Add login");
+        assert_eq!(groups[0].files[0].path, "src/auth.rs");
+        // A file object without a `hunks` key still parses (hunks defaults empty).
+        assert_eq!(groups[1].files[0].path, "README.md");
+    }
+
+    #[test]
+    fn parse_change_sets_fenced_with_prose() {
+        let resp = "Sure! Here are the groups:\n```json\n[{\"title\":\"T\",\"description\":\"d\",\"files\":[{\"path\":\"a.rs\"}]}]\n```\nHope that helps.";
+        let groups = parse_change_sets(resp).expect("should parse fenced output");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].files[0].path, "a.rs");
+    }
+
+    #[test]
+    fn parse_change_sets_malformed_errors() {
+        // Not JSON of the expected shape at all.
+        assert!(parse_change_sets("the model refused to answer").is_err());
+        // A JSON object rather than the expected array.
+        assert!(parse_change_sets(r#"{"oops": true}"#).is_err());
+    }
 }

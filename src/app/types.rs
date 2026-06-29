@@ -135,6 +135,10 @@ pub(super) enum CueAction {
     SquashBookmark,
     /// Save this cue's commit as a reusable Play in the Dirigent Playbook.
     SaveAsPlay,
+    /// Stage just this change-set group's files (no commit).
+    StageChangeSet(i64),
+    /// Open the commit dialog scoped to this change-set group's files.
+    CommitChangeSet(i64),
 }
 
 /// State for a single open file tab.
@@ -741,6 +745,9 @@ pub(crate) struct GitState {
     pub(super) commit_needs_focus: bool,
     /// When the commit dialog was opened for a cue review, the cue ID.
     pub(super) commit_review_cue_id: Option<i64>,
+    /// When the commit dialog was opened for a change-set group, that group's
+    /// cue ID, so it can be marked done and cleared once the commit succeeds.
+    pub(super) commit_change_set_cue_id: Option<i64>,
     /// Whether a commit operation is in progress (jj only).
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -854,6 +861,7 @@ impl GitState {
             self.commit_files.clear();
             self.show_commit_dialog = false;
             self.commit_review_cue_id = None;
+            self.commit_change_set_cue_id = None;
             return true;
         }
         if self.show_cleanup_bookmarks {

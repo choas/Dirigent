@@ -1,6 +1,7 @@
 mod agents_poll;
 mod ansi;
 mod background;
+mod change_set_analysis;
 mod claude_code_name;
 mod claude_run;
 mod code_viewer;
@@ -449,6 +450,12 @@ pub struct DirigentApp {
     split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
     split_cue_cancel: Arc<AtomicBool>,
 
+    // Change Set Analysis async state
+    change_set_generating: bool,
+    change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    /// File lists for ephemeral change-set Review cues, keyed by cue id.
+    change_set_files: HashMap<i64, Vec<String>>,
+
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
 
@@ -867,6 +874,7 @@ impl DirigentApp {
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
                 commit_review_cue_id: None,
+                commit_change_set_cue_id: None,
                 committing: false,
                 commit_rx: None,
                 commit_pending_cue_id: None,
@@ -1014,6 +1022,10 @@ impl DirigentApp {
             split_cue_source_id: None,
             split_cue_rx: None,
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
+
+            change_set_generating: false,
+            change_set_rx: None,
+            change_set_files: HashMap::new(),
 
             custom_theme_edit: None,
 
@@ -1349,6 +1361,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for split cue results
         self.process_split_cue_result();
+
+        // Poll for change-set analysis results
+        self.process_change_set_result();
 
         // Poll for git push/pull/PR results
         self.process_push_result();

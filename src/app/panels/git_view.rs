@@ -230,6 +230,25 @@ impl DirigentApp {
             {
                 self.open_commit_dialog_for_changes();
             }
+            ui.add_space(SPACE_SM);
+            let analyzing = self.change_set_generating;
+            let analyze_label = if analyzing {
+                "\u{29D7} Analyzing…"
+            } else {
+                "\u{2728} Analyze Changes"
+            };
+            if ui
+                .add_enabled(
+                    !analyzing,
+                    egui::Button::new(analyze_label).min_size(egui::vec2(ui.available_width(), 0.0)),
+                )
+                .on_hover_text(
+                    "Group the working tree into logical change sets for review (Fast LLM)",
+                )
+                .clicked()
+            {
+                self.start_change_set_analysis();
+            }
             if has_selection {
                 ui.add_space(SPACE_SM);
                 if ui
@@ -313,6 +332,7 @@ impl DirigentApp {
         files.sort_unstable();
         self.git.commit_files = files;
         self.git.commit_review_cue_id = None;
+        self.git.commit_change_set_cue_id = None;
         self.git.commit_in_background = false;
         self.git.commit_message_input.clear();
         self.git.commit_needs_focus = true;
