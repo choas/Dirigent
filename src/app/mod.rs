@@ -26,6 +26,7 @@ mod ssh_operations;
 pub(super) mod symbols;
 mod tasks;
 mod theme;
+mod thunderdome;
 mod types;
 pub(crate) mod util;
 mod vcs_dispatch;
