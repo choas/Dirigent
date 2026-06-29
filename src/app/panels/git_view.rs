@@ -146,14 +146,17 @@ impl DirigentApp {
                 }
                 ui.add_space(2.0);
 
+                let ctx = DirtyTreeRenderCtx {
+                    selected_files: &self.git.selected_files,
+                    semantic: &self.semantic,
+                    font_size: self.settings.font_size,
+                };
                 render_dirty_tree_children(
                     ui,
                     &tree,
                     0,
                     &mut self.git.git_view_expanded_dirs,
-                    &self.git.selected_files,
-                    &self.semantic,
-                    self.settings.font_size,
+                    &ctx,
                     "",
                     &mut action,
                 );
@@ -180,7 +183,7 @@ impl DirigentApp {
                     &self.settings.vcs_backend,
                     &self.settings.jj_cli_path,
                     &self.project_root,
-                    &[rel_path.clone()],
+                    std::slice::from_ref(&rel_path),
                 ) {
                     Ok(()) => {
                         self.git.selected_files.remove(&rel_path);
@@ -341,17 +344,25 @@ fn reveal_label() -> &'static str {
     }
 }
 
+/// Read-only context shared across the recursive dirty-tree rendering.
+struct DirtyTreeRenderCtx<'a> {
+    selected_files: &'a HashSet<String>,
+    semantic: &'a SemanticColors,
+    font_size: f32,
+}
+
 fn render_dirty_tree_children(
     ui: &mut egui::Ui,
     node: &DirtyTreeNode,
     depth: usize,
     expanded: &mut HashSet<String>,
-    selected_files: &HashSet<String>,
-    semantic: &SemanticColors,
-    font_size: f32,
+    ctx: &DirtyTreeRenderCtx<'_>,
     parent_path: &str,
     action: &mut Option<GitViewAction>,
 ) {
+    let selected_files = ctx.selected_files;
+    let semantic = ctx.semantic;
+    let font_size = ctx.font_size;
     let indent = depth as f32 * 16.0;
 
     for (name, child) in &node.children {
@@ -400,17 +411,7 @@ fn render_dirty_tree_children(
             });
 
             if is_expanded {
-                render_dirty_tree_children(
-                    ui,
-                    child,
-                    depth + 1,
-                    expanded,
-                    selected_files,
-                    semantic,
-                    font_size,
-                    &node_path,
-                    action,
-                );
+                render_dirty_tree_children(ui, child, depth + 1, expanded, ctx, &node_path, action);
             }
         } else if let Some((rel_path, status)) = &child.file_status {
             let (row_rect, response) = allocate_tree_row(ui);

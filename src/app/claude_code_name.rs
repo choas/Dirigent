@@ -170,6 +170,7 @@ pub fn paint_at(
     let bob = bob_pattern[bob_idx] as f32 * px;
     char_origin.y += bob;
 
+    #[allow(clippy::needless_range_loop)]
     for row in 0..H {
         for col in 0..W {
             let cell = CHARACTER[row][col];

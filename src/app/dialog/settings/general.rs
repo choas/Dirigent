@@ -45,7 +45,7 @@ impl DirigentApp {
                 .selected_text(&theme_label)
                 .show_ui(ui, |ui| {
                     let variants = ThemeChoice::all_variants();
-                    let mut prev_was_dark = variants.first().map_or(true, |v| v.is_dark());
+                    let mut prev_was_dark = variants.first().is_none_or(|v| v.is_dark());
                     for variant in variants {
                         let is_dark = variant.is_dark();
                         if prev_was_dark && !is_dark {

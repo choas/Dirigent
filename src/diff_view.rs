@@ -300,14 +300,13 @@ fn render_file_header(
         {
             toggled = true;
         }
-        if file.new_path != "/dev/null" {
-            if ui
+        if file.new_path != "/dev/null"
+            && ui
                 .small_button("\u{2197}")
                 .on_hover_text("Open file at first change")
                 .clicked()
-            {
-                open = true;
-            }
+        {
+            open = true;
         }
     });
 
@@ -620,7 +619,12 @@ pub(crate) fn render_side_by_side_diff(
         collapsed_files,
         colors,
         |ui, file, file_idx, budget| {
-            render_sbs_file_hunks(ui, file, file_idx, search, colors, &dc, sep_color, budget)
+            let style = SbsStyle {
+                colors,
+                dc: &dc,
+                sep_color,
+            };
+            render_sbs_file_hunks(ui, file, file_idx, search, &style, budget)
         },
     )
 }
@@ -628,16 +632,24 @@ pub(crate) fn render_side_by_side_diff(
 /// Render all hunks for a single file in side-by-side mode, consuming from the
 /// shared line `budget`. Returns `true` if it stopped before rendering every
 /// row because the budget ran out.
+/// Styling shared across side-by-side hunk rendering.
+struct SbsStyle<'a> {
+    colors: &'a SemanticColors,
+    dc: &'a DiffColors,
+    sep_color: egui::Color32,
+}
+
 fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
     file_idx: usize,
     search: Option<&DiffSearchHighlight<'_>>,
-    colors: &SemanticColors,
-    dc: &DiffColors,
-    sep_color: egui::Color32,
+    style: &SbsStyle<'_>,
     budget: &mut usize,
 ) -> bool {
+    let colors = style.colors;
+    let dc = style.dc;
+    let sep_color = style.sep_color;
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
         if *budget == 0 {
             return true;

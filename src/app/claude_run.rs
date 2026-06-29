@@ -1484,7 +1484,7 @@ impl DirigentApp {
         let _ = self
             .db
             .log_activity(cue_id, "Run completed — question pending");
-        self.reply_inputs.entry(cue_id).or_insert_with(String::new);
+        self.reply_inputs.entry(cue_id).or_default();
         self.notify_run_complete(cue_id, true);
     }
 

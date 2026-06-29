@@ -37,7 +37,7 @@ impl From<std::io::Error> for ExportThemeError {
 fn export_theme(theme: &CustomTheme) -> Result<String, ExportThemeError> {
     let path = rfd::FileDialog::new()
         .set_title("Export Theme")
-        .set_file_name(&format!("{}.json", theme.name.trim()))
+        .set_file_name(format!("{}.json", theme.name.trim()))
         .add_filter("JSON", &["json"])
         .save_file()
         .ok_or(ExportThemeError::Cancelled)?;
@@ -246,16 +246,15 @@ impl DirigentApp {
                 let is_editing = edit.editing_index.is_some();
                 let name_valid = !edit.theme.name.trim().is_empty();
                 ui.horizontal(|ui| {
-                    if is_editing {
-                        if ui
+                    if is_editing
+                        && ui
                             .button(
                                 egui::RichText::new("Delete")
                                     .color(egui::Color32::from_rgb(210, 95, 95)),
                             )
                             .clicked()
-                        {
-                            delete = true;
-                        }
+                    {
+                        delete = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui

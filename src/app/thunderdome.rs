@@ -128,7 +128,7 @@ pub fn paint_at(
 
     // Beat timing: phase 0.0 == the kick hit, ramping to 1.0 at the next beat.
     let beat_index = (t / BEAT).floor() as i64;
-    let beat_phase = (t / BEAT).fract() as f32;
+    let beat_phase = (t / BEAT).fract();
 
     // Punchy downward headbang: the skull slams down on the kick and eases back.
     let bounce_rows = 4.0 * (-(beat_phase * 6.5)).exp();
@@ -139,6 +139,7 @@ pub fn paint_at(
 
     // Draw the skull with edge-detection shading (highlight on top edges,
     // shadow on bottom edges) for a chunky pixel-art look.
+    #[allow(clippy::needless_range_loop)]
     for row in 0..SKULL_H {
         for col in 0..SKULL_W {
             let cell = SKULL[row][col];
@@ -179,6 +180,7 @@ pub fn paint_at(
     // but flash both for a proper thunderclap.
     if flashing {
         let lead_left = beat_index % 2 == 0;
+        #[allow(clippy::needless_range_loop)]
         for row in 0..BOLT_H {
             for col in 0..BOLT_W {
                 if BOLT[row][col] == 0 {
