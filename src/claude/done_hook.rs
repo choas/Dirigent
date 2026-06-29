@@ -58,7 +58,7 @@ impl DoneHook {
 
 impl Drop for DoneHook {
     fn drop(&mut self) {
-        let _ = remove_stop_hook(&self.settings_path);
+        let _ = remove_stop_hook(&self.settings_path, &self.sentinel);
         let _ = std::fs::remove_file(&self.sentinel);
         let _ = std::fs::remove_file(&self.payload);
     }
@@ -85,7 +85,10 @@ fn upsert_stop_hook(settings_path: &Path, sentinel: &Path, payload: &Path) -> an
         .entry("Stop")
         .or_insert_with(|| serde_json::json!([]));
     if let Some(arr) = stop.as_array_mut() {
-        arr.retain(|h| !h.to_string().contains(HOOK_MARKER));
+        // Only drop a stale entry that belongs to *this* run's sentinel so that
+        // concurrent runs in the same repo keep each other's hooks intact.
+        let token = shell_escape(sentinel);
+        arr.retain(|h| !h.to_string().contains(&token));
         arr.push(serde_json::json!({
             "matcher": "",
             "hooks": [{
@@ -104,17 +107,19 @@ fn upsert_stop_hook(settings_path: &Path, sentinel: &Path, payload: &Path) -> an
     atomic_write(settings_path, json.as_bytes())
 }
 
-fn remove_stop_hook(settings_path: &Path) -> anyhow::Result<()> {
+fn remove_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()> {
     if !settings_path.exists() {
         return Ok(());
     }
     let mut root = read_json_object(settings_path);
 
+    let token = shell_escape(sentinel);
     let changed = if let Some(hooks) = root.get_mut("hooks") {
         if let Some(stop) = hooks.get_mut("Stop") {
             if let Some(arr) = stop.as_array_mut() {
                 let before = arr.len();
-                arr.retain(|h| !h.to_string().contains(HOOK_MARKER));
+                // Remove only this run's hook, leaving any concurrent run's hook.
+                arr.retain(|h| !h.to_string().contains(&token));
                 arr.len() != before
             } else {
                 false
@@ -242,5 +247,44 @@ mod tests {
         assert!(json.contains("cat >"));
         assert!(json.contains(payload.to_str().unwrap()));
         assert!(json.contains(sentinel.to_str().unwrap()));
+    }
+
+    fn stop_hook_count(settings: &Path) -> usize {
+        let json = std::fs::read_to_string(settings).unwrap();
+        let root: serde_json::Value = serde_json::from_str(&json).unwrap();
+        root["hooks"]["Stop"].as_array().map_or(0, Vec::len)
+    }
+
+    #[test]
+    fn concurrent_runs_preserve_each_others_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+        let sentinel_a = tmp.path().join("dirigent-pty-done-1-100");
+        let payload_a = sentinel_a.with_extension("json");
+        let sentinel_b = tmp.path().join("dirigent-pty-done-1-1000");
+        let payload_b = sentinel_b.with_extension("json");
+
+        // Two overlapping runs install their hooks.
+        upsert_stop_hook(&settings, &sentinel_a, &payload_a).unwrap();
+        upsert_stop_hook(&settings, &sentinel_b, &payload_b).unwrap();
+
+        // Both hooks must coexist; installing B must not drop A. Match on the
+        // quoted argument tokens since A's sentinel is a string prefix of B's.
+        let token_a = shell_escape(&sentinel_a);
+        let token_b = shell_escape(&sentinel_b);
+        assert_eq!(stop_hook_count(&settings), 2);
+        let json = std::fs::read_to_string(&settings).unwrap();
+        assert!(json.contains(&token_a));
+        assert!(json.contains(&token_b));
+
+        // Dropping run A removes only A's hook, leaving B untouched.
+        remove_stop_hook(&settings, &sentinel_a).unwrap();
+        assert_eq!(stop_hook_count(&settings), 1);
+        let json = std::fs::read_to_string(&settings).unwrap();
+        assert!(!json.contains(&token_a));
+        assert!(json.contains(&token_b));
+
+        remove_stop_hook(&settings, &sentinel_b).unwrap();
+        assert_eq!(stop_hook_count(&settings), 0);
     }
 }
