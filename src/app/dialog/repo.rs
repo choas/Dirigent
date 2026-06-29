@@ -387,7 +387,6 @@ impl DirigentApp {
         };
         match create_result {
             Ok(()) => {
-                self.git.show_switch_branch = false;
                 self.git.new_branch_name.clear();
                 self.git.active_bookmark = Some(name.to_string());
                 self.set_status_message(format!("Created {} '{}'", noun, name));
@@ -396,6 +395,8 @@ impl DirigentApp {
                 self.force_reload_open_tabs();
                 self.reload_file_tree();
                 self.git.recompute_dirty_dirs(&self.project_root);
+                // Refresh the dialog's branch list so the new branch appears.
+                self.refresh_branch_list();
             }
             Err(e) => {
                 self.set_status_message(format!("Failed to create {}: {}", noun, e));

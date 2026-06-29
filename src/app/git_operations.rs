@@ -110,6 +110,15 @@ impl DirigentApp {
 
     /// Open the "Switch Branch" dialog with available branches populated.
     pub(super) fn open_switch_branch_dialog(&mut self) {
+        self.refresh_branch_list();
+        self.git.new_branch_name.clear();
+        self.git.show_switch_branch = true;
+    }
+
+    /// (Re)populate the list of available branches/bookmarks used by the
+    /// Switch Branch dialog. Call after operations that change the set of
+    /// branches (e.g. creating a new one).
+    pub(super) fn refresh_branch_list(&mut self) {
         match self.settings.vcs_backend {
             VcsBackend::Jj => {
                 let infos = jj::jj_list_bookmarks_with_status(
@@ -133,8 +142,6 @@ impl DirigentApp {
                 self.git.bookmark_push_statuses.clear();
             }
         }
-        self.git.new_branch_name.clear();
-        self.git.show_switch_branch = true;
     }
 
     /// Open the Create PR dialog with pre-filled fields.
