@@ -1346,7 +1346,14 @@ impl DirigentApp {
             Ok(msg) => {
                 if let Some(id) = pending_cue {
                     let _ = self.db.update_cue_status(id, CueStatus::Done);
-                    let _ = self.db.log_activity(id, "Committed");
+                    // The worker reports success as "Committed: <hash>"; record it
+                    // as "Committed (<hash>)" so cue_commit_hash can recover the
+                    // hash and offer "Save as Play" on the cue.
+                    let activity = match msg.strip_prefix("Committed: ") {
+                        Some(hash) => format!("Committed ({})", hash),
+                        None => "Committed".to_string(),
+                    };
+                    let _ = self.db.log_activity(id, &activity);
                     self.clear_review_question_and_recheck_workflow(id);
                 }
                 self.set_status_message(msg);
