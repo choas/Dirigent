@@ -231,6 +231,7 @@ impl DirigentApp {
 
         let mut open = true;
         let mut switch_to: Option<String> = None;
+        let mut create: Option<String> = None;
 
         let title = if self.settings.vcs_backend == VcsBackend::Jj {
             "Switch Bookmark"
@@ -246,20 +247,49 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                self.render_switch_branch_body(ui, &mut switch_to);
+                self.render_switch_branch_body(ui, &mut switch_to, &mut create);
             });
 
         if !open {
             self.git.show_switch_branch = false;
         }
 
-        if let Some(branch) = switch_to {
+        if let Some(name) = create {
+            self.perform_branch_create(&name);
+        } else if let Some(branch) = switch_to {
             self.perform_branch_switch(&branch);
         }
     }
 
-    /// Body of the Switch Branch dialog: current branch label and branch list.
-    fn render_switch_branch_body(&self, ui: &mut egui::Ui, switch_to: &mut Option<String>) {
+    /// Body of the Switch Branch dialog: a create field, the current branch
+    /// label, and the list of branches to switch to.
+    fn render_switch_branch_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        switch_to: &mut Option<String>,
+        create: &mut Option<String>,
+    ) {
+        let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
+
+        // New-branch creation row, directly under the dialog headline.
+        ui.horizontal(|ui| {
+            let hint = if is_jj { "New bookmark" } else { "New branch" };
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.git.new_branch_name)
+                    .hint_text(hint)
+                    .desired_width(220.0),
+            );
+            let name = self.git.new_branch_name.trim().to_string();
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let clicked = ui
+                .add_enabled(!name.is_empty(), egui::Button::new("Create"))
+                .clicked();
+            if !name.is_empty() && (clicked || submit) {
+                *create = Some(name);
+            }
+        });
+        ui.add_space(6.0);
+
         if let Some(ref info) = self.git.info {
             ui.label(
                 egui::RichText::new(format!("Current: {}", info.branch))
@@ -338,6 +368,37 @@ impl DirigentApp {
                     "branch"
                 };
                 self.set_status_message(format!("Failed to switch {}: {}", noun, e));
+            }
+        }
+    }
+
+    /// Create a new branch (or bookmark) and switch to it.
+    fn perform_branch_create(&mut self, name: &str) {
+        let create_result = match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                jj::jj_create_bookmark(&self.project_root, name, &self.settings.jj_cli_path)
+            }
+            VcsBackend::Git => git::create_branch(&self.project_root, name),
+        };
+        let noun = if self.settings.vcs_backend == VcsBackend::Jj {
+            "bookmark"
+        } else {
+            "branch"
+        };
+        match create_result {
+            Ok(()) => {
+                self.git.show_switch_branch = false;
+                self.git.new_branch_name.clear();
+                self.git.active_bookmark = Some(name.to_string());
+                self.set_status_message(format!("Created {} '{}'", noun, name));
+                self.reload_git_info();
+                self.reload_commit_history();
+                self.force_reload_open_tabs();
+                self.reload_file_tree();
+                self.git.recompute_dirty_dirs(&self.project_root);
+            }
+            Err(e) => {
+                self.set_status_message(format!("Failed to create {}: {}", noun, e));
             }
         }
     }

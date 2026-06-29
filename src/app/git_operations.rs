@@ -133,6 +133,7 @@ impl DirigentApp {
                 self.git.bookmark_push_statuses.clear();
             }
         }
+        self.git.new_branch_name.clear();
         self.git.show_switch_branch = true;
     }
 

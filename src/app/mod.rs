@@ -820,6 +820,7 @@ impl DirigentApp {
                 notifying_pr: false,
                 pr_notify_rx: None,
                 show_switch_branch: false,
+                new_branch_name: String::new(),
                 archived_dbs: Vec::new(),
                 show_archived_dbs: false,
                 pending_force_remove: None,

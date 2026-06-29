@@ -652,6 +652,8 @@ pub(crate) struct GitState {
     pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Whether the "Switch Branch" dialog is open.
     pub(super) show_switch_branch: bool,
+    /// Input field for creating a new branch from the Switch Branch dialog.
+    pub(super) new_branch_name: String,
     /// Archived worktree DBs (cached list).
     pub(super) archived_dbs: Vec<git::ArchivedDb>,
     /// Whether the archived DBs section is expanded in the worktree panel.
