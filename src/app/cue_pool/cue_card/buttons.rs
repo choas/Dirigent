@@ -193,12 +193,6 @@ impl DirigentApp {
         cue: &Cue,
         actions: &mut Vec<(i64, CueAction)>,
     ) {
-        // Ephemeral change-set analysis cards have their own action set: commit
-        // or stage just this group's files, or dismiss the card.
-        if self.is_change_set_cue(cue.id) {
-            self.render_change_set_buttons(ui, cue, actions);
-            return;
-        }
         let fs = self.settings.font_size;
         if cue.has_question {
             ui.label(icon("?", fs).color(self.semantic.warning).strong())
@@ -246,44 +240,6 @@ impl DirigentApp {
             .clicked()
         {
             actions.push((cue.id, CueAction::RevertReview(cue.id)));
-        }
-    }
-
-    /// Buttons for an ephemeral Change Set Analysis card in the Review column:
-    /// commit just this group's files (confirmation-gated), stage them, or
-    /// dismiss the card.
-    fn render_change_set_buttons(
-        &mut self,
-        ui: &mut egui::Ui,
-        cue: &Cue,
-        actions: &mut Vec<(i64, CueAction)>,
-    ) {
-        let fs = self.settings.font_size;
-        let commit_btn =
-            egui::Button::new(icon("\u{2713} Commit", fs).color(self.semantic.badge_text))
-                .fill(self.semantic.accent)
-                .small();
-        if ui
-            .add(commit_btn)
-            .on_hover_text("Review a generated message, then commit this group's files")
-            .clicked()
-        {
-            actions.push((cue.id, CueAction::CommitChangeSet(cue.id)));
-        }
-        if self.settings.vcs_backend == VcsBackend::Git
-            && ui
-                .small_button(icon("\u{2295} Stage this", fs))
-                .on_hover_text("Stage just this group's files (no commit)")
-                .clicked()
-        {
-            actions.push((cue.id, CueAction::StageChangeSet(cue.id)));
-        }
-        if ui
-            .small_button(icon("\u{2715} Dismiss", fs))
-            .on_hover_text("Remove this change-set card (does not touch your files)")
-            .clicked()
-        {
-            actions.push((cue.id, CueAction::Delete));
         }
     }
 
