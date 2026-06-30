@@ -178,6 +178,11 @@ fn invoke_pty(
             .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
     }
     all_args.extend_from_slice(extra_args_vec);
+    // Read the session id from the *full* argv: `--session-id`/`--resume` may
+    // arrive via the parsed `extra_args` string, not just `extra_args_vec`. If
+    // we missed it here, Claude would run session-scoped while the hook fell
+    // back to an unconditional command, reopening the concurrent-run overlap.
+    let session_id = extract_session_id(&all_args);
     if !all_args.is_empty() {
         builder = builder.extra_args(all_args);
     }
@@ -192,7 +197,7 @@ fn invoke_pty(
     // `std::process::Command`, which also overwrites — see `invoke_headless`.
     builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
 
-    let done_hook = DoneHook::install(project_root);
+    let done_hook = DoneHook::install(project_root, session_id.as_deref());
     if done_hook.is_some() {
         on_log("⏎ Stop hook installed\n");
     }
@@ -203,8 +208,6 @@ fn invoke_pty(
             ClaudeError::SpawnFailed(std::io::Error::other(msg))
         }
     })?;
-
-    let session_id = extract_session_id(extra_args_vec);
     let state = consume_pty_events(
         &mut session,
         prompt,
@@ -223,14 +226,14 @@ fn invoke_pty(
     })
 }
 
-/// Extract the Claude session id from the extra CLI args.
+/// Extract the Claude session id from the full CLI argv.
 ///
-/// The caller injects either `--session-id <uuid>` (fresh run) or
-/// `--resume <uuid>` (continuation) into `extra_args_vec`; this returns the
-/// value following whichever flag appears so it can be surfaced in the live
-/// log when the run completes.
-fn extract_session_id(extra_args_vec: &[String]) -> Option<String> {
-    let mut iter = extra_args_vec.iter();
+/// Either `--session-id <uuid>` (fresh run) or `--resume <uuid>` (continuation)
+/// may appear, regardless of whether it came from the parsed `extra_args`
+/// string or `extra_args_vec`; this returns the value following whichever flag
+/// appears first so the hook and live log see the same session as the PTY.
+fn extract_session_id(args: &[String]) -> Option<String> {
+    let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--session-id" || arg == "--resume" {
             return iter.next().filter(|v| !v.is_empty()).cloned();
