@@ -213,42 +213,40 @@ impl DirigentApp {
             return;
         }
         let has_selection = !self.git.selected_files.is_empty();
+        let analyzing = self.change_set_generating;
         egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
             ui.add_space(SPACE_SM);
-            let label = if has_selection {
+            // With a selection, commit just those files as one commit. With no
+            // selection, group the whole working tree into logical change sets
+            // (via the CLI) and commit them one-by-one through the dialog's queue.
+            let label = if analyzing {
+                "\u{29D7} Analyzing…"
+            } else if has_selection {
                 "\u{2714} Commit Selected"
             } else {
                 "\u{2714} Commit Changes"
+            };
+            let hover = if has_selection {
+                "Commit the selected files with an AI-generated message"
+            } else {
+                "Group the changes into logical commits, each with an AI-generated message"
             };
             let btn =
                 egui::Button::new(egui::RichText::new(label).color(self.semantic.accent_text()))
                     .fill(self.semantic.accent);
             if ui
-                .add_sized([ui.available_width(), 0.0], btn)
-                .on_hover_text("Analyze the changes and commit with an AI-generated message")
-                .clicked()
+                .add_enabled_ui(!analyzing, |ui| {
+                    ui.add_sized([ui.available_width(), 0.0], btn)
+                        .on_hover_text(hover)
+                        .clicked()
+                })
+                .inner
             {
-                self.open_commit_dialog_for_changes();
-            }
-            ui.add_space(SPACE_SM);
-            let analyzing = self.change_set_generating;
-            let analyze_label = if analyzing {
-                "\u{29D7} Analyzing…"
-            } else {
-                "\u{2728} Analyze Changes"
-            };
-            if ui
-                .add_enabled(
-                    !analyzing,
-                    egui::Button::new(analyze_label).min_size(egui::vec2(ui.available_width(), 0.0)),
-                )
-                .on_hover_text(
-                    "Group the working tree into logical change sets for review \
-                     (uses the selected CLI — slower but more precise)",
-                )
-                .clicked()
-            {
-                self.start_change_set_analysis();
+                if has_selection {
+                    self.open_commit_dialog_for_changes();
+                } else {
+                    self.start_split_commit();
+                }
             }
             if has_selection {
                 ui.add_space(SPACE_SM);
@@ -333,7 +331,8 @@ impl DirigentApp {
         files.sort_unstable();
         self.git.commit_files = files;
         self.git.commit_review_cue_id = None;
-        self.git.commit_change_set_cue_id = None;
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.commit_in_background = false;
         self.git.commit_message_input.clear();
         self.git.commit_needs_focus = true;

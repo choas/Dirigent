@@ -135,10 +135,6 @@ pub(super) enum CueAction {
     SquashBookmark,
     /// Save this cue's commit as a reusable Play in the Dirigent Playbook.
     SaveAsPlay,
-    /// Stage just this change-set group's files (no commit).
-    StageChangeSet(i64),
-    /// Open the commit dialog scoped to this change-set group's files.
-    CommitChangeSet(i64),
 }
 
 /// State for a single open file tab.
@@ -567,6 +563,20 @@ pub(crate) struct EditingCue {
     pub(super) focus_requested: bool,
 }
 
+/// One change-set group queued for committing in the commit dialog: a logical
+/// slice of the working tree (a title, its files, and an editable message). The
+/// commit dialog walks a `Vec<CommitGroup>` so a messy working tree can be split
+/// into several focused commits, each reviewed and committed in turn.
+pub(super) struct CommitGroup {
+    /// Short imperative summary of the group (seeds the commit message subject).
+    pub(super) title: String,
+    /// Files belonging to this group; committed as a path-scoped diff.
+    pub(super) files: Vec<String>,
+    /// The group's commit message — generated on first view, then editable.
+    /// Empty until a suggestion lands or the user types one.
+    pub(super) message: String,
+}
+
 /// State for git information, dirty files, commit history, and worktrees.
 pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
@@ -745,9 +755,13 @@ pub(crate) struct GitState {
     pub(super) commit_needs_focus: bool,
     /// When the commit dialog was opened for a cue review, the cue ID.
     pub(super) commit_review_cue_id: Option<i64>,
-    /// When the commit dialog was opened for a change-set group, that group's
-    /// cue ID, so it can be marked done and cleared once the commit succeeds.
-    pub(super) commit_change_set_cue_id: Option<i64>,
+    /// Change-set groups queued for one-by-one committing in the commit dialog.
+    /// Empty means the dialog is committing a single target (a selection, the
+    /// whole working tree, or a reviewed cue's diff). When non-empty the dialog
+    /// shows queue navigation and advances to the next group after each commit.
+    pub(super) commit_queue: Vec<CommitGroup>,
+    /// Index of the group in [`commit_queue`](Self::commit_queue) currently shown.
+    pub(super) commit_queue_pos: usize,
     /// Whether a commit operation is in progress (jj only).
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -859,9 +873,10 @@ impl GitState {
             self.commit_suggest_rx = None;
             self.commit_in_background = false;
             self.commit_files.clear();
+            self.commit_queue.clear();
+            self.commit_queue_pos = 0;
             self.show_commit_dialog = false;
             self.commit_review_cue_id = None;
-            self.commit_change_set_cue_id = None;
             return true;
         }
         if self.show_cleanup_bookmarks {

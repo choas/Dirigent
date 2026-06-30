@@ -37,7 +37,6 @@ impl DirigentApp {
                 self.process_move_to(id, new_status);
             }
             CueAction::Delete => {
-                self.forget_change_set(id);
                 self.process_delete(id);
             }
             CueAction::Navigate(file_path, line, line_end) => {
@@ -183,12 +182,6 @@ impl DirigentApp {
             }
             CueAction::SaveAsPlay => {
                 self.process_save_as_play(id);
-            }
-            CueAction::StageChangeSet(cue_id) => {
-                self.process_stage_change_set(cue_id);
-            }
-            CueAction::CommitChangeSet(cue_id) => {
-                self.process_commit_change_set(cue_id);
             }
         }
         self.reload_cues();
@@ -447,7 +440,8 @@ impl DirigentApp {
                     if show_dialog {
                         self.git.commit_message_input = commit_msg;
                         self.git.commit_review_cue_id = Some(cue_id);
-                        self.git.commit_change_set_cue_id = None;
+                        self.git.commit_queue.clear();
+                        self.git.commit_queue_pos = 0;
                         self.git.commit_needs_focus = true;
                         self.git.show_commit_dialog = true;
                     } else {

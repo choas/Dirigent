@@ -1,11 +1,14 @@
-//! Change Set Analysis (whole-file v1).
+//! Change Set grouping for split commits (whole-file v1).
 //!
-//! Sends the working diff to the user's selected coding-agent CLI, which groups
-//! the changed files into logical feature sets. Routing through the full CLI
-//! (rather than the Fast LLM) is slower but more precise. Each group is
-//! normalized to a file-disjoint partition and surfaced as an ephemeral cue card
-//! in the Review column, where the human can stage or commit it. Nothing is
-//! committed without explicit confirmation.
+//! Backs the "Commit Changes" button: sends the working diff to the user's
+//! selected coding-agent CLI, which groups the changed files into logical
+//! feature sets. Routing through the full CLI (rather than the Fast LLM) is
+//! slower but more precise. Each group is normalized to a file-disjoint
+//! partition and queued in the commit dialog ([`GitState::commit_queue`]), where
+//! the human reviews each group's message and commits it. Nothing is committed
+//! without explicit confirmation.
+//!
+//! [`GitState::commit_queue`]: super::types::GitState::commit_queue
 //!
 //! Modeled on [`super::split_cue`]: the CLI call runs on a background thread, the
 //! result comes back over an `mpsc` channel, and the UI is repainted when it
@@ -16,14 +19,11 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 
-use crate::db::CueStatus;
 use crate::fast_llm::ChangeSetGroupRaw;
 use crate::settings::{CliProvider, Settings, VcsBackend};
 
+use super::types::CommitGroup;
 use super::DirigentApp;
-
-/// Tag applied to ephemeral change-set Review cues so they can be recognized.
-const CHANGE_SET_TAG: &str = "changeset";
 
 /// Diffs larger than this (in characters) skip the model and collapse to a
 /// single "All changes" group, guarding against poor or expensive groupings.
@@ -39,33 +39,13 @@ pub(super) struct ChangeSetGroup {
 
 /// Outcome of a change-set analysis run.
 pub(super) enum ChangeSetOutcome {
-    /// One or more groups ready to surface as Review cards.
+    /// One or more groups ready to queue in the commit dialog.
     Groups(Vec<ChangeSetGroup>),
     /// The working tree was clean / produced no groups.
     Nothing,
 }
 
 pub(super) type ChangeSetResult = Result<ChangeSetOutcome, String>;
-
-/// Format the cue text for a change-set Review card: title, description, and the
-/// member files, so the human can see exactly what the group covers.
-fn change_set_cue_text(group: &ChangeSetGroup) -> String {
-    let mut s = if group.title.is_empty() {
-        "Change set".to_string()
-    } else {
-        group.title.clone()
-    };
-    if !group.description.is_empty() {
-        s.push_str("\n\n");
-        s.push_str(&group.description);
-    }
-    s.push_str("\n\nFiles:");
-    for f in &group.files {
-        s.push_str("\n- ");
-        s.push_str(f);
-    }
-    s
-}
 
 /// Cap on the diff embedded in the CLI prompt. Larger working trees collapse to
 /// a single "All changes" group via [`OVERSIZED_DIFF_CHARS`] before we get here,
@@ -141,18 +121,20 @@ fn run_change_set_analysis(
 }
 
 impl DirigentApp {
-    /// Start a Change Set Analysis run: group the dirty working tree into
-    /// logical feature sets surfaced as Review cards. Guards on a clean tree up
-    /// front so the run never has side effects. The grouping runs through the
-    /// user's selected coding-agent CLI — slower than the Fast LLM but more
-    /// precise.
-    pub(super) fn start_change_set_analysis(&mut self) {
+    /// Start a split commit: group the dirty working tree into logical change
+    /// sets via the selected coding-agent CLI, then feed them to the commit
+    /// dialog's queue so each can be reviewed and committed in turn. Guards on a
+    /// clean tree up front so the run never has side effects. The grouping is
+    /// slower than the Fast LLM but more precise; while it runs the dialog is not
+    /// yet shown — [`process_change_set_result`](Self::process_change_set_result)
+    /// opens it once the groups land.
+    pub(super) fn start_split_commit(&mut self) {
         if self.change_set_generating {
-            self.set_status_message("Change-set analysis already in progress".into());
+            self.set_status_message("Already analyzing changes…".into());
             return;
         }
         if self.git.dirty_files.is_empty() {
-            self.set_status_message("Nothing to analyze — the working tree is clean".into());
+            self.set_status_message("Nothing to commit — the working tree is clean".into());
             return;
         }
 
@@ -187,7 +169,10 @@ impl DirigentApp {
         self.set_status_message("Analyzing changes with the selected CLI…".into());
     }
 
-    /// Poll for a completed analysis run and surface the groups as Review cards.
+    /// Poll for a completed grouping run and open the commit dialog with the
+    /// groups queued. A single group still goes through the queue (so the user
+    /// gets the same review-then-commit flow); a clean/empty result just reports
+    /// status without opening the dialog.
     pub(super) fn process_change_set_result(&mut self) {
         let rx = match self.change_set_rx {
             Some(ref rx) => rx,
@@ -198,7 +183,7 @@ impl DirigentApp {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.change_set_generating = false;
                 self.change_set_rx = None;
-                self.set_status_message("Change-set analysis failed unexpectedly".into());
+                self.set_status_message("Change analysis failed unexpectedly".into());
                 return;
             }
             Ok(r) => r,
@@ -208,41 +193,91 @@ impl DirigentApp {
 
         match result {
             Ok(ChangeSetOutcome::Nothing) => {
-                self.set_status_message("Nothing to analyze — no changes found".into());
+                self.set_status_message("Nothing to commit — no changes found".into());
             }
             Ok(ChangeSetOutcome::Groups(groups)) => {
-                let mut created = 0usize;
-                for group in &groups {
-                    let text = change_set_cue_text(group);
-                    match self.db.insert_cue(&text, "", 0, None, &[]) {
-                        Ok(id) => {
-                            let _ = self.db.update_cue_status(id, CueStatus::Review);
-                            let _ = self.db.update_cue_tag(id, Some(CHANGE_SET_TAG));
-                            self.change_set_files.insert(id, group.files.clone());
-                            created += 1;
-                        }
-                        Err(e) => log::error!("insert change-set cue failed: {e}"),
-                    }
-                }
-                self.reload_cues();
-                self.set_status_message(format!(
-                    "Analyzed into {created} change set(s) — review in the Review column"
-                ));
+                self.git.commit_queue = groups
+                    .into_iter()
+                    .map(|g| CommitGroup {
+                        title: g.title,
+                        files: g.files,
+                        message: String::new(),
+                    })
+                    .collect();
+                self.git.commit_queue_pos = 0;
+                self.open_commit_queue();
             }
             Err(e) => {
-                self.set_status_message(format!("Change-set analysis failed: {e}"));
+                self.set_status_message(format!("Change analysis failed: {e}"));
             }
         }
     }
 
-    /// Stage exactly a change-set group's files (`git add`), without committing.
-    pub(super) fn process_stage_change_set(&mut self, id: i64) {
-        let files = match self.change_set_files.get(&id) {
-            Some(f) => f.clone(),
+    /// Open the commit dialog on the first queued group. Clears any single-commit
+    /// context (review/selection/background) so the dialog renders in queue mode.
+    fn open_commit_queue(&mut self) {
+        if self.git.commit_queue.is_empty() {
+            return;
+        }
+        self.git.commit_review_cue_id = None;
+        self.git.commit_in_background = false;
+        self.git.commit_queue_pos = 0;
+        self.git.show_commit_dialog = true;
+        self.load_commit_group(0);
+        let n = self.git.commit_queue.len();
+        self.set_status_message(format!(
+            "Split into {n} commit{} — review and commit each",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+
+    /// Load queued group `pos` into the dialog's editor: scope the commit to its
+    /// files and show its message, drafting one from the diff when the group has
+    /// not been visited yet.
+    pub(in crate::app) fn load_commit_group(&mut self, pos: usize) {
+        let group = match self.git.commit_queue.get(pos) {
+            Some(g) => g,
             None => return,
         };
+        let message = group.message.clone();
+        let files = group.files.clone();
+        // Cancel any suggestion still in flight for the previously shown group so
+        // its late result can't overwrite this group's message.
+        self.git
+            .commit_suggest_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.git.commit_suggesting = false;
+        self.git.commit_suggest_rx = None;
+        self.git.commit_queue_pos = pos;
+        self.git.commit_files = files;
+        self.git.commit_message_input = message;
+        self.git.commit_needs_focus = true;
+        // First visit with no message yet: draft one from this group's diff.
+        if self.git.commit_message_input.trim().is_empty() {
+            self.spawn_commit_message_suggestion();
+        }
+    }
+
+    /// Persist the edited message back into the current queued group, so it
+    /// survives navigating away and back.
+    pub(in crate::app) fn save_current_commit_group_message(&mut self) {
+        let pos = self.git.commit_queue_pos;
+        let msg = self.git.commit_message_input.clone();
+        if let Some(group) = self.git.commit_queue.get_mut(pos) {
+            group.message = msg;
+        }
+    }
+
+    /// Stage just the current commit target's files (`git add`), without
+    /// committing. Git-only; jj has no separate staging area.
+    pub(in crate::app) fn stage_commit_files(&mut self) {
         if self.settings.vcs_backend != VcsBackend::Git {
-            self.set_status_message("Staging a change set is only available with Git".into());
+            self.set_status_message("Staging is only available with Git".into());
+            return;
+        }
+        let files = self.git.commit_files.clone();
+        if files.is_empty() {
+            self.set_status_message("No files to stage".into());
             return;
         }
         match crate::git::stage_files(&self.project_root, &files) {
@@ -251,40 +286,22 @@ impl DirigentApp {
         }
     }
 
-    /// Open the commit dialog scoped to a change-set group's files, pre-filling a
-    /// generated message. The commit only runs when the human confirms; on
-    /// success [`process_commit_result`](Self::process_commit_result) marks the
-    /// card done and clears it.
-    pub(super) fn process_commit_change_set(&mut self, id: i64) {
-        let files = match self.change_set_files.get(&id) {
-            Some(f) => f.clone(),
-            None => return,
-        };
-        let title = self
-            .cues
-            .iter()
-            .find(|c| c.id == id)
-            .and_then(|c| c.text.lines().next())
-            .unwrap_or("Change set")
-            .to_string();
-
-        self.git.commit_files = files;
-        self.git.commit_review_cue_id = None;
-        self.git.commit_change_set_cue_id = Some(id);
-        self.git.commit_in_background = false;
-        self.git.commit_message_input = crate::git::generate_commit_message(&title, None);
-        self.git.commit_needs_focus = true;
+    /// After a queued group commits successfully, drop it and advance: reopen the
+    /// dialog on the next group, or finish when the queue is empty.
+    pub(in crate::app) fn advance_commit_queue(&mut self) {
+        let pos = self.git.commit_queue_pos;
+        if pos < self.git.commit_queue.len() {
+            self.git.commit_queue.remove(pos);
+        }
+        if self.git.commit_queue.is_empty() {
+            self.git.commit_queue_pos = 0;
+            self.set_status_message("All change sets committed".into());
+            return;
+        }
+        // `pos` now points at the next group (indices shifted down by the removal).
+        let next = pos.min(self.git.commit_queue.len() - 1);
         self.git.show_commit_dialog = true;
-    }
-
-    /// True when a cue is an ephemeral change-set card (drives card buttons).
-    pub(in crate::app) fn is_change_set_cue(&self, id: i64) -> bool {
-        self.change_set_files.contains_key(&id)
-    }
-
-    /// Drop any change-set bookkeeping for a cue that is being removed.
-    pub(in crate::app) fn forget_change_set(&mut self, id: i64) {
-        self.change_set_files.remove(&id);
+        self.load_commit_group(next);
     }
 }
 
@@ -516,19 +533,14 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_yields_one_card_per_group_with_disjoint_files() {
+    fn multi_group_yields_one_queued_commit_per_group_with_disjoint_files() {
         let changed = vec!["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()];
         let groups =
             normalize_change_sets(vec![raw("A", &["a.rs"]), raw("B", &["b.rs", "c.rs"])], &changed);
-        // One Review card per group...
+        // One queued commit per group, each scoped to exactly its own files.
         assert_eq!(groups.len(), 2);
-        // ...each cue text lists exactly that group's files and no other's.
-        let text_a = change_set_cue_text(&groups[0]);
-        let text_b = change_set_cue_text(&groups[1]);
-        assert!(text_a.contains("a.rs"));
-        assert!(!text_a.contains("b.rs") && !text_a.contains("c.rs"));
-        assert!(text_b.contains("b.rs") && text_b.contains("c.rs"));
-        assert!(!text_b.contains("a.rs"));
+        assert_eq!(groups[0].files, vec!["a.rs"]);
+        assert_eq!(groups[1].files, vec!["b.rs", "c.rs"]);
     }
 
     #[test]
