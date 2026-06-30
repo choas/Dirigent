@@ -119,10 +119,16 @@ fn upsert_stop_hook(
         .entry("Stop")
         .or_insert_with(|| serde_json::json!([]));
     if let Some(arr) = stop.as_array_mut() {
-        // Only drop a stale entry that belongs to *this* run's sentinel so that
-        // concurrent runs in the same repo keep each other's hooks intact.
+        // Drop this run's own prior entry (an idempotent reinstall) and prune
+        // orphaned Dirigent entries whose owning process has already exited —
+        // those would otherwise accumulate forever and fire on every future
+        // Stop, because each install now mints a fresh sentinel. Concurrent
+        // runs (ours or another live instance) and unrelated hooks are kept.
         let token = shell_escape(sentinel);
-        arr.retain(|h| !h.to_string().contains(&token));
+        arr.retain(|h| {
+            let s = h.to_string();
+            !s.contains(&token) && !is_stale_dirigent_hook(&s)
+        });
         arr.push(serde_json::json!({
             "matcher": "",
             "hooks": [{
@@ -167,6 +173,53 @@ fn stop_hook_command(sentinel: &Path, payload: &Path, session_id: Option<&str>) 
             shell_escape(sentinel),
         ),
     }
+}
+
+/// True when `hook` (a serialized `Stop` entry) is a Dirigent hook whose owning
+/// process has already exited, so its sentinel will never be written and the
+/// entry would otherwise linger in settings forever. Entries we cannot pin to a
+/// dead process — unparsable ids, or a still-running pid (a concurrent run in
+/// this or another live instance) — are preserved.
+fn is_stale_dirigent_hook(hook: &str) -> bool {
+    match dirigent_hook_pid(hook) {
+        Some(pid) => !pid_is_alive(pid),
+        None => false,
+    }
+}
+
+/// Extract the owning process id embedded in a Dirigent sentinel/payload path of
+/// the form `dirigent-pty-done-<pid>-<timestamp>-<nonce>`. The bare `HOOK_MARKER`
+/// argument (no trailing dash) is skipped because we anchor on the `-` that only
+/// precedes the pid inside the path.
+fn dirigent_hook_pid(hook: &str) -> Option<u32> {
+    let needle = format!("{HOOK_MARKER}-");
+    let start = hook.find(&needle)? + needle.len();
+    let digits: String = hook[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> bool {
+    // `kill(pid, 0)` does the kernel's permission/existence check without
+    // delivering a signal: 0 means the process exists, EPERM means it exists but
+    // we may not signal it (still alive), and ESRCH means it is gone. A pid that
+    // overflows `pid_t` cannot name a real process, so treat it as alive and
+    // leave the entry untouched rather than risk a bogus `kill` argument.
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return true;
+    };
+    let rc = unsafe { libc::kill(pid, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(_pid: u32) -> bool {
+    // No portable liveness probe here, so never prune: deleting a live sibling's
+    // hook is worse than letting orphans accumulate on these targets.
+    true
 }
 
 fn remove_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()> {
@@ -421,13 +474,16 @@ mod tests {
 
         // Many threads install their hook into the same file at once. Without
         // serialization the read/modify/write races and entries get clobbered.
+        // Embed this live process's pid so the new stale-entry pruning treats
+        // every run as an active sibling and leaves it in place.
         const RUNS: usize = 16;
+        let pid = std::process::id();
         std::thread::scope(|scope| {
             for i in 0..RUNS {
                 let settings = settings.clone();
                 let dir = tmp.path().to_path_buf();
                 scope.spawn(move || {
-                    let sentinel = dir.join(format!("dirigent-pty-done-{i}"));
+                    let sentinel = dir.join(format!("dirigent-pty-done-{pid}-{i}"));
                     let payload = sentinel.with_extension("json");
                     upsert_stop_hook(&settings, &sentinel, &payload, Some(&format!("sess-{i}")))
                         .unwrap();
@@ -439,8 +495,48 @@ mod tests {
         assert_eq!(stop_hook_count(&settings), RUNS);
         let json = std::fs::read_to_string(&settings).unwrap();
         for i in 0..RUNS {
-            let sentinel = tmp.path().join(format!("dirigent-pty-done-{i}"));
+            let sentinel = tmp.path().join(format!("dirigent-pty-done-{pid}-{i}"));
             assert!(json.contains(&shell_escape(&sentinel)));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upsert_stop_hook_prunes_orphaned_dirigent_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+
+        // Seed the file with an unrelated user hook that must always survive.
+        let seed = serde_json::json!({
+            "hooks": {
+                "Stop": [{
+                    "matcher": "",
+                    "hooks": [{ "type": "command", "command": "echo keep-me" }]
+                }]
+            }
+        });
+        std::fs::write(&settings, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+
+        // A Dirigent hook left behind by a run whose process has since exited
+        // (e.g. the app was killed before `DoneHook::drop`). A reaped child's
+        // pid is reliably dead.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait().unwrap();
+        let orphan = tmp.path().join(format!("dirigent-pty-done-{dead_pid}-1-0"));
+        upsert_stop_hook(&settings, &orphan, &orphan.with_extension("json"), Some("dead")).unwrap();
+
+        // A fresh run owned by this live process installs its hook. The orphan is
+        // pruned, while the live run's hook and the unrelated user hook remain.
+        let live = tmp
+            .path()
+            .join(format!("dirigent-pty-done-{}-2-0", std::process::id()));
+        upsert_stop_hook(&settings, &live, &live.with_extension("json"), Some("live")).unwrap();
+
+        assert_eq!(stop_hook_count(&settings), 2);
+        let json = std::fs::read_to_string(&settings).unwrap();
+        assert!(!json.contains(&shell_escape(&orphan)));
+        assert!(json.contains(&shell_escape(&live)));
+        assert!(json.contains("echo keep-me"));
     }
 }
