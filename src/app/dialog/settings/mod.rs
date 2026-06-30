@@ -173,6 +173,11 @@ impl DirigentApp {
                     }
                 });
                 ui.end_row();
+
+                ui.label("Commit Footer:");
+                ui.checkbox(&mut self.settings.commit_footer, "Add Dirigent footer to commit messages")
+                    .on_hover_text("Appends a \"Dirigent: <url>\" line to each generated commit message.");
+                ui.end_row();
             });
     }
 

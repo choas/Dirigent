@@ -277,6 +277,9 @@ pub(crate) struct Settings {
     /// Automatically commit each cue when it moves to Review.
     #[serde(default)]
     pub auto_commit: bool,
+    /// Append the `Dirigent: <url>` footer to each generated commit message.
+    #[serde(default = "default_true")]
+    pub commit_footer: bool,
     /// Automatically send "continue" when a run stops mid-task.
     #[serde(default)]
     pub auto_continue: bool,
@@ -466,6 +469,7 @@ impl Default for Settings {
             auto_context_file: false,
             auto_context_git_diff: false,
             auto_commit: false,
+            commit_footer: true,
             auto_continue: false,
             auto_continue_max: default_auto_continue_max(),
             allow_dangerous_skip_permissions: true,

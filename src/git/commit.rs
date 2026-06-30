@@ -267,7 +267,14 @@ const MAX_LOG_MESSAGE_LEN: usize = 2000;
 /// appended so the original user intent is preserved in the commit.
 ///
 /// Format: `type: title\n\n[cli body]\n\nCue: cue_text\n\nDirigent: …`
-pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>) -> String {
+///
+/// When `include_footer` is false the trailing `Dirigent: <url>` line is
+/// omitted (controlled by the "Add Dirigent footer to commits" setting).
+pub(crate) fn generate_commit_message(
+    cue_text: &str,
+    cli_message: Option<&str>,
+    include_footer: bool,
+) -> String {
     let cli_body = cli_message.map(|m| m.trim()).filter(|t| !t.is_empty());
 
     let (subject, body_parts) = if let Some(cli) = cli_body {
@@ -330,7 +337,9 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
     for p in &body_parts {
         sections.push(p.clone());
     }
-    sections.push(DIRIGENT_FOOTER.to_string());
+    if include_footer {
+        sections.push(DIRIGENT_FOOTER.to_string());
+    }
     let msg = sections.join("\n\n");
 
     // Validate with commitlint-rs — log any issues for diagnostics.
@@ -618,16 +627,24 @@ mod tests {
 
     #[test]
     fn generate_commit_message_short() {
-        let msg = generate_commit_message("Fix typo", None);
+        let msg = generate_commit_message("Fix typo", None, true);
         assert!(msg.starts_with("fix: fix typo"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
         assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
+    fn generate_commit_message_omits_footer_when_disabled() {
+        let msg = generate_commit_message("Fix typo", None, false);
+        assert!(msg.starts_with("fix: fix typo"));
+        assert!(!msg.contains(DIRIGENT_FOOTER));
+        assert!(lint_commit_message(&msg).is_empty());
+    }
+
+    #[test]
     fn generate_commit_message_long_truncates() {
         let long_text = format!("Add {}", "feature ".repeat(20));
-        let msg = generate_commit_message(&long_text, None);
+        let msg = generate_commit_message(&long_text, None, true);
         let subject = msg.lines().next().unwrap();
         assert!(subject.len() <= 72, "subject too long: {}", subject.len());
         assert!(subject.contains("..."));
@@ -638,7 +655,7 @@ mod tests {
 
     #[test]
     fn generate_commit_message_short_no_body() {
-        let msg = generate_commit_message("add dark mode", None);
+        let msg = generate_commit_message("add dark mode", None, true);
         let parts: Vec<&str> = msg.split("\n\n").collect();
         assert_eq!(parts.len(), 2); // subject + footer only
         assert!(lint_commit_message(&msg).is_empty());
@@ -646,14 +663,15 @@ mod tests {
 
     #[test]
     fn generate_commit_message_preserves_existing_prefix() {
-        let msg = generate_commit_message("docs: update readme", None);
+        let msg = generate_commit_message("docs: update readme", None, true);
         assert!(msg.starts_with("docs: update readme"));
         assert!(lint_commit_message(&msg).is_empty());
     }
 
     #[test]
     fn generate_commit_message_with_cli_message() {
-        let msg = generate_commit_message("Fix typo", Some("Fixed a typo in the README file"));
+        let msg =
+            generate_commit_message("Fix typo", Some("Fixed a typo in the README file"), true);
         // Subject derived from CLI message, not cue text
         assert!(msg.starts_with("fix: fixed a typo in the README file"));
         // Full CLI message preserved in body
@@ -666,7 +684,7 @@ mod tests {
     #[test]
     fn generate_commit_message_cli_multiline() {
         let cli = "Added new button component\n\nThis adds a reusable button with variants.";
-        let msg = generate_commit_message("add a button", Some(cli));
+        let msg = generate_commit_message("add a button", Some(cli), true);
         assert!(msg.starts_with("feat: added new button component"));
         // Full CLI message (title + body) preserved in body section
         assert!(msg
@@ -682,7 +700,7 @@ mod tests {
         let detailed = format!("Add a feature.\n\n{}", "Detail sentence. ".repeat(40));
         let detailed = detailed.trim();
         assert!(detailed.len() > 500 && detailed.len() <= MAX_LOG_MESSAGE_LEN);
-        let msg = generate_commit_message("add a feature", Some(detailed));
+        let msg = generate_commit_message("add a feature", Some(detailed), true);
         assert!(msg.starts_with("feat: add a feature"));
         assert!(msg.contains(detailed)); // full message preserved
         assert!(msg.contains("Cue: add a feature"));
@@ -696,7 +714,7 @@ mod tests {
             "Add a feature.\n\n{}",
             "x".repeat(MAX_LOG_MESSAGE_LEN + 500)
         );
-        let msg = generate_commit_message("Fix typo", Some(&huge_cli));
+        let msg = generate_commit_message("Fix typo", Some(&huge_cli), true);
         assert!(msg.starts_with("feat: add a feature"));
         assert!(!msg.contains(&huge_cli)); // truncated
         assert!(msg.contains("…"));

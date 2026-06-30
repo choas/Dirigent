@@ -588,7 +588,11 @@ impl DirigentApp {
             .flatten()
             .and_then(|e| e.response)
             .and_then(|r| claude::extract_commit_message(&r));
-        let commit_msg = git::generate_commit_message(cue_text, extracted.as_deref());
+        let commit_msg = git::generate_commit_message(
+            cue_text,
+            extracted.as_deref(),
+            self.settings.commit_footer,
+        );
 
         // Open the editable commit dialog for both backends so the user can
         // review and edit the generated message before committing. The dialog's

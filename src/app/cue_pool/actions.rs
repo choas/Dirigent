@@ -435,7 +435,11 @@ impl DirigentApp {
                         .response
                         .as_deref()
                         .and_then(claude::extract_commit_message);
-                    let commit_msg = git::generate_commit_message(&cue_text, extracted.as_deref());
+                    let commit_msg = git::generate_commit_message(
+                        &cue_text,
+                        extracted.as_deref(),
+                        self.settings.commit_footer,
+                    );
 
                     if show_dialog {
                         self.git.commit_message_input = commit_msg;
@@ -696,12 +700,10 @@ impl DirigentApp {
                 .iter()
                 .map(|c| format!("- {}", c.text.trim()))
                 .collect();
-            let commit_msg = format!(
-                "{}\n\n{}\n\n{}",
-                subject,
-                cue_details.join("\n\n"),
-                git::DIRIGENT_FOOTER,
-            );
+            let mut commit_msg = format!("{}\n\n{}", subject, cue_details.join("\n\n"));
+            if self.settings.commit_footer {
+                commit_msg.push_str(&format!("\n\n{}", git::DIRIGENT_FOOTER));
+            }
             match vcs_dispatch::commit_all(
                 &self.settings.vcs_backend,
                 &self.settings.jj_cli_path,
