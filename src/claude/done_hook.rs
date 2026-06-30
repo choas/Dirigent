@@ -31,14 +31,23 @@ impl DoneHook {
     /// session matches. When the id is unknown (`None`) the hook fires
     /// unconditionally, which is safe for the common single-run case.
     pub fn install(project_root: &Path, session_id: Option<&str>) -> Option<Self> {
+        // The sentinel doubles as this run's identity token in the shared
+        // settings file, so it must be unique even when two installs land in the
+        // same process during the same instant. pid + timestamp alone can
+        // collide, so add a process-wide monotonic nonce and use nanosecond
+        // resolution.
+        static NEXT_SENTINEL_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let nonce = NEXT_SENTINEL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let sentinel = std::env::temp_dir().join(format!(
-            "{}-{}-{}",
+            "{}-{}-{}-{}",
             HOOK_MARKER,
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis()
+                .as_nanos(),
+            nonce
         ));
         let payload = sentinel.with_extension("json");
 
@@ -146,7 +155,10 @@ fn stop_hook_command(sentinel: &Path, payload: &Path, session_id: Option<&str>) 
             HOOK_MARKER,
             shell_escape(payload),
             shell_escape(sentinel),
-            shell_escape(Path::new(id)),
+            // `$3` is interpolated into the grep ERE, so regex-escape the id to
+            // match it literally, then shell-escape the result so the argument
+            // itself can never trigger shell expansion.
+            shell_escape_str(&regex_escape(id)),
         ),
         _ => format!(
             "sh -c 'cat > \"$1\"; touch \"$2\"' {} {} {}",
@@ -193,12 +205,27 @@ fn remove_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()>
 }
 
 fn shell_escape(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if s.contains('\'') {
-        format!("\"{}\"", s.replace('"', "\\\""))
-    } else {
-        format!("'{s}'")
+    shell_escape_str(&path.to_string_lossy())
+}
+
+/// POSIX single-quote escape: wrap in single quotes and rewrite each embedded
+/// quote as `'\''`. Nothing inside survives shell interpretation — unlike a
+/// double-quote fallback, which would leave `$(...)` and backticks live.
+fn shell_escape_str(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Escape ERE metacharacters so a value matches literally inside a `grep -E`
+/// pattern.
+fn regex_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if "\\.^$*+?()[]{}|".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
     }
+    out
 }
 
 fn read_stop_hook_summary(path: &Path) -> Option<StopHookSummary> {
@@ -317,6 +344,35 @@ mod tests {
         assert!(json.contains("sess-123"));
         assert!(json.contains("grep -Eq"));
         assert!(json.contains("|| exit 0"));
+    }
+
+    #[test]
+    fn shell_escape_neutralizes_single_quotes_and_expansion() {
+        // A single quote must not break out of the quoting, and command
+        // substitution stays inert as literal text.
+        assert_eq!(shell_escape_str("a'b"), "'a'\\''b'");
+        assert_eq!(shell_escape_str("$(touch x)"), "'$(touch x)'");
+        assert_eq!(shell_escape_str("`id`"), "'`id`'");
+    }
+
+    #[test]
+    fn regex_escape_escapes_ere_metacharacters() {
+        assert_eq!(regex_escape("a.b*c"), "a\\.b\\*c");
+        assert_eq!(regex_escape("(x)|[y]"), "\\(x\\)\\|\\[y\\]");
+        // A plain UUID-style id is unchanged.
+        assert_eq!(regex_escape("sess-123"), "sess-123");
+    }
+
+    #[test]
+    fn stop_hook_command_escapes_malicious_session_id() {
+        let sentinel = Path::new("/tmp/sentinel");
+        let payload = Path::new("/tmp/payload.json");
+        let cmd = stop_hook_command(sentinel, payload, Some("$(touch pwned).*"));
+        // The raw expansion must never appear unquoted, and ERE metacharacters
+        // (including `$`, `(`, `)`, `.`, `*`) are backslash-escaped so the grep
+        // matches the id literally.
+        assert!(cmd.contains("'\\$\\(touch pwned\\)\\.\\*'"));
+        assert!(!cmd.contains("'$(touch pwned).*'"));
     }
 
     fn stop_hook_count(settings: &Path) -> usize {
