@@ -264,6 +264,24 @@ fn run_split_analysis(
     settings: &crate::settings::Settings,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<SplitCueItem>, String> {
+    let response_text = run_cli_prompt(prompt, provider, project_root, settings, cancel)?;
+    parse_split_response(&response_text)
+}
+
+/// Run a one-shot, read-only prompt through the user's selected coding-agent CLI
+/// and return its raw stdout. Shared by analysis helpers (split cue, change-set
+/// analysis) that need a precise model judgement and are willing to pay the
+/// latency of the full CLI rather than the Fast LLM.
+///
+/// Claude is forced headless because PTY line-deduplication corrupts multi-line
+/// JSON output.
+pub(super) fn run_cli_prompt(
+    prompt: &str,
+    provider: &crate::settings::CliProvider,
+    project_root: &std::path::Path,
+    settings: &crate::settings::Settings,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
     use crate::settings::CliProvider;
 
     let pf = settings.provider_fields(provider);
@@ -347,5 +365,5 @@ fn run_split_analysis(
         }
     };
 
-    parse_split_response(&response_text)
+    Ok(response_text)
 }

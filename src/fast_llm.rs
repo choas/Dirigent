@@ -164,32 +164,9 @@ pub struct ChangeSetFileRaw {
     pub hunks: Vec<serde_json::Value>,
 }
 
-/// Ask the Fast LLM to group a working diff into logical, file-disjoint change
-/// sets. Returns the raw groups as parsed from the model; callers are expected
-/// to normalize them (merge overlaps, account for omitted files) before use.
-pub fn analyze_change_sets(
-    config: &FastLlmConfig,
-    diff: &str,
-) -> Result<Vec<ChangeSetGroupRaw>, String> {
-    const SYSTEM: &str = "You are a helpful assistant that organizes a messy git working tree. \
-        Given a unified diff, group the changed files into logical, self-describing \
-        feature sets. Respond with ONLY a JSON array, no markdown fences and no commentary, \
-        shaped like: \
-        [{\"title\": \"...\", \"description\": \"...\", \"files\": [{\"path\": \"...\", \"hunks\": []}]}]. \
-        Rules: put each changed file in exactly one group; cover every file in the diff; \
-        write a short imperative title (max ~50 chars) and a one-line description per group; \
-        use the file paths exactly as they appear in the diff.";
-
-    // Cap the diff so a huge change set doesn't blow past the model's context.
-    let trimmed: String = diff.chars().take(12_000).collect();
-    let prompt = format!("Group the changed files in the following diff:\n\n{trimmed}");
-    let result = complete(config, Some(SYSTEM), &prompt)?;
-    parse_change_sets(&result)
-}
-
 /// Defensively parse the model's change-set response into raw groups, tolerating
 /// markdown code fences and surrounding prose.
-fn parse_change_sets(response: &str) -> Result<Vec<ChangeSetGroupRaw>, String> {
+pub(crate) fn parse_change_sets(response: &str) -> Result<Vec<ChangeSetGroupRaw>, String> {
     let json = crate::util::json_extract::extract_json(response);
     let groups: Vec<ChangeSetGroupRaw> =
         serde_json::from_str(&json).map_err(|e| format!("parse change-set JSON: {e}"))?;
