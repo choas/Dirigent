@@ -243,7 +243,8 @@ impl DirigentApp {
                     egui::Button::new(analyze_label).min_size(egui::vec2(ui.available_width(), 0.0)),
                 )
                 .on_hover_text(
-                    "Group the working tree into logical change sets for review (Fast LLM)",
+                    "Group the working tree into logical change sets for review \
+                     (uses the selected CLI — slower but more precise)",
                 )
                 .clicked()
             {

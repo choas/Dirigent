@@ -453,6 +453,8 @@ pub struct DirigentApp {
     // Change Set Analysis async state
     change_set_generating: bool,
     change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    /// Cancellation flag for the in-flight change-set CLI run.
+    change_set_cancel: Arc<AtomicBool>,
     /// File lists for ephemeral change-set Review cues, keyed by cue id.
     change_set_files: HashMap<i64, Vec<String>>,
 
@@ -1025,6 +1027,7 @@ impl DirigentApp {
 
             change_set_generating: false,
             change_set_rx: None,
+            change_set_cancel: Arc::new(AtomicBool::new(false)),
             change_set_files: HashMap::new(),
 
             custom_theme_edit: None,
@@ -1437,6 +1440,7 @@ impl eframe::App for DirigentApp {
 impl Drop for DirigentApp {
     fn drop(&mut self) {
         self.split_cue_cancel.store(true, Ordering::SeqCst);
+        self.change_set_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
     }
 }

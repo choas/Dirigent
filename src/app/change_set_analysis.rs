@@ -1,21 +1,24 @@
 //! Change Set Analysis (whole-file v1).
 //!
-//! Sends the working diff to the Fast LLM, which groups the changed files into
-//! logical feature sets. Each group is normalized to a file-disjoint partition
-//! and surfaced as an ephemeral cue card in the Review column, where the human
-//! can stage or commit it. Nothing is committed without explicit confirmation.
+//! Sends the working diff to the user's selected coding-agent CLI, which groups
+//! the changed files into logical feature sets. Routing through the full CLI
+//! (rather than the Fast LLM) is slower but more precise. Each group is
+//! normalized to a file-disjoint partition and surfaced as an ephemeral cue card
+//! in the Review column, where the human can stage or commit it. Nothing is
+//! committed without explicit confirmation.
 //!
-//! Modeled on [`super::split_cue`]: the model call runs on a background thread,
-//! the result comes back over an `mpsc` channel, and the UI is repainted when
-//! it lands.
+//! Modeled on [`super::split_cue`]: the CLI call runs on a background thread, the
+//! result comes back over an `mpsc` channel, and the UI is repainted when it
+//! lands.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, Arc};
 
 use crate::db::CueStatus;
-use crate::fast_llm::{ChangeSetGroupRaw, FastLlmConfig};
-use crate::settings::{Settings, VcsBackend};
+use crate::fast_llm::ChangeSetGroupRaw;
+use crate::settings::{CliProvider, Settings, VcsBackend};
 
 use super::DirigentApp;
 
@@ -40,8 +43,6 @@ pub(super) enum ChangeSetOutcome {
     Groups(Vec<ChangeSetGroup>),
     /// The working tree was clean / produced no groups.
     Nothing,
-    /// The Fast LLM is disabled or unconfigured.
-    Unavailable,
 }
 
 pub(super) type ChangeSetResult = Result<ChangeSetOutcome, String>;
@@ -66,13 +67,33 @@ fn change_set_cue_text(group: &ChangeSetGroup) -> String {
     s
 }
 
-/// Pure short-circuit decision shared by the run path and tests: abort with
-/// `Unavailable` when the Fast LLM is not configured, or `Nothing` when the
-/// working diff is absent or empty. Returns `None` to proceed to the model.
-fn precheck(config_available: bool, diff: Option<&str>) -> Option<ChangeSetOutcome> {
-    if !config_available {
-        return Some(ChangeSetOutcome::Unavailable);
-    }
+/// Cap on the diff embedded in the CLI prompt. Larger working trees collapse to
+/// a single "All changes" group via [`OVERSIZED_DIFF_CHARS`] before we get here,
+/// so this only guards against the prompt itself growing unwieldy.
+const PROMPT_DIFF_CHARS: usize = 40_000;
+
+/// Build the one-shot, read-only prompt asking the coding-agent CLI to group the
+/// working diff into logical, file-disjoint change sets and return JSON only.
+fn build_change_set_prompt(diff: &str) -> String {
+    let trimmed: String = diff.chars().take(PROMPT_DIFF_CHARS).collect();
+    format!(
+        "You are organizing a messy git working tree. Given the unified diff below, \
+         group the changed files into logical, self-describing feature sets.\n\n\
+         Output ONLY a JSON array, with no markdown fences and no commentary, shaped like:\n\
+         [{{\"title\": \"...\", \"description\": \"...\", \"files\": [{{\"path\": \"...\", \"hunks\": []}}]}}]\n\n\
+         Rules:\n\
+         - Put each changed file in exactly one group; cover every file in the diff.\n\
+         - Write a short imperative title (max ~50 chars) and a one-line description per group.\n\
+         - Use the file paths exactly as they appear in the diff.\n\
+         - Do NOT modify any files. Only analyze the diff and return JSON.\n\n\
+         Diff:\n{trimmed}"
+    )
+}
+
+/// Pure short-circuit decision shared by the run path and tests: return
+/// `Nothing` when the working diff is absent or empty, otherwise `None` to
+/// proceed to the model.
+fn precheck(diff: Option<&str>) -> Option<ChangeSetOutcome> {
     match diff {
         None => Some(ChangeSetOutcome::Nothing),
         Some(d) if d.trim().is_empty() => Some(ChangeSetOutcome::Nothing),
@@ -80,22 +101,22 @@ fn precheck(config_available: bool, diff: Option<&str>) -> Option<ChangeSetOutco
     }
 }
 
-/// Run the analysis off the UI thread: resolve the Fast LLM config, compute the
-/// working diff, group it, and normalize to a file-disjoint partition. Returns a
-/// pure outcome; no side effects to the working tree are ever made here.
+/// Run the analysis off the UI thread: compute the working diff, ask the selected
+/// CLI to group it, and normalize to a file-disjoint partition. Returns a pure
+/// outcome; no side effects to the working tree are ever made here.
 fn run_change_set_analysis(
     settings: &Settings,
     backend: &VcsBackend,
     jj_path: &str,
     project_root: &Path,
+    provider: &CliProvider,
+    cancel: Arc<AtomicBool>,
 ) -> ChangeSetResult {
-    let config = FastLlmConfig::from_settings(settings);
     let diff = super::vcs_dispatch::get_working_diff(backend, jj_path, project_root, &[]);
-    if let Some(outcome) = precheck(config.is_some(), diff.as_deref()) {
+    if let Some(outcome) = precheck(diff.as_deref()) {
         return Ok(outcome);
     }
-    // precheck guarantees both are present and the diff is non-empty here.
-    let config = config.expect("config present after precheck");
+    // precheck guarantees the diff is present and non-empty here.
     let diff = diff.expect("diff present after precheck");
     let changed = changed_files_from_diff(&diff);
     if changed.is_empty() {
@@ -109,7 +130,9 @@ fn run_change_set_analysis(
             files: changed,
         }]));
     }
-    let raw = crate::fast_llm::analyze_change_sets(&config, &diff)?;
+    let prompt = build_change_set_prompt(&diff);
+    let response = super::split_cue::run_cli_prompt(&prompt, provider, project_root, settings, cancel)?;
+    let raw = crate::fast_llm::parse_change_sets(&response)?;
     let groups = normalize_change_sets(raw, &changed);
     if groups.is_empty() {
         return Ok(ChangeSetOutcome::Nothing);
@@ -119,8 +142,10 @@ fn run_change_set_analysis(
 
 impl DirigentApp {
     /// Start a Change Set Analysis run: group the dirty working tree into
-    /// logical feature sets surfaced as Review cards. Guards on a clean tree and
-    /// an unconfigured Fast LLM up front so the run never has side effects.
+    /// logical feature sets surfaced as Review cards. Guards on a clean tree up
+    /// front so the run never has side effects. The grouping runs through the
+    /// user's selected coding-agent CLI — slower than the Fast LLM but more
+    /// precise.
     pub(super) fn start_change_set_analysis(&mut self) {
         if self.change_set_generating {
             self.set_status_message("Change-set analysis already in progress".into());
@@ -130,32 +155,36 @@ impl DirigentApp {
             self.set_status_message("Nothing to analyze — the working tree is clean".into());
             return;
         }
-        if FastLlmConfig::from_settings(&self.settings).is_none() {
-            self.set_status_message(
-                "Fast LLM is not configured — enable it under Settings → Fast LLM".into(),
-            );
-            return;
-        }
 
         self.change_set_generating = true;
+        self.change_set_cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         self.change_set_rx = Some(rx);
 
         let settings = self.settings.clone();
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
+        let provider = self.settings.cli_provider.clone();
         let project_root = self.project_root.clone();
+        let cancel = Arc::clone(&self.change_set_cancel);
         let ctx = self.egui_ctx.clone();
 
         std::thread::spawn(move || {
-            let result = run_change_set_analysis(&settings, &backend, &jj_path, &project_root);
+            let result = run_change_set_analysis(
+                &settings,
+                &backend,
+                &jj_path,
+                &project_root,
+                &provider,
+                cancel,
+            );
             let _ = tx.send(result);
             if let Some(c) = ctx.get() {
                 c.request_repaint();
             }
         });
 
-        self.set_status_message("Analyzing changes...".into());
+        self.set_status_message("Analyzing changes with the selected CLI…".into());
     }
 
     /// Poll for a completed analysis run and surface the groups as Review cards.
@@ -178,11 +207,6 @@ impl DirigentApp {
         self.change_set_rx = None;
 
         match result {
-            Ok(ChangeSetOutcome::Unavailable) => {
-                self.set_status_message(
-                    "Fast LLM is not configured — enable it under Settings → Fast LLM".into(),
-                );
-            }
             Ok(ChangeSetOutcome::Nothing) => {
                 self.set_status_message("Nothing to analyze — no changes found".into());
             }
@@ -481,19 +505,14 @@ mod tests {
 
     #[test]
     fn precheck_short_circuits() {
-        // Unavailable when the Fast LLM is not configured, regardless of diff.
-        assert!(matches!(
-            precheck(false, Some("diff --git a a")),
-            Some(ChangeSetOutcome::Unavailable)
-        ));
         // Nothing on a clean tree (no diff, or empty/whitespace diff).
-        assert!(matches!(precheck(true, None), Some(ChangeSetOutcome::Nothing)));
+        assert!(matches!(precheck(None), Some(ChangeSetOutcome::Nothing)));
         assert!(matches!(
-            precheck(true, Some("   \n ")),
+            precheck(Some("   \n ")),
             Some(ChangeSetOutcome::Nothing)
         ));
         // Otherwise proceed to the model.
-        assert!(precheck(true, Some("diff --git a/x b/x")).is_none());
+        assert!(precheck(Some("diff --git a/x b/x")).is_none());
     }
 
     #[test]
