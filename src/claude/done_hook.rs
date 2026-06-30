@@ -1,9 +1,19 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use claude_pty::StopHookSummary;
 
 const HOOK_MARKER: &str = "dirigent-pty-done";
+
+/// Serializes the read/modify/write of `.claude/settings.local.json` so that
+/// two PTY runs starting in the same process at nearly the same time cannot both
+/// read the same snapshot, append only their own hook, and clobber each other's
+/// entry when the later `atomic_write` persists its stale copy.
+fn settings_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 pub(super) struct DoneHook {
     sentinel: PathBuf,
@@ -76,6 +86,10 @@ fn upsert_stop_hook(
     payload: &Path,
     session_id: Option<&str>,
 ) -> anyhow::Result<()> {
+    // Hold the lock across the whole read/modify/write so a concurrent install
+    // or removal cannot interleave and overwrite our entry with a stale file.
+    let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
+
     let mut root = read_json_object(settings_path);
     if !root.is_object() {
         root = serde_json::json!({});
@@ -144,6 +158,10 @@ fn stop_hook_command(sentinel: &Path, payload: &Path, session_id: Option<&str>) 
 }
 
 fn remove_stop_hook(settings_path: &Path, sentinel: &Path) -> anyhow::Result<()> {
+    // Same lock as the install path: removing our hook also rewrites the whole
+    // file, so it must not race with a concurrent run's install/removal.
+    let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
+
     if !settings_path.exists() {
         return Ok(());
     }
@@ -338,5 +356,35 @@ mod tests {
 
         remove_stop_hook(&settings, &sentinel_b).unwrap();
         assert_eq!(stop_hook_count(&settings), 0);
+    }
+
+    #[test]
+    fn concurrent_installs_do_not_drop_each_other() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+
+        // Many threads install their hook into the same file at once. Without
+        // serialization the read/modify/write races and entries get clobbered.
+        const RUNS: usize = 16;
+        std::thread::scope(|scope| {
+            for i in 0..RUNS {
+                let settings = settings.clone();
+                let dir = tmp.path().to_path_buf();
+                scope.spawn(move || {
+                    let sentinel = dir.join(format!("dirigent-pty-done-{i}"));
+                    let payload = sentinel.with_extension("json");
+                    upsert_stop_hook(&settings, &sentinel, &payload, Some(&format!("sess-{i}")))
+                        .unwrap();
+                });
+            }
+        });
+
+        // Every run's hook must have survived the concurrent installs.
+        assert_eq!(stop_hook_count(&settings), RUNS);
+        let json = std::fs::read_to_string(&settings).unwrap();
+        for i in 0..RUNS {
+            let sentinel = tmp.path().join(format!("dirigent-pty-done-{i}"));
+            assert!(json.contains(&shell_escape(&sentinel)));
+        }
     }
 }
