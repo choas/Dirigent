@@ -158,10 +158,25 @@ pub struct ChangeSetGroupRaw {
 pub struct ChangeSetFileRaw {
     #[serde(default)]
     pub path: String,
-    /// Per-hunk selection accepted from the model but unused in whole-file v1.
+    /// 1-based hunk numbers the model assigned to this group (v2 partial
+    /// analysis). Empty means the group owns the whole file (v1 behavior).
     #[serde(default)]
-    #[allow(dead_code)]
     pub hunks: Vec<serde_json::Value>,
+}
+
+impl ChangeSetFileRaw {
+    /// The 1-based hunk numbers the model assigned, accepting both JSON numbers
+    /// (`1`) and numeric strings (`"1"`). Non-numeric entries are ignored.
+    pub fn hunk_indices(&self) -> Vec<usize> {
+        self.hunks
+            .iter()
+            .filter_map(|v| {
+                v.as_u64()
+                    .map(|n| n as usize)
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            })
+            .collect()
+    }
 }
 
 /// Defensively parse the model's change-set response into raw groups, tolerating

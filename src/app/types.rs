@@ -581,14 +581,19 @@ pub(crate) struct EditingCue {
 /// slice of the working tree (a title, its files, and an editable message). The
 /// commit dialog walks a `Vec<CommitGroup>` so a messy working tree can be split
 /// into several focused commits, each reviewed and committed in turn.
+#[derive(Clone)]
 pub(super) struct CommitGroup {
     /// Short imperative summary of the group (seeds the commit message subject).
     pub(super) title: String,
-    /// Files belonging to this group; committed as a path-scoped diff.
+    /// Files belonging to this group.
     pub(super) files: Vec<String>,
     /// The group's commit message — generated on first view, then editable.
     /// Empty until a suggestion lands or the user types one.
     pub(super) message: String,
+    /// Partial (v2) ownership: path -> the `@@` headers of the hunks this group
+    /// owns. A path present here is committed hunk-by-hunk; a path in `files` but
+    /// absent here is committed whole. Empty for a whole-file (v1) group.
+    pub(super) hunk_selection: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// State for git information, dirty files, commit history, and worktrees.
