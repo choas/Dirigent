@@ -30,6 +30,64 @@ pub(crate) struct FileRawDiff {
     pub binary: bool,
 }
 
+impl FileRawDiff {
+    pub fn hunk_count(&self) -> usize {
+        self.hunks.len()
+    }
+
+    /// The `@@ ... @@` header line of hunk `idx`.
+    pub fn hunk_header(&self, idx: usize) -> Option<&str> {
+        self.hunks.get(idx).and_then(|h| h.first()).map(|s| s.as_str())
+    }
+
+    /// The verbatim lines of hunk `idx` (starting with its `@@` header), for
+    /// presenting numbered hunks to the grouping model.
+    pub fn hunk_lines(&self, idx: usize) -> Option<&[String]> {
+        self.hunks.get(idx).map(|h| h.as_slice())
+    }
+}
+
+/// Parse the new-side range `+c,d` from an `@@ -a,b +c,d @@` header into
+/// `(start, len)`. A missing length defaults to 1.
+fn parse_new_range(header: &str) -> Option<(usize, usize)> {
+    let plus = header.find('+')?;
+    let rest = &header[plus + 1..];
+    let end = rest.find(' ').unwrap_or(rest.len());
+    let spec = &rest[..end];
+    let mut parts = spec.split(',');
+    let start: usize = parts.next()?.trim().parse().ok()?;
+    let len: usize = match parts.next() {
+        Some(l) => l.trim().parse().ok()?,
+        None => 1,
+    };
+    Some((start, len))
+}
+
+/// Match a stored hunk header against a file's current hunks: exact header first,
+/// then unambiguous new-side range overlap. Returns the real hunk index, or
+/// `None` when there is no match or the overlap is ambiguous.
+pub(crate) fn match_hunk_header(file: &FileRawDiff, header: &str) -> Option<usize> {
+    // 1. Exact header match.
+    if let Some(idx) = (0..file.hunks.len()).find(|&i| file.hunk_header(i) == Some(header)) {
+        return Some(idx);
+    }
+    // 2. New-side range overlap, but only if exactly one hunk overlaps.
+    let (ws, wl) = parse_new_range(header)?;
+    let (we, want_end) = (ws, ws + wl);
+    let mut matches = (0..file.hunks.len()).filter(|&i| {
+        file.hunk_header(i)
+            .and_then(parse_new_range)
+            .map(|(s, l)| s < want_end && we < s + l.max(1))
+            .unwrap_or(false)
+    });
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        None // ambiguous: more than one hunk overlaps
+    } else {
+        Some(first)
+    }
+}
+
 /// Split a raw (possibly multi-file) unified diff into per-file sections,
 /// preserving every line verbatim.
 pub(crate) fn split_into_file_diffs(diff: &str) -> Vec<FileRawDiff> {
@@ -349,6 +407,50 @@ mod tests {
         discard_hunk(p, &patch).expect("discard");
         // The edit is gone from disk; file matches the committed content.
         assert_eq!(std::fs::read_to_string(p.join("f.txt")).unwrap(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn match_hunk_header_exact_and_overlap() {
+        let diff = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,2 +1,3 @@\n ctx\n+add\n@@ -20,1 +21,1 @@\n-x\n+y\n";
+        let files = split_into_file_diffs(diff);
+        let f = &files[0];
+        // Exact header match.
+        assert_eq!(match_hunk_header(f, "@@ -1,2 +1,3 @@"), Some(0));
+        assert_eq!(match_hunk_header(f, "@@ -20,1 +21,1 @@"), Some(1));
+        // Overlap match: a header with drifted old-side but overlapping new range.
+        assert_eq!(match_hunk_header(f, "@@ -1,2 +1,2 @@"), Some(0));
+        // No overlap at all.
+        assert_eq!(match_hunk_header(f, "@@ -99,1 +99,1 @@"), None);
+    }
+
+    #[test]
+    fn commit_partial_commits_only_selected_hunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        let base: String = (1..=30).map(|i| format!("line{i}\n")).collect();
+        std::fs::write(p.join("f.txt"), &base).unwrap();
+        run(p, &["add", "f.txt"]);
+        run(p, &["commit", "-qm", "base"]);
+        // Two far-apart edits -> two hunks.
+        let mut lines: Vec<String> = (1..=30).map(|i| format!("line{i}")).collect();
+        lines[0] = "CHANGED1".into();
+        lines[29] = "CHANGED30".into();
+        std::fs::write(p.join("f.txt"), lines.join("\n") + "\n").unwrap();
+
+        let files = split_into_file_diffs(&working_diff(p));
+        let patch0 = build_hunk_patch(&files[0], 0).unwrap();
+        // Commit only the first hunk.
+        crate::git::commit_partial(p, &[], &[patch0], "part: first hunk").expect("partial commit");
+
+        // HEAD now contains CHANGED1 but not CHANGED30.
+        let head = run(p, &["show", "HEAD:f.txt"]);
+        assert!(head.contains("CHANGED1"));
+        assert!(!head.contains("CHANGED30"));
+        // The second hunk is still dirty in the working tree.
+        let wd = working_diff(p);
+        assert!(wd.contains("CHANGED30"));
+        assert!(!wd.contains("CHANGED1"), "committed hunk should no longer be dirty");
     }
 
     #[test]

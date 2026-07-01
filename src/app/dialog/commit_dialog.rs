@@ -77,9 +77,12 @@ impl DirigentApp {
                                 .color(self.semantic.secondary_text),
                         );
                     }
-                    let files = self.git.commit_files.join(", ");
+                    // Per-file scope for this group: whole file, or "(N hunks)"
+                    // for a partial (v2) selection, marked "split" when the file
+                    // is also owned by another queued group.
+                    let files_label = self.commit_group_files_label(queue_pos);
                     ui.label(
-                        egui::RichText::new(files)
+                        egui::RichText::new(files_label)
                             .small()
                             .color(self.semantic.tertiary_text),
                     );
@@ -237,7 +240,20 @@ impl DirigentApp {
             if in_queue {
                 self.save_current_commit_group_message();
             }
-            self.start_commit();
+            // A queued group with a per-hunk selection commits only those hunks
+            // (v2 partial); everything else commits whole files via start_commit.
+            let partial = in_queue
+                && self
+                    .git
+                    .commit_queue
+                    .get(self.git.commit_queue_pos)
+                    .map(|g| !g.hunk_selection.is_empty())
+                    .unwrap_or(false);
+            if partial {
+                self.commit_current_group_partial();
+            } else {
+                self.start_commit();
+            }
         } else if background {
             self.background_commit();
         } else if dismiss {
@@ -257,6 +273,34 @@ impl DirigentApp {
         if generate {
             self.spawn_commit_message_suggestion();
         }
+    }
+
+    /// Build the per-file scope label for queued group `pos`: each owned file,
+    /// annotated with its hunk count when the group owns a subset (v2), and
+    /// marked "split" when the file is shared with another queued group.
+    fn commit_group_files_label(&self, pos: usize) -> String {
+        let group = match self.git.commit_queue.get(pos) {
+            Some(g) => g,
+            None => return String::new(),
+        };
+        group
+            .files
+            .iter()
+            .map(|path| {
+                let shared = self
+                    .git
+                    .commit_queue
+                    .iter()
+                    .enumerate()
+                    .any(|(i, g)| i != pos && g.files.contains(path));
+                let split = if shared { " · split" } else { "" };
+                match group.hunk_selection.get(path) {
+                    Some(hunks) => format!("{path} ({} hunks{split})", hunks.len()),
+                    None => format!("{path}{split}"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Close the Commit dialog and arrange for the commit to happen in the

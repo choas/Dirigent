@@ -101,6 +101,46 @@ pub(crate) fn commit_diff(
     )
 }
 
+/// Commit a partial selection: stage `whole_files` entirely and apply each
+/// single-hunk patch in `hunk_patches` to the index, then commit the staged
+/// index. The working tree is left untouched, so any un-selected hunks of a
+/// shared file remain dirty afterwards.
+pub(crate) fn commit_partial(
+    repo_path: &Path,
+    whole_files: &[String],
+    hunk_patches: &[String],
+    commit_message: &str,
+) -> crate::error::Result<String> {
+    if whole_files.is_empty() && hunk_patches.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "nothing selected to commit".into(),
+        ));
+    }
+
+    // Reset the index to HEAD so pre-existing staged changes aren't included and
+    // the hunk patches (built against HEAD) apply cleanly to the index.
+    {
+        let repo = Repository::discover(repo_path)?;
+        let head_commit = repo
+            .head()?
+            .peel_to_commit()
+            .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
+        let head_tree = head_commit.tree()?;
+        let mut idx = repo.index()?;
+        idx.read_tree(&head_tree)?;
+        idx.write()?;
+    }
+
+    // Stage whole files, then apply each owned hunk to the index.
+    stage_files(repo_path, whole_files)?;
+    for patch in hunk_patches {
+        super::staging::stage_hunk(repo_path, patch)?;
+    }
+
+    let repo = Repository::discover(repo_path)?;
+    commit_staged(&repo, commit_message, "nothing to commit — selection empty")
+}
+
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {
     use std::process::Command;
 
