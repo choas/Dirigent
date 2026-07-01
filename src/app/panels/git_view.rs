@@ -5,7 +5,7 @@ use eframe::egui;
 use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
-use crate::settings::SemanticColors;
+use crate::settings::{SemanticColors, VcsBackend};
 
 use super::super::vcs_dispatch;
 
@@ -289,6 +289,16 @@ impl DirigentApp {
             &[],
         ) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
+            // Hunk-level staging is a Git-only feature (jj has no index).
+            let staging = if self.settings.vcs_backend == VcsBackend::Git {
+                Some(super::super::StagingState {
+                    files: Vec::new(),
+                    staged_view: false,
+                    partial: self.compute_partial_staged(&parsed),
+                })
+            } else {
+                None
+            };
             self.dismiss_central_overlays();
             self.diff_review = Some(super::super::DiffReview {
                 cue_id: 0,
@@ -306,6 +316,7 @@ impl DirigentApp {
                 search_query: String::new(),
                 search_matches: Vec::new(),
                 search_current: None,
+                staging,
             });
         }
     }

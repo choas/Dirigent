@@ -11,6 +11,7 @@ mod dino;
 mod file_navigation;
 mod git_operations;
 mod graph_helpers;
+mod hunk_staging;
 mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
@@ -108,7 +109,7 @@ use tasks::TaskHandle;
 use theme::{icon, icon_small};
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
-    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
+    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
 };
 
 /// Set the macOS Dock label and menu bar title to the given project name.

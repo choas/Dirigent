@@ -30,12 +30,6 @@ pub(crate) struct FileRawDiff {
     pub binary: bool,
 }
 
-impl FileRawDiff {
-    pub fn hunk_count(&self) -> usize {
-        self.hunks.len()
-    }
-}
-
 /// Split a raw (possibly multi-file) unified diff into per-file sections,
 /// preserving every line verbatim.
 pub(crate) fn split_into_file_diffs(diff: &str) -> Vec<FileRawDiff> {
@@ -261,7 +255,7 @@ mod tests {
         let files = split_into_file_diffs(diff);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "f.txt");
-        assert_eq!(files[0].hunk_count(), 2);
+        assert_eq!(files[0].hunks.len(), 2);
         let p0 = build_hunk_patch(&files[0], 0).unwrap();
         assert!(p0.contains("@@ -1,2 +1,2 @@"));
         assert!(p0.contains("+new1"));
@@ -278,7 +272,7 @@ mod tests {
         let files = split_into_file_diffs(diff);
         assert_eq!(files.len(), 1);
         assert!(files[0].binary);
-        assert_eq!(files[0].hunk_count(), 0);
+        assert_eq!(files[0].hunks.len(), 0);
         assert!(build_hunk_patch(&files[0], 0).is_none());
     }
 
@@ -306,7 +300,7 @@ mod tests {
         std::fs::write(p.join("f.txt"), lines.join("\n") + "\n").unwrap();
 
         let files = split_into_file_diffs(&working_diff(p));
-        assert_eq!(files[0].hunk_count(), 2, "expected two separate hunks");
+        assert_eq!(files[0].hunks.len(), 2, "expected two separate hunks");
         let patch = build_hunk_patch(&files[0], 0).unwrap();
         stage_hunk(p, &patch).expect("stage first hunk");
 

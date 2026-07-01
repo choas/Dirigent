@@ -66,6 +66,20 @@ pub(super) struct DiffReview {
     /// Matches as (file_idx, hunk_idx, line_idx_in_hunk).
     pub(super) search_matches: Vec<(usize, usize, usize)>,
     pub(super) search_current: Option<usize>,
+    /// When set, this diff is a working-tree diff with per-hunk staging controls
+    /// (stage/discard/unstage) and the previous/staged/unstaged view toggle.
+    pub(super) staging: Option<StagingState>,
+}
+
+/// State for hunk-level staging within a working-tree [`DiffReview`].
+pub(super) struct StagingState {
+    /// File scope for staging (empty = the whole working tree).
+    pub(super) files: Vec<String>,
+    /// `false` = staged-vs-unstaged (`git diff`, the default);
+    /// `true` = previous-vs-staged (`git diff --cached`).
+    pub(super) staged_view: bool,
+    /// Files that are partially staged, for the `[-]` indicator.
+    pub(super) partial: Vec<String>,
 }
 
 pub(super) enum CueAction {

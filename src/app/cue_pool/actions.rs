@@ -385,6 +385,7 @@ impl DirigentApp {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current: None,
+            staging: None,
         });
     }
 
