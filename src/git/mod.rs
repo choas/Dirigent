@@ -40,7 +40,7 @@ pub(crate) use merge::{
 pub(crate) use pr::{build_pr_body, create_pull_request, get_default_branch, main_worktree_path};
 pub(crate) use staging::{
     build_hunk_patch, discard_hunk, get_staged_diff, is_partially_staged, split_into_file_diffs,
-    stage_hunk, unstage_hunk, FileRawDiff,
+    stage_hunk, unstage_hunk,
 };
 pub(crate) use status::{
     format_status_summary, get_ahead_of_remote, get_dirty_files, read_git_info, GitInfo,

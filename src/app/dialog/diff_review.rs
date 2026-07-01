@@ -38,6 +38,11 @@ struct DiffReviewActions {
     search_prev: bool,
     search_close: bool,
     open_file: Option<(String, usize)>,
+    /// Hunk-staging actions (working-tree diffs only), as (file_idx, hunk_idx).
+    toggle_staged_view: bool,
+    stage_hunk: Option<(usize, usize)>,
+    discard_hunk: Option<(usize, usize)>,
+    unstage_hunk: Option<(usize, usize)>,
 }
 
 impl DiffReviewActions {
@@ -54,6 +59,10 @@ impl DiffReviewActions {
             search_prev: false,
             search_close: false,
             open_file: None,
+            toggle_staged_view: false,
+            stage_hunk: None,
+            discard_hunk: None,
+            unstage_hunk: None,
         }
     }
 }
@@ -83,6 +92,11 @@ impl DirigentApp {
         let search_query = &mut review.search_query;
         let search_matches = &review.search_matches;
         let search_current = review.search_current;
+        // (staged_view, partially-staged file list) when this is a staging diff.
+        let staging = review
+            .staging
+            .as_ref()
+            .map(|s| (s.staged_view, s.partial.clone()));
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             Self::render_diff_header_bar(
@@ -117,6 +131,19 @@ impl DirigentApp {
             Self::render_diff_search_bar(ui, fs, &sem, search_query, &search, &mut actions);
             ui.separator();
 
+            if let Some((staged_view, ref partial)) = staging {
+                Self::render_staging_toolbar(
+                    ui,
+                    fs,
+                    &sem,
+                    staged_view,
+                    partial,
+                    &parsed,
+                    &mut actions,
+                );
+                ui.separator();
+            }
+
             actions.open_file = Self::render_diff_content(
                 ui,
                 &sem,
@@ -130,7 +157,95 @@ impl DirigentApp {
 
         self.apply_diff_review_state_updates(&actions);
         self.apply_diff_search_actions(&actions);
+        self.apply_staging_actions(&actions);
         self.apply_diff_review_actions(actions, cue_id, &diff_text, &cue_text);
+    }
+
+    /// Toolbar + per-hunk controls for a working-tree staging diff: a view toggle,
+    /// the partially-staged indicator, and stage/discard (unstaged view) or
+    /// unstage (staged view) buttons per hunk.
+    fn render_staging_toolbar(
+        ui: &mut egui::Ui,
+        fs: f32,
+        sem: &SemanticColors,
+        staged_view: bool,
+        partial: &[String],
+        parsed: &crate::diff_view::ParsedDiff,
+        actions: &mut DiffReviewActions,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(icon("Staging:", fs));
+            if ui
+                .selectable_label(!staged_view, "Unstaged \u{2192} to stage")
+                .on_hover_text("Working tree vs index — stage or discard these hunks")
+                .clicked()
+                && staged_view
+            {
+                actions.toggle_staged_view = true;
+            }
+            if ui
+                .selectable_label(staged_view, "Staged \u{2192} to commit")
+                .on_hover_text("Index vs HEAD — what a commit now would include; unstage here")
+                .clicked()
+                && !staged_view
+            {
+                actions.toggle_staged_view = true;
+            }
+        });
+        if !partial.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("[-] partially staged: {}", partial.join(", ")))
+                    .small()
+                    .color(sem.warning),
+            );
+        }
+        if parsed.files.is_empty() {
+            let msg = if staged_view {
+                "Nothing staged."
+            } else {
+                "Nothing left to stage."
+            };
+            ui.label(egui::RichText::new(msg).small().italics().color(sem.secondary_text));
+            return;
+        }
+        for (fi, file) in parsed.files.iter().enumerate() {
+            for hi in 0..file.hunks.len() {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{} · hunk {}", file.display_path(), hi + 1))
+                            .small()
+                            .monospace()
+                            .color(sem.secondary_text),
+                    );
+                    if staged_view {
+                        if ui.small_button("Unstage").clicked() {
+                            actions.unstage_hunk = Some((fi, hi));
+                        }
+                    } else {
+                        if ui.small_button("Stage").clicked() {
+                            actions.stage_hunk = Some((fi, hi));
+                        }
+                        if ui.small_button("Discard").clicked() {
+                            actions.discard_hunk = Some((fi, hi));
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Apply a hunk-staging action collected during render. One op per frame; the
+    /// view toggle takes precedence (it re-reads the diff for the other side).
+    fn apply_staging_actions(&mut self, actions: &DiffReviewActions) {
+        if actions.toggle_staged_view {
+            self.toggle_staging_view();
+        } else if let Some((fi, hi)) = actions.stage_hunk {
+            self.stage_review_hunk(fi, hi);
+        } else if let Some((fi, hi)) = actions.discard_hunk {
+            self.discard_review_hunk(fi, hi);
+        } else if let Some((fi, hi)) = actions.unstage_hunk {
+            self.unstage_review_hunk(fi, hi);
+        }
     }
 
     fn render_diff_header_bar(
