@@ -53,6 +53,32 @@ pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<Str
     }
 }
 
+/// Diff between two refs using merge-base (three-dot) semantics: `git diff
+/// base...head`. This shows what `head` introduced relative to their common
+/// ancestor — the natural "what's new on this branch" view for review — rather
+/// than every difference between the two tips. Returns `None` when the refs are
+/// identical or produce no differences.
+pub(crate) fn get_range_diff(repo_path: &Path, base: &str, head: &str) -> Option<String> {
+    use std::process::Command;
+
+    let range = format!("{base}...{head}");
+    let output = Command::new("git")
+        .arg("diff")
+        .arg(&range)
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let diff = String::from_utf8_lossy(&output.stdout).to_string();
+    if diff.trim().is_empty() {
+        None
+    } else {
+        Some(diff)
+    }
+}
+
 fn make_path_relative(repo_path: &Path, f: &str) -> String {
     let path = Path::new(f);
     if path.is_absolute() {
@@ -211,6 +237,39 @@ pub(super) fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    fn range_diff_diverged_vs_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        run(p, &["init", "-q"]);
+        run(p, &["config", "user.email", "t@t.t"]);
+        run(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("f.txt"), "a\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+        run(p, &["branch", "feature"]);
+        run(p, &["checkout", "-q", "feature"]);
+        std::fs::write(p.join("f.txt"), "a\nb\n").unwrap();
+        run(p, &["commit", "-qam", "feature work"]);
+
+        // Diverged: main...feature shows the feature's addition.
+        let d = get_range_diff(p, "master", "feature")
+            .or_else(|| get_range_diff(p, "main", "feature"))
+            .expect("diverged refs produce a diff");
+        assert!(d.contains("+b"));
+        // Identical refs -> nothing.
+        assert!(get_range_diff(p, "feature", "feature").is_none());
+    }
 
     #[test]
     fn parse_diff_file_paths_simple() {

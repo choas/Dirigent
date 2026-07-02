@@ -1,4 +1,5 @@
 mod agent_log;
+mod analyze_over;
 mod cleanup_bookmarks;
 mod commit_dialog;
 mod create_bookmark;

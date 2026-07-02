@@ -459,6 +459,15 @@ pub struct DirigentApp {
     /// Cancellation flag for the in-flight change-set CLI run.
     change_set_cancel: Arc<AtomicBool>,
 
+    // "Analyze Changes over" (read-only cross-branch range analysis)
+    analyze_over_show_picker: bool,
+    analyze_over_base: String,
+    analyze_over_head: String,
+    analyze_over_generating: bool,
+    analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
+    analyze_over_cancel: Arc<AtomicBool>,
+    analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
+
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
 
@@ -1031,6 +1040,14 @@ impl DirigentApp {
             change_set_rx: None,
             change_set_cancel: Arc::new(AtomicBool::new(false)),
 
+            analyze_over_show_picker: false,
+            analyze_over_base: String::new(),
+            analyze_over_head: String::new(),
+            analyze_over_generating: false,
+            analyze_over_rx: None,
+            analyze_over_cancel: Arc::new(AtomicBool::new(false)),
+            analyze_over_result: None,
+
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
@@ -1369,6 +1386,9 @@ impl eframe::App for DirigentApp {
         // Poll for change-set analysis results
         self.process_change_set_result();
 
+        // Poll for cross-branch range analysis results
+        self.process_analyze_over_result();
+
         // Poll for git push/pull/PR results
         self.process_push_result();
         self.process_pull_result();
@@ -1442,6 +1462,7 @@ impl Drop for DirigentApp {
     fn drop(&mut self) {
         self.split_cue_cancel.store(true, Ordering::SeqCst);
         self.change_set_cancel.store(true, Ordering::SeqCst);
+        self.analyze_over_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
     }
 }

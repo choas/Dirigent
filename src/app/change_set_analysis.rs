@@ -53,6 +53,55 @@ pub(super) enum ChangeSetOutcome {
 
 pub(super) type ChangeSetResult = Result<ChangeSetOutcome, String>;
 
+/// Read-only result of analyzing the diff between two refs: the grouped change
+/// sets plus the range that produced them.
+pub(super) struct AnalyzeOver {
+    pub base: String,
+    pub head: String,
+    pub diff: String,
+    pub groups: Vec<ChangeSetGroup>,
+}
+
+/// `Ok(None)` means there was nothing to analyze (identical refs / empty range).
+pub(super) type AnalyzeOverResult = Result<Option<AnalyzeOver>, String>;
+
+/// Group the diff between two refs off the UI thread, reusing the working-tree
+/// grouping helpers. Whole-file grouping only — per-hunk staging is meaningless
+/// across branches, so no hunk selection is produced.
+fn run_analyze_over(
+    settings: &Settings,
+    project_root: &Path,
+    provider: &CliProvider,
+    base: String,
+    head: String,
+    cancel: Arc<AtomicBool>,
+) -> AnalyzeOverResult {
+    let diff = match crate::git::get_range_diff(project_root, &base, &head) {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    let file_diffs = crate::git::split_into_file_diffs(&diff);
+    let changed = changed_files_from_diff(&diff);
+    if changed.is_empty() {
+        return Ok(None);
+    }
+    let prompt = build_change_set_prompt(&file_diffs);
+    let response =
+        super::split_cue::run_cli_prompt(&prompt, provider, project_root, settings, cancel)?;
+    let raw = crate::fast_llm::parse_change_sets(&response)?;
+    // Whole-file grouping (empty file_diffs => no hunk selection).
+    let groups = normalize_change_sets(raw, &changed, &[]);
+    if groups.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(AnalyzeOver {
+        base,
+        head,
+        diff,
+        groups,
+    }))
+}
+
 /// Cap on the diff embedded in the CLI prompt. Larger working trees collapse to
 /// a single "All changes" group via [`OVERSIZED_DIFF_CHARS`] before we get here,
 /// so this only guards against the prompt itself growing unwieldy.
@@ -330,6 +379,75 @@ impl DirigentApp {
         match crate::git::stage_files(&self.project_root, &files) {
             Ok(()) => self.set_status_message(format!("Staged {} file(s)", files.len())),
             Err(e) => self.set_status_message(format!("Stage failed: {e}")),
+        }
+    }
+
+    /// Start analyzing the diff between two refs (read-only cross-branch review).
+    pub(in crate::app) fn start_analyze_over(&mut self, base: String, head: String) {
+        if base.is_empty() || head.is_empty() {
+            self.set_status_message("Pick a base and a head ref".into());
+            return;
+        }
+        if base == head {
+            self.set_status_message("Pick two different refs to compare".into());
+            return;
+        }
+        if self.analyze_over_generating {
+            return;
+        }
+        self.analyze_over_generating = true;
+        self.analyze_over_show_picker = false;
+        self.analyze_over_result = None;
+        self.analyze_over_cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.analyze_over_rx = Some(rx);
+
+        let settings = self.settings.clone();
+        let provider = self.settings.cli_provider.clone();
+        let project_root = self.project_root.clone();
+        let cancel = Arc::clone(&self.analyze_over_cancel);
+        let ctx = self.egui_ctx.clone();
+        let (b, h) = (base.clone(), head.clone());
+
+        std::thread::spawn(move || {
+            let result = run_analyze_over(&settings, &project_root, &provider, b, h, cancel);
+            let _ = tx.send(result);
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
+        });
+        self.set_status_message(format!("Analyzing {base}\u{2026}{head}\u{2026}"));
+    }
+
+    /// Poll for a completed range analysis and open the read-only results.
+    pub(in crate::app) fn process_analyze_over_result(&mut self) {
+        let rx = match self.analyze_over_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let result = match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.analyze_over_generating = false;
+                self.analyze_over_rx = None;
+                self.set_status_message("Range analysis failed unexpectedly".into());
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.analyze_over_generating = false;
+        self.analyze_over_rx = None;
+        match result {
+            Ok(None) => self.set_status_message("Nothing to analyze between those refs".into()),
+            Ok(Some(a)) => {
+                let n = a.groups.len();
+                self.set_status_message(format!(
+                    "Grouped {}\u{2026}{} into {n} change set(s)",
+                    a.base, a.head
+                ));
+                self.analyze_over_result = Some(a);
+            }
+            Err(e) => self.set_status_message(format!("Range analysis failed: {e}")),
         }
     }
 

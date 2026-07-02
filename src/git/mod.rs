@@ -29,7 +29,7 @@ pub(crate) use commit::{
     commit_all, commit_diff, commit_partial, detect_commit_type, generate_commit_message, git_pull,
     git_push, move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
 };
-pub(crate) use diff::{get_working_diff, parse_diff_file_paths_for_repo};
+pub(crate) use diff::{get_range_diff, get_working_diff, parse_diff_file_paths_for_repo};
 pub(crate) use history::{
     count_commits, get_commit_diff, get_commit_message, read_commit_history, CommitInfo,
 };
