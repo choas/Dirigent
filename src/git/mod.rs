@@ -6,6 +6,7 @@ pub(crate) mod graph;
 mod history;
 mod merge;
 mod pr;
+mod staging;
 mod status;
 mod worktree;
 
@@ -25,10 +26,13 @@ fn collect_statuses(repo: &Repository) -> Option<Statuses<'_>> {
 
 pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};
 pub(crate) use commit::{
-    commit_all, commit_diff, detect_commit_type, generate_commit_message, git_pull, git_push,
-    move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
+    commit_all, commit_diff, commit_partial, detect_commit_type, generate_commit_message, git_pull,
+    git_push, move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
 };
-pub(crate) use diff::{get_working_diff, parse_diff_file_paths_for_repo};
+pub(crate) use diff::{
+    compare_folders, get_range_diff, get_working_diff, parse_diff_file_paths_for_repo,
+    FolderCompare,
+};
 pub(crate) use history::{
     count_commits, get_commit_diff, get_commit_message, read_commit_history, CommitInfo,
 };
@@ -37,10 +41,14 @@ pub(crate) use merge::{
     rebase_continue, stage_files, MergeOperation,
 };
 pub(crate) use pr::{build_pr_body, create_pull_request, get_default_branch, main_worktree_path};
+pub(crate) use staging::{
+    build_hunk_patch, discard_hunk, get_staged_diff, is_partially_staged, match_hunk_header,
+    split_into_file_diffs, stage_hunk, unstage_hunk, FileRawDiff,
+};
 pub(crate) use status::{
     format_status_summary, get_ahead_of_remote, get_dirty_files, read_git_info, GitInfo,
 };
 pub(crate) use worktree::{
     checkout_branch, create_branch, create_worktree, list_branches, list_worktrees, own_branches,
-    remove_worktree, WorktreeInfo,
+    prune_worktrees, remove_worktree, WorktreeInfo,
 };

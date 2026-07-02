@@ -66,6 +66,20 @@ pub(super) struct DiffReview {
     /// Matches as (file_idx, hunk_idx, line_idx_in_hunk).
     pub(super) search_matches: Vec<(usize, usize, usize)>,
     pub(super) search_current: Option<usize>,
+    /// When set, this diff is a working-tree diff with per-hunk staging controls
+    /// (stage/discard/unstage) and the previous/staged/unstaged view toggle.
+    pub(super) staging: Option<StagingState>,
+}
+
+/// State for hunk-level staging within a working-tree [`DiffReview`].
+pub(super) struct StagingState {
+    /// File scope for staging (empty = the whole working tree).
+    pub(super) files: Vec<String>,
+    /// `false` = staged-vs-unstaged (`git diff`, the default);
+    /// `true` = previous-vs-staged (`git diff --cached`).
+    pub(super) staged_view: bool,
+    /// Files that are partially staged, for the `[-]` indicator.
+    pub(super) partial: Vec<String>,
 }
 
 pub(super) enum CueAction {
@@ -563,6 +577,25 @@ pub(crate) struct EditingCue {
     pub(super) focus_requested: bool,
 }
 
+/// One change-set group queued for committing in the commit dialog: a logical
+/// slice of the working tree (a title, its files, and an editable message). The
+/// commit dialog walks a `Vec<CommitGroup>` so a messy working tree can be split
+/// into several focused commits, each reviewed and committed in turn.
+#[derive(Clone)]
+pub(super) struct CommitGroup {
+    /// Short imperative summary of the group (seeds the commit message subject).
+    pub(super) title: String,
+    /// Files belonging to this group.
+    pub(super) files: Vec<String>,
+    /// The group's commit message — generated on first view, then editable.
+    /// Empty until a suggestion lands or the user types one.
+    pub(super) message: String,
+    /// Partial (v2) ownership: path -> the `@@` headers of the hunks this group
+    /// owns. A path present here is committed hunk-by-hunk; a path in `files` but
+    /// absent here is committed whole. Empty for a whole-file (v1) group.
+    pub(super) hunk_selection: std::collections::HashMap<String, Vec<String>>,
+}
+
 /// State for git information, dirty files, commit history, and worktrees.
 pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
@@ -741,6 +774,13 @@ pub(crate) struct GitState {
     pub(super) commit_needs_focus: bool,
     /// When the commit dialog was opened for a cue review, the cue ID.
     pub(super) commit_review_cue_id: Option<i64>,
+    /// Change-set groups queued for one-by-one committing in the commit dialog.
+    /// Empty means the dialog is committing a single target (a selection, the
+    /// whole working tree, or a reviewed cue's diff). When non-empty the dialog
+    /// shows queue navigation and advances to the next group after each commit.
+    pub(super) commit_queue: Vec<CommitGroup>,
+    /// Index of the group in [`commit_queue`](Self::commit_queue) currently shown.
+    pub(super) commit_queue_pos: usize,
     /// Whether a commit operation is in progress (jj only).
     pub(super) committing: bool,
     pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -852,6 +892,8 @@ impl GitState {
             self.commit_suggest_rx = None;
             self.commit_in_background = false;
             self.commit_files.clear();
+            self.commit_queue.clear();
+            self.commit_queue_pos = 0;
             self.show_commit_dialog = false;
             self.commit_review_cue_id = None;
             return true;

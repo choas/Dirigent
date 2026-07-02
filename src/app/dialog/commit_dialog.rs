@@ -19,8 +19,17 @@ impl DirigentApp {
         let mut do_commit = false;
         let mut generate = false;
         let mut background = false;
+        let mut do_stage = false;
+        let mut nav_prev = false;
+        let mut nav_next = false;
+        let mut move_earlier = false;
+        let mut move_later = false;
 
         let fs = self.settings.font_size;
+        let queue_len = self.git.commit_queue.len();
+        let queue_pos = self.git.commit_queue_pos;
+        let in_queue = queue_len > 0;
+        let is_git = self.settings.vcs_backend == crate::settings::VcsBackend::Git;
 
         egui::Window::new("Commit")
             .collapsible(false)
@@ -30,7 +39,76 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                if self.git.commit_review_cue_id.is_some() {
+                if in_queue {
+                    // Split-commit mode: walk the queued change-set groups, each
+                    // committed in turn. Header shows position and lets the user
+                    // page between groups to adjust messages before committing.
+                    let title = self
+                        .git
+                        .commit_queue
+                        .get(queue_pos)
+                        .map(|g| g.title.clone())
+                        .unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(queue_pos > 0, egui::Button::new("\u{25C0}").small())
+                            .on_hover_text("Previous change set")
+                            .clicked()
+                        {
+                            nav_prev = true;
+                        }
+                        ui.label(
+                            egui::RichText::new(format!("Commit {} of {queue_len}", queue_pos + 1))
+                                .strong(),
+                        );
+                        if ui
+                            .add_enabled(
+                                queue_pos + 1 < queue_len,
+                                egui::Button::new("\u{25B6}").small(),
+                            )
+                            .on_hover_text("Next change set")
+                            .clicked()
+                        {
+                            nav_next = true;
+                        }
+                        // Reorder the proposed sequence: the human decides the
+                        // final commit story, not the model's emitted order.
+                        ui.separator();
+                        if ui
+                            .add_enabled(queue_pos > 0, egui::Button::new("\u{2191}").small())
+                            .on_hover_text("Commit this change set earlier (move up in the order)")
+                            .clicked()
+                        {
+                            move_earlier = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                queue_pos + 1 < queue_len,
+                                egui::Button::new("\u{2193}").small(),
+                            )
+                            .on_hover_text("Commit this change set later (move down in the order)")
+                            .clicked()
+                        {
+                            move_later = true;
+                        }
+                    });
+                    if !title.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&title)
+                                .small()
+                                .color(self.semantic.secondary_text),
+                        );
+                    }
+                    // Per-file scope for this group: whole file, or "(N hunks)"
+                    // for a partial (v2) selection, marked "split" when the file
+                    // is also owned by another queued group.
+                    let files_label = self.commit_group_files_label(queue_pos);
+                    ui.label(
+                        egui::RichText::new(files_label)
+                            .small()
+                            .color(self.semantic.tertiary_text),
+                    );
+                } else if self.git.commit_review_cue_id.is_some() {
                     ui.label("Commit the reviewed changes with a message.");
                 } else if !self.git.commit_files.is_empty() {
                     let n = self.git.commit_files.len();
@@ -130,23 +208,40 @@ impl DirigentApp {
 
                 ui.horizontal(|ui| {
                     let can_commit = !self.git.commit_message_input.trim().is_empty();
+                    let commit_label = if in_queue && queue_len > 1 {
+                        "\u{2714} Commit & Next"
+                    } else {
+                        "\u{2714} Commit"
+                    };
                     let commit_btn = egui::Button::new(
-                        icon("\u{2714} Commit", fs).color(self.semantic.badge_text),
+                        icon(commit_label, fs).color(self.semantic.badge_text),
                     )
                     .fill(self.semantic.accent);
                     if ui
                         .add_enabled(can_commit, commit_btn)
-                        .on_hover_text("Commit working-copy changes")
+                        .on_hover_text("Commit these changes")
                         .clicked()
                     {
                         do_commit = true;
                     }
+                    // Staging applies to a scoped set of files (a selection or a
+                    // queued group) and only with Git, which has a staging area.
+                    if is_git
+                        && !self.git.commit_files.is_empty()
+                        && ui
+                            .button(icon("\u{2295} Stage", fs))
+                            .on_hover_text("Stage these files (git add) without committing")
+                            .clicked()
+                    {
+                        do_stage = true;
+                    }
                     if ui.button("Cancel").clicked() {
                         dismiss = true;
                     }
-                    // Backgrounding only applies to direct working-copy commits,
-                    // not to committing a reviewed cue's diff.
+                    // Backgrounding only applies to a plain working-copy commit,
+                    // not to a reviewed cue's diff or a split-commit queue.
                     if self.git.commit_review_cue_id.is_none()
+                        && !in_queue
                         && ui
                             .button("Background")
                             .on_hover_text(
@@ -162,15 +257,78 @@ impl DirigentApp {
             });
 
         if do_commit {
-            self.start_commit();
+            // In queue mode, persist the edited message so a failed commit keeps
+            // it; on success the group is dropped and the dialog advances.
+            if in_queue {
+                self.save_current_commit_group_message();
+            }
+            // A queued group with a per-hunk selection commits only those hunks
+            // (v2 partial); everything else commits whole files via start_commit.
+            let partial = in_queue
+                && self
+                    .git
+                    .commit_queue
+                    .get(self.git.commit_queue_pos)
+                    .map(|g| !g.hunk_selection.is_empty())
+                    .unwrap_or(false);
+            if partial {
+                self.commit_current_group_partial();
+            } else {
+                self.start_commit();
+            }
         } else if background {
             self.background_commit();
         } else if dismiss {
             self.cancel_commit_dialog();
+        } else if move_earlier {
+            // The dialog stays on the same group: only its order changes, so the
+            // message/files in the editor remain valid without a reload.
+            self.move_commit_group(-1);
+        } else if move_later {
+            self.move_commit_group(1);
+        } else if nav_prev {
+            self.save_current_commit_group_message();
+            self.load_commit_group(queue_pos.saturating_sub(1));
+        } else if nav_next {
+            self.save_current_commit_group_message();
+            self.load_commit_group((queue_pos + 1).min(queue_len.saturating_sub(1)));
+        } else if do_stage {
+            if in_queue {
+                self.save_current_commit_group_message();
+            }
+            self.stage_commit_files();
         }
         if generate {
             self.spawn_commit_message_suggestion();
         }
+    }
+
+    /// Build the per-file scope label for queued group `pos`: each owned file,
+    /// annotated with its hunk count when the group owns a subset (v2), and
+    /// marked "split" when the file is shared with another queued group.
+    fn commit_group_files_label(&self, pos: usize) -> String {
+        let group = match self.git.commit_queue.get(pos) {
+            Some(g) => g,
+            None => return String::new(),
+        };
+        group
+            .files
+            .iter()
+            .map(|path| {
+                let shared = self
+                    .git
+                    .commit_queue
+                    .iter()
+                    .enumerate()
+                    .any(|(i, g)| i != pos && g.files.contains(path));
+                let split = if shared { " · split" } else { "" };
+                match group.hunk_selection.get(path) {
+                    Some(hunks) => format!("{path} ({} hunks{split})", hunks.len()),
+                    None => format!("{path}{split}"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Close the Commit dialog and arrange for the commit to happen in the
@@ -202,6 +360,8 @@ impl DirigentApp {
         self.git.commit_suggest_rx = None;
         self.git.commit_in_background = false;
         self.git.commit_files.clear();
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.show_commit_dialog = false;
         self.git.commit_review_cue_id = None;
     }

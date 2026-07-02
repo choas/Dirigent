@@ -1231,6 +1231,8 @@ impl DirigentApp {
     pub(super) fn open_commit_dialog(&mut self) {
         self.git.commit_message_input.clear();
         self.git.commit_review_cue_id = None;
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.commit_needs_focus = true;
         self.git.show_commit_dialog = true;
     }
@@ -1251,14 +1253,15 @@ impl DirigentApp {
             return;
         }
 
-        let cue_id = self.git.commit_review_cue_id.take();
+        let review_cue_id = self.git.commit_review_cue_id.take();
         let selected_files = std::mem::take(&mut self.git.commit_files);
 
         // Resolve the diff to commit:
         // - a reviewed cue commits its stored execution diff;
-        // - a Git-view selection commits only those files (path-scoped diff);
+        // - a Git-view selection or a queued change-set group commits only those
+        //   files (path-scoped diff);
         // - otherwise the whole working copy is committed (`commit_all`).
-        let diff_text = if let Some(id) = cue_id {
+        let diff_text = if let Some(id) = review_cue_id {
             self.db
                 .get_latest_execution(id)
                 .ok()
@@ -1316,7 +1319,7 @@ impl DirigentApp {
             let _ = tx.send(result);
         });
 
-        self.git.commit_pending_cue_id = cue_id;
+        self.git.commit_pending_cue_id = review_cue_id;
         self.set_status_message("Committing...".into());
     }
 
@@ -1342,6 +1345,7 @@ impl DirigentApp {
         self.git.committing = false;
         self.git.commit_rx = None;
         let pending_cue = self.git.commit_pending_cue_id.take();
+        let in_queue = !self.git.commit_queue.is_empty();
         match result {
             Ok(msg) => {
                 if let Some(id) = pending_cue {
@@ -1371,10 +1375,25 @@ impl DirigentApp {
                     );
                 }
                 self.set_status_message(msg);
+                // A split commit: drop the committed group and advance the dialog
+                // to the next one (or finish when the queue empties).
+                if in_queue {
+                    self.advance_commit_queue();
+                }
             }
             Err(e) => {
                 if let Some(id) = pending_cue {
                     let _ = self.db.log_activity(id, "Commit failed");
+                }
+                // Leave the queue intact so the user can retry the failed group:
+                // restore the group's files (start_commit consumed them) and
+                // reopen the dialog, keeping the message the user already had.
+                if in_queue {
+                    let pos = self.git.commit_queue_pos;
+                    if let Some(g) = self.git.commit_queue.get(pos) {
+                        self.git.commit_files = g.files.clone();
+                    }
+                    self.git.show_commit_dialog = true;
                 }
                 self.set_status_message(e);
             }

@@ -251,6 +251,7 @@ impl DirigentApp {
         self.render_pull_unmerged_dialog(ctx);
         self.render_cleanup_bookmarks_dialog(ctx);
         self.render_commit_dialog(ctx);
+        self.render_analyze_over(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);

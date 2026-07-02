@@ -9,6 +9,9 @@ pub(crate) struct WorktreeInfo {
     pub is_current: bool,
     pub is_locked: bool,
     pub is_main: bool,
+    /// True when the worktree's folder no longer exists on disk (deleted by
+    /// hand). Git still lists it until `git worktree prune` runs.
+    pub orphaned: bool,
 }
 
 fn build_worktree_info(
@@ -27,13 +30,54 @@ fn build_worktree_info(
                 .unwrap_or_else(|| "main".to_string())
         });
     let is_current = canon_wt == current || current.starts_with(&canon_wt);
+    let orphaned = !p.exists();
     WorktreeInfo {
         name,
         path: p,
         is_current,
         is_locked,
         is_main: is_first,
+        orphaned,
     }
+}
+
+/// Branch names currently checked out in a live (non-orphaned) worktree. Such a
+/// branch cannot receive a second worktree, so it is ineligible in the
+/// "Worktree from Branch" picker. (The panel computes the same set inline to
+/// avoid a git call per frame; this is the standalone, tested primitive.)
+#[allow(dead_code)]
+pub(crate) fn checked_out_branches(repo_path: &Path) -> std::collections::HashSet<String> {
+    list_worktrees(repo_path)
+        .map(|wts| {
+            wts.into_iter()
+                .filter(|w| !w.orphaned)
+                .map(|w| w.name)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `branch` is eligible to get a new worktree: it must be one of the
+/// user's own branches and not already checked out in a live worktree.
+#[allow(dead_code)]
+pub(crate) fn is_branch_eligible_for_worktree(repo_path: &Path, branch: &str) -> bool {
+    own_branches(repo_path).contains(branch) && !checked_out_branches(repo_path).contains(branch)
+}
+
+/// Prune worktree registrations whose folders no longer exist
+/// (`git worktree prune`).
+pub(crate) fn prune_worktrees(repo_path: &Path) -> crate::error::Result<()> {
+    use std::process::Command;
+    let output = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
@@ -419,4 +463,86 @@ pub(crate) fn remove_worktree(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let o = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            o.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+
+    fn init(dir: &Path) {
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "user.email", "t@t.t"]);
+        git(dir, &["config", "user.name", "T"]);
+        std::fs::write(dir.join("f"), "x\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+    }
+
+    #[test]
+    fn eligibility_reflects_checkout() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        // An owned branch not checked out anywhere is eligible.
+        git(p, &["branch", "idle"]);
+        assert!(is_branch_eligible_for_worktree(p, "idle"));
+        // A branch checked out in a worktree is ineligible.
+        create_worktree(p, "feat").unwrap();
+        assert!(checked_out_branches(p).contains("feat"));
+        assert!(!is_branch_eligible_for_worktree(p, "feat"));
+    }
+
+    #[test]
+    fn orphan_detection_and_prune() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        let wt = create_worktree(p, "feat").unwrap();
+        // Live worktree: not orphaned.
+        assert!(list_worktrees(p)
+            .unwrap()
+            .iter()
+            .any(|w| w.name == "feat" && !w.orphaned));
+        // Delete the folder by hand -> orphaned, still listed by git.
+        std::fs::remove_dir_all(&wt).unwrap();
+        assert!(list_worktrees(p)
+            .unwrap()
+            .iter()
+            .any(|w| w.name == "feat" && w.orphaned));
+        // Prune removes the stale registration.
+        prune_worktrees(p).unwrap();
+        assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
+    }
+
+    #[test]
+    fn retire_keeps_the_branch() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        let wt = create_worktree(p, "feat").unwrap();
+        remove_worktree(p, &wt, false).unwrap();
+        // Worktree gone...
+        assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
+        // ...but the branch ref is preserved.
+        let branches = list_branches(p).unwrap();
+        assert!(branches.iter().any(|b| b == "feat"), "branch must survive retire");
+    }
 }

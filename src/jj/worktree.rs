@@ -52,6 +52,7 @@ pub(crate) fn jj_list_workspaces(
             is_current,
             is_locked: false,
             is_main: i == 0,
+            orphaned: false,
         });
     }
 

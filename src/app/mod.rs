@@ -1,6 +1,7 @@
 mod agents_poll;
 mod ansi;
 mod background;
+mod change_set_analysis;
 mod claude_code_name;
 mod claude_run;
 mod code_viewer;
@@ -8,8 +9,10 @@ mod cue_pool;
 mod dialog;
 mod dino;
 mod file_navigation;
+mod folder_compare;
 mod git_operations;
 mod graph_helpers;
+mod hunk_staging;
 mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
@@ -107,7 +110,7 @@ use tasks::TaskHandle;
 use theme::{icon, icon_small};
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
-    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
+    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
 };
 
 /// Set the macOS Dock label and menu bar title to the given project name.
@@ -451,6 +454,26 @@ pub struct DirigentApp {
     split_cue_source_id: Option<i64>,
     split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
     split_cue_cancel: Arc<AtomicBool>,
+
+    // Split-commit grouping async state: the "Commit Changes" button groups the
+    // working tree into logical change sets via the CLI, then feeds them to the
+    // commit dialog's queue.
+    change_set_generating: bool,
+    change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    /// Cancellation flag for the in-flight change-set CLI run.
+    change_set_cancel: Arc<AtomicBool>,
+
+    // "Analyze Changes over" (read-only cross-branch range analysis)
+    analyze_over_show_picker: bool,
+    analyze_over_base: String,
+    analyze_over_head: String,
+    analyze_over_generating: bool,
+    analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
+    analyze_over_cancel: Arc<AtomicBool>,
+    analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
+
+    // Folder "Compare to…" async state
+    folder_compare_rx: Option<mpsc::Receiver<folder_compare::FolderCompareMsg>>,
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
@@ -870,6 +893,8 @@ impl DirigentApp {
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
                 commit_review_cue_id: None,
+                commit_queue: Vec::new(),
+                commit_queue_pos: 0,
                 committing: false,
                 commit_rx: None,
                 commit_pending_cue_id: None,
@@ -1017,6 +1042,20 @@ impl DirigentApp {
             split_cue_source_id: None,
             split_cue_rx: None,
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
+
+            change_set_generating: false,
+            change_set_rx: None,
+            change_set_cancel: Arc::new(AtomicBool::new(false)),
+
+            analyze_over_show_picker: false,
+            analyze_over_base: String::new(),
+            analyze_over_head: String::new(),
+            analyze_over_generating: false,
+            analyze_over_rx: None,
+            analyze_over_cancel: Arc::new(AtomicBool::new(false)),
+            analyze_over_result: None,
+
+            folder_compare_rx: None,
 
             custom_theme_edit: None,
 
@@ -1353,6 +1392,15 @@ impl eframe::App for DirigentApp {
         // Poll for split cue results
         self.process_split_cue_result();
 
+        // Poll for change-set analysis results
+        self.process_change_set_result();
+
+        // Poll for cross-branch range analysis results
+        self.process_analyze_over_result();
+
+        // Poll for folder comparison results
+        self.process_folder_compare_result();
+
         // Poll for git push/pull/PR results
         self.process_push_result();
         self.process_pull_result();
@@ -1425,6 +1473,8 @@ impl eframe::App for DirigentApp {
 impl Drop for DirigentApp {
     fn drop(&mut self) {
         self.split_cue_cancel.store(true, Ordering::SeqCst);
+        self.change_set_cancel.store(true, Ordering::SeqCst);
+        self.analyze_over_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
     }
 }

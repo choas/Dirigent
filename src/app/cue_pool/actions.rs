@@ -385,6 +385,7 @@ impl DirigentApp {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current: None,
+            staging: None,
         });
     }
 
@@ -440,6 +441,8 @@ impl DirigentApp {
                     if show_dialog {
                         self.git.commit_message_input = commit_msg;
                         self.git.commit_review_cue_id = Some(cue_id);
+                        self.git.commit_queue.clear();
+                        self.git.commit_queue_pos = 0;
                         self.git.commit_needs_focus = true;
                         self.git.show_commit_dialog = true;
                     } else {

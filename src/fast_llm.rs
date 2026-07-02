@@ -137,6 +137,57 @@ pub fn complete(
     Ok(content)
 }
 
+/// One change-set group as returned by the model: a logical feature set with a
+/// short title, a one-line description, and the files it covers.
+///
+/// The schema is `{ "title", "description", "files": [{ "path", "hunks": [...] }] }`.
+/// In the whole-file v1 analyzer the per-hunk data is accepted but ignored, so the
+/// same schema extends unchanged to the partial (per-hunk) version later.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChangeSetGroupRaw {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub files: Vec<ChangeSetFileRaw>,
+}
+
+/// One file within a [`ChangeSetGroupRaw`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChangeSetFileRaw {
+    #[serde(default)]
+    pub path: String,
+    /// 1-based hunk numbers the model assigned to this group (v2 partial
+    /// analysis). Empty means the group owns the whole file (v1 behavior).
+    #[serde(default)]
+    pub hunks: Vec<serde_json::Value>,
+}
+
+impl ChangeSetFileRaw {
+    /// The 1-based hunk numbers the model assigned, accepting both JSON numbers
+    /// (`1`) and numeric strings (`"1"`). Non-numeric entries are ignored.
+    pub fn hunk_indices(&self) -> Vec<usize> {
+        self.hunks
+            .iter()
+            .filter_map(|v| {
+                v.as_u64()
+                    .map(|n| n as usize)
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            })
+            .collect()
+    }
+}
+
+/// Defensively parse the model's change-set response into raw groups, tolerating
+/// markdown code fences and surrounding prose.
+pub(crate) fn parse_change_sets(response: &str) -> Result<Vec<ChangeSetGroupRaw>, String> {
+    let json = crate::util::json_extract::extract_json(response);
+    let groups: Vec<ChangeSetGroupRaw> =
+        serde_json::from_str(&json).map_err(|e| format!("parse change-set JSON: {e}"))?;
+    Ok(groups)
+}
+
 /// Summarize a git diff into a concise, conventional commit message subject line.
 pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<String, String> {
     const SYSTEM: &str = "You are a helpful assistant that writes git commit messages. \
@@ -160,4 +211,39 @@ pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<St
         return Err("model returned an empty commit message".to_string());
     }
     Ok(subject)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_change_sets_well_formed() {
+        let resp = r#"[
+            {"title": "Add login", "description": "auth flow", "files": [{"path": "src/auth.rs", "hunks": []}]},
+            {"title": "Docs", "description": "readme", "files": [{"path": "README.md"}]}
+        ]"#;
+        let groups = parse_change_sets(resp).expect("should parse");
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].title, "Add login");
+        assert_eq!(groups[0].files[0].path, "src/auth.rs");
+        // A file object without a `hunks` key still parses (hunks defaults empty).
+        assert_eq!(groups[1].files[0].path, "README.md");
+    }
+
+    #[test]
+    fn parse_change_sets_fenced_with_prose() {
+        let resp = "Sure! Here are the groups:\n```json\n[{\"title\":\"T\",\"description\":\"d\",\"files\":[{\"path\":\"a.rs\"}]}]\n```\nHope that helps.";
+        let groups = parse_change_sets(resp).expect("should parse fenced output");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].files[0].path, "a.rs");
+    }
+
+    #[test]
+    fn parse_change_sets_malformed_errors() {
+        // Not JSON of the expected shape at all.
+        assert!(parse_change_sets("the model refused to answer").is_err());
+        // A JSON object rather than the expected array.
+        assert!(parse_change_sets(r#"{"oops": true}"#).is_err());
+    }
 }

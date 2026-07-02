@@ -5,7 +5,7 @@ use eframe::egui;
 use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
-use crate::settings::SemanticColors;
+use crate::settings::{SemanticColors, VcsBackend};
 
 use super::super::vcs_dispatch;
 
@@ -81,6 +81,20 @@ impl DirigentApp {
             }
             let label = format!("Changes ({})", self.git.dirty_files.len());
             let _ = ui.selectable_label(true, egui::RichText::new(label).size(fs));
+            // Cross-branch change-set review (Git only; jj has no such range diff here).
+            if self.settings.vcs_backend == VcsBackend::Git {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let analyzing = self.analyze_over_generating;
+                    let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
+                    if ui
+                        .add_enabled(!analyzing, egui::Button::new(label).small())
+                        .on_hover_text("Analyze changes over… (group a branch's changes for review)")
+                        .clicked()
+                    {
+                        self.open_analyze_over_picker();
+                    }
+                });
+            }
         });
     }
 
@@ -216,22 +230,40 @@ impl DirigentApp {
             return;
         }
         let has_selection = !self.git.selected_files.is_empty();
+        let analyzing = self.change_set_generating;
         egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
             ui.add_space(SPACE_SM);
-            let label = if has_selection {
+            // With a selection, commit just those files as one commit. With no
+            // selection, group the whole working tree into logical change sets
+            // (via the CLI) and commit them one-by-one through the dialog's queue.
+            let label = if analyzing {
+                "\u{29D7} Analyzing…"
+            } else if has_selection {
                 "\u{2714} Commit Selected"
             } else {
                 "\u{2714} Commit Changes"
+            };
+            let hover = if has_selection {
+                "Commit the selected files with an AI-generated message"
+            } else {
+                "Group the changes into logical commits, each with an AI-generated message"
             };
             let btn =
                 egui::Button::new(egui::RichText::new(label).color(self.semantic.accent_text()))
                     .fill(self.semantic.accent);
             if ui
-                .add_sized([ui.available_width(), 0.0], btn)
-                .on_hover_text("Analyze the changes and commit with an AI-generated message")
-                .clicked()
+                .add_enabled_ui(!analyzing, |ui| {
+                    ui.add_sized([ui.available_width(), 0.0], btn)
+                        .on_hover_text(hover)
+                        .clicked()
+                })
+                .inner
             {
-                self.open_commit_dialog_for_changes();
+                if has_selection {
+                    self.open_commit_dialog_for_changes();
+                } else {
+                    self.start_split_commit();
+                }
             }
             if has_selection {
                 ui.add_space(SPACE_SM);
@@ -271,6 +303,16 @@ impl DirigentApp {
             &[],
         ) {
             let parsed = diff_view::parse_unified_diff(&diff_text);
+            // Hunk-level staging is a Git-only feature (jj has no index).
+            let staging = if self.settings.vcs_backend == VcsBackend::Git {
+                Some(super::super::StagingState {
+                    files: Vec::new(),
+                    staged_view: false,
+                    partial: self.compute_partial_staged(&parsed),
+                })
+            } else {
+                None
+            };
             self.dismiss_central_overlays();
             self.diff_review = Some(super::super::DiffReview {
                 cue_id: 0,
@@ -288,6 +330,7 @@ impl DirigentApp {
                 search_query: String::new(),
                 search_matches: Vec::new(),
                 search_current: None,
+                staging,
             });
         }
     }
@@ -316,6 +359,8 @@ impl DirigentApp {
         files.sort_unstable();
         self.git.commit_files = files;
         self.git.commit_review_cue_id = None;
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.commit_in_background = false;
         self.git.commit_message_input.clear();
         self.git.commit_needs_focus = true;
