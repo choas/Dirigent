@@ -79,6 +79,53 @@ pub(crate) fn get_range_diff(repo_path: &Path, base: &str, head: &str) -> Option
     }
 }
 
+/// Result of comparing two folders.
+pub(crate) enum FolderCompare {
+    /// Folders differ; carries the unified diff.
+    Diff(String),
+    /// Folders are identical.
+    Identical,
+}
+
+/// Compare two folders with `git diff --no-index left right` (works outside any
+/// repo). `git diff --no-index` exits 0 when identical, 1 when they differ, and
+/// >1 on error — so we map those to `Identical` / `Diff` / an error.
+pub(crate) fn compare_folders(left: &Path, right: &Path) -> crate::error::Result<FolderCompare> {
+    use crate::error::DirigentError;
+    use std::process::Command;
+
+    for p in [left, right] {
+        if !p.exists() {
+            return Err(DirigentError::GitCommand(format!(
+                "path does not exist: {}",
+                p.display()
+            )));
+        }
+    }
+
+    let output = Command::new("git")
+        .arg("diff")
+        .arg("--no-index")
+        .arg(left)
+        .arg(right)
+        .output()?;
+
+    match output.status.code() {
+        Some(0) => Ok(FolderCompare::Identical),
+        Some(1) => {
+            let diff = String::from_utf8_lossy(&output.stdout).into_owned();
+            if diff.trim().is_empty() {
+                Ok(FolderCompare::Identical)
+            } else {
+                Ok(FolderCompare::Diff(diff))
+            }
+        }
+        _ => Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )),
+    }
+}
+
 fn make_path_relative(repo_path: &Path, f: &str) -> String {
     let path = Path::new(f);
     if path.is_absolute() {
@@ -245,6 +292,38 @@ mod tests {
             .output()
             .expect("git runs");
         assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    fn compare_folders_differ_identical_and_missing() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        std::fs::write(a.join("f.txt"), "one\n").unwrap();
+        std::fs::write(b.join("f.txt"), "two\n").unwrap();
+
+        // Differing folders -> a diff mentioning the changed lines and paths.
+        match compare_folders(&a, &b).unwrap() {
+            FolderCompare::Diff(diff) => {
+                assert!(diff.contains("-one"));
+                assert!(diff.contains("+two"));
+                let paths = parse_diff_file_paths_for_repo(d.path(), &diff);
+                assert!(!paths.is_empty(), "diff should parse into file paths");
+            }
+            FolderCompare::Identical => panic!("folders differ"),
+        }
+
+        // Identical content -> Identical, not an error.
+        std::fs::write(b.join("f.txt"), "one\n").unwrap();
+        assert!(matches!(
+            compare_folders(&a, &b).unwrap(),
+            FolderCompare::Identical
+        ));
+
+        // Missing path -> error.
+        assert!(compare_folders(&a, &d.path().join("nope")).is_err());
     }
 
     #[test]
