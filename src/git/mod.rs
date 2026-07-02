@@ -47,5 +47,5 @@ pub(crate) use status::{
 };
 pub(crate) use worktree::{
     checkout_branch, create_branch, create_worktree, list_branches, list_worktrees, own_branches,
-    remove_worktree, WorktreeInfo,
+    prune_worktrees, remove_worktree, WorktreeInfo,
 };

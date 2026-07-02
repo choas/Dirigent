@@ -49,13 +49,19 @@ fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), std::io::Error> 
 
 /// Worktree label based on its current/locked state.
 fn worktree_label(wt: &git::WorktreeInfo) -> String {
+    // Solid diamond for the main checkout, hollow for secondary worktrees.
+    let role = if wt.is_main { "\u{25C6}" } else { "\u{25C7}" };
+    let mut s = format!("{role} {}", wt.name);
     if wt.is_current {
-        format!("\u{25B6} {} (current)", wt.name)
-    } else if wt.is_locked {
-        format!("\u{25A0} {}", wt.name)
-    } else {
-        wt.name.clone()
+        s.push_str(" (current)");
     }
+    if wt.is_locked {
+        s.push_str(" \u{1F512}");
+    }
+    if wt.orphaned {
+        s.push_str(" (orphaned)");
+    }
+    s
 }
 
 /// Accumulated deferred actions from the worktree panel UI.
@@ -66,6 +72,8 @@ struct WorktreeActions {
     create_name: Option<String>,
     delete_archive_pending: Option<PathBuf>,
     reveal_path: Option<PathBuf>,
+    /// Run `git worktree prune` to clear orphaned registrations.
+    prune: bool,
 }
 
 impl DirigentApp {
@@ -449,6 +457,25 @@ impl DirigentApp {
                     self.empty_label(ui, "No worktrees found");
                 }
             });
+
+        // Offer a prune action when git still lists worktrees whose folders are
+        // gone (deleted by hand), which can otherwise confuse later operations.
+        if self.git.worktrees.iter().any(|w| w.orphaned) {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("\u{26A0} Orphaned worktrees detected")
+                        .small()
+                        .color(self.semantic.warning),
+                );
+                if ui
+                    .small_button("Prune")
+                    .on_hover_text("git worktree prune — clear registrations whose folders are gone")
+                    .clicked()
+                {
+                    actions.prune = true;
+                }
+            });
+        }
     }
 
     /// Single worktree row with label and action buttons.
@@ -472,11 +499,18 @@ impl DirigentApp {
                 if !wt.is_current
                     && !wt.is_locked
                     && !wt.is_main
-                    && ui.small_button("Remove").clicked()
+                    && ui
+                        .small_button("Retire")
+                        .on_hover_text(
+                            "Remove this worktree's folder and unregister it. \
+                             The branch and its commits are kept.",
+                        )
+                        .clicked()
                 {
                     actions.remove_path = Some(wt.path.clone());
                 }
-                if !wt.is_current && ui.small_button("Switch").clicked() {
+                // A switch only makes sense for a worktree whose folder still exists.
+                if !wt.is_current && !wt.orphaned && ui.small_button("Switch").clicked() {
                     actions.switch_to = Some(wt.path.clone());
                 }
             });
@@ -496,12 +530,32 @@ impl DirigentApp {
                     .small()
                     .color(self.semantic.secondary_text),
             );
+            // Branches already checked out in a live worktree can't get a second
+            // one, so show them greyed out and non-selectable.
+            let checked_out: std::collections::HashSet<&str> = self
+                .git
+                .worktrees
+                .iter()
+                .filter(|w| !w.orphaned)
+                .map(|w| w.name.as_str())
+                .collect();
             let mut selected_branch: Option<String> = None;
             egui::ScrollArea::vertical()
                 .id_salt("branch_picker")
                 .max_height(120.0)
                 .show(ui, |ui| {
                     for branch in self.git.available_branches.iter() {
+                        if checked_out.contains(branch.as_str()) {
+                            ui.add_enabled(
+                                false,
+                                egui::Label::new(
+                                    egui::RichText::new(format!("{branch}  (in a worktree)"))
+                                        .monospace()
+                                        .color(self.semantic.tertiary_text),
+                                ),
+                            );
+                            continue;
+                        }
                         let label = match self.git.bookmark_push_statuses.get(branch) {
                             Some(jj::BookmarkPushStatus::NotPushed) => {
                                 format!("{branch}  \u{2191} not pushed")
@@ -654,6 +708,16 @@ impl DirigentApp {
         if let Some(path) = actions.reveal_path {
             if let Err(e) = reveal_in_file_manager(&path) {
                 self.set_status_message(format!("Failed to reveal in file manager: {}", e));
+            }
+        }
+
+        if actions.prune {
+            match git::prune_worktrees(&self.project_root) {
+                Ok(()) => {
+                    self.set_status_message("Pruned orphaned worktrees".into());
+                    self.reload_worktrees();
+                }
+                Err(e) => self.set_status_message(format!("Prune failed: {e}")),
             }
         }
     }
