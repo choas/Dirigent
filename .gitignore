@@ -10,6 +10,9 @@ Dirigent.app
 .cache
 .env
 .scannerwork/
+sonar-report-*.md
+sonar-fix-*.md
+__pycache__/
 Screenshot*
 code_review_prompts.md
 desert_dino.png
