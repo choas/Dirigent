@@ -81,6 +81,20 @@ impl DirigentApp {
             }
             let label = format!("Changes ({})", self.git.dirty_files.len());
             let _ = ui.selectable_label(true, egui::RichText::new(label).size(fs));
+            // Cross-branch change-set review (Git only; jj has no such range diff here).
+            if self.settings.vcs_backend == VcsBackend::Git {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let analyzing = self.analyze_over_generating;
+                    let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
+                    if ui
+                        .add_enabled(!analyzing, egui::Button::new(label).small())
+                        .on_hover_text("Analyze changes over… (group a branch's changes for review)")
+                        .clicked()
+                    {
+                        self.open_analyze_over_picker();
+                    }
+                });
+            }
         });
     }
 
