@@ -262,6 +262,10 @@ pub(crate) struct Settings {
     /// Path to the `jj` CLI binary (auto-detected on first launch).
     #[serde(default)]
     pub jj_cli_path: String,
+    /// Optional external diff tool for folder comparison. When set, "Compare to…"
+    /// launches it with the two folder paths instead of the built-in view.
+    #[serde(default)]
+    pub external_diff_tool: String,
     /// Master toggle for LSP support.
     #[serde(default)]
     pub lsp_enabled: bool,
@@ -460,6 +464,7 @@ impl Default for Settings {
             ssh_servers: Vec::new(),
             vcs_backend: VcsBackend::default(),
             jj_cli_path: String::new(),
+            external_diff_tool: String::new(),
             lsp_servers: default_lsp_servers(),
             lsp_enabled: false,
             prompt_suggestions_enabled: false,

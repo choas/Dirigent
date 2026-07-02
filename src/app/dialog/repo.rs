@@ -74,6 +74,8 @@ struct WorktreeActions {
     reveal_path: Option<PathBuf>,
     /// Run `git worktree prune` to clear orphaned registrations.
     prune: bool,
+    /// Compare this worktree folder against another (picked) folder.
+    compare_left: Option<PathBuf>,
 }
 
 impl DirigentApp {
@@ -513,6 +515,14 @@ impl DirigentApp {
                 if !wt.is_current && !wt.orphaned && ui.small_button("Switch").clicked() {
                     actions.switch_to = Some(wt.path.clone());
                 }
+                if !wt.orphaned
+                    && ui
+                        .small_button("Compare\u{2026}")
+                        .on_hover_text("Compare this worktree folder against another folder")
+                        .clicked()
+                {
+                    actions.compare_left = Some(wt.path.clone());
+                }
             });
         });
     }
@@ -719,6 +729,10 @@ impl DirigentApp {
                 }
                 Err(e) => self.set_status_message(format!("Prune failed: {e}")),
             }
+        }
+
+        if let Some(left) = actions.compare_left {
+            self.start_folder_compare(left);
         }
     }
 

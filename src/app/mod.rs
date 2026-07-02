@@ -9,6 +9,7 @@ mod cue_pool;
 mod dialog;
 mod dino;
 mod file_navigation;
+mod folder_compare;
 mod git_operations;
 mod graph_helpers;
 mod hunk_staging;
@@ -467,6 +468,9 @@ pub struct DirigentApp {
     analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
     analyze_over_cancel: Arc<AtomicBool>,
     analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
+
+    // Folder "Compare to…" async state
+    folder_compare_rx: Option<mpsc::Receiver<folder_compare::FolderCompareMsg>>,
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
@@ -1048,6 +1052,8 @@ impl DirigentApp {
             analyze_over_cancel: Arc::new(AtomicBool::new(false)),
             analyze_over_result: None,
 
+            folder_compare_rx: None,
+
             custom_theme_edit: None,
 
             pending_auto_commits: Vec::new(),
@@ -1388,6 +1394,9 @@ impl eframe::App for DirigentApp {
 
         // Poll for cross-branch range analysis results
         self.process_analyze_over_result();
+
+        // Poll for folder comparison results
+        self.process_folder_compare_result();
 
         // Poll for git push/pull/PR results
         self.process_push_result();
