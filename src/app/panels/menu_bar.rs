@@ -9,6 +9,7 @@ use crate::settings::{SemanticColors, VcsBackend};
 struct MenuBarActions {
     push_clicked: bool,
     pull_clicked: bool,
+    tidy_clicked: bool,
     move_to_branch_clicked: bool,
     switch_branch_clicked: bool,
     create_pr_clicked: bool,
@@ -95,6 +96,33 @@ impl DirigentApp {
             }
 
             self.render_git_menu_pull_push(ui, actions);
+
+            ui.separator();
+
+            // The named front door for untangling a multi-agent dirty tree:
+            // triggers the split-commit flow (group -> review -> commit each).
+            let dirty = self.git.dirty_files.len();
+            let tidy_label = if self.change_set_generating {
+                "Tidying\u{2026}".to_string()
+            } else if dirty > 0 {
+                format!("Tidy my working tree ({dirty} dirty)")
+            } else {
+                "Tidy my working tree".to_string()
+            };
+            if ui
+                .add_enabled(
+                    dirty > 0 && !self.change_set_generating,
+                    egui::Button::new(tidy_label),
+                )
+                .on_hover_text(
+                    "Group the dirty working tree into logical change sets, \
+                     then review and commit each in turn",
+                )
+                .clicked()
+            {
+                actions.tidy_clicked = true;
+                ui.close();
+            }
 
             // Show "Move to Branch" when on main/master with commits ahead
             let is_default = self
@@ -518,6 +546,9 @@ impl DirigentApp {
         }
         if actions.push_clicked {
             self.start_git_push();
+        }
+        if actions.tidy_clicked {
+            self.start_split_commit();
         }
         if actions.move_to_branch_clicked {
             self.open_move_to_branch_dialog();

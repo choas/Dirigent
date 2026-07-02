@@ -156,6 +156,12 @@ When launched from the macOS app bundle without a path (e.g. double-clicking the
 6. **Accept or reject** — Commit the changes or revert them
 7. **Repeat** — Use the global prompt field or playbook for cues that don't target specific lines
 
+### Tidy my working tree
+
+When several agents (or a long session) leave you with one big tangled working tree, use **Git menu → Tidy my working tree** (or the Git view's **Commit Changes** button with no files selected). Dirigent sends the working diff to your coding-agent CLI, which groups the changes into logical change sets. Each group becomes one entry in a commit queue: review its files and generated message, reorder the sequence with ↑/↓, optionally stage it, and commit each group in turn. When a single file mixes unrelated work, groups can own individual hunks, so one file can be split across several clean commits (Git only).
+
+**Commit-after-review is the default.** No Dirigent action creates a commit without your explicit confirmation — every commit path goes through the commit dialog (or an equally explicit click on an already-reviewed cue). The one exception is a workflow's *auto-commit*, which only applies when you opted a cue into it.
+
 ### Per-project data
 
 Dirigent stores its database (`Dirigent.db`) and settings (`settings.json`) in a `.Dirigent/` directory inside your project root. This directory is local to each project and should be added to `.gitignore`.

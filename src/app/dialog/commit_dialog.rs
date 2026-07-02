@@ -22,6 +22,8 @@ impl DirigentApp {
         let mut do_stage = false;
         let mut nav_prev = false;
         let mut nav_next = false;
+        let mut move_earlier = false;
+        let mut move_later = false;
 
         let fs = self.settings.font_size;
         let queue_len = self.git.commit_queue.len();
@@ -68,6 +70,26 @@ impl DirigentApp {
                             .clicked()
                         {
                             nav_next = true;
+                        }
+                        // Reorder the proposed sequence: the human decides the
+                        // final commit story, not the model's emitted order.
+                        ui.separator();
+                        if ui
+                            .add_enabled(queue_pos > 0, egui::Button::new("\u{2191}").small())
+                            .on_hover_text("Commit this change set earlier (move up in the order)")
+                            .clicked()
+                        {
+                            move_earlier = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                queue_pos + 1 < queue_len,
+                                egui::Button::new("\u{2193}").small(),
+                            )
+                            .on_hover_text("Commit this change set later (move down in the order)")
+                            .clicked()
+                        {
+                            move_later = true;
                         }
                     });
                     if !title.is_empty() {
@@ -258,6 +280,12 @@ impl DirigentApp {
             self.background_commit();
         } else if dismiss {
             self.cancel_commit_dialog();
+        } else if move_earlier {
+            // The dialog stays on the same group: only its order changes, so the
+            // message/files in the editor remain valid without a reload.
+            self.move_commit_group(-1);
+        } else if move_later {
+            self.move_commit_group(1);
         } else if nav_prev {
             self.save_current_commit_group_message();
             self.load_commit_group(queue_pos.saturating_sub(1));

@@ -525,6 +525,17 @@ impl DirigentApp {
         }
     }
 
+    /// Move the currently shown queued group one step earlier (`-1`) or later
+    /// (`+1`) in the commit order, keeping the dialog on the same group. The
+    /// edited message is persisted first so it survives the move.
+    pub(in crate::app) fn move_commit_group(&mut self, delta: i32) {
+        self.save_current_commit_group_message();
+        let pos = self.git.commit_queue_pos;
+        if let Some(new_pos) = move_group(&mut self.git.commit_queue, pos, delta) {
+            self.git.commit_queue_pos = new_pos;
+        }
+    }
+
     /// After a queued group commits successfully, drop it and advance: reopen the
     /// dialog on the next group, or finish when the queue is empty.
     pub(in crate::app) fn advance_commit_queue(&mut self) {
@@ -542,6 +553,23 @@ impl DirigentApp {
         self.git.show_commit_dialog = true;
         self.load_commit_group(next);
     }
+}
+
+/// Swap the group at `pos` with its neighbor in direction `delta` (`-1` =
+/// earlier, `+1` = later). Returns the group's new position, or `None` when the
+/// move is out of bounds (already first/last, or `pos` invalid) — the queue is
+/// left unchanged in that case.
+pub(super) fn move_group(queue: &mut [CommitGroup], pos: usize, delta: i32) -> Option<usize> {
+    let len = queue.len();
+    if pos >= len {
+        return None;
+    }
+    let target = pos.checked_add_signed(delta as isize)?;
+    if target >= len {
+        return None;
+    }
+    queue.swap(pos, target);
+    Some(target)
 }
 
 /// Extract the set of changed file paths from a unified working diff, preserving
@@ -922,6 +950,38 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].files, vec!["a.rs"]);
         assert!(groups[0].hunk_selection.is_empty(), "must not stage a guessed range");
+    }
+
+    #[test]
+    fn move_group_swaps_and_respects_bounds() {
+        let mk = |title: &str| CommitGroup {
+            title: title.to_string(),
+            files: vec![format!("{title}.rs")],
+            message: format!("msg {title}"),
+            hunk_selection: HashMap::new(),
+        };
+        let mut q = vec![mk("A"), mk("B"), mk("C")];
+
+        // Move B earlier: order becomes B, A, C and the group tracks to pos 0.
+        assert_eq!(move_group(&mut q, 1, -1), Some(0));
+        assert_eq!(q[0].title, "B");
+        assert_eq!(q[1].title, "A");
+        // Files and edited message travel with the group.
+        assert_eq!(q[0].files, vec!["B.rs"]);
+        assert_eq!(q[0].message, "msg B");
+
+        // Move first earlier / last later: out of bounds, queue unchanged.
+        assert_eq!(move_group(&mut q, 0, -1), None);
+        assert_eq!(move_group(&mut q, 2, 1), None);
+        assert_eq!(q[0].title, "B");
+        assert_eq!(q[2].title, "C");
+
+        // Invalid position is rejected.
+        assert_eq!(move_group(&mut q, 9, 1), None);
+
+        // Move A later: B, C, A.
+        assert_eq!(move_group(&mut q, 1, 1), Some(2));
+        assert_eq!(q[2].title, "A");
     }
 
     #[test]
