@@ -102,10 +102,12 @@ fn handle_hook_output(
     if !output.stderr.is_empty() {
         on_log(&String::from_utf8_lossy(&output.stderr));
     }
-    if fail_on_error && !output.status.success() {
+    if !output.status.success() {
         let msg = format!("{} script failed (exit {})", label, output.status);
         on_log(&format!("\u{2717} {}\n", msg));
-        return Err(std::io::Error::other(msg));
+        if fail_on_error {
+            return Err(std::io::Error::other(msg));
+        }
     }
     Ok(())
 }
@@ -142,4 +144,47 @@ fn should_skip_stream_line(line: &str) -> bool {
         || line.starts_with("id:")
         || line.starts_with("retry:")
         || line.starts_with(':')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonblocking_hook_failure_is_logged() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut log = String::new();
+
+        let result = run_hook_script(
+            "post-run",
+            "exit 7",
+            temp_dir.path(),
+            &mut |text| {
+                log.push_str(text);
+            },
+            false,
+        );
+
+        assert!(result.is_ok());
+        assert!(log.contains("post-run script failed"));
+    }
+
+    #[test]
+    fn blocking_hook_failure_returns_error() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut log = String::new();
+
+        let result = run_hook_script(
+            "pre-run",
+            "exit 7",
+            temp_dir.path(),
+            &mut |text| {
+                log.push_str(text);
+            },
+            true,
+        );
+
+        assert!(result.is_err());
+        assert!(log.contains("pre-run script failed"));
+    }
 }
