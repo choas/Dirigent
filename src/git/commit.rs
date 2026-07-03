@@ -192,49 +192,39 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
 pub(crate) fn detect_commit_type(text: &str) -> &'static str {
     let lower = text.to_lowercase();
     let first_word = lower.split_whitespace().next().unwrap_or("");
+    conventional_type_prefix(first_word)
+        .or_else(|| keyword_commit_type(&lower))
+        .unwrap_or("feat")
+}
 
-    // If the text already starts with a known conventional type prefix, use it.
-    for &ct in CONVENTIONAL_TYPES {
-        if first_word == ct
+fn conventional_type_prefix(first_word: &str) -> Option<&'static str> {
+    CONVENTIONAL_TYPES.iter().copied().find(|ct| {
+        first_word == *ct
             || first_word.starts_with(&format!("{ct}:"))
             || first_word.starts_with(&format!("{ct}("))
-        {
-            return ct;
-        }
-    }
+    })
+}
 
-    // Keyword-based heuristics (order matters — more specific first).
-    if lower.contains("fix") || lower.contains("bug") || lower.contains("crash") {
-        "fix"
-    } else if lower.contains("refactor")
-        || lower.contains("rename")
-        || lower.contains("move ")
-        || lower.contains("extract")
-    {
-        "refactor"
-    } else if lower.contains("readme")
-        || lower.contains("documentation")
-        || lower.starts_with("doc")
-    {
-        "docs"
-    } else if lower.contains("test") {
-        "test"
-    } else if lower.contains("format") || lower.contains("whitespace") || lower.contains("lint") {
-        "style"
-    } else if lower.contains("performance") || lower.contains("optimiz") || lower.contains("speed")
-    {
-        "perf"
-    } else if lower.contains("dependenc") || lower.contains("upgrade") || lower.contains("cargo") {
-        "build"
-    } else if lower.contains(" ci") || lower.contains("pipeline") || lower.contains("workflow") {
-        "ci"
-    } else if lower.contains("cleanup") || lower.contains("chore") {
-        "chore"
-    } else if lower.contains("revert") {
-        "revert"
-    } else {
-        "feat"
-    }
+fn keyword_commit_type(lower: &str) -> Option<&'static str> {
+    const KEYWORDS: &[(&str, &[&str])] = &[
+        ("fix", &["fix", "bug", "crash"]),
+        ("refactor", &["refactor", "rename", "move ", "extract"]),
+        ("docs", &["readme", "documentation"]),
+        ("test", &["test"]),
+        ("style", &["format", "whitespace", "lint"]),
+        ("perf", &["performance", "optimiz", "speed"]),
+        ("build", &["dependenc", "upgrade", "cargo"]),
+        ("ci", &[" ci", "pipeline", "workflow"]),
+        ("chore", &["cleanup", "chore"]),
+        ("revert", &["revert"]),
+    ];
+    KEYWORDS
+        .iter()
+        .find(|(commit_type, terms)| {
+            terms.iter().any(|term| lower.contains(term))
+                || (*commit_type == "docs" && lower.starts_with("doc"))
+        })
+        .map(|(commit_type, _)| *commit_type)
 }
 
 /// Strip an existing conventional commit type prefix (e.g. "feat: " or "fix(scope): ").
