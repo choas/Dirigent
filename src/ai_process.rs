@@ -73,6 +73,51 @@ where
     })
 }
 
+pub(crate) fn spawn_stderr_collector<F, R, H>(
+    stderr_handle: R,
+    on_log: Arc<Mutex<F>>,
+    mut handle_line: H,
+) -> std::thread::JoinHandle<String>
+where
+    F: FnMut(&str) + Send + 'static,
+    R: std::io::Read + Send + 'static,
+    H: FnMut(&str, &mut F) + Send + 'static,
+{
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+
+        let reader = std::io::BufReader::new(stderr_handle);
+        let mut full_stderr = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(line) => {
+                    full_stderr.push_str(&line);
+                    full_stderr.push('\n');
+                    with_locked_log(&on_log, "stderr", |log| handle_line(&line, log));
+                }
+                Err(e) => {
+                    let msg = format!("stderr read error: {e}\n");
+                    with_locked_log(&on_log, "stderr error", |log| log(&msg));
+                    full_stderr.push_str(&msg);
+                    break;
+                }
+            }
+        }
+        full_stderr
+    })
+}
+
+pub(crate) fn log_empty_result_stderr<F>(on_log: &Arc<Mutex<F>>, final_result: &str, stderr: &str)
+where
+    F: FnMut(&str),
+{
+    if final_result.is_empty() && !stderr.is_empty() {
+        with_locked_log(on_log, "empty-result error", |log| {
+            log(&format!("\nError: {}\n", stderr));
+        });
+    }
+}
+
 pub(crate) fn is_file_related_tool(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
