@@ -67,6 +67,123 @@ impl DiffReviewActions {
     }
 }
 
+fn render_staging_view_toggle(
+    ui: &mut egui::Ui,
+    fs: f32,
+    staged_view: bool,
+    actions: &mut DiffReviewActions,
+) {
+    ui.horizontal(|ui| {
+        ui.label(icon("Staging:", fs));
+        if ui
+            .selectable_label(!staged_view, "Unstaged \u{2192} to stage")
+            .on_hover_text("Working tree vs index — stage or discard these hunks")
+            .clicked()
+            && staged_view
+        {
+            actions.toggle_staged_view = true;
+        }
+        if ui
+            .selectable_label(staged_view, "Staged \u{2192} to commit")
+            .on_hover_text("Index vs HEAD — what a commit now would include; unstage here")
+            .clicked()
+            && !staged_view
+        {
+            actions.toggle_staged_view = true;
+        }
+    });
+}
+
+fn render_partial_staging_label(ui: &mut egui::Ui, partial: &[String], warning: egui::Color32) {
+    if !partial.is_empty() {
+        ui.label(
+            egui::RichText::new(format!("[-] partially staged: {}", partial.join(", ")))
+                .small()
+                .color(warning),
+        );
+    }
+}
+
+fn render_empty_staging_message(
+    ui: &mut egui::Ui,
+    staged_view: bool,
+    secondary_text: egui::Color32,
+) {
+    let msg = if staged_view {
+        "Nothing staged."
+    } else {
+        "Nothing left to stage."
+    };
+    ui.label(
+        egui::RichText::new(msg)
+            .small()
+            .italics()
+            .color(secondary_text),
+    );
+}
+
+fn render_staging_hunk_controls(
+    ui: &mut egui::Ui,
+    parsed: &crate::diff_view::ParsedDiff,
+    staged_view: bool,
+    secondary_text: egui::Color32,
+    actions: &mut DiffReviewActions,
+) {
+    for (fi, file) in parsed.files.iter().enumerate() {
+        for hi in 0..file.hunks.len() {
+            render_staging_hunk_row(
+                ui,
+                file.display_path(),
+                fi,
+                hi,
+                staged_view,
+                secondary_text,
+                actions,
+            );
+        }
+    }
+}
+
+fn render_staging_hunk_row(
+    ui: &mut egui::Ui,
+    display_path: &str,
+    file_idx: usize,
+    hunk_idx: usize,
+    staged_view: bool,
+    secondary_text: egui::Color32,
+    actions: &mut DiffReviewActions,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("{} · hunk {}", display_path, hunk_idx + 1))
+                .small()
+                .monospace()
+                .color(secondary_text),
+        );
+        if staged_view {
+            if ui.small_button("Unstage").clicked() {
+                actions.unstage_hunk = Some((file_idx, hunk_idx));
+            }
+        } else {
+            render_unstaged_hunk_buttons(ui, file_idx, hunk_idx, actions);
+        }
+    });
+}
+
+fn render_unstaged_hunk_buttons(
+    ui: &mut egui::Ui,
+    file_idx: usize,
+    hunk_idx: usize,
+    actions: &mut DiffReviewActions,
+) {
+    if ui.small_button("Stage").clicked() {
+        actions.stage_hunk = Some((file_idx, hunk_idx));
+    }
+    if ui.small_button("Discard").clicked() {
+        actions.discard_hunk = Some((file_idx, hunk_idx));
+    }
+}
+
 impl DirigentApp {
     // Diff review rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_diff_review_central(&mut self, ui: &mut egui::Ui) {
@@ -173,65 +290,13 @@ impl DirigentApp {
         parsed: &crate::diff_view::ParsedDiff,
         actions: &mut DiffReviewActions,
     ) {
-        ui.horizontal(|ui| {
-            ui.label(icon("Staging:", fs));
-            if ui
-                .selectable_label(!staged_view, "Unstaged \u{2192} to stage")
-                .on_hover_text("Working tree vs index — stage or discard these hunks")
-                .clicked()
-                && staged_view
-            {
-                actions.toggle_staged_view = true;
-            }
-            if ui
-                .selectable_label(staged_view, "Staged \u{2192} to commit")
-                .on_hover_text("Index vs HEAD — what a commit now would include; unstage here")
-                .clicked()
-                && !staged_view
-            {
-                actions.toggle_staged_view = true;
-            }
-        });
-        if !partial.is_empty() {
-            ui.label(
-                egui::RichText::new(format!("[-] partially staged: {}", partial.join(", ")))
-                    .small()
-                    .color(sem.warning),
-            );
-        }
+        render_staging_view_toggle(ui, fs, staged_view, actions);
+        render_partial_staging_label(ui, partial, sem.warning);
         if parsed.files.is_empty() {
-            let msg = if staged_view {
-                "Nothing staged."
-            } else {
-                "Nothing left to stage."
-            };
-            ui.label(egui::RichText::new(msg).small().italics().color(sem.secondary_text));
+            render_empty_staging_message(ui, staged_view, sem.secondary_text);
             return;
         }
-        for (fi, file) in parsed.files.iter().enumerate() {
-            for hi in 0..file.hunks.len() {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{} · hunk {}", file.display_path(), hi + 1))
-                            .small()
-                            .monospace()
-                            .color(sem.secondary_text),
-                    );
-                    if staged_view {
-                        if ui.small_button("Unstage").clicked() {
-                            actions.unstage_hunk = Some((fi, hi));
-                        }
-                    } else {
-                        if ui.small_button("Stage").clicked() {
-                            actions.stage_hunk = Some((fi, hi));
-                        }
-                        if ui.small_button("Discard").clicked() {
-                            actions.discard_hunk = Some((fi, hi));
-                        }
-                    }
-                });
-            }
-        }
+        render_staging_hunk_controls(ui, parsed, staged_view, sem.secondary_text, actions);
     }
 
     /// Apply a hunk-staging action collected during render. One op per frame; the
