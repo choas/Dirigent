@@ -9,6 +9,13 @@ use crate::git::CommitInfo;
 /// jj's native revision identifiers.
 pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -> Vec<CommitInfo> {
     let limit_str = limit.to_string();
+    let Some(stdout) = jj_log_output(path, jj_path, &limit_str) else {
+        return Vec::new();
+    };
+    parse_jj_log_output(&stdout)
+}
+
+fn jj_log_output(path: &Path, jj_path: &str, limit: &str) -> Option<String> {
     let output = super::jj_cmd(jj_path)
         .args([
             "log",
@@ -16,7 +23,7 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
             "--color",
             "never",
             "-n",
-            &limit_str,
+            limit,
             "-T",
             concat!(
                 r#"change_id ++ "\t""#,
@@ -32,98 +39,93 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
         .current_dir(path)
         .output();
 
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
-    };
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+}
 
+fn parse_jj_log_output(stdout: &str) -> Vec<CommitInfo> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut result = Vec::new();
     let mut is_first = true;
 
     for line in stdout.lines() {
-        if line.trim().is_empty() {
+        let Some(commit) = parse_jj_log_line(line, now, is_first) else {
             continue;
-        }
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 8 {
-            continue;
-        }
-
-        let change_id = parts[0].trim().to_string();
-        let short_hash = if change_id.len() >= 7 {
-            change_id[..7].to_string()
-        } else {
-            change_id.clone()
         };
-        // Pull trailing fields from the end so tabs in the description don't shift offsets.
-        let n = parts.len();
-        let is_empty = parts[n - 1].trim() == "empty";
-        let parents_str = parts[n - 2].trim();
-        let tags_str = parts[n - 3].trim();
-        let bookmarks_str = parts[n - 4].trim();
-        let timestamp_str = parts[n - 5].trim();
-        let author = parts[n - 6].trim().to_string();
-        let mut message = parts[1..n - 6].join("\t").trim().to_string();
-
-        if message.is_empty() {
-            message = "(no description yet)".to_string();
-        }
-
-        let wc_prefix = if is_first { "@ " } else { "" };
-        let empty_suffix = if is_empty { " (empty)" } else { "" };
-        message = format!("{}{}{}", wc_prefix, message, empty_suffix);
-
-        let time_ago = parse_jj_timestamp(timestamp_str, now);
-
-        let branch_labels: Vec<String> = if bookmarks_str.is_empty() {
-            Vec::new()
-        } else {
-            bookmarks_str
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect()
-        };
-
-        let tag_labels: Vec<String> = if tags_str.is_empty() {
-            Vec::new()
-        } else {
-            tags_str.split_whitespace().map(|s| s.to_string()).collect()
-        };
-
-        let parent_hashes: Vec<String> = if parents_str.is_empty() {
-            Vec::new()
-        } else {
-            parents_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect()
-        };
-
-        let is_merge = parent_hashes.len() > 1;
-
-        result.push(CommitInfo {
-            full_hash: change_id,
-            short_hash,
-            message,
-            body: String::new(),
-            author,
-            time_ago,
-            parent_hashes,
-            branch_labels,
-            tag_labels,
-            is_merge,
-            is_working_copy: is_first,
-        });
+        result.push(commit);
         is_first = false;
     }
 
     result
+}
+
+fn parse_jj_log_line(line: &str, now: i64, is_first: bool) -> Option<CommitInfo> {
+    if line.trim().is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = line.split('\t').collect();
+    if parts.len() < 8 {
+        return None;
+    }
+
+    let n = parts.len();
+    let change_id = parts[0].trim().to_string();
+    let parent_hashes = comma_labels(parts[n - 2].trim());
+    Some(CommitInfo {
+        short_hash: short_change_id(&change_id),
+        message: jj_commit_message(&parts, is_first),
+        author: parts[n - 6].trim().to_string(),
+        time_ago: parse_jj_timestamp(parts[n - 5].trim(), now),
+        branch_labels: whitespace_labels(parts[n - 4].trim()),
+        tag_labels: whitespace_labels(parts[n - 3].trim()),
+        is_merge: parent_hashes.len() > 1,
+        parent_hashes,
+        full_hash: change_id,
+        body: String::new(),
+        is_working_copy: is_first,
+    })
+}
+
+fn short_change_id(change_id: &str) -> String {
+    if change_id.len() >= 7 {
+        change_id[..7].to_string()
+    } else {
+        change_id.to_string()
+    }
+}
+
+fn jj_commit_message(parts: &[&str], is_first: bool) -> String {
+    let n = parts.len();
+    let mut message = parts[1..n - 6].join("\t").trim().to_string();
+    if message.is_empty() {
+        message = "(no description yet)".to_string();
+    }
+    let wc_prefix = if is_first { "@ " } else { "" };
+    let empty_suffix = if parts[n - 1].trim() == "empty" {
+        " (empty)"
+    } else {
+        ""
+    };
+    format!("{}{}{}", wc_prefix, message, empty_suffix)
+}
+
+fn whitespace_labels(labels: &str) -> Vec<String> {
+    labels.split_whitespace().map(|s| s.to_string()).collect()
+}
+
+fn comma_labels(labels: &str) -> Vec<String> {
+    labels
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn parse_jj_timestamp(ts: &str, now: i64) -> String {
