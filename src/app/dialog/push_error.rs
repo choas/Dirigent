@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use super::super::DirigentApp;
+use super::error_dialog::{create_global_error_cue, render_error_dialog, ErrorDialogSpec};
 
 impl DirigentApp {
     pub(in crate::app) fn render_push_error_dialog(&mut self, ctx: &egui::Context) {
@@ -8,66 +9,36 @@ impl DirigentApp {
             return;
         }
 
-        let mut dismiss = false;
-        let mut create_cue = false;
+        let actions = render_error_dialog(
+            ctx,
+            self.semantic.dialog_frame(),
+            ErrorDialogSpec {
+                title: "Push Failed",
+                intro: "Git push failed with the following error:",
+                error_message: &self.git.push_error_message,
+                error_max_height: 200.0,
+                create_button: "Create Push Cue",
+                create_tooltip: "Create a cue for Claude to push and fix any problems",
+                try_again_tooltip: None,
+                suggestion: None,
+                suggestion_color: self.semantic.tertiary_text,
+            },
+        );
 
-        egui::Window::new("Push Failed")
-            .collapsible(false)
-            .resizable(true)
-            .default_width(480.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.label("Git push failed with the following error:");
-                ui.add_space(8.0);
-
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        let mut error_text = self.git.push_error_message.clone();
-                        ui.add(
-                            egui::TextEdit::multiline(&mut error_text)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
-
-                ui.add_space(12.0);
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .button("Create Push Cue")
-                        .on_hover_text("Create a cue for Claude to push and fix any problems")
-                        .clicked()
-                    {
-                        create_cue = true;
-                    }
-                    if ui.button("Dismiss").clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-
-        if create_cue {
+        if actions.create_cue {
             let cue_text = format!(
                 "Git push failed. Fix the issue and push again.\n\nError:\n{}",
                 self.git.push_error_message
             );
-            match self.db.insert_global_cue(&cue_text) {
-                Ok(_id) => {
-                    self.reload_cues();
-                    self.set_status_message("Created push cue in Inbox".to_string());
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to create cue: {}", e));
-                }
-            }
-            self.git.show_push_error = false;
-            self.git.push_error_message.clear();
-        } else if dismiss {
-            self.git.show_push_error = false;
-            self.git.push_error_message.clear();
+            create_global_error_cue(self, &cue_text, "Created push cue in Inbox");
+            self.close_push_error_dialog();
+        } else if actions.dismiss {
+            self.close_push_error_dialog();
         }
+    }
+
+    fn close_push_error_dialog(&mut self) {
+        self.git.show_push_error = false;
+        self.git.push_error_message.clear();
     }
 }
