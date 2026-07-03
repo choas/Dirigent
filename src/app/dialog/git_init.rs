@@ -84,36 +84,23 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let vcs_name = if is_jj { "jj" } else { "git" };
-                ui.label(format!(
-                    "\"{}\" is not a {} repository.",
-                    path.display(),
-                    vcs_name
-                ));
-                ui.add_space(8.0);
-                let init_question = if is_jj {
-                    "Would you like to run jj git init --colocate?"
-                } else {
-                    "Would you like to run git init?"
-                };
-                ui.label(init_question);
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Initialize").clicked() {
-                        do_init = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        dismiss = true;
-                    }
-                });
+                render_git_init_dialog_body(ui, &path, is_jj, &mut do_init, &mut dismiss);
             });
 
-        if do_init {
-            if is_jj {
-                self.init_jj_repo(&path);
-            } else {
-                self.init_git_repo(&path);
-            }
+        self.apply_git_init_dialog_action(&path, is_jj, do_init, dismiss);
+    }
+
+    fn apply_git_init_dialog_action(
+        &mut self,
+        path: &Path,
+        is_jj: bool,
+        do_init: bool,
+        dismiss: bool,
+    ) {
+        if do_init && is_jj {
+            self.init_jj_repo(path);
+        } else if do_init {
+            self.init_git_repo(path);
         } else if dismiss {
             self.git_init_confirm = None;
         }
@@ -185,5 +172,39 @@ impl DirigentApp {
                 self.set_status_message(format!("jj init failed: {}", e));
             }
         }
+    }
+}
+
+fn render_git_init_dialog_body(
+    ui: &mut egui::Ui,
+    path: &Path,
+    is_jj: bool,
+    do_init: &mut bool,
+    dismiss: &mut bool,
+) {
+    let vcs_name = if is_jj { "jj" } else { "git" };
+    ui.label(format!(
+        "\"{}\" is not a {} repository.",
+        path.display(),
+        vcs_name
+    ));
+    ui.add_space(8.0);
+    ui.label(init_question(is_jj));
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        if ui.button("Initialize").clicked() {
+            *do_init = true;
+        }
+        if ui.button("Cancel").clicked() {
+            *dismiss = true;
+        }
+    });
+}
+
+fn init_question(is_jj: bool) -> &'static str {
+    if is_jj {
+        "Would you like to run jj git init --colocate?"
+    } else {
+        "Would you like to run git init?"
     }
 }
