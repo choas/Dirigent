@@ -351,28 +351,6 @@ fn dispatch_event(
     }
 }
 
-/// Wait for the child process to exit (handles poisoned mutex).
-fn wait_for_child(
-    child: &Arc<Mutex<std::process::Child>>,
-) -> std::io::Result<std::process::ExitStatus> {
-    match child.lock() {
-        Ok(mut c) => c.wait(),
-        Err(poisoned) => poisoned.into_inner().wait(),
-    }
-}
-
-/// Kill the child process (handles poisoned mutex).
-fn kill_child(child: &Arc<Mutex<std::process::Child>>) {
-    match child.lock() {
-        Ok(mut c) => {
-            let _ = c.kill();
-        }
-        Err(poisoned) => {
-            let _ = poisoned.into_inner().kill();
-        }
-    }
-}
-
 /// Check the child process exit status and log stderr on failure.
 fn check_exit_status<F: FnMut(&str)>(
     exit_status: std::process::ExitStatus,
@@ -411,34 +389,21 @@ pub(crate) fn invoke_opencode_streaming(
 
     let opencode_bin = resolve_opencode_bin(config.cli_path)?;
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
-            e.into_inner()
-        });
-        ai_process::run_hook_script(
-            "pre-run",
-            config.pre_run_script,
-            project_root,
-            &mut *log,
-            true,
-        )
-        .map_err(OpenCodeError::SpawnFailed)?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "pre-run",
+        config.pre_run_script,
+        project_root,
+        true,
+    )
+    .map_err(OpenCodeError::SpawnFailed)?;
 
     let run_start = Instant::now();
-    let mut child = {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for command build: {:?}",
-                e
-            );
-            e.into_inner()
-        });
+    let mut child = ai_process::with_locked_log(&on_log, "command build", |log| {
         build_opencode_command(&opencode_bin, prompt, project_root, config, &mut *log)?
             .spawn()
-            .map_err(OpenCodeError::SpawnFailed)?
-    };
+            .map_err(OpenCodeError::SpawnFailed)
+    })?;
 
     let stderr_handle = child.stderr.take().expect("stderr must be piped");
     let stdout_handle = child.stdout.take().expect("stdout must be piped");
@@ -459,15 +424,17 @@ pub(crate) fn invoke_opencode_streaming(
         for line in reader.lines() {
             match line {
                 Ok(line) => {
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    claude::filter_opencode_log_line(&line, &mut *log);
+                    ai_process::with_locked_log(&on_log_for_stderr, "stderr", |log| {
+                        claude::filter_opencode_log_line(&line, log);
+                    });
                     full_stderr.push_str(&line);
                     full_stderr.push('\n');
                 }
                 Err(e) => {
                     let msg = format!("stderr read error: {e}\n");
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    log(&msg);
+                    ai_process::with_locked_log(&on_log_for_stderr, "stderr error", |log| {
+                        log(&msg);
+                    });
                     full_stderr.push_str(&msg);
                     break;
                 }
@@ -477,8 +444,7 @@ pub(crate) fn invoke_opencode_streaming(
     });
 
     let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
-        let mut log = on_log.lock().unwrap_or_else(|e| e.into_inner());
-        log(text);
+        ai_process::with_locked_log(&on_log, "stdout", |log| log(text));
     });
 
     done.store(true, Ordering::Relaxed);
@@ -489,16 +455,16 @@ pub(crate) fn invoke_opencode_streaming(
     let (final_result, edited_files, stream_metrics) = match stream_result {
         Ok(result) => result,
         Err(error) => {
-            kill_child(&child);
+            ai_process::kill_child(&child);
             let _ = watchdog.join();
-            let _ = wait_for_child(&child);
+            let _ = ai_process::wait_for_child(&child);
             let _ = stderr_thread.join();
             return Err(OpenCodeError::StreamReadError(error));
         }
     };
 
     let _ = watchdog.join();
-    let exit_status = wait_for_child(&child);
+    let exit_status = ai_process::wait_for_child(&child);
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
@@ -509,33 +475,19 @@ pub(crate) fn invoke_opencode_streaming(
     check_exit_status(exit_status, &stderr, &on_log)?;
 
     if final_result.is_empty() && !stderr.is_empty() {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for empty-result error: {:?}",
-                e
-            );
-            e.into_inner()
+        ai_process::with_locked_log(&on_log, "empty-result error", |log| {
+            log(&format!("\nError: {}\n", stderr));
         });
-        log(&format!("\nError: {}\n", stderr));
     }
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for post-run: {:?}",
-                e
-            );
-            e.into_inner()
-        });
-        ai_process::run_hook_script(
-            "post-run",
-            config.post_run_script,
-            project_root,
-            &mut *log,
-            false,
-        )
-        .map_err(OpenCodeError::SpawnFailed)?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "post-run",
+        config.post_run_script,
+        project_root,
+        false,
+    )
+    .map_err(OpenCodeError::SpawnFailed)?;
 
     let elapsed_ms = run_start.elapsed().as_millis() as u64;
 
