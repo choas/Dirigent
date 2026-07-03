@@ -67,7 +67,7 @@ fn try_sonar_fetch(
     }
 }
 
-use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
+use super::custom::{output_piped_command, SUBPROCESS_TIMEOUT_SECS};
 use super::types::SourceItem;
 
 /// Fetch items from a GitHub Issues source using the `gh` CLI.
@@ -92,13 +92,7 @@ pub(crate) fn fetch_github_issues(
     }
 
     cmd.current_dir(project_root);
-
-    let child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
+    let output = output_piped_command(cmd)?;
 
     if !output.status.success() {
         return Err(DirigentError::Source(format!(
