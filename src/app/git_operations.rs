@@ -576,41 +576,7 @@ impl DirigentApp {
             return;
         }
 
-        // Collect all Done cues with PR source_ref
-        let pr_cues: Vec<(i64, String, String)> = self
-            .cues
-            .iter()
-            .filter(|c| c.status == CueStatus::Done)
-            .filter_map(|c| {
-                let source_ref = c.source_ref.as_ref()?;
-                if !source_ref.starts_with("pr") {
-                    return None;
-                }
-                // Check if already notified
-                let already_notified = self
-                    .db
-                    .get_last_activity_matching(c.id, "Notified PR")
-                    .ok()
-                    .flatten()
-                    .is_some();
-                if already_notified {
-                    return None;
-                }
-                let commit_hash = self
-                    .db
-                    .get_last_activity_matching(c.id, "Committed")
-                    .ok()
-                    .flatten()
-                    .and_then(|event| {
-                        event
-                            .strip_prefix("Committed (")
-                            .and_then(|s| s.strip_suffix(')'))
-                            .map(|s| s.to_string())
-                    })
-                    .unwrap_or_else(|| "latest commit".to_string());
-                Some((c.id, source_ref.clone(), commit_hash))
-            })
-            .collect();
+        let pr_cues = self.unnotified_pr_cues();
 
         if pr_cues.is_empty() {
             self.set_status_message("No un-notified PR findings in Done".to_string());
@@ -662,6 +628,44 @@ impl DirigentApp {
             let ids_str: Vec<String> = notified_ids.iter().map(|id| id.to_string()).collect();
             let _ = tx.send(Ok(format!("{}|{}", msg, ids_str.join(","))));
         });
+    }
+
+    fn unnotified_pr_cues(&self) -> Vec<(i64, String, String)> {
+        self.cues
+            .iter()
+            .filter(|cue| cue.status == CueStatus::Done)
+            .filter_map(|cue| self.pr_notification_payload(cue))
+            .collect()
+    }
+
+    fn pr_notification_payload(&self, cue: &crate::db::Cue) -> Option<(i64, String, String)> {
+        let source_ref = cue.source_ref.as_ref()?;
+        if !source_ref.starts_with("pr") || self.cue_has_pr_notification(cue.id) {
+            return None;
+        }
+        Some((cue.id, source_ref.clone(), self.last_commit_for_cue(cue.id)))
+    }
+
+    fn cue_has_pr_notification(&self, cue_id: i64) -> bool {
+        self.db
+            .get_last_activity_matching(cue_id, "Notified PR")
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    fn last_commit_for_cue(&self, cue_id: i64) -> String {
+        self.db
+            .get_last_activity_matching(cue_id, "Committed")
+            .ok()
+            .flatten()
+            .and_then(|event| {
+                event
+                    .strip_prefix("Committed (")
+                    .and_then(|s| s.strip_suffix(')'))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "latest commit".to_string())
     }
 
     pub(super) fn process_pr_notify_result(&mut self) {
@@ -1332,12 +1336,7 @@ impl DirigentApp {
         let result = match rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.committing = false;
-                self.git.commit_rx = None;
-                if let Some(id) = self.git.commit_pending_cue_id.take() {
-                    let _ = self.db.log_activity(id, "Commit failed");
-                }
-                self.set_status_message("Commit failed unexpectedly".into());
+                self.handle_commit_channel_disconnect();
                 return;
             }
             Ok(r) => r,
@@ -1347,38 +1346,50 @@ impl DirigentApp {
         let pending_cue = self.git.commit_pending_cue_id.take();
         let in_queue = !self.git.commit_queue.is_empty();
         match result {
-            Ok(msg) => {
-                if let Some(id) = pending_cue {
-                    let _ = self.db.update_cue_status(id, CueStatus::Done);
-                    let _ = self.db.log_activity(id, "Committed");
-                    self.clear_review_question_and_recheck_workflow(id);
-                }
-                self.set_status_message(msg);
-                // A split commit: drop the committed group and advance the dialog
-                // to the next one (or finish when the queue empties).
-                if in_queue {
-                    self.advance_commit_queue();
-                }
-            }
-            Err(e) => {
-                if let Some(id) = pending_cue {
-                    let _ = self.db.log_activity(id, "Commit failed");
-                }
-                // Leave the queue intact so the user can retry the failed group:
-                // restore the group's files (start_commit consumed them) and
-                // reopen the dialog, keeping the message the user already had.
-                if in_queue {
-                    let pos = self.git.commit_queue_pos;
-                    if let Some(g) = self.git.commit_queue.get(pos) {
-                        self.git.commit_files = g.files.clone();
-                    }
-                    self.git.show_commit_dialog = true;
-                }
-                self.set_status_message(e);
-            }
+            Ok(msg) => self.finish_commit_success(pending_cue, in_queue, msg),
+            Err(e) => self.finish_commit_failure(pending_cue, in_queue, e),
         }
         self.reload_git_info();
         self.reload_commit_history();
+    }
+
+    fn handle_commit_channel_disconnect(&mut self) {
+        self.git.committing = false;
+        self.git.commit_rx = None;
+        if let Some(id) = self.git.commit_pending_cue_id.take() {
+            let _ = self.db.log_activity(id, "Commit failed");
+        }
+        self.set_status_message("Commit failed unexpectedly".into());
+    }
+
+    fn finish_commit_success(&mut self, pending_cue: Option<i64>, in_queue: bool, msg: String) {
+        if let Some(id) = pending_cue {
+            let _ = self.db.update_cue_status(id, CueStatus::Done);
+            let _ = self.db.log_activity(id, "Committed");
+            self.clear_review_question_and_recheck_workflow(id);
+        }
+        self.set_status_message(msg);
+        if in_queue {
+            self.advance_commit_queue();
+        }
+    }
+
+    fn finish_commit_failure(&mut self, pending_cue: Option<i64>, in_queue: bool, error: String) {
+        if let Some(id) = pending_cue {
+            let _ = self.db.log_activity(id, "Commit failed");
+        }
+        if in_queue {
+            self.restore_current_commit_group();
+        }
+        self.set_status_message(error);
+    }
+
+    fn restore_current_commit_group(&mut self) {
+        let pos = self.git.commit_queue_pos;
+        if let Some(group) = self.git.commit_queue.get(pos) {
+            self.git.commit_files = group.files.clone();
+        }
+        self.git.show_commit_dialog = true;
     }
 
     pub(super) fn reload_git_info(&mut self) {
