@@ -623,7 +623,7 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let (row_rect, response) =
         ui.allocate_exact_size(egui::vec2(full_width, row_height), egui::Sense::click());
 
-    paint_commit_row_background(
+    graph_helpers::paint_graph_row_background(
         ui,
         row_rect,
         response.hovered(),
@@ -693,32 +693,6 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let response = response.on_hover_text(hover_text);
 
     (response.clicked(), hovered)
-}
-
-fn paint_commit_row_background(
-    ui: &egui::Ui,
-    row_rect: egui::Rect,
-    hovered: bool,
-    is_dark: bool,
-    highlight_lane: Option<usize>,
-) {
-    if highlight_lane.is_some() {
-        let tint = if is_dark {
-            egui::Color32::from_white_alpha(8)
-        } else {
-            egui::Color32::from_black_alpha(6)
-        };
-        ui.painter().rect_filled(row_rect, 0, tint);
-    }
-
-    if hovered {
-        let hover = if is_dark {
-            egui::Color32::from_white_alpha(15)
-        } else {
-            egui::Color32::from_black_alpha(12)
-        };
-        ui.painter().rect_filled(row_rect, 0, hover);
-    }
 }
 
 fn commit_text_color(ui: &egui::Ui, params: &CommitRowParams<'_>) -> egui::Color32 {
@@ -837,21 +811,7 @@ fn render_dir_context_menu(
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &entry_path, status_msg);
         ui.separator();
-        if !is_ignored && ui.button("Add to .gitignore").clicked() {
-            *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
-            ui.close();
-        }
-        if ui.button("Rename\u{2026}").clicked() {
-            *action = Some(FileTreeAction::RenameStart(entry_path.clone()));
-            ui.close();
-        }
-        if ui
-            .button(egui::RichText::new("Delete Directory\u{2026}").color(semantic.danger))
-            .clicked()
-        {
-            *action = Some(FileTreeAction::Delete(entry_path.clone(), true));
-            ui.close();
-        }
+        render_file_mutation_items(ui, &entry_path, is_ignored, true, semantic, action);
     });
 }
 
@@ -874,22 +834,38 @@ fn render_file_context_menu(
         ui.separator();
         render_reveal_open_terminal_items(ui, &entry_path, &parent_dir, status_msg);
         ui.separator();
-        if !is_ignored && ui.button("Add to .gitignore").clicked() {
-            *action = Some(FileTreeAction::AddToGitignore(entry_path.clone()));
-            ui.close();
-        }
-        if ui.button("Rename\u{2026}").clicked() {
-            *action = Some(FileTreeAction::RenameStart(entry_path.clone()));
-            ui.close();
-        }
-        if ui
-            .button(egui::RichText::new("Delete File\u{2026}").color(semantic.danger))
-            .clicked()
-        {
-            *action = Some(FileTreeAction::Delete(entry_path.clone(), false));
-            ui.close();
-        }
+        render_file_mutation_items(ui, &entry_path, is_ignored, false, semantic, action);
     });
+}
+
+fn render_file_mutation_items(
+    ui: &mut egui::Ui,
+    entry_path: &Path,
+    is_ignored: bool,
+    is_dir: bool,
+    semantic: &SemanticColors,
+    action: &mut Option<FileTreeAction>,
+) {
+    if !is_ignored && ui.button("Add to .gitignore").clicked() {
+        *action = Some(FileTreeAction::AddToGitignore(entry_path.to_path_buf()));
+        ui.close();
+    }
+    if ui.button("Rename\u{2026}").clicked() {
+        *action = Some(FileTreeAction::RenameStart(entry_path.to_path_buf()));
+        ui.close();
+    }
+    let delete_label = if is_dir {
+        "Delete Directory\u{2026}"
+    } else {
+        "Delete File\u{2026}"
+    };
+    if ui
+        .button(egui::RichText::new(delete_label).color(semantic.danger))
+        .clicked()
+    {
+        *action = Some(FileTreeAction::Delete(entry_path.to_path_buf(), is_dir));
+        ui.close();
+    }
 }
 
 /// Render "Copy Path", "Copy Relative Path", "Copy Name", and (for files) "Copy Contents".
