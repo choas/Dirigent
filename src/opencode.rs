@@ -362,14 +362,9 @@ fn check_exit_status<F: FnMut(&str)>(
     }
     let status = exit_status;
     if !stderr.is_empty() {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
-                e
-            );
-            e.into_inner()
+        ai_process::with_locked_log(on_log, "non-zero exit error", |log| {
+            log(&format!("\nError: {}\n", stderr));
         });
-        log(&format!("\nError: {}\n", stderr));
     }
     Err(OpenCodeError::NonZeroExit(status))
 }
@@ -416,32 +411,10 @@ pub(crate) fn invoke_opencode_streaming(
     // time (stderr is unbuffered / line-buffered even when stdout is piped).
     // We filter through `filter_opencode_log_line` to suppress verbose
     // INFO/DEBUG noise while preserving WARN/ERROR and useful metadata.
-    let on_log_for_stderr = Arc::clone(&on_log);
-    let stderr_thread = std::thread::spawn(move || {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(stderr_handle);
-        let mut full_stderr = String::new();
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    ai_process::with_locked_log(&on_log_for_stderr, "stderr", |log| {
-                        claude::filter_opencode_log_line(&line, log);
-                    });
-                    full_stderr.push_str(&line);
-                    full_stderr.push('\n');
-                }
-                Err(e) => {
-                    let msg = format!("stderr read error: {e}\n");
-                    ai_process::with_locked_log(&on_log_for_stderr, "stderr error", |log| {
-                        log(&msg);
-                    });
-                    full_stderr.push_str(&msg);
-                    break;
-                }
-            }
-        }
-        full_stderr
-    });
+    let stderr_thread =
+        ai_process::spawn_stderr_collector(stderr_handle, Arc::clone(&on_log), |line, log| {
+            claude::filter_opencode_log_line(line, log);
+        });
 
     let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
         ai_process::with_locked_log(&on_log, "stdout", |log| log(text));
@@ -474,11 +447,7 @@ pub(crate) fn invoke_opencode_streaming(
     let exit_status = exit_status.map_err(OpenCodeError::WaitFailed)?;
     check_exit_status(exit_status, &stderr, &on_log)?;
 
-    if final_result.is_empty() && !stderr.is_empty() {
-        ai_process::with_locked_log(&on_log, "empty-result error", |log| {
-            log(&format!("\nError: {}\n", stderr));
-        });
-    }
+    ai_process::log_empty_result_stderr(&on_log, &final_result, &stderr);
 
     ai_process::run_hook_with_locked_log(
         &on_log,
