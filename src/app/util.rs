@@ -96,16 +96,6 @@ pub(crate) fn paint_grid_row(
     }
 }
 
-pub(crate) fn vertical_neighbors<const WIDTH: usize, const HEIGHT: usize>(
-    grid: &[[u8; WIDTH]; HEIGHT],
-    row: usize,
-    col: usize,
-) -> (u8, u8) {
-    let above = row.checked_sub(1).map_or(0, |r| grid[r][col]);
-    let below = grid.get(row + 1).map_or(0, |r| r[col]);
-    (above, below)
-}
-
 pub(crate) fn mask_value(mask: &[&str], row: usize, col: usize) -> u8 {
     mask.get(row)
         .and_then(|line| line.as_bytes().get(col))
@@ -119,36 +109,6 @@ pub(crate) fn mask_vertical_neighbors(mask: &[&str], row: usize, col: usize) -> 
         .map_or(0, |prev| mask_value(mask, prev, col));
     let below = mask_value(mask, row + 1, col);
     (above, below)
-}
-
-pub(crate) fn paint_u8_grid_at<const WIDTH: usize, const HEIGHT: usize>(
-    painter: &egui::Painter,
-    origin: egui::Pos2,
-    grid: &[[u8; WIDTH]; HEIGHT],
-    px: f32,
-    col_offset: f32,
-    row_offset: f32,
-    mut color_for: impl FnMut(usize, usize, u8) -> egui::Color32,
-) {
-    for (row, cells) in grid.iter().enumerate() {
-        for (col, cell) in cells.iter().copied().enumerate() {
-            if cell == 0 {
-                continue;
-            }
-            paint_grid_rect(
-                painter,
-                origin,
-                GridRect {
-                    col: col_offset + col as f32,
-                    row: row_offset + row as f32,
-                    width: 1.0,
-                    height: 1.0,
-                },
-                px,
-                color_for(row, col, cell),
-            );
-        }
-    }
 }
 
 pub(crate) fn paint_pixel_grid(
