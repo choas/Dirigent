@@ -26,13 +26,15 @@ try {
 }
 
 const REQUIRED_TABLES = ["cues", "executions", "cue_activity_log"] as const;
-const existing = db
-  .prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)"
-  )
-  .all(...REQUIRED_TABLES)
-  .map((r) => (r as { name: string }).name);
-const missing = REQUIRED_TABLES.filter((t) => !existing.includes(t));
+const existing = new Set(
+  db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)"
+    )
+    .all(...REQUIRED_TABLES)
+    .map((r) => (r as { name: string }).name)
+);
+const missing = REQUIRED_TABLES.filter((t) => !existing.has(t));
 if (missing.length > 0) {
   process.stderr.write(
     `Database "${DB_PATH}" is missing required tables: ${missing.join(", ")}\n`
