@@ -40,61 +40,66 @@ impl DirigentApp {
     fn render_settings_theme_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Theme:");
         ui.horizontal(|ui| {
-            let theme_label = self.settings.theme.display_name().to_string();
-            egui::ComboBox::from_id_salt("theme_combo")
-                .selected_text(&theme_label)
-                .show_ui(ui, |ui| {
-                    let variants = ThemeChoice::all_variants();
-                    let mut prev_was_dark = variants.first().map_or(true, |v| v.is_dark());
-                    for variant in variants {
-                        let is_dark = variant.is_dark();
-                        if prev_was_dark && !is_dark {
-                            ui.separator();
-                        }
-                        prev_was_dark = is_dark;
-                        ui.selectable_value(
-                            &mut self.settings.theme,
-                            variant.clone(),
-                            variant.display_name(),
-                        );
-                    }
-                    // Custom themes section
-                    if !self.settings.custom_themes.is_empty() {
-                        ui.separator();
-                        for ct in &self.settings.custom_themes {
-                            let is_selected = matches!(
-                                &self.settings.theme,
-                                ThemeChoice::Custom(active) if active.name == ct.name
-                            );
-                            if ui.selectable_label(is_selected, &ct.name).clicked() {
-                                self.settings.theme = ThemeChoice::Custom(ct.clone());
-                            }
-                        }
-                    }
-                });
-            if ui
-                .small_button("+")
-                .on_hover_text("New custom theme")
-                .clicked()
-            {
-                self.custom_theme_edit = Some(CustomThemeEdit::new(
-                    self.settings.theme.to_custom_theme(),
-                    None,
-                ));
-            }
-            // Edit button for current custom theme
-            if let ThemeChoice::Custom(ref ct) = self.settings.theme {
-                if ui
-                    .small_button("\u{270E}")
-                    .on_hover_text("Edit custom theme")
-                    .clicked()
-                {
-                    let idx = self.settings.custom_themes.iter().position(|t| t == ct);
-                    self.custom_theme_edit = Some(CustomThemeEdit::new(ct.clone(), idx));
-                }
-            }
+            self.render_theme_combo(ui);
+            self.render_custom_theme_buttons(ui);
         });
         ui.end_row();
+    }
+
+    fn render_theme_combo(&mut self, ui: &mut egui::Ui) {
+        let theme_label = self.settings.theme.display_name().to_string();
+        egui::ComboBox::from_id_salt("theme_combo")
+            .selected_text(&theme_label)
+            .show_ui(ui, |ui| {
+                render_builtin_theme_options(ui, &mut self.settings.theme);
+                self.render_custom_theme_options(ui);
+            });
+    }
+
+    fn render_custom_theme_options(&mut self, ui: &mut egui::Ui) {
+        if self.settings.custom_themes.is_empty() {
+            return;
+        }
+        ui.separator();
+        for custom_theme in &self.settings.custom_themes {
+            let is_selected = matches!(
+                &self.settings.theme,
+                ThemeChoice::Custom(active) if active.name == custom_theme.name
+            );
+            if ui
+                .selectable_label(is_selected, &custom_theme.name)
+                .clicked()
+            {
+                self.settings.theme = ThemeChoice::Custom(custom_theme.clone());
+            }
+        }
+    }
+
+    fn render_custom_theme_buttons(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .small_button("+")
+            .on_hover_text("New custom theme")
+            .clicked()
+        {
+            self.custom_theme_edit = Some(CustomThemeEdit::new(
+                self.settings.theme.to_custom_theme(),
+                None,
+            ));
+        }
+        if let ThemeChoice::Custom(ref custom_theme) = self.settings.theme {
+            if ui
+                .small_button("\u{270E}")
+                .on_hover_text("Edit custom theme")
+                .clicked()
+            {
+                let idx = self
+                    .settings
+                    .custom_themes
+                    .iter()
+                    .position(|theme| theme == custom_theme);
+                self.custom_theme_edit = Some(CustomThemeEdit::new(custom_theme.clone(), idx));
+            }
+        }
     }
 
     fn render_settings_provider_row(&mut self, ui: &mut egui::Ui) {
@@ -508,6 +513,18 @@ impl DirigentApp {
     }
 
     fn render_settings_misc_rows(&mut self, ui: &mut egui::Ui) {
+        self.render_vcs_backend_row(ui);
+        self.render_jj_cli_path_row(ui);
+        self.render_notification_rows(ui);
+        self.render_animation_rows(ui);
+        self.render_heartbeat_row(ui);
+        self.render_diff_colors_row(ui);
+        self.render_home_folder_row(ui);
+        self.render_frame_timing_row(ui);
+        self.render_dock_icon_row(ui);
+    }
+
+    fn render_vcs_backend_row(&mut self, ui: &mut egui::Ui) {
         ui.label("VCS Backend:");
         let prev_backend = self.settings.vcs_backend.clone();
         ui.horizontal(|ui| {
@@ -537,7 +554,9 @@ impl DirigentApp {
             self.ensure_jj_colocated();
         }
         ui.end_row();
+    }
 
+    fn render_jj_cli_path_row(&mut self, ui: &mut egui::Ui) {
         if self.settings.vcs_backend == VcsBackend::Jj {
             ui.label("jj CLI Path:");
             ui.add(
@@ -548,7 +567,9 @@ impl DirigentApp {
             );
             ui.end_row();
         }
+    }
 
+    fn render_notification_rows(&mut self, ui: &mut egui::Ui) {
         ui.label("Notifications:");
         ui.end_row();
 
@@ -559,7 +580,9 @@ impl DirigentApp {
         ui.label("  Popup:");
         ui.checkbox(&mut self.settings.notify_popup, "Show macOS notification");
         ui.end_row();
+    }
 
+    fn render_animation_rows(&mut self, ui: &mut egui::Ui) {
         ui.label("Animation:");
         egui::ComboBox::from_id_salt("running_animation_combo")
             .selected_text(self.settings.running_animation.display_name())
@@ -583,7 +606,9 @@ impl DirigentApp {
             );
             ui.end_row();
         }
+    }
 
+    fn render_heartbeat_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Heart Beat:");
         egui::ComboBox::from_id_salt("heartbeat_style_combo")
             .selected_text(self.settings.heartbeat_style.display_name())
@@ -597,7 +622,9 @@ impl DirigentApp {
                 }
             });
         ui.end_row();
+    }
 
+    fn render_diff_colors_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Diff Colors:");
         egui::ComboBox::from_id_salt("diff_color_combo")
             .selected_text(self.settings.diff_color_scheme.display_name())
@@ -611,12 +638,16 @@ impl DirigentApp {
                 }
             });
         ui.end_row();
+    }
 
+    fn render_home_folder_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Home Folder:");
         ui.checkbox(&mut self.settings.allow_home_folder_access, "Allow AI access to home folders")
             .on_hover_text("When disabled, installs a Claude Code PreToolUse hook that blocks access to personal directories like ~/Documents, ~/Desktop, ~/Downloads, ~/Photos, ~/Music, ~/Library, ~/.ssh, etc.");
         ui.end_row();
+    }
 
+    fn render_frame_timing_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Frame Timing:");
         ui.checkbox(
             &mut self.settings.show_frame_timing,
@@ -624,7 +655,9 @@ impl DirigentApp {
         )
         .on_hover_text("Display per-frame timing breakdown and memory usage in the status bar.");
         ui.end_row();
+    }
 
+    fn render_dock_icon_row(&mut self, ui: &mut egui::Ui) {
         ui.label("Dock Icon:");
         ui.horizontal(|ui| {
             ui.add(
@@ -651,5 +684,18 @@ impl DirigentApp {
             }
         });
         ui.end_row();
+    }
+}
+
+fn render_builtin_theme_options(ui: &mut egui::Ui, theme: &mut ThemeChoice) {
+    let variants = ThemeChoice::all_variants();
+    let mut prev_was_dark = variants.first().is_none_or(|variant| variant.is_dark());
+    for variant in variants {
+        let is_dark = variant.is_dark();
+        if prev_was_dark && !is_dark {
+            ui.separator();
+        }
+        prev_was_dark = is_dark;
+        ui.selectable_value(theme, variant.clone(), variant.display_name());
     }
 }
