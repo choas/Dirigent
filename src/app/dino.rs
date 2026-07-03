@@ -280,16 +280,9 @@ fn paint_dino_grid(
     grid: &[[u8; DINO_W]; DINO_TOTAL_ROWS],
     colors: &DinoColors,
 ) {
-    for row in 0..DINO_TOTAL_ROWS {
-        for col in 0..DINO_W {
-            let cell = grid[row][col];
-            if cell == 0 {
-                continue;
-            }
-            let color = dino_cell_color(grid, row, col, cell, colors);
-            util::paint_grid_cell(painter, origin, col, row, px, color);
-        }
-    }
+    util::paint_u8_grid(painter, origin, grid, px, |row, col, cell| {
+        dino_cell_color(grid, row, col, cell, colors)
+    });
 }
 
 fn dino_cell_color(
@@ -299,8 +292,7 @@ fn dino_cell_color(
     cell: u8,
     colors: &DinoColors,
 ) -> egui::Color32 {
-    let above = row.checked_sub(1).map_or(0, |r| grid[r][col]);
-    let below = grid.get(row + 1).map_or(0, |r| r[col]);
+    let (above, below) = util::vertical_neighbors(grid, row, col);
     if cell == 2 {
         colors.eye
     } else if above == 0 {
@@ -313,9 +305,7 @@ fn dino_cell_color(
 }
 
 fn paint_ground(painter: &egui::Painter, origin: egui::Pos2, px: f32, colors: &DinoColors) {
-    for col in 0..W {
-        util::paint_grid_cell(painter, origin, col, GROUND_ROW, px, colors.sand);
-    }
+    util::paint_grid_row(painter, origin, GROUND_ROW, 0..W, px, colors.sand);
 }
 
 fn paint_stones(
