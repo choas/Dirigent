@@ -113,14 +113,12 @@ pub(crate) fn mask_value(mask: &[&str], row: usize, col: usize) -> u8 {
         .unwrap_or(0)
 }
 
-pub(crate) fn paint_u8_grid<const WIDTH: usize, const HEIGHT: usize>(
-    painter: &egui::Painter,
-    origin: egui::Pos2,
-    grid: &[[u8; WIDTH]; HEIGHT],
-    px: f32,
-    color_for: impl FnMut(usize, usize, u8) -> egui::Color32,
-) {
-    paint_u8_grid_at(painter, origin, grid, px, 0.0, 0.0, color_for);
+pub(crate) fn mask_vertical_neighbors(mask: &[&str], row: usize, col: usize) -> (u8, u8) {
+    let above = row
+        .checked_sub(1)
+        .map_or(0, |prev| mask_value(mask, prev, col));
+    let below = mask_value(mask, row + 1, col);
+    (above, below)
 }
 
 pub(crate) fn paint_u8_grid_at<const WIDTH: usize, const HEIGHT: usize>(
