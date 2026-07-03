@@ -90,48 +90,6 @@ pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
     }
 }
 
-fn run_hook_script(
-    label: &str,
-    script: &str,
-    project_root: &Path,
-    on_log: &mut impl FnMut(&str),
-    fail_on_error: bool,
-) -> Result<(), GeminiError> {
-    if script.trim().is_empty() {
-        return Ok(());
-    }
-    on_log(&format!("\u{25B6} {}: {}\n", label, script.trim()));
-    let result = Command::new("sh")
-        .arg("-c")
-        .arg(script.trim())
-        .current_dir(project_root)
-        .output();
-    match result {
-        Ok(output) => {
-            if !output.stdout.is_empty() {
-                on_log(&String::from_utf8_lossy(&output.stdout));
-            }
-            if !output.stderr.is_empty() {
-                on_log(&String::from_utf8_lossy(&output.stderr));
-            }
-            if !output.status.success() {
-                let msg = format!("{} script failed (exit {})", label, output.status);
-                on_log(&format!("\u{2717} {}\n", msg));
-                if fail_on_error {
-                    return Err(GeminiError::SpawnFailed(std::io::Error::other(msg)));
-                }
-            }
-        }
-        Err(e) => {
-            on_log(&format!("\u{2717} {} script error: {}\n", label, e));
-            if fail_on_error {
-                return Err(GeminiError::SpawnFailed(e));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn resolve_gemini_bin(cli_path: &str) -> Result<PathBuf, GeminiError> {
     let bin = if cli_path.is_empty() {
         "gemini"
@@ -196,22 +154,9 @@ fn process_event_stream(
         }
         let line = line_result?;
 
-        let json_str = if let Some(data) = line.strip_prefix("data:") {
-            data.trim()
-        } else if line.is_empty()
-            || line.starts_with("event:")
-            || line.starts_with("id:")
-            || line.starts_with("retry:")
-            || line.starts_with(':')
-        {
+        let Some(json_str) = ai_process::stream_json_payload(&line) else {
             continue;
-        } else {
-            line.trim()
         };
-
-        if json_str.is_empty() {
-            continue;
-        }
 
         let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) else {
             json_buffer.push_str(json_str);
@@ -470,13 +415,14 @@ pub(crate) fn invoke_gemini_streaming(
             log::error!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
             e.into_inner()
         });
-        run_hook_script(
+        ai_process::run_hook_script(
             "pre-run",
             config.pre_run_script,
             project_root,
             &mut *log,
             true,
-        )?;
+        )
+        .map_err(GeminiError::SpawnFailed)?;
     }
 
     let run_start = Instant::now();
@@ -568,13 +514,14 @@ pub(crate) fn invoke_gemini_streaming(
             );
             e.into_inner()
         });
-        run_hook_script(
+        ai_process::run_hook_script(
             "post-run",
             config.post_run_script,
             project_root,
             &mut *log,
             false,
-        )?;
+        )
+        .map_err(GeminiError::SpawnFailed)?;
     }
 
     let elapsed_ms = run_start.elapsed().as_millis() as u64;

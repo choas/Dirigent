@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -65,4 +66,80 @@ pub(crate) fn build_tool_detail(input: &serde_json::Value, include_pattern: bool
     } else {
         String::new()
     }
+}
+
+pub(crate) fn run_hook_script(
+    label: &str,
+    script: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+    fail_on_error: bool,
+) -> Result<(), std::io::Error> {
+    if script.trim().is_empty() {
+        return Ok(());
+    }
+    on_log(&format!("\u{25B6} {}: {}\n", label, script.trim()));
+    let result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script.trim())
+        .current_dir(project_root)
+        .output();
+    match result {
+        Ok(output) => handle_hook_output(label, output, on_log, fail_on_error),
+        Err(e) => handle_hook_spawn_error(label, e, on_log, fail_on_error),
+    }
+}
+
+fn handle_hook_output(
+    label: &str,
+    output: std::process::Output,
+    on_log: &mut dyn FnMut(&str),
+    fail_on_error: bool,
+) -> Result<(), std::io::Error> {
+    if !output.stdout.is_empty() {
+        on_log(&String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        on_log(&String::from_utf8_lossy(&output.stderr));
+    }
+    if fail_on_error && !output.status.success() {
+        let msg = format!("{} script failed (exit {})", label, output.status);
+        on_log(&format!("\u{2717} {}\n", msg));
+        return Err(std::io::Error::other(msg));
+    }
+    Ok(())
+}
+
+fn handle_hook_spawn_error(
+    label: &str,
+    error: std::io::Error,
+    on_log: &mut dyn FnMut(&str),
+    fail_on_error: bool,
+) -> Result<(), std::io::Error> {
+    on_log(&format!("\u{2717} {} script error: {}\n", label, error));
+    if fail_on_error {
+        Err(error)
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn stream_json_payload(line: &str) -> Option<&str> {
+    if let Some(data) = line.strip_prefix("data:") {
+        let payload = data.trim();
+        (!payload.is_empty()).then_some(payload)
+    } else if should_skip_stream_line(line) {
+        None
+    } else {
+        let payload = line.trim();
+        (!payload.is_empty()).then_some(payload)
+    }
+}
+
+fn should_skip_stream_line(line: &str) -> bool {
+    line.is_empty()
+        || line.starts_with("event:")
+        || line.starts_with("id:")
+        || line.starts_with("retry:")
+        || line.starts_with(':')
 }
