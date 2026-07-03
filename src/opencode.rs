@@ -2,11 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use crate::ai_process;
 use crate::claude;
-
-const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 pub(crate) enum OpenCodeError {
@@ -165,7 +164,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
 
     let mut new_edited_file = None;
     if is_file_tool(name) {
-        new_edited_file = extract_file_path_from_input(&input);
+        new_edited_file = ai_process::extract_file_path_from_input(&input);
         if new_edited_file.is_none() {
             // Log bash commands when no file path is found
             if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
@@ -180,7 +179,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
         }
     }
 
-    let detail = build_tool_detail(&input);
+    let detail = ai_process::build_tool_detail(&input, true);
     if !detail.is_empty() {
         on_log(&format!("\u{2192} {}{}\n", name, detail));
     }
@@ -190,45 +189,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
 
 /// Check whether a tool name refers to a file-modifying tool.
 fn is_file_tool(name: &str) -> bool {
-    let name_lower = name.to_ascii_lowercase();
-    matches!(name, "Write" | "Edit" | "Bash" | "Task")
-        || matches!(
-            name_lower.as_str(),
-            "write"
-                | "edit"
-                | "bash"
-                | "task"
-                | "write_file"
-                | "edit_file"
-                | "create_file"
-                | "str_replace_editor"
-                | "file_editor"
-                | "write_to_file"
-                | "apply_diff"
-        )
-}
-
-/// Extract a file path from tool input using common field names.
-fn extract_file_path_from_input(input: &serde_json::Value) -> Option<String> {
-    input
-        .get("file_path")
-        .or_else(|| input.get("path"))
-        .or_else(|| input.get("file"))
-        .and_then(|p| p.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Build a human-readable detail string from tool input.
-fn build_tool_detail(input: &serde_json::Value) -> String {
-    if let Some(file_path) = input.get("file_path").and_then(|p| p.as_str()) {
-        format!(" {}", file_path)
-    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-        format!(" $ {}", command.lines().next().unwrap_or(""))
-    } else if let Some(grep) = input.get("pattern").and_then(|p| p.as_str()) {
-        format!(" \"{}\"", grep)
-    } else {
-        String::new()
-    }
+    ai_process::is_file_related_tool(name)
 }
 
 /// Process a "step_finish" event from the OpenCode JSON stream.
@@ -338,26 +299,6 @@ fn build_opencode_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     Ok(cmd)
-}
-
-/// Spawn a watchdog thread that kills the child process on cancellation.
-fn spawn_watchdog(
-    child: &Arc<Mutex<std::process::Child>>,
-    cancel: &Arc<AtomicBool>,
-    done: &Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    let child = Arc::clone(child);
-    let cancel = Arc::clone(cancel);
-    let done = Arc::clone(done);
-    std::thread::spawn(move || {
-        while !done.load(Ordering::Relaxed) {
-            if cancel.load(Ordering::Relaxed) {
-                let _ = child.lock().map(|mut c| c.kill());
-                return;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
-        }
-    })
 }
 
 /// Process the JSON event stream from stdout, collecting results, edited files, and metrics.
@@ -562,7 +503,7 @@ pub(crate) fn invoke_opencode_streaming(
 
     let child = Arc::new(Mutex::new(child));
     let done = Arc::new(AtomicBool::new(false));
-    let watchdog = spawn_watchdog(&child, &cancel, &done);
+    let watchdog = ai_process::spawn_cancel_watchdog(&child, &cancel, &done);
 
     // Stream stderr line-by-line so the user sees OpenCode progress in real
     // time (stderr is unbuffered / line-buffered even when stdout is piped).
