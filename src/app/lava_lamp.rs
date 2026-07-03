@@ -210,13 +210,9 @@ pub fn paint_at(
         })
         .collect();
 
-    for row in 0..H {
-        for col in 0..W {
-            if let Some(color) = pixel_color(row, col, &blob_positions, &colors) {
-                util::paint_grid_cell(painter, origin, col, row, px, color);
-            }
-        }
-    }
+    util::paint_pixel_grid(painter, origin, W, H, px, |row, col| {
+        pixel_color(row, col, &blob_positions, &colors)
+    });
 
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
 }
