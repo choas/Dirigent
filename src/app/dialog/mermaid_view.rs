@@ -34,60 +34,16 @@ impl DirigentApp {
                 .collapsible(false)
                 .frame(self.semantic.dialog_frame())
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("\u{2212}").on_hover_text("Zoom out").clicked() {
-                            dialog.zoom = (dialog.zoom / 1.25).max(0.1);
-                        }
-                        ui.label(format!("{}%", (dialog.zoom * 100.0) as u32));
-                        if ui.button("+").on_hover_text("Zoom in").clicked() {
-                            dialog.zoom = (dialog.zoom * 1.25).min(10.0);
-                        }
-                        if ui.button("Fit").on_hover_text("Reset zoom").clicked() {
-                            dialog.zoom = 1.0;
-                        }
-                        ui.separator();
-                        if ui
-                            .button("Download PNG")
-                            .on_hover_text("Export the diagram as a PNG image")
-                            .clicked()
-                        {
-                            export = Some("png");
-                        }
-                        if ui
-                            .button("Download SVG")
-                            .on_hover_text("Export the diagram as an SVG image")
-                            .clicked()
-                        {
-                            export = Some("svg");
-                        }
-                    });
+                    render_mermaid_toolbar(ui, &mut dialog.zoom, &mut export);
                     ui.separator();
 
-                    // Cmd/Ctrl + scroll to zoom.
-                    let scroll = ui.input(|i| {
-                        if i.modifiers.command {
-                            i.smooth_scroll_delta.y
-                        } else {
-                            0.0
-                        }
-                    });
-                    if scroll != 0.0 {
-                        let factor = if scroll > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                        dialog.zoom = (dialog.zoom * factor).clamp(0.1, 10.0);
-                    }
+                    apply_scroll_zoom(ui, &mut dialog.zoom);
 
-                    egui::ScrollArea::both().auto_shrink([false; 2]).show(
-                        ui,
-                        |ui| match &texture {
-                            Some(tex) => {
-                                let size = tex.size_vec2() * dialog.zoom;
-                                ui.add(egui::Image::new((tex.id(), size)));
-                            }
-                            None => {
-                                ui.label("Diagram is not available.");
-                            }
-                        },
-                    );
+                    egui::ScrollArea::both()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            render_mermaid_image(ui, texture.as_ref(), dialog.zoom)
+                        });
                 });
         }
 
@@ -119,6 +75,62 @@ impl DirigentApp {
                 Err(e) => self.set_status_message(format!("Failed to write diagram: {e}")),
             },
             Err(e) => self.set_status_message(format!("Failed to render diagram: {e}")),
+        }
+    }
+}
+
+fn render_mermaid_toolbar(ui: &mut egui::Ui, zoom: &mut f32, export: &mut Option<&'static str>) {
+    ui.horizontal(|ui| {
+        if ui.button("\u{2212}").on_hover_text("Zoom out").clicked() {
+            *zoom = (*zoom / 1.25).max(0.1);
+        }
+        ui.label(format!("{}%", (*zoom * 100.0) as u32));
+        if ui.button("+").on_hover_text("Zoom in").clicked() {
+            *zoom = (*zoom * 1.25).min(10.0);
+        }
+        if ui.button("Fit").on_hover_text("Reset zoom").clicked() {
+            *zoom = 1.0;
+        }
+        ui.separator();
+        if ui
+            .button("Download PNG")
+            .on_hover_text("Export the diagram as a PNG image")
+            .clicked()
+        {
+            *export = Some("png");
+        }
+        if ui
+            .button("Download SVG")
+            .on_hover_text("Export the diagram as an SVG image")
+            .clicked()
+        {
+            *export = Some("svg");
+        }
+    });
+}
+
+fn apply_scroll_zoom(ui: &egui::Ui, zoom: &mut f32) {
+    let scroll = ui.input(|i| {
+        if i.modifiers.command {
+            i.smooth_scroll_delta.y
+        } else {
+            0.0
+        }
+    });
+    if scroll != 0.0 {
+        let factor = if scroll > 0.0 { 1.1 } else { 1.0 / 1.1 };
+        *zoom = (*zoom * factor).clamp(0.1, 10.0);
+    }
+}
+
+fn render_mermaid_image(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, zoom: f32) {
+    match texture {
+        Some(tex) => {
+            let size = tex.size_vec2() * zoom;
+            ui.add(egui::Image::new((tex.id(), size)));
+        }
+        None => {
+            ui.label("Diagram is not available.");
         }
     }
 }
