@@ -54,6 +54,29 @@ fn update_stale_working_copy(repo_path: &Path, jj_path: &str) -> crate::error::R
     Ok(())
 }
 
+fn run_jj_checked<const N: usize>(
+    repo_path: &Path,
+    jj_path: &str,
+    args: [&str; N],
+    failure_context: &str,
+) -> crate::error::Result<Output> {
+    let output = super::jj_cmd(jj_path)
+        .args(args)
+        .current_dir(repo_path)
+        .output()?;
+
+    if output.status.success() {
+        Ok(output)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(DirigentError::JjCommand(format!(
+            "{} failed: {}",
+            failure_context,
+            stderr.trim()
+        )))
+    }
+}
+
 /// Push the current bookmarks to the remote via `jj git push`.
 pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
     let output = super::jj_cmd(jj_path)
@@ -348,18 +371,12 @@ pub(crate) fn jj_delete_bookmark(
     name: &str,
     jj_path: &str,
 ) -> crate::error::Result<()> {
-    let output = super::jj_cmd(jj_path)
-        .args(["bookmark", "delete", name])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::JjCommand(format!(
-            "jj bookmark delete failed: {}",
-            stderr.trim()
-        )));
-    }
+    run_jj_checked(
+        repo_path,
+        jj_path,
+        ["bookmark", "delete", name],
+        "jj bookmark delete",
+    )?;
     Ok(())
 }
 
@@ -575,36 +592,18 @@ pub(crate) fn jj_create_bookmark(
     name: &str,
     jj_path: &str,
 ) -> crate::error::Result<()> {
-    let output = super::jj_cmd(jj_path)
-        .args(["bookmark", "create", name, "-r", "@-"])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::JjCommand(format!(
-            "jj bookmark create failed: {}",
-            stderr.trim()
-        )));
-    }
+    run_jj_checked(
+        repo_path,
+        jj_path,
+        ["bookmark", "create", name, "-r", "@-"],
+        "jj bookmark create",
+    )?;
     Ok(())
 }
 
 /// Undo the last jj operation via `jj op restore @-`.
 pub(crate) fn jj_undo(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
-    let output = super::jj_cmd(jj_path)
-        .args(["op", "restore", "@-"])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::JjCommand(format!(
-            "jj op restore failed: {}",
-            stderr.trim()
-        )));
-    }
-
+    let output = run_jj_checked(repo_path, jj_path, ["op", "restore", "@-"], "jj op restore")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let summary = stdout.lines().next().unwrap_or("ok").trim();
     Ok(format!("Undo: {}", summary))

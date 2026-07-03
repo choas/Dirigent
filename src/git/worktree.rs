@@ -233,6 +233,22 @@ fn fetch_and_prune(repo_path: &Path) {
         .spawn(); // fire-and-forget — avoids blocking the UI thread
 }
 
+fn run_git_checked(repo_path: &Path, args: &[&str]) -> crate::error::Result<()> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
+}
+
 /// Return the set of local branch names whose upstream tracking branch has
 /// been deleted (marked `[gone]`), e.g. after a PR was merged and the remote
 /// branch removed.
@@ -377,64 +393,19 @@ fn copy_claude_settings(src_root: &Path, dst_root: &Path) {
         return;
     }
     let dst_dir = dst_root.join(".claude");
-    if let Err(e) = copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
+    if let Err(e) = crate::util::fs::copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
         log::warn!("failed to copy .claude/ settings to worktree: {e}");
     }
 }
 
-/// Recursively copy `src` to `dst`, skipping entries whose file name matches
-/// any entry in `skip`.
-fn copy_dir_recursive(src: &Path, dst: &Path, skip: &[&str]) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if skip.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
-            continue;
-        }
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path, &[])?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}
-
 /// Switch the current branch by running `git checkout <branch>`.
 pub(crate) fn checkout_branch(repo_path: &Path, branch: &str) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["checkout", branch])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-    Ok(())
+    run_git_checked(repo_path, &["checkout", branch])
 }
 
 /// Create a new branch and switch to it (`git checkout -b <branch>`).
 pub(crate) fn create_branch(repo_path: &Path, branch: &str) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["checkout", "-b", branch])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-    Ok(())
+    run_git_checked(repo_path, &["checkout", "-b", branch])
 }
 
 pub(crate) fn remove_worktree(
@@ -442,8 +413,6 @@ pub(crate) fn remove_worktree(
     wt_path: &Path,
     force: bool,
 ) -> crate::error::Result<()> {
-    use std::process::Command;
-
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
@@ -451,18 +420,7 @@ pub(crate) fn remove_worktree(
     let wt_str = wt_path.to_string_lossy();
     args.push(&wt_str);
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-
-    Ok(())
+    run_git_checked(repo_path, &args)
 }
 
 #[cfg(test)]

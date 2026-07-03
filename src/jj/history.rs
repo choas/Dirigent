@@ -16,8 +16,10 @@ pub(crate) fn jj_read_commit_history(path: &Path, limit: usize, jj_path: &str) -
 }
 
 fn jj_log_output(path: &Path, jj_path: &str, limit: &str) -> Option<String> {
-    let output = super::jj_cmd(jj_path)
-        .args([
+    jj_stdout(
+        path,
+        jj_path,
+        &[
             "log",
             "--no-graph",
             "--color",
@@ -35,14 +37,20 @@ fn jj_log_output(path: &Path, jj_path: &str, limit: &str) -> Option<String> {
                 r#" ++ parents.map(|p| p.change_id()).join(",") ++ "\t""#,
                 r#" ++ if(empty, "empty", "") ++ "\n""#,
             ),
-        ])
-        .current_dir(path)
-        .output();
+        ],
+    )
+}
 
+fn jj_stdout(path: &Path, jj_path: &str, args: &[&str]) -> Option<String> {
+    let output = super::jj_cmd(jj_path)
+        .args(args)
+        .current_dir(path)
+        .output()
+        .ok()?;
     output
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn parse_jj_log_output(stdout: &str) -> Vec<CommitInfo> {
@@ -178,8 +186,10 @@ fn format_time_ago(diff: i64) -> String {
 }
 
 pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
-    let output = super::jj_cmd(jj_path)
-        .args([
+    jj_stdout(
+        path,
+        jj_path,
+        &[
             "log",
             "--no-graph",
             "--color",
@@ -187,17 +197,10 @@ pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
             "--ignore-working-copy",
             "-T",
             r#"change_id ++ "\n""#,
-        ])
-        .current_dir(path)
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout.lines().filter(|l| !l.trim().is_empty()).count()
-        }
-        _ => 0,
-    }
+        ],
+    )
+    .map(|stdout| stdout.lines().filter(|l| !l.trim().is_empty()).count())
+    .unwrap_or(0)
 }
 
 /// Find empty head commits (leaves of the commit graph that have no diff).
@@ -205,8 +208,10 @@ pub(crate) fn jj_count_commits(path: &Path, jj_path: &str) -> usize {
 /// Uses `heads(all())` to find all head revisions, then filters to those
 /// that are marked `empty` by jj.  Returns a vec of `(change_id, description)`.
 pub(crate) fn jj_find_empty_heads(path: &Path, jj_path: &str) -> Vec<(String, String)> {
-    let output = super::jj_cmd(jj_path)
-        .args([
+    let Some(stdout) = jj_stdout(
+        path,
+        jj_path,
+        &[
             "log",
             "--no-graph",
             "--color",
@@ -216,16 +221,10 @@ pub(crate) fn jj_find_empty_heads(path: &Path, jj_path: &str) -> Vec<(String, St
             "heads(all()) & empty()",
             "-T",
             r#"change_id ++ "\t" ++ description.first_line() ++ "\n""#,
-        ])
-        .current_dir(path)
-        .output();
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+        ],
+    ) else {
+        return Vec::new();
     };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -237,8 +236,10 @@ pub(crate) fn jj_find_empty_heads(path: &Path, jj_path: &str) -> Vec<(String, St
 }
 
 pub(crate) fn jj_get_commit_diff(path: &Path, change_id: &str, jj_path: &str) -> Option<String> {
-    let output = super::jj_cmd(jj_path)
-        .args([
+    jj_stdout(
+        path,
+        jj_path,
+        &[
             "diff",
             "--git",
             "--color",
@@ -246,14 +247,6 @@ pub(crate) fn jj_get_commit_diff(path: &Path, change_id: &str, jj_path: &str) ->
             "--ignore-working-copy",
             "-r",
             change_id,
-        ])
-        .current_dir(path)
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        None
-    }
+        ],
+    )
 }
