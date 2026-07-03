@@ -48,44 +48,8 @@ fn extract_last_balanced_with_pos(
     let close_b = close as u8;
 
     let mut search_from = bytes.len();
-    while let Some(rel) = bytes[..search_from].iter().rposition(|&b| b == close_b) {
-        let end = rel;
-        let mut depth: i32 = 0;
-        let mut start = None;
-        let mut i = end;
-        loop {
-            let b = bytes[i];
-            if b == b'"' {
-                if i == 0 {
-                    break;
-                }
-                i -= 1;
-                while i > 0 {
-                    if bytes[i] == b'"' {
-                        let backslashes =
-                            bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count();
-                        if backslashes % 2 == 0 {
-                            break;
-                        }
-                    }
-                    i -= 1;
-                }
-            } else if b == close_b {
-                depth += 1;
-            } else if b == open_b {
-                depth -= 1;
-                if depth == 0 {
-                    start = Some(i);
-                    break;
-                }
-            }
-            if i == 0 {
-                break;
-            }
-            i -= 1;
-        }
-
-        if let Some(s_pos) = start {
+    while let Some(end) = bytes[..search_from].iter().rposition(|&b| b == close_b) {
+        if let Some(s_pos) = scan_back_for_open(bytes, end, open_b, close_b) {
             if end > s_pos {
                 return Some((s_pos, end, s[s_pos..=end].to_string()));
             }
@@ -93,6 +57,48 @@ fn extract_last_balanced_with_pos(
         search_from = end;
     }
     None
+}
+
+/// Walk backwards from the `close` byte at `end`, tracking brace depth and
+/// skipping string literals, until the matching `open` byte is found.
+fn scan_back_for_open(bytes: &[u8], end: usize, open_b: u8, close_b: u8) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut i = end;
+    loop {
+        let b = bytes[i];
+        if b == b'"' {
+            i = skip_string_backwards(bytes, i)?;
+        } else if b == close_b {
+            depth += 1;
+        } else if b == open_b {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        if i == 0 {
+            return None;
+        }
+        i -= 1;
+    }
+}
+
+/// Given a closing `"` at position `i`, move back to the matching opening
+/// quote (an unescaped `"`). Returns `None` when the buffer start is reached
+/// before the string can be entered.
+fn skip_string_backwards(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut i = i.checked_sub(1)?;
+    while i > 0 {
+        if bytes[i] == b'"' && count_backslashes_before(bytes, i).is_multiple_of(2) {
+            break;
+        }
+        i -= 1;
+    }
+    Some(i)
+}
+
+fn count_backslashes_before(bytes: &[u8], i: usize) -> usize {
+    bytes[..i].iter().rev().take_while(|&&c| c == b'\\').count()
 }
 
 #[cfg(test)]
