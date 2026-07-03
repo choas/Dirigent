@@ -72,22 +72,24 @@ const server = new McpServer({
 // Cue Management
 // ---------------------------------------------------------------------------
 
-server.tool(
+server.registerTool(
   "dirigent_list_cues",
-  "List Dirigent cues, optionally filtered by status or tag",
   {
-    status: z
-      .enum(VALID_STATUSES)
-      .optional()
-      .describe("Filter by cue status"),
-    tag: z.string().optional().describe("Filter by tag"),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(1000)
-      .default(50)
-      .describe("Max results to return (up to 1000)"),
+    description: "List Dirigent cues, optionally filtered by status or tag",
+    inputSchema: {
+      status: z
+        .enum(VALID_STATUSES)
+        .optional()
+        .describe("Filter by cue status"),
+      tag: z.string().optional().describe("Filter by tag"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .default(50)
+        .describe("Max results to return (up to 1000)"),
+    },
   },
   async ({ status, tag, limit }) => {
     let sql =
@@ -108,11 +110,13 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_get_cue",
-  "Get full details of a single Dirigent cue",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
+    description: "Get full details of a single Dirigent cue",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+    },
   },
   async ({ cue_id }) => {
     const cue = db
@@ -127,28 +131,30 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_add_cue",
-  "Add a new cue to the Dirigent Inbox",
   {
-    text: z.string().min(1).describe("Cue description / task body"),
-    file_path: z
-      .string()
-      .default("")
-      .describe("Associated file path (empty for global)"),
-    line_number: z
-      .number()
-      .int()
-      .nonnegative()
-      .default(0)
-      .describe("Start line (0 for global)"),
-    line_number_end: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("End line for ranges"),
-    tag: z.string().optional().describe("Grouping tag"),
+    description: "Add a new cue to the Dirigent Inbox",
+    inputSchema: {
+      text: z.string().min(1).describe("Cue description / task body"),
+      file_path: z
+        .string()
+        .default("")
+        .describe("Associated file path (empty for global)"),
+      line_number: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(0)
+        .describe("Start line (0 for global)"),
+      line_number_end: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("End line for ranges"),
+      tag: z.string().optional().describe("Grouping tag"),
+    },
   },
   async ({ text, file_path, line_number, line_number_end, tag }) => {
     const validEnd =
@@ -169,14 +175,16 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_move_cue",
-  "Move a Dirigent cue to a different status column",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
-    new_status: z
-      .enum(VALID_STATUSES)
-      .describe("Target status column"),
+    description: "Move a Dirigent cue to a different status column",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+      new_status: z
+        .enum(VALID_STATUSES)
+        .describe("Target status column"),
+    },
   },
   async ({ cue_id, new_status }) => {
     const cue = db
@@ -199,26 +207,28 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_update_cue",
-  "Edit a cue's text, tag, or location (file path / line range)",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
-    text: z.string().optional().describe("New cue text"),
-    tag: z.string().optional().describe("New tag value"),
-    file_path: z.string().optional().describe("New file path"),
-    line_number: z
-      .number()
-      .int()
-      .nonnegative()
-      .optional()
-      .describe("New start line"),
-    line_number_end: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("New end line"),
+    description: "Edit a cue's text, tag, or location (file path / line range)",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+      text: z.string().optional().describe("New cue text"),
+      tag: z.string().optional().describe("New tag value"),
+      file_path: z.string().optional().describe("New file path"),
+      line_number: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe("New start line"),
+      line_number_end: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("New end line"),
+    },
   },
   async ({ cue_id, text, tag, file_path, line_number, line_number_end }) => {
     const cue = db
@@ -272,11 +282,13 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_delete_cue",
-  "Delete a cue and its associated executions and activity log",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
+    description: "Delete a cue and its associated executions and activity log",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+    },
   },
   async ({ cue_id }) => {
     const cue = db
@@ -299,10 +311,11 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_archive_done",
-  "Archive all cues currently in Done status",
-  {},
+  {
+    description: "Archive all cues currently in Done status",
+  },
   async () => {
     const doneCues = db
       .prepare("SELECT id FROM cues WHERE status = 'done'")
@@ -330,22 +343,24 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_search_cues",
-  "Search cues by keyword (case-insensitive match on cue text)",
   {
-    query: z.string().min(1).describe("Search term"),
-    status: z
-      .enum(VALID_STATUSES)
-      .optional()
-      .describe("Optionally restrict search to a status"),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(200)
-      .default(30)
-      .describe("Max results (up to 200)"),
+    description: "Search cues by keyword (case-insensitive match on cue text)",
+    inputSchema: {
+      query: z.string().min(1).describe("Search term"),
+      status: z
+        .enum(VALID_STATUSES)
+        .optional()
+        .describe("Optionally restrict search to a status"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(200)
+        .default(30)
+        .describe("Max results (up to 200)"),
+    },
   },
   async ({ query, status, limit }) => {
     let sql =
@@ -362,18 +377,20 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_list_executions",
-  "List all executions for a cue (newest first, metrics only)",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(50)
-      .default(10)
-      .describe("Max results (up to 50)"),
+    description: "List all executions for a cue (newest first, metrics only)",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(50)
+        .default(10)
+        .describe("Max results (up to 50)"),
+    },
   },
   async ({ cue_id, limit }) => {
     const rows = db
@@ -397,10 +414,11 @@ server.tool(
 // Query / Reporting
 // ---------------------------------------------------------------------------
 
-server.tool(
+server.registerTool(
   "dirigent_pool_summary",
-  "Get a summary of cue counts per status column",
-  {},
+  {
+    description: "Get a summary of cue counts per status column",
+  },
   async () => {
     const rows = db
       .prepare(
@@ -411,17 +429,19 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_recent_activity",
-  "Get recent activity log entries across all cues",
   {
-    limit: z
-      .number()
-      .int()
-      .positive()
-      .max(1000)
-      .default(20)
-      .describe("Max entries to return (up to 1000)"),
+    description: "Get recent activity log entries across all cues",
+    inputSchema: {
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .default(20)
+        .describe("Max entries to return (up to 1000)"),
+    },
   },
   async ({ limit }) => {
     const rows = db
@@ -436,11 +456,13 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_cue_history",
-  "Get the activity log for a specific cue",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
+    description: "Get the activity log for a specific cue",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+    },
   },
   async ({ cue_id }) => {
     const rows = db
@@ -456,11 +478,13 @@ server.tool(
 // Execution History (read-only)
 // ---------------------------------------------------------------------------
 
-server.tool(
+server.registerTool(
   "dirigent_get_execution",
-  "Get the latest execution for a Dirigent cue",
   {
-    cue_id: z.number().int().positive().describe("Cue ID"),
+    description: "Get the latest execution for a Dirigent cue",
+    inputSchema: {
+      cue_id: z.number().int().positive().describe("Cue ID"),
+    },
   },
   async ({ cue_id }) => {
     const exec = db
@@ -479,10 +503,11 @@ server.tool(
   }
 );
 
-server.tool(
+server.registerTool(
   "dirigent_execution_stats",
-  "Get aggregate execution statistics (cost, duration, turns)",
-  {},
+  {
+    description: "Get aggregate execution statistics (cost, duration, turns)",
+  },
   async () => {
     const stats = db
       .prepare(
