@@ -261,14 +261,13 @@ impl DirigentApp {
         }
         self.render_notion_done_button(ui, cue, actions, fs);
         self.render_push_button(ui, cue, actions, fs);
-        if self.settings.vcs_backend == VcsBackend::Jj {
-            if ui
+        if self.settings.vcs_backend == VcsBackend::Jj
+            && ui
                 .small_button(icon("\u{2261} Squash", fs))
                 .on_hover_text("Squash all commits on this cue's bookmark into one")
                 .clicked()
-            {
-                actions.push((cue.id, CueAction::SquashBookmark));
-            }
+        {
+            actions.push((cue.id, CueAction::SquashBookmark));
         }
         self.render_log_and_agents_buttons(ui, cue, actions, fs);
         if ui

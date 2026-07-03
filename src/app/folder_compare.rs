@@ -27,7 +27,11 @@ impl DirigentApp {
         // Optional external diff tool: launch it and return (non-blocking).
         let tool = self.settings.external_diff_tool.trim().to_string();
         if !tool.is_empty() {
-            match std::process::Command::new(&tool).arg(&left).arg(&right).spawn() {
+            match std::process::Command::new(&tool)
+                .arg(&left)
+                .arg(&right)
+                .spawn()
+            {
                 Ok(_) => {
                     self.set_status_message(format!("Opened comparison in {tool}"));
                     return;
