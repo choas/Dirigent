@@ -406,42 +406,61 @@ impl DirigentApp {
             self.apply_fix_diagnostic(active_idx, line, diag_messages, actions);
         }
 
-        if actions.new_sel_start != self.viewer.tabs[active_idx].selection_start
-            || actions.new_sel_end != self.viewer.tabs[active_idx].selection_end
-        {
-            self.viewer.tabs[active_idx].selection_start = actions.new_sel_start;
-            self.viewer.tabs[active_idx].selection_end = actions.new_sel_end;
-            self.viewer.tabs[active_idx].cue_input.clear();
-            self.viewer.tabs[active_idx].cue_images.clear();
-        }
-
-        if actions.submit_cue && !self.viewer.tabs[active_idx].cue_input.is_empty() {
-            self.submit_inline_cue(active_idx, rel_path);
-        }
-
-        if actions.submit_cue_whole_file && !self.viewer.tabs[active_idx].cue_input.is_empty() {
-            self.submit_whole_file_cue(active_idx, rel_path);
-        }
+        self.apply_selection_change(actions, active_idx);
+        self.apply_cue_submit_actions(actions, active_idx, rel_path);
 
         if let Some(line) = actions.implement_click_line {
             self.apply_implement_click(active_idx, line, file_path);
         }
 
-        if let Some(ref word) = actions.goto_def_word {
-            let w = word.clone();
-            // Try LSP go-to-definition first, fall back to regex
-            if let Some((line_0based, char_0based)) = actions.lsp_goto_def_position {
-                self.lsp_goto_definition(file_path, line_0based, char_0based, &w);
-            } else {
-                self.goto_definition(&w);
-            }
-        }
+        self.apply_goto_definition_action(actions, file_path);
 
         // LSP hover: request hover info for the hovered position
         if let Some((line, character)) = actions.lsp_hover_position {
             if self.settings.lsp_enabled {
                 self.lsp.hover(file_path, line, character);
             }
+        }
+    }
+
+    fn apply_selection_change(&mut self, actions: &CodeLineActions, active_idx: usize) {
+        let tab = &mut self.viewer.tabs[active_idx];
+        if actions.new_sel_start == tab.selection_start && actions.new_sel_end == tab.selection_end
+        {
+            return;
+        }
+        tab.selection_start = actions.new_sel_start;
+        tab.selection_end = actions.new_sel_end;
+        tab.cue_input.clear();
+        tab.cue_images.clear();
+    }
+
+    fn apply_cue_submit_actions(
+        &mut self,
+        actions: &CodeLineActions,
+        active_idx: usize,
+        rel_path: &str,
+    ) {
+        if self.viewer.tabs[active_idx].cue_input.is_empty() {
+            return;
+        }
+        if actions.submit_cue {
+            self.submit_inline_cue(active_idx, rel_path);
+        }
+        if actions.submit_cue_whole_file {
+            self.submit_whole_file_cue(active_idx, rel_path);
+        }
+    }
+
+    fn apply_goto_definition_action(&mut self, actions: &CodeLineActions, file_path: &Path) {
+        let Some(word) = actions.goto_def_word.as_ref() else {
+            return;
+        };
+        // Try LSP go-to-definition first, fall back to regex.
+        if let Some((line_0based, char_0based)) = actions.lsp_goto_def_position {
+            self.lsp_goto_definition(file_path, line_0based, char_0based, word);
+        } else {
+            self.goto_definition(word);
         }
     }
 
