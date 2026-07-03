@@ -1,4 +1,6 @@
 use eframe::egui;
+use std::iter::Peekable;
+use std::str::Chars;
 
 /// Overrides for the ANSI red/green colors that Claude Code's TUI uses for
 /// diff lines. When present, foreground / background red and green
@@ -69,50 +71,80 @@ pub fn ansi_to_layout_job_resumable(
     let mut chars = text.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c != '\x1b' {
-            buf.push(c);
-            continue;
-        }
-        let Some(&next) = chars.peek() else {
-            break;
-        };
-        if next == '[' {
-            chars.next();
-            let mut params = String::new();
-            let mut final_byte = '\0';
-            for c2 in chars.by_ref() {
-                if !c2.is_ascii_digit() && c2 != ';' && c2 != '?' && c2 != ':' {
-                    final_byte = c2;
-                    break;
-                }
-                params.push(c2);
-            }
-            if final_byte == 'm' {
-                if !buf.is_empty() {
-                    job.append(&buf, 0.0, current.clone());
-                    buf.clear();
-                }
-                apply_sgr(&params, &mut current, &base, overrides);
-            }
-        } else if next == ']' {
-            chars.next();
-            while let Some(c2) = chars.next() {
-                if c2 == '\x07' {
-                    break;
-                }
-                if c2 == '\x1b' && chars.peek() == Some(&'\\') {
-                    chars.next();
-                    break;
-                }
-            }
+        if c == '\x1b' {
+            handle_escape_sequence(
+                &mut chars,
+                &mut job,
+                &mut buf,
+                &mut current,
+                &base,
+                overrides,
+            );
         } else {
-            chars.next();
+            buf.push(c);
         }
     }
     if !buf.is_empty() {
         job.append(&buf, 0.0, current.clone());
     }
     (job, current)
+}
+
+fn handle_escape_sequence(
+    chars: &mut Peekable<Chars<'_>>,
+    job: &mut egui::text::LayoutJob,
+    buf: &mut String,
+    current: &mut egui::TextFormat,
+    base: &egui::TextFormat,
+    overrides: &DiffAnsiOverrides,
+) {
+    match chars.peek().copied() {
+        Some('[') => {
+            chars.next();
+            if let Some(params) = read_sgr_params(chars) {
+                flush_text(job, buf, current);
+                apply_sgr(&params, current, base, overrides);
+            }
+        }
+        Some(']') => {
+            chars.next();
+            skip_osc_sequence(chars);
+        }
+        Some(_) => {
+            chars.next();
+        }
+        None => {}
+    }
+}
+
+fn read_sgr_params(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
+    let mut params = String::new();
+    for c in chars.by_ref() {
+        if !c.is_ascii_digit() && c != ';' && c != '?' && c != ':' {
+            return (c == 'm').then_some(params);
+        }
+        params.push(c);
+    }
+    None
+}
+
+fn skip_osc_sequence(chars: &mut Peekable<Chars<'_>>) {
+    while let Some(c) = chars.next() {
+        if c == '\x07' {
+            break;
+        }
+        if c == '\x1b' && chars.peek() == Some(&'\\') {
+            chars.next();
+            break;
+        }
+    }
+}
+
+fn flush_text(job: &mut egui::text::LayoutJob, buf: &mut String, current: &egui::TextFormat) {
+    if !buf.is_empty() {
+        job.append(buf, 0.0, current.clone());
+        buf.clear();
+    }
 }
 
 fn apply_sgr(

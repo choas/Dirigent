@@ -187,98 +187,56 @@ fn find_untracked_files(repo_path: &Path) -> HashSet<String> {
 /// Like parse_diff_file_paths but also strips a directory prefix if present.
 /// Use this when the diff may have been generated with paths relative to a parent dir.
 pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<String> {
-    let dir_name = repo_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir_prefix = if dir_name.is_empty() {
-        String::new()
-    } else {
-        format!("{}/", dir_name)
-    };
-
-    let mut paths = Vec::new();
-    for line in diff_text.lines() {
-        let rest = line
-            .strip_prefix("+++ b/")
-            .or_else(|| line.strip_prefix("--- a/"));
-        let rest = match rest {
-            Some(r) => r,
-            None => continue,
-        };
-        let path = rest.trim();
-        if path.is_empty() {
-            continue;
-        }
-        // Only strip the repo-name prefix when the original path does NOT exist
-        // in the repo (i.e., it was spuriously added by the AI). When the path
-        // exists as-is, keep it — it's a real subdirectory that happens to share
-        // the repo's name.
-        let path = if !dir_prefix.is_empty() {
-            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
-                if repo_path.join(path).exists() {
-                    path
-                } else {
-                    stripped
-                }
-            } else {
-                path
-            }
-        } else {
-            path
-        };
-        let path = path.to_string();
-        if !path.is_empty() && !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-    paths
+    parse_diff_paths_with_repo_prefix(repo_path, diff_text)
 }
 
 /// Parse file paths from diff text, stripping the repo directory prefix if present.
 pub(super) fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String> {
+    parse_diff_paths_with_repo_prefix(repo_path, diff_text)
+}
+
+fn parse_diff_paths_with_repo_prefix(repo_path: &Path, diff_text: &str) -> Vec<String> {
     let dir_name = repo_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let dir_prefix = if dir_name.is_empty() {
-        String::new()
-    } else {
-        format!("{}/", dir_name)
-    };
-
+    let dir_prefix = repo_dir_prefix(&dir_name);
     let mut file_paths = Vec::new();
     for line in diff_text.lines() {
-        let rest = line
-            .strip_prefix("+++ b/")
-            .or_else(|| line.strip_prefix("--- a/"));
-        let rest = match rest {
-            Some(r) => r,
-            None => continue,
-        };
-        let path = rest.trim();
-        if path.is_empty() {
+        let Some(path) = diff_line_path(repo_path, &dir_prefix, line) else {
             continue;
-        }
-        let path = if !dir_prefix.is_empty() {
-            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
-                if repo_path.join(path).exists() {
-                    path
-                } else {
-                    stripped
-                }
-            } else {
-                path
-            }
-        } else {
-            path
         };
-        let path = path.to_string();
-        if !path.is_empty() && !file_paths.contains(&path) {
+        if !file_paths.contains(&path) {
             file_paths.push(path);
         }
     }
     file_paths
+}
+
+fn repo_dir_prefix(dir_name: &str) -> String {
+    if dir_name.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dir_name)
+    }
+}
+
+fn diff_line_path(repo_path: &Path, dir_prefix: &str, line: &str) -> Option<String> {
+    let path = line
+        .strip_prefix("+++ b/")
+        .or_else(|| line.strip_prefix("--- a/"))?
+        .trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some(strip_spurious_repo_prefix(repo_path, dir_prefix, path).to_string())
+}
+
+fn strip_spurious_repo_prefix<'a>(repo_path: &Path, dir_prefix: &str, path: &'a str) -> &'a str {
+    if dir_prefix.is_empty() || repo_path.join(path).exists() {
+        return path;
+    }
+    path.strip_prefix(dir_prefix).unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -291,7 +249,12 @@ mod tests {
             .args(args)
             .output()
             .expect("git runs");
-        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]

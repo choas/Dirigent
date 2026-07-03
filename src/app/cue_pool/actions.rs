@@ -548,76 +548,68 @@ impl DirigentApp {
     }
 
     fn process_revert_review(&mut self, cue_id: i64) {
-        // For jj workspace cues: delete the bookmark and forget the workspace.
-        // The commit stays in the repo (hidden) but is no longer referenced.
-        if self.claude.workspace_paths.contains_key(&cue_id) {
-            let cue_text = self
-                .cues
-                .iter()
-                .find(|c| c.id == cue_id)
-                .map(|c| c.text.clone())
-                .unwrap_or_default();
-            let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
-            match crate::jj::jj_delete_bookmark(
-                &self.project_root,
-                &bookmark,
-                &self.settings.jj_cli_path,
-            ) {
-                Ok(()) => {
-                    self.cleanup_jj_workspace(cue_id);
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                    let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
-                    self.set_status_message(
-                        "Reverted — bookmark deleted, workspace removed".to_string(),
-                    );
-                    self.reload_git_info();
-                }
-                Err(e) => {
-                    let msg = e.to_string().to_lowercase();
-                    if msg.contains("no such bookmark") || msg.contains("not found") {
-                        self.cleanup_jj_workspace(cue_id);
-                        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                        let _ = self.db.log_activity(
-                            cue_id,
-                            "Reverted (bookmark not found, cleaned workspace)",
-                        );
-                        self.set_status_message(
-                            "Reverted — bookmark already gone, workspace removed".to_string(),
-                        );
-                        self.reload_git_info();
-                    } else {
-                        let _ = self.db.log_activity(
-                            cue_id,
-                            &format!("Revert failed: jj bookmark delete error: {e}"),
-                        );
-                        self.set_status_message(format!("Revert failed: {e}"));
-                    }
-                }
-            }
+        if self.process_revert_workspace_review(cue_id) {
             return;
         }
 
-        let reverted = match self.db.get_latest_execution(cue_id) {
-            Ok(Some(exec)) => {
-                if let Some(ref diff) = exec.diff {
-                    let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
-                    match vcs_dispatch::revert_files(
-                        &self.settings.vcs_backend,
-                        &self.settings.jj_cli_path,
-                        &self.project_root,
-                        &file_paths,
-                    ) {
-                        Ok(()) => true,
-                        Err(e) => {
-                            self.set_status_message(format!("Revert failed: {}", e));
-                            false
-                        }
-                    }
-                } else {
-                    self.set_status_message("Nothing to revert — no diff in execution".into());
-                    false
-                }
+        if self.revert_latest_execution(cue_id) {
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            let _ = self.db.log_activity(cue_id, "Reverted");
+            self.reload_open_tabs();
+            self.reload_git_info();
+        }
+    }
+
+    fn process_revert_workspace_review(&mut self, cue_id: i64) -> bool {
+        // For jj workspace cues: delete the bookmark and forget the workspace.
+        // The commit stays in the repo (hidden) but is no longer referenced.
+        if !self.claude.workspace_paths.contains_key(&cue_id) {
+            return false;
+        }
+        let cue_text = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        let bookmark = crate::jj::cue_bookmark_name(cue_id, &cue_text);
+        match crate::jj::jj_delete_bookmark(
+            &self.project_root,
+            &bookmark,
+            &self.settings.jj_cli_path,
+        ) {
+            Ok(()) => self.finish_revert_workspace_review(
+                cue_id,
+                "Reverted (bookmark deleted)",
+                "Reverted — bookmark deleted, workspace removed",
+            ),
+            Err(e) if is_missing_jj_bookmark(&e) => self.finish_revert_workspace_review(
+                cue_id,
+                "Reverted (bookmark not found, cleaned workspace)",
+                "Reverted — bookmark already gone, workspace removed",
+            ),
+            Err(e) => {
+                let _ = self.db.log_activity(
+                    cue_id,
+                    &format!("Revert failed: jj bookmark delete error: {e}"),
+                );
+                self.set_status_message(format!("Revert failed: {e}"));
             }
+        }
+        true
+    }
+
+    fn finish_revert_workspace_review(&mut self, cue_id: i64, activity: &str, message: &str) {
+        self.cleanup_jj_workspace(cue_id);
+        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+        let _ = self.db.log_activity(cue_id, activity);
+        self.set_status_message(message.to_string());
+        self.reload_git_info();
+    }
+
+    fn revert_latest_execution(&mut self, cue_id: i64) -> bool {
+        match self.db.get_latest_execution(cue_id) {
+            Ok(Some(exec)) => self.revert_execution_diff(exec.diff.as_deref()),
             Ok(None) => {
                 self.set_status_message("Nothing to revert — no execution found".into());
                 false
@@ -626,12 +618,26 @@ impl DirigentApp {
                 self.set_status_message(format!("Revert failed: {}", e));
                 false
             }
+        }
+    }
+
+    fn revert_execution_diff(&mut self, diff: Option<&str>) -> bool {
+        let Some(diff) = diff else {
+            self.set_status_message("Nothing to revert — no diff in execution".into());
+            return false;
         };
-        if reverted {
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            let _ = self.db.log_activity(cue_id, "Reverted");
-            self.reload_open_tabs();
-            self.reload_git_info();
+        let file_paths = git::parse_diff_file_paths_for_repo(&self.project_root, diff);
+        match vcs_dispatch::revert_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &file_paths,
+        ) {
+            Ok(()) => true,
+            Err(e) => {
+                self.set_status_message(format!("Revert failed: {}", e));
+                false
+            }
         }
     }
 
@@ -670,67 +676,12 @@ impl DirigentApp {
         }
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
 
-        // Handle workspace cues individually via the same path as
-        // process_commit_review so cleanup_jj_workspace is invoked.
-        let mut workspace_accepted = 0usize;
-        let mut non_workspace_ids: Vec<i64> = Vec::new();
-        for &cue_id in &review_ids {
-            if self.claude.workspace_paths.contains_key(&cue_id)
-                && !self.claude.workspace_commit_failed.contains(&cue_id)
-            {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
-                self.cleanup_jj_workspace(cue_id);
-                workspace_accepted += 1;
-            } else {
-                non_workspace_ids.push(cue_id);
-            }
-        }
+        let (workspace_accepted, non_workspace_ids) =
+            self.accept_workspace_review_cues(&review_ids);
 
         // Commit remaining non-workspace cues in bulk.
         if !non_workspace_ids.is_empty() {
-            let non_ws_cues: Vec<&Cue> = self
-                .cues
-                .iter()
-                .filter(|c| non_workspace_ids.contains(&c.id))
-                .collect();
-            let subject = build_commit_all_subject(&non_ws_cues);
-            let cue_details: Vec<String> = non_ws_cues
-                .iter()
-                .map(|c| format!("- {}", c.text.trim()))
-                .collect();
-            let commit_msg = format!(
-                "{}\n\n{}\n\n{}",
-                subject,
-                cue_details.join("\n\n"),
-                git::DIRIGENT_FOOTER,
-            );
-            match vcs_dispatch::commit_all(
-                &self.settings.vcs_backend,
-                &self.settings.jj_cli_path,
-                &self.project_root,
-                &commit_msg,
-                self.git.active_bookmark.as_deref(),
-            ) {
-                Ok(hash) => {
-                    let short = &hash[..7.min(hash.len())];
-                    let total = workspace_accepted + non_workspace_ids.len();
-                    let plural = if total == 1 { "" } else { "s" };
-                    self.set_status_message(format!(
-                        "Committed all: {} ({} cue{})",
-                        short, total, plural,
-                    ));
-                    for cue_id in &non_workspace_ids {
-                        let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
-                        let _ = self
-                            .db
-                            .log_activity(*cue_id, &format!("Committed ({})", short));
-                    }
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Commit all failed: {}", e));
-                }
-            }
+            self.commit_non_workspace_review_cues(&non_workspace_ids, workspace_accepted);
         } else if workspace_accepted > 0 {
             let plural = if workspace_accepted == 1 { "" } else { "s" };
             self.set_status_message(format!(
@@ -741,6 +692,71 @@ impl DirigentApp {
 
         self.reload_git_info();
         self.reload_commit_history();
+    }
+
+    fn accept_workspace_review_cues(&mut self, review_ids: &[i64]) -> (usize, Vec<i64>) {
+        let mut workspace_accepted = 0usize;
+        let mut non_workspace_ids: Vec<i64> = Vec::new();
+        for &cue_id in review_ids {
+            if self.can_accept_workspace_cue(cue_id) {
+                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+                let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
+                self.cleanup_jj_workspace(cue_id);
+                workspace_accepted += 1;
+            } else {
+                non_workspace_ids.push(cue_id);
+            }
+        }
+        (workspace_accepted, non_workspace_ids)
+    }
+
+    fn can_accept_workspace_cue(&self, cue_id: i64) -> bool {
+        self.claude.workspace_paths.contains_key(&cue_id)
+            && !self.claude.workspace_commit_failed.contains(&cue_id)
+    }
+
+    fn commit_non_workspace_review_cues(
+        &mut self,
+        non_workspace_ids: &[i64],
+        workspace_accepted: usize,
+    ) {
+        let non_ws_cues: Vec<&Cue> = self
+            .cues
+            .iter()
+            .filter(|c| non_workspace_ids.contains(&c.id))
+            .collect();
+        let commit_msg = build_commit_all_message(&non_ws_cues);
+        match vcs_dispatch::commit_all(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            &self.project_root,
+            &commit_msg,
+            self.git.active_bookmark.as_deref(),
+        ) {
+            Ok(hash) => self.finish_commit_all(non_workspace_ids, workspace_accepted, &hash),
+            Err(e) => self.set_status_message(format!("Commit all failed: {}", e)),
+        }
+    }
+
+    fn finish_commit_all(
+        &mut self,
+        non_workspace_ids: &[i64],
+        workspace_accepted: usize,
+        hash: &str,
+    ) {
+        let short = &hash[..7.min(hash.len())];
+        let total = workspace_accepted + non_workspace_ids.len();
+        let plural = if total == 1 { "" } else { "s" };
+        self.set_status_message(format!(
+            "Committed all: {} ({} cue{})",
+            short, total, plural
+        ));
+        for cue_id in non_workspace_ids {
+            let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
+            let _ = self
+                .db
+                .log_activity(*cue_id, &format!("Committed ({})", short));
+        }
     }
 
     fn process_queue_next(&mut self, id: i64) {
@@ -1062,4 +1078,23 @@ impl DirigentApp {
             }
         }
     }
+}
+
+fn build_commit_all_message(cues: &[&Cue]) -> String {
+    let subject = build_commit_all_subject(cues);
+    let cue_details: Vec<String> = cues
+        .iter()
+        .map(|c| format!("- {}", c.text.trim()))
+        .collect();
+    format!(
+        "{}\n\n{}\n\n{}",
+        subject,
+        cue_details.join("\n\n"),
+        git::DIRIGENT_FOOTER,
+    )
+}
+
+fn is_missing_jj_bookmark(error: &impl std::fmt::Display) -> bool {
+    let msg = error.to_string().to_lowercase();
+    msg.contains("no such bookmark") || msg.contains("not found")
 }

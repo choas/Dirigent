@@ -5,6 +5,21 @@ use eframe::egui;
 
 use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
 
+/// Actions requested from within the Commit dialog UI, applied after the
+/// window closure has returned so `self` can be mutated freely.
+#[derive(Default)]
+struct CommitDialogActions {
+    dismiss: bool,
+    do_commit: bool,
+    generate: bool,
+    background: bool,
+    do_stage: bool,
+    nav_prev: bool,
+    nav_next: bool,
+    move_earlier: bool,
+    move_later: bool,
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_commit_dialog(&mut self, ctx: &egui::Context) {
         if !self.git.show_commit_dialog {
@@ -15,21 +30,7 @@ impl DirigentApp {
         // `process_commit_suggestion` so a backgrounded commit still completes
         // after the dialog has been closed.
 
-        let mut dismiss = false;
-        let mut do_commit = false;
-        let mut generate = false;
-        let mut background = false;
-        let mut do_stage = false;
-        let mut nav_prev = false;
-        let mut nav_next = false;
-        let mut move_earlier = false;
-        let mut move_later = false;
-
-        let fs = self.settings.font_size;
-        let queue_len = self.git.commit_queue.len();
-        let queue_pos = self.git.commit_queue_pos;
-        let in_queue = queue_len > 0;
-        let is_git = self.settings.vcs_backend == crate::settings::VcsBackend::Git;
+        let mut actions = CommitDialogActions::default();
 
         egui::Window::new("Commit")
             .collapsible(false)
@@ -39,267 +40,314 @@ impl DirigentApp {
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                if in_queue {
-                    // Split-commit mode: walk the queued change-set groups, each
-                    // committed in turn. Header shows position and lets the user
-                    // page between groups to adjust messages before committing.
-                    let title = self
-                        .git
-                        .commit_queue
-                        .get(queue_pos)
-                        .map(|g| g.title.clone())
-                        .unwrap_or_default();
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(queue_pos > 0, egui::Button::new("\u{25C0}").small())
-                            .on_hover_text("Previous change set")
-                            .clicked()
-                        {
-                            nav_prev = true;
-                        }
-                        ui.label(
-                            egui::RichText::new(format!("Commit {} of {queue_len}", queue_pos + 1))
-                                .strong(),
-                        );
-                        if ui
-                            .add_enabled(
-                                queue_pos + 1 < queue_len,
-                                egui::Button::new("\u{25B6}").small(),
-                            )
-                            .on_hover_text("Next change set")
-                            .clicked()
-                        {
-                            nav_next = true;
-                        }
-                        // Reorder the proposed sequence: the human decides the
-                        // final commit story, not the model's emitted order.
-                        ui.separator();
-                        if ui
-                            .add_enabled(queue_pos > 0, egui::Button::new("\u{2191}").small())
-                            .on_hover_text("Commit this change set earlier (move up in the order)")
-                            .clicked()
-                        {
-                            move_earlier = true;
-                        }
-                        if ui
-                            .add_enabled(
-                                queue_pos + 1 < queue_len,
-                                egui::Button::new("\u{2193}").small(),
-                            )
-                            .on_hover_text("Commit this change set later (move down in the order)")
-                            .clicked()
-                        {
-                            move_later = true;
-                        }
-                    });
-                    if !title.is_empty() {
-                        ui.label(
-                            egui::RichText::new(&title)
-                                .small()
-                                .color(self.semantic.secondary_text),
-                        );
-                    }
-                    // Per-file scope for this group: whole file, or "(N hunks)"
-                    // for a partial (v2) selection, marked "split" when the file
-                    // is also owned by another queued group.
-                    let files_label = self.commit_group_files_label(queue_pos);
-                    ui.label(
-                        egui::RichText::new(files_label)
-                            .small()
-                            .color(self.semantic.tertiary_text),
-                    );
-                } else if self.git.commit_review_cue_id.is_some() {
-                    ui.label("Commit the reviewed changes with a message.");
-                } else if !self.git.commit_files.is_empty() {
-                    let n = self.git.commit_files.len();
-                    ui.label(format!(
-                        "Commit {n} selected file{} with a message.",
-                        if n == 1 { "" } else { "s" }
-                    ));
-                } else if self.settings.vcs_backend == crate::settings::VcsBackend::Jj {
-                    ui.label("Describe the current working-copy commit and start a new change.");
-                } else {
-                    ui.label("Commit all working-copy changes with a message.");
-                }
-                ui.add_space(SPACE_XS);
-
-                if let Some(ref info) = self.git.info {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Branch:")
-                                .small()
-                                .color(self.semantic.tertiary_text),
-                        );
-                        ui.label(
-                            egui::RichText::new(&info.branch)
-                                .small()
-                                .strong()
-                                .color(self.semantic.secondary_text),
-                        );
-                    });
-                    let summary = crate::git::format_status_summary(info);
-                    if !summary.is_empty() {
-                        ui.label(
-                            egui::RichText::new(summary)
-                                .small()
-                                .color(self.semantic.tertiary_text),
-                        );
-                    }
-                    ui.add_space(SPACE_XS);
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Commit message").strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.git.commit_suggesting {
-                            ui.spinner();
-                            ui.label(
-                                egui::RichText::new("Generating\u{2026}")
-                                    .small()
-                                    .color(self.semantic.tertiary_text),
-                            );
-                        } else {
-                            // The button is always available: it drafts a message
-                            // from the diff using the Fast LLM when configured, and
-                            // otherwise falls back to the coding-agent CLI.
-                            let hover = if self.settings.fast_llm_enabled {
-                                "Draft a commit message from the diff using the Fast LLM"
-                            } else {
-                                "Draft a commit message from the diff using the CLI"
-                            };
-                            if ui
-                                .small_button(icon("\u{2728} Summarize", fs))
-                                .on_hover_text(hover)
-                                .clicked()
-                            {
-                                generate = true;
-                            }
-                        }
-                    });
-                });
-                let response = ui.add(
-                    egui::TextEdit::multiline(&mut self.git.commit_message_input)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(3)
-                        .hint_text("Describe what changed"),
-                );
-
-                if self.git.commit_needs_focus {
-                    response.request_focus();
-                    self.git.commit_needs_focus = false;
-                }
-
-                if response.has_focus()
-                    && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
-                    && !self.git.commit_message_input.trim().is_empty()
-                {
-                    do_commit = true;
-                }
-
-                ui.add_space(SPACE_XS);
-
-                ui.label(
-                    egui::RichText::new("Cmd+Enter to commit")
-                        .small()
-                        .color(self.semantic.tertiary_text),
-                );
-
-                ui.add_space(SPACE_SM);
-
-                ui.horizontal(|ui| {
-                    let can_commit = !self.git.commit_message_input.trim().is_empty();
-                    let commit_label = if in_queue && queue_len > 1 {
-                        "\u{2714} Commit & Next"
-                    } else {
-                        "\u{2714} Commit"
-                    };
-                    let commit_btn = egui::Button::new(
-                        icon(commit_label, fs).color(self.semantic.badge_text),
-                    )
-                    .fill(self.semantic.accent);
-                    if ui
-                        .add_enabled(can_commit, commit_btn)
-                        .on_hover_text("Commit these changes")
-                        .clicked()
-                    {
-                        do_commit = true;
-                    }
-                    // Staging applies to a scoped set of files (a selection or a
-                    // queued group) and only with Git, which has a staging area.
-                    if is_git
-                        && !self.git.commit_files.is_empty()
-                        && ui
-                            .button(icon("\u{2295} Stage", fs))
-                            .on_hover_text("Stage these files (git add) without committing")
-                            .clicked()
-                    {
-                        do_stage = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        dismiss = true;
-                    }
-                    // Backgrounding only applies to a plain working-copy commit,
-                    // not to a reviewed cue's diff or a split-commit queue.
-                    if self.git.commit_review_cue_id.is_none()
-                        && !in_queue
-                        && ui
-                            .button("Background")
-                            .on_hover_text(
-                                "Close and commit in the background once the message is ready",
-                            )
-                            .clicked()
-                    {
-                        background = true;
-                    }
-                });
-
-                ui.add_space(SPACE_XS);
+                self.render_commit_dialog_contents(ui, &mut actions);
             });
 
-        if do_commit {
-            // In queue mode, persist the edited message so a failed commit keeps
-            // it; on success the group is dropped and the dialog advances.
-            if in_queue {
-                self.save_current_commit_group_message();
+        self.apply_commit_dialog_actions(&actions);
+    }
+
+    fn render_commit_dialog_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        actions: &mut CommitDialogActions,
+    ) {
+        self.render_commit_dialog_header(ui, actions);
+        ui.add_space(SPACE_XS);
+
+        self.render_commit_branch_info(ui);
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Commit message").strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.render_commit_summarize_control(ui, actions);
+            });
+        });
+        let response = ui.add(
+            egui::TextEdit::multiline(&mut self.git.commit_message_input)
+                .desired_width(f32::INFINITY)
+                .desired_rows(3)
+                .hint_text("Describe what changed"),
+        );
+
+        if self.git.commit_needs_focus {
+            response.request_focus();
+            self.git.commit_needs_focus = false;
+        }
+
+        if response.has_focus()
+            && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
+            && !self.git.commit_message_input.trim().is_empty()
+        {
+            actions.do_commit = true;
+        }
+
+        ui.add_space(SPACE_XS);
+
+        ui.label(
+            egui::RichText::new("Cmd+Enter to commit")
+                .small()
+                .color(self.semantic.tertiary_text),
+        );
+
+        ui.add_space(SPACE_SM);
+
+        self.render_commit_dialog_buttons(ui, actions);
+
+        ui.add_space(SPACE_XS);
+    }
+
+    /// One-line description of what is being committed: the queued change-set
+    /// header in split-commit mode, otherwise the scope of the commit.
+    fn render_commit_dialog_header(&self, ui: &mut egui::Ui, actions: &mut CommitDialogActions) {
+        if !self.git.commit_queue.is_empty() {
+            self.render_commit_queue_header(ui, actions);
+        } else if self.git.commit_review_cue_id.is_some() {
+            ui.label("Commit the reviewed changes with a message.");
+        } else if !self.git.commit_files.is_empty() {
+            let n = self.git.commit_files.len();
+            ui.label(format!(
+                "Commit {n} selected file{} with a message.",
+                if n == 1 { "" } else { "s" }
+            ));
+        } else if self.settings.vcs_backend == crate::settings::VcsBackend::Jj {
+            ui.label("Describe the current working-copy commit and start a new change.");
+        } else {
+            ui.label("Commit all working-copy changes with a message.");
+        }
+    }
+
+    /// Split-commit mode: walk the queued change-set groups, each committed in
+    /// turn. Header shows position and lets the user page between groups to
+    /// adjust messages before committing.
+    fn render_commit_queue_header(&self, ui: &mut egui::Ui, actions: &mut CommitDialogActions) {
+        let queue_len = self.git.commit_queue.len();
+        let queue_pos = self.git.commit_queue_pos;
+        let title = self
+            .git
+            .commit_queue
+            .get(queue_pos)
+            .map(|g| g.title.clone())
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(queue_pos > 0, egui::Button::new("\u{25C0}").small())
+                .on_hover_text("Previous change set")
+                .clicked()
+            {
+                actions.nav_prev = true;
             }
-            // A queued group with a per-hunk selection commits only those hunks
-            // (v2 partial); everything else commits whole files via start_commit.
-            let partial = in_queue
-                && self
-                    .git
-                    .commit_queue
-                    .get(self.git.commit_queue_pos)
-                    .map(|g| !g.hunk_selection.is_empty())
-                    .unwrap_or(false);
-            if partial {
-                self.commit_current_group_partial();
+            ui.label(
+                egui::RichText::new(format!("Commit {} of {queue_len}", queue_pos + 1)).strong(),
+            );
+            if ui
+                .add_enabled(
+                    queue_pos + 1 < queue_len,
+                    egui::Button::new("\u{25B6}").small(),
+                )
+                .on_hover_text("Next change set")
+                .clicked()
+            {
+                actions.nav_next = true;
+            }
+            // Reorder the proposed sequence: the human decides the
+            // final commit story, not the model's emitted order.
+            ui.separator();
+            if ui
+                .add_enabled(queue_pos > 0, egui::Button::new("\u{2191}").small())
+                .on_hover_text("Commit this change set earlier (move up in the order)")
+                .clicked()
+            {
+                actions.move_earlier = true;
+            }
+            if ui
+                .add_enabled(
+                    queue_pos + 1 < queue_len,
+                    egui::Button::new("\u{2193}").small(),
+                )
+                .on_hover_text("Commit this change set later (move down in the order)")
+                .clicked()
+            {
+                actions.move_later = true;
+            }
+        });
+        if !title.is_empty() {
+            ui.label(
+                egui::RichText::new(&title)
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+        }
+        // Per-file scope for this group: whole file, or "(N hunks)"
+        // for a partial (v2) selection, marked "split" when the file
+        // is also owned by another queued group.
+        let files_label = self.commit_group_files_label(queue_pos);
+        ui.label(
+            egui::RichText::new(files_label)
+                .small()
+                .color(self.semantic.tertiary_text),
+        );
+    }
+
+    fn render_commit_branch_info(&self, ui: &mut egui::Ui) {
+        let Some(info) = &self.git.info else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Branch:")
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            );
+            ui.label(
+                egui::RichText::new(&info.branch)
+                    .small()
+                    .strong()
+                    .color(self.semantic.secondary_text),
+            );
+        });
+        let summary = crate::git::format_status_summary(info);
+        if !summary.is_empty() {
+            ui.label(
+                egui::RichText::new(summary)
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            );
+        }
+        ui.add_space(SPACE_XS);
+    }
+
+    fn render_commit_summarize_control(
+        &self,
+        ui: &mut egui::Ui,
+        actions: &mut CommitDialogActions,
+    ) {
+        if self.git.commit_suggesting {
+            ui.spinner();
+            ui.label(
+                egui::RichText::new("Generating\u{2026}")
+                    .small()
+                    .color(self.semantic.tertiary_text),
+            );
+        } else {
+            // The button is always available: it drafts a message
+            // from the diff using the Fast LLM when configured, and
+            // otherwise falls back to the coding-agent CLI.
+            let hover = if self.settings.fast_llm_enabled {
+                "Draft a commit message from the diff using the Fast LLM"
             } else {
-                self.start_commit();
+                "Draft a commit message from the diff using the CLI"
+            };
+            if ui
+                .small_button(icon("\u{2728} Summarize", self.settings.font_size))
+                .on_hover_text(hover)
+                .clicked()
+            {
+                actions.generate = true;
             }
-        } else if background {
+        }
+    }
+
+    fn render_commit_dialog_buttons(&self, ui: &mut egui::Ui, actions: &mut CommitDialogActions) {
+        let fs = self.settings.font_size;
+        let in_queue = !self.git.commit_queue.is_empty();
+        let is_git = self.settings.vcs_backend == crate::settings::VcsBackend::Git;
+        let can_commit = !self.git.commit_message_input.trim().is_empty();
+        let commit_label = if in_queue && self.git.commit_queue.len() > 1 {
+            "\u{2714} Commit & Next"
+        } else {
+            "\u{2714} Commit"
+        };
+        ui.horizontal(|ui| {
+            let commit_btn =
+                egui::Button::new(icon(commit_label, fs).color(self.semantic.badge_text))
+                    .fill(self.semantic.accent);
+            if ui
+                .add_enabled(can_commit, commit_btn)
+                .on_hover_text("Commit these changes")
+                .clicked()
+            {
+                actions.do_commit = true;
+            }
+            // Staging applies to a scoped set of files (a selection or a
+            // queued group) and only with Git, which has a staging area.
+            if is_git
+                && !self.git.commit_files.is_empty()
+                && ui
+                    .button(icon("\u{2295} Stage", fs))
+                    .on_hover_text("Stage these files (git add) without committing")
+                    .clicked()
+            {
+                actions.do_stage = true;
+            }
+            if ui.button("Cancel").clicked() {
+                actions.dismiss = true;
+            }
+            // Backgrounding only applies to a plain working-copy commit,
+            // not to a reviewed cue's diff or a split-commit queue.
+            if self.git.commit_review_cue_id.is_none()
+                && !in_queue
+                && ui
+                    .button("Background")
+                    .on_hover_text("Close and commit in the background once the message is ready")
+                    .clicked()
+            {
+                actions.background = true;
+            }
+        });
+    }
+
+    fn apply_commit_dialog_actions(&mut self, actions: &CommitDialogActions) {
+        let queue_len = self.git.commit_queue.len();
+        let queue_pos = self.git.commit_queue_pos;
+        let in_queue = queue_len > 0;
+        if actions.do_commit {
+            self.commit_from_dialog(in_queue);
+        } else if actions.background {
             self.background_commit();
-        } else if dismiss {
+        } else if actions.dismiss {
             self.cancel_commit_dialog();
-        } else if move_earlier {
+        } else if actions.move_earlier {
             // The dialog stays on the same group: only its order changes, so the
             // message/files in the editor remain valid without a reload.
             self.move_commit_group(-1);
-        } else if move_later {
+        } else if actions.move_later {
             self.move_commit_group(1);
-        } else if nav_prev {
+        } else if actions.nav_prev {
             self.save_current_commit_group_message();
             self.load_commit_group(queue_pos.saturating_sub(1));
-        } else if nav_next {
+        } else if actions.nav_next {
             self.save_current_commit_group_message();
             self.load_commit_group((queue_pos + 1).min(queue_len.saturating_sub(1)));
-        } else if do_stage {
+        } else if actions.do_stage {
             if in_queue {
                 self.save_current_commit_group_message();
             }
             self.stage_commit_files();
         }
-        if generate {
+        if actions.generate {
             self.spawn_commit_message_suggestion();
+        }
+    }
+
+    fn commit_from_dialog(&mut self, in_queue: bool) {
+        // In queue mode, persist the edited message so a failed commit keeps
+        // it; on success the group is dropped and the dialog advances.
+        if in_queue {
+            self.save_current_commit_group_message();
+        }
+        // A queued group with a per-hunk selection commits only those hunks
+        // (v2 partial); everything else commits whole files via start_commit.
+        let partial = in_queue
+            && self
+                .git
+                .commit_queue
+                .get(self.git.commit_queue_pos)
+                .map(|g| !g.hunk_selection.is_empty())
+                .unwrap_or(false);
+        if partial {
+            self.commit_current_group_partial();
+        } else {
+            self.start_commit();
         }
     }
 

@@ -71,6 +71,14 @@ struct StreamMetrics {
     num_turns: Option<u64>,
 }
 
+#[derive(Default)]
+struct CodexStreamState {
+    final_result: String,
+    edited_files: Vec<String>,
+    metrics: StreamMetrics,
+    logged_tool_item_ids: Vec<String>,
+}
+
 struct HookCommand {
     program: String,
     args: Vec<String>,
@@ -428,10 +436,7 @@ fn process_event_stream(
     use std::io::BufRead;
 
     let reader = std::io::BufReader::new(stdout_handle);
-    let mut final_result = String::new();
-    let mut edited_files = Vec::new();
-    let mut metrics = StreamMetrics::default();
-    let mut logged_tool_item_ids = Vec::new();
+    let mut state = CodexStreamState::default();
 
     for line_result in reader.lines() {
         if cancel.load(Ordering::Relaxed) {
@@ -443,46 +448,84 @@ fn process_event_stream(
             continue;
         }
 
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
-            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            let item_id = event
-                .get("item")
-                .and_then(|item| item.get("id"))
-                .and_then(|id| id.as_str());
-
-            if should_log_tool_event(event_type, item_id, &logged_tool_item_ids) {
-                if let Some((name, detail)) = extract_tool_call_from_event(&event) {
-                    on_log(&format!("\u{2192} {}{}\n", name, detail));
-                    if let Some(id) = item_id {
-                        logged_tool_item_ids.push(id.to_string());
-                    }
-                }
-            }
-            if let Some(text) = extract_text_from_event(&event) {
-                on_log(text);
-                on_log("\n");
-                final_result.push_str(text);
-                final_result.push('\n');
-            }
-            collect_edited_paths(&event, &mut edited_files);
-            if let Some(cost) = event.get("cost_usd").and_then(|c| c.as_f64()) {
-                metrics.cost_usd = Some(cost);
-            }
-            if let Some(duration_ms) = event.get("duration_ms").and_then(|d| d.as_u64()) {
-                metrics.duration_ms = Some(duration_ms);
-            }
-            if is_turn_complete_event(&event) {
-                metrics.num_turns = Some(metrics.num_turns.unwrap_or(0).saturating_add(1));
-            }
-            continue;
-        }
-
-        on_log(&format!("{}\n", line));
-        final_result.push_str(line);
-        final_result.push('\n');
+        process_codex_stream_line(line, on_log, &mut state);
     }
 
-    Ok((final_result, edited_files, metrics))
+    Ok((state.final_result, state.edited_files, state.metrics))
+}
+
+fn process_codex_stream_line(
+    line: &str,
+    on_log: &mut dyn FnMut(&str),
+    state: &mut CodexStreamState,
+) {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(event) => process_codex_json_event(&event, on_log, state),
+        Err(_) => append_plain_codex_line(line, on_log, &mut state.final_result),
+    }
+}
+
+fn process_codex_json_event(
+    event: &serde_json::Value,
+    on_log: &mut dyn FnMut(&str),
+    state: &mut CodexStreamState,
+) {
+    log_codex_tool_event(event, on_log, &mut state.logged_tool_item_ids);
+    append_codex_text_event(event, on_log, &mut state.final_result);
+    collect_edited_paths(event, &mut state.edited_files);
+    update_codex_metrics(event, &mut state.metrics);
+}
+
+fn log_codex_tool_event(
+    event: &serde_json::Value,
+    on_log: &mut dyn FnMut(&str),
+    logged_tool_item_ids: &mut Vec<String>,
+) {
+    let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let item_id = event
+        .get("item")
+        .and_then(|item| item.get("id"))
+        .and_then(|id| id.as_str());
+    if !should_log_tool_event(event_type, item_id, logged_tool_item_ids) {
+        return;
+    }
+    if let Some((name, detail)) = extract_tool_call_from_event(event) {
+        on_log(&format!("\u{2192} {}{}\n", name, detail));
+        if let Some(id) = item_id {
+            logged_tool_item_ids.push(id.to_string());
+        }
+    }
+}
+
+fn append_codex_text_event(
+    event: &serde_json::Value,
+    on_log: &mut dyn FnMut(&str),
+    final_result: &mut String,
+) {
+    if let Some(text) = extract_text_from_event(event) {
+        on_log(text);
+        on_log("\n");
+        final_result.push_str(text);
+        final_result.push('\n');
+    }
+}
+
+fn append_plain_codex_line(line: &str, on_log: &mut dyn FnMut(&str), final_result: &mut String) {
+    on_log(&format!("{}\n", line));
+    final_result.push_str(line);
+    final_result.push('\n');
+}
+
+fn update_codex_metrics(event: &serde_json::Value, metrics: &mut StreamMetrics) {
+    if let Some(cost) = event.get("cost_usd").and_then(|c| c.as_f64()) {
+        metrics.cost_usd = Some(cost);
+    }
+    if let Some(duration_ms) = event.get("duration_ms").and_then(|d| d.as_u64()) {
+        metrics.duration_ms = Some(duration_ms);
+    }
+    if is_turn_complete_event(event) {
+        metrics.num_turns = Some(metrics.num_turns.unwrap_or(0).saturating_add(1));
+    }
 }
 
 fn stream_stderr(

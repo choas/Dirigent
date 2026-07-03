@@ -2,11 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use crate::ai_process;
 use crate::claude;
-
-const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 pub(crate) enum OpenCodeError {
@@ -79,50 +78,6 @@ pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
     }
 }
 
-/// Run a hook script (pre-run or post-run) and log its output.
-/// Returns `Err` only for pre-run failures (when `fail_on_error` is true).
-fn run_hook_script(
-    label: &str,
-    script: &str,
-    project_root: &Path,
-    on_log: &mut impl FnMut(&str),
-    fail_on_error: bool,
-) -> Result<(), OpenCodeError> {
-    if script.trim().is_empty() {
-        return Ok(());
-    }
-    on_log(&format!("\u{25B6} {}: {}\n", label, script.trim()));
-    let result = Command::new("sh")
-        .arg("-c")
-        .arg(script.trim())
-        .current_dir(project_root)
-        .output();
-    match result {
-        Ok(output) => {
-            if !output.stdout.is_empty() {
-                on_log(&String::from_utf8_lossy(&output.stdout));
-            }
-            if !output.stderr.is_empty() {
-                on_log(&String::from_utf8_lossy(&output.stderr));
-            }
-            if !output.status.success() {
-                let msg = format!("{} script failed (exit {})", label, output.status);
-                on_log(&format!("\u{2717} {}\n", msg));
-                if fail_on_error {
-                    return Err(OpenCodeError::SpawnFailed(std::io::Error::other(msg)));
-                }
-            }
-        }
-        Err(e) => {
-            on_log(&format!("\u{2717} {} script error: {}\n", label, e));
-            if fail_on_error {
-                return Err(OpenCodeError::SpawnFailed(e));
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Extract text content from a text event, trying multiple field paths
 /// to handle different OpenCode stream format versions.
 fn extract_text_from_event(event: &serde_json::Value) -> Option<&str> {
@@ -165,7 +120,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
 
     let mut new_edited_file = None;
     if is_file_tool(name) {
-        new_edited_file = extract_file_path_from_input(&input);
+        new_edited_file = ai_process::extract_file_path_from_input(&input);
         if new_edited_file.is_none() {
             // Log bash commands when no file path is found
             if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
@@ -180,7 +135,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
         }
     }
 
-    let detail = build_tool_detail(&input);
+    let detail = ai_process::build_tool_detail(&input, true);
     if !detail.is_empty() {
         on_log(&format!("\u{2192} {}{}\n", name, detail));
     }
@@ -190,45 +145,7 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
 
 /// Check whether a tool name refers to a file-modifying tool.
 fn is_file_tool(name: &str) -> bool {
-    let name_lower = name.to_ascii_lowercase();
-    matches!(name, "Write" | "Edit" | "Bash" | "Task")
-        || matches!(
-            name_lower.as_str(),
-            "write"
-                | "edit"
-                | "bash"
-                | "task"
-                | "write_file"
-                | "edit_file"
-                | "create_file"
-                | "str_replace_editor"
-                | "file_editor"
-                | "write_to_file"
-                | "apply_diff"
-        )
-}
-
-/// Extract a file path from tool input using common field names.
-fn extract_file_path_from_input(input: &serde_json::Value) -> Option<String> {
-    input
-        .get("file_path")
-        .or_else(|| input.get("path"))
-        .or_else(|| input.get("file"))
-        .and_then(|p| p.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Build a human-readable detail string from tool input.
-fn build_tool_detail(input: &serde_json::Value) -> String {
-    if let Some(file_path) = input.get("file_path").and_then(|p| p.as_str()) {
-        format!(" {}", file_path)
-    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-        format!(" $ {}", command.lines().next().unwrap_or(""))
-    } else if let Some(grep) = input.get("pattern").and_then(|p| p.as_str()) {
-        format!(" \"{}\"", grep)
-    } else {
-        String::new()
-    }
+    ai_process::is_file_related_tool(name)
 }
 
 /// Process a "step_finish" event from the OpenCode JSON stream.
@@ -340,26 +257,6 @@ fn build_opencode_command(
     Ok(cmd)
 }
 
-/// Spawn a watchdog thread that kills the child process on cancellation.
-fn spawn_watchdog(
-    child: &Arc<Mutex<std::process::Child>>,
-    cancel: &Arc<AtomicBool>,
-    done: &Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    let child = Arc::clone(child);
-    let cancel = Arc::clone(cancel);
-    let done = Arc::clone(done);
-    std::thread::spawn(move || {
-        while !done.load(Ordering::Relaxed) {
-            if cancel.load(Ordering::Relaxed) {
-                let _ = child.lock().map(|mut c| c.kill());
-                return;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
-        }
-    })
-}
-
 /// Process the JSON event stream from stdout, collecting results, edited files, and metrics.
 fn process_event_stream(
     stdout_handle: impl std::io::Read,
@@ -380,24 +277,9 @@ fn process_event_stream(
         }
         let line = line_result?;
 
-        // The stream format may use SSE (Server-Sent Events) framing.
-        // Strip `data:` prefixes and skip non-data SSE lines.
-        let json_str = if let Some(data) = line.strip_prefix("data:") {
-            data.trim()
-        } else if line.is_empty()
-            || line.starts_with("event:")
-            || line.starts_with("id:")
-            || line.starts_with("retry:")
-            || line.starts_with(':')
-        {
+        let Some(json_str) = ai_process::stream_json_payload(&line) else {
             continue;
-        } else {
-            line.trim()
         };
-
-        if json_str.is_empty() {
-            continue;
-        }
 
         let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) else {
             on_log(&line);
@@ -469,28 +351,6 @@ fn dispatch_event(
     }
 }
 
-/// Wait for the child process to exit (handles poisoned mutex).
-fn wait_for_child(
-    child: &Arc<Mutex<std::process::Child>>,
-) -> std::io::Result<std::process::ExitStatus> {
-    match child.lock() {
-        Ok(mut c) => c.wait(),
-        Err(poisoned) => poisoned.into_inner().wait(),
-    }
-}
-
-/// Kill the child process (handles poisoned mutex).
-fn kill_child(child: &Arc<Mutex<std::process::Child>>) {
-    match child.lock() {
-        Ok(mut c) => {
-            let _ = c.kill();
-        }
-        Err(poisoned) => {
-            let _ = poisoned.into_inner().kill();
-        }
-    }
-}
-
 /// Check the child process exit status and log stderr on failure.
 fn check_exit_status<F: FnMut(&str)>(
     exit_status: std::process::ExitStatus,
@@ -502,14 +362,9 @@ fn check_exit_status<F: FnMut(&str)>(
     }
     let status = exit_status;
     if !stderr.is_empty() {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for non-zero exit error: {:?}",
-                e
-            );
-            e.into_inner()
+        ai_process::with_locked_log(on_log, "non-zero exit error", |log| {
+            log(&format!("\nError: {}\n", stderr));
         });
-        log(&format!("\nError: {}\n", stderr));
     }
     Err(OpenCodeError::NonZeroExit(status))
 }
@@ -529,73 +384,40 @@ pub(crate) fn invoke_opencode_streaming(
 
     let opencode_bin = resolve_opencode_bin(config.cli_path)?;
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
-            e.into_inner()
-        });
-        run_hook_script(
-            "pre-run",
-            config.pre_run_script,
-            project_root,
-            &mut *log,
-            true,
-        )?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "pre-run",
+        config.pre_run_script,
+        project_root,
+        true,
+    )
+    .map_err(OpenCodeError::SpawnFailed)?;
 
     let run_start = Instant::now();
-    let mut child = {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for command build: {:?}",
-                e
-            );
-            e.into_inner()
-        });
+    let mut child = ai_process::with_locked_log(&on_log, "command build", |log| {
         build_opencode_command(&opencode_bin, prompt, project_root, config, &mut *log)?
             .spawn()
-            .map_err(OpenCodeError::SpawnFailed)?
-    };
+            .map_err(OpenCodeError::SpawnFailed)
+    })?;
 
     let stderr_handle = child.stderr.take().expect("stderr must be piped");
     let stdout_handle = child.stdout.take().expect("stdout must be piped");
 
     let child = Arc::new(Mutex::new(child));
     let done = Arc::new(AtomicBool::new(false));
-    let watchdog = spawn_watchdog(&child, &cancel, &done);
+    let watchdog = ai_process::spawn_cancel_watchdog(&child, &cancel, &done);
 
     // Stream stderr line-by-line so the user sees OpenCode progress in real
     // time (stderr is unbuffered / line-buffered even when stdout is piped).
     // We filter through `filter_opencode_log_line` to suppress verbose
     // INFO/DEBUG noise while preserving WARN/ERROR and useful metadata.
-    let on_log_for_stderr = Arc::clone(&on_log);
-    let stderr_thread = std::thread::spawn(move || {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(stderr_handle);
-        let mut full_stderr = String::new();
-        for line in reader.lines() {
-            match line {
-                Ok(line) => {
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    claude::filter_opencode_log_line(&line, &mut *log);
-                    full_stderr.push_str(&line);
-                    full_stderr.push('\n');
-                }
-                Err(e) => {
-                    let msg = format!("stderr read error: {e}\n");
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    log(&msg);
-                    full_stderr.push_str(&msg);
-                    break;
-                }
-            }
-        }
-        full_stderr
-    });
+    let stderr_thread =
+        ai_process::spawn_stderr_collector(stderr_handle, Arc::clone(&on_log), |line, log| {
+            claude::filter_opencode_log_line(line, log);
+        });
 
     let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
-        let mut log = on_log.lock().unwrap_or_else(|e| e.into_inner());
-        log(text);
+        ai_process::with_locked_log(&on_log, "stdout", |log| log(text));
     });
 
     done.store(true, Ordering::Relaxed);
@@ -606,16 +428,16 @@ pub(crate) fn invoke_opencode_streaming(
     let (final_result, edited_files, stream_metrics) = match stream_result {
         Ok(result) => result,
         Err(error) => {
-            kill_child(&child);
+            ai_process::kill_child(&child);
             let _ = watchdog.join();
-            let _ = wait_for_child(&child);
+            let _ = ai_process::wait_for_child(&child);
             let _ = stderr_thread.join();
             return Err(OpenCodeError::StreamReadError(error));
         }
     };
 
     let _ = watchdog.join();
-    let exit_status = wait_for_child(&child);
+    let exit_status = ai_process::wait_for_child(&child);
     let stderr = stderr_thread.join().unwrap_or_default();
 
     if cancel.load(Ordering::Relaxed) {
@@ -625,33 +447,16 @@ pub(crate) fn invoke_opencode_streaming(
     let exit_status = exit_status.map_err(OpenCodeError::WaitFailed)?;
     check_exit_status(exit_status, &stderr, &on_log)?;
 
-    if final_result.is_empty() && !stderr.is_empty() {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for empty-result error: {:?}",
-                e
-            );
-            e.into_inner()
-        });
-        log(&format!("\nError: {}\n", stderr));
-    }
+    ai_process::log_empty_result_stderr(&on_log, &final_result, &stderr);
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for post-run: {:?}",
-                e
-            );
-            e.into_inner()
-        });
-        run_hook_script(
-            "post-run",
-            config.post_run_script,
-            project_root,
-            &mut *log,
-            false,
-        )?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "post-run",
+        config.post_run_script,
+        project_root,
+        false,
+    )
+    .map_err(OpenCodeError::SpawnFailed)?;
 
     let elapsed_ms = run_start.elapsed().as_millis() as u64;
 

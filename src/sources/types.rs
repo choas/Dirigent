@@ -35,6 +35,12 @@ impl SourceItem {
         self.line_number = line_number;
         self
     }
+
+    /// Set the stable source identifier that produced this item.
+    pub fn with_source_id(mut self, source_id: &str) -> Self {
+        self.source_id = source_id.to_string();
+        self
+    }
 }
 
 /// A Notion database or page visible to the integration token.

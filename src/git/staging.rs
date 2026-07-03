@@ -37,7 +37,10 @@ impl FileRawDiff {
 
     /// The `@@ ... @@` header line of hunk `idx`.
     pub fn hunk_header(&self, idx: usize) -> Option<&str> {
-        self.hunks.get(idx).and_then(|h| h.first()).map(|s| s.as_str())
+        self.hunks
+            .get(idx)
+            .and_then(|h| h.first())
+            .map(|s| s.as_str())
     }
 
     /// The verbatim lines of hunk `idx` (starting with its `@@` header), for
@@ -91,59 +94,98 @@ pub(crate) fn match_hunk_header(file: &FileRawDiff, header: &str) -> Option<usiz
 /// Split a raw (possibly multi-file) unified diff into per-file sections,
 /// preserving every line verbatim.
 pub(crate) fn split_into_file_diffs(diff: &str) -> Vec<FileRawDiff> {
-    let mut files: Vec<FileRawDiff> = Vec::new();
-    let mut cur: Option<FileRawDiff> = None;
-    // Whether we've passed the header and are accumulating hunk bodies.
-    let mut in_hunks = false;
-
+    let mut builder = RawDiffBuilder::default();
     for line in diff.lines() {
+        builder.push_line(line);
+    }
+    builder.finish()
+}
+
+#[derive(Default)]
+struct RawDiffBuilder {
+    files: Vec<FileRawDiff>,
+    cur: Option<FileRawDiff>,
+    in_hunks: bool,
+}
+
+impl RawDiffBuilder {
+    fn push_line(&mut self, line: &str) {
         if line.starts_with("diff --git ") {
-            if let Some(f) = cur.take() {
-                files.push(f);
-            }
-            cur = Some(FileRawDiff {
-                path: parse_diff_git_path(line),
-                header: vec![line.to_string()],
-                hunks: Vec::new(),
-                binary: false,
-            });
-            in_hunks = false;
-            continue;
-        }
-        let Some(f) = cur.as_mut() else {
-            // Lines before the first `diff --git` (shouldn't happen) are ignored.
-            continue;
-        };
-        if line.starts_with("@@ ") {
-            in_hunks = true;
-            f.hunks.push(vec![line.to_string()]);
-        } else if in_hunks {
-            // Body line of the current hunk (context/+/-/\ marker).
-            if let Some(h) = f.hunks.last_mut() {
-                h.push(line.to_string());
-            }
+            self.start_file(line);
+        } else if line.starts_with("@@ ") {
+            self.start_hunk(line);
+        } else if self.in_hunks {
+            self.push_hunk_line(line);
         } else {
-            // Still in the file header block.
-            if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
-                f.binary = true;
-            }
-            // Prefer the explicit +++/--- paths when present.
-            if let Some(p) = line.strip_prefix("+++ ") {
-                if p != "/dev/null" {
-                    f.path = strip_ab_prefix(p);
-                }
-            } else if let Some(p) = line.strip_prefix("--- ") {
-                if p != "/dev/null" && f.path.is_empty() {
-                    f.path = strip_ab_prefix(p);
-                }
-            }
-            f.header.push(line.to_string());
+            self.push_header_line(line);
         }
     }
-    if let Some(f) = cur.take() {
-        files.push(f);
+
+    fn start_file(&mut self, line: &str) {
+        self.flush_current();
+        self.cur = Some(FileRawDiff {
+            path: parse_diff_git_path(line),
+            header: vec![line.to_string()],
+            hunks: Vec::new(),
+            binary: false,
+        });
+        self.in_hunks = false;
     }
-    files
+
+    fn start_hunk(&mut self, line: &str) {
+        if let Some(file) = self.cur.as_mut() {
+            self.in_hunks = true;
+            file.hunks.push(vec![line.to_string()]);
+        }
+    }
+
+    fn push_hunk_line(&mut self, line: &str) {
+        if let Some(hunk) = self.cur.as_mut().and_then(|file| file.hunks.last_mut()) {
+            hunk.push(line.to_string());
+        }
+    }
+
+    fn push_header_line(&mut self, line: &str) {
+        let Some(file) = self.cur.as_mut() else {
+            return;
+        };
+        update_file_header_from_line(file, line);
+        file.header.push(line.to_string());
+    }
+
+    fn flush_current(&mut self) {
+        if let Some(file) = self.cur.take() {
+            self.files.push(file);
+        }
+    }
+
+    fn finish(mut self) -> Vec<FileRawDiff> {
+        self.flush_current();
+        self.files
+    }
+}
+
+fn update_file_header_from_line(file: &mut FileRawDiff, line: &str) {
+    if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
+        file.binary = true;
+    }
+    if let Some(path) = plus_header_path(line) {
+        file.path = path;
+    } else if let Some(path) = minus_header_path(line, file.path.is_empty()) {
+        file.path = path;
+    }
+}
+
+fn plus_header_path(line: &str) -> Option<String> {
+    line.strip_prefix("+++ ")
+        .filter(|path| *path != "/dev/null")
+        .map(strip_ab_prefix)
+}
+
+fn minus_header_path(line: &str, path_empty: bool) -> Option<String> {
+    line.strip_prefix("--- ")
+        .filter(|path| path_empty && *path != "/dev/null")
+        .map(strip_ab_prefix)
 }
 
 /// Extract the path from a `diff --git a/<path> b/<path>` line (the `b/` side).
@@ -366,7 +408,10 @@ mod tests {
         assert!(is_partially_staged(p, "f.txt"));
         let staged = get_staged_diff(p, &[]).unwrap();
         assert!(staged.contains("CHANGED1"));
-        assert!(!staged.contains("CHANGED20"), "second hunk must stay unstaged");
+        assert!(
+            !staged.contains("CHANGED20"),
+            "second hunk must stay unstaged"
+        );
         // Working tree on disk is unchanged (both edits still present).
         let disk = std::fs::read_to_string(p.join("f.txt")).unwrap();
         assert!(disk.contains("CHANGED1") && disk.contains("CHANGED20"));
@@ -406,7 +451,10 @@ mod tests {
         let patch = build_hunk_patch(&files[0], 0).unwrap();
         discard_hunk(p, &patch).expect("discard");
         // The edit is gone from disk; file matches the committed content.
-        assert_eq!(std::fs::read_to_string(p.join("f.txt")).unwrap(), "a\nb\nc\n");
+        assert_eq!(
+            std::fs::read_to_string(p.join("f.txt")).unwrap(),
+            "a\nb\nc\n"
+        );
     }
 
     #[test]
@@ -450,7 +498,10 @@ mod tests {
         // The second hunk is still dirty in the working tree.
         let wd = working_diff(p);
         assert!(wd.contains("CHANGED30"));
-        assert!(!wd.contains("CHANGED1"), "committed hunk should no longer be dirty");
+        assert!(
+            !wd.contains("CHANGED1"),
+            "committed hunk should no longer be dirty"
+        );
     }
 
     #[test]
@@ -462,10 +513,14 @@ mod tests {
         run(p, &["add", "f.txt"]);
         run(p, &["commit", "-qm", "base"]);
         // A patch whose context doesn't match the file at all.
-        let bogus = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,1 +1,1 @@\n-zzz\n+yyy\n";
+        let bogus =
+            "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,1 +1,1 @@\n-zzz\n+yyy\n";
         let err = stage_hunk(p, bogus);
         assert!(err.is_err(), "bogus patch must be rejected");
         assert!(get_staged_diff(p, &[]).is_none(), "index unchanged");
-        assert_eq!(std::fs::read_to_string(p.join("f.txt")).unwrap(), "a\nb\nc\n");
+        assert_eq!(
+            std::fs::read_to_string(p.join("f.txt")).unwrap(),
+            "a\nb\nc\n"
+        );
     }
 }

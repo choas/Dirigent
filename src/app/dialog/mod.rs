@@ -8,6 +8,7 @@ mod cue_agent_runs;
 mod custom_theme;
 mod delete_bookmark;
 mod diff_review;
+mod error_dialog;
 mod file_ops;
 mod filter_pr;
 mod git_init;

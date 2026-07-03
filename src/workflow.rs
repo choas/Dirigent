@@ -280,15 +280,34 @@ fn try_extract_strategies(response: &str) -> Option<Vec<LlmWorkflowStep>> {
     }
 
     // Strategy 2: find the last `{"steps"` occurrence (compact JSON)
-    if let Some(pos) = response.rfind("{\"steps\"") {
-        let candidate = &response[pos..];
-        let balanced = crate::util::json_extract::extract_json(candidate);
-        if let Some(steps) = try_parse_steps(&balanced) {
-            return Some(steps);
-        }
+    if let Some(steps) = try_parse_from_marker(response, "{\"steps\"") {
+        return Some(steps);
     }
 
     // Strategy 3: find the last `"steps"` key with flexible whitespace
+    if let Some(steps) = try_parse_steps_key(response) {
+        return Some(steps);
+    }
+
+    // Strategy 4: find the last `[{"cue_ids"` occurrence (bare array format)
+    if let Some(steps) = try_parse_from_marker(response, "[{\"cue_ids\"") {
+        return Some(steps);
+    }
+
+    // Strategy 5: find the last `"cue_ids"` with flexible whitespace (bare array)
+    try_parse_cue_ids_key(response)
+}
+
+/// Parse the balanced JSON starting at the last occurrence of `marker`.
+fn try_parse_from_marker(response: &str, marker: &str) -> Option<Vec<LlmWorkflowStep>> {
+    let pos = response.rfind(marker)?;
+    let candidate = &response[pos..];
+    let balanced = crate::util::json_extract::extract_json(candidate);
+    try_parse_steps(&balanced)
+}
+
+/// Find the last `"steps"` key preceded by `{` (flexible whitespace).
+fn try_parse_steps_key(response: &str) -> Option<Vec<LlmWorkflowStep>> {
     for (i, _) in response.rmatch_indices("\"steps\"") {
         let before = response[..i].trim_end();
         if before.ends_with('{') {
@@ -300,17 +319,11 @@ fn try_extract_strategies(response: &str) -> Option<Vec<LlmWorkflowStep>> {
             }
         }
     }
+    None
+}
 
-    // Strategy 4: find the last `[{"cue_ids"` occurrence (bare array format)
-    if let Some(pos) = response.rfind("[{\"cue_ids\"") {
-        let candidate = &response[pos..];
-        let balanced = crate::util::json_extract::extract_json(candidate);
-        if let Some(steps) = try_parse_steps(&balanced) {
-            return Some(steps);
-        }
-    }
-
-    // Strategy 5: find the last `"cue_ids"` with flexible whitespace (bare array)
+/// Find the last `"cue_ids"` key preceded by `[{` (flexible whitespace).
+fn try_parse_cue_ids_key(response: &str) -> Option<Vec<LlmWorkflowStep>> {
     for (i, _) in response.rmatch_indices("\"cue_ids\"") {
         let before = response[..i].trim_end();
         if before.ends_with("[{") || before.ends_with("[ {") {
@@ -322,7 +335,6 @@ fn try_extract_strategies(response: &str) -> Option<Vec<LlmWorkflowStep>> {
             }
         }
     }
-
     None
 }
 

@@ -571,25 +571,14 @@ fn ansi_row(screen: &vt100::Screen, row: u16) -> String {
     let mut current = StyleState::default();
     let mut emitted_any_style = false;
     for col in 0..cols {
-        if let Some(cell) = screen.cell(row, col) {
-            let style = StyleState::from_cell(cell);
-            if !emitted_any_style || style != current {
-                let sgr = style.to_sgr();
-                if !sgr.is_empty() {
-                    out.push_str(&sgr);
-                    emitted_any_style = true;
-                }
-                current = style;
-            }
-            let contents = cell.contents();
-            if contents.is_empty() {
-                out.push(' ');
-            } else {
-                out.push_str(contents.as_ref());
-            }
-        } else {
-            out.push(' ');
-        }
+        append_ansi_cell(
+            screen,
+            row,
+            col,
+            &mut out,
+            &mut current,
+            &mut emitted_any_style,
+        );
     }
     let trimmed = out.trim_end().to_string();
     if emitted_any_style && !current.is_default() {
@@ -597,6 +586,44 @@ fn ansi_row(screen: &vt100::Screen, row: u16) -> String {
     } else {
         trimmed
     }
+}
+
+fn append_ansi_cell(
+    screen: &vt100::Screen,
+    row: u16,
+    col: u16,
+    out: &mut String,
+    current: &mut StyleState,
+    emitted_any_style: &mut bool,
+) {
+    let Some(cell) = screen.cell(row, col) else {
+        out.push(' ');
+        return;
+    };
+    update_ansi_style(out, current, emitted_any_style, StyleState::from_cell(cell));
+    let contents = cell.contents();
+    if contents.is_empty() {
+        out.push(' ');
+    } else {
+        out.push_str(contents.as_ref());
+    }
+}
+
+fn update_ansi_style(
+    out: &mut String,
+    current: &mut StyleState,
+    emitted_any_style: &mut bool,
+    style: StyleState,
+) {
+    if *emitted_any_style && style == *current {
+        return;
+    }
+    let sgr = style.to_sgr();
+    if !sgr.is_empty() {
+        out.push_str(&sgr);
+        *emitted_any_style = true;
+    }
+    *current = style;
 }
 
 fn chat_region_bounds(lines: &[String]) -> (usize, usize) {
@@ -741,77 +768,103 @@ fn detect_permission_dialog(
     plain_rows: &[String],
     frame_generation: u64,
 ) -> Option<PermissionDialog> {
-    let kind = if normalized.contains("1.Yes")
-        && (normalized.contains("trustthisfolder") || normalized.contains("projectyoucreated"))
-    {
-        PermissionDialogKind::TrustFolder
-    } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
-        PermissionDialogKind::ToolUse
-    } else if normalized.contains("ExitPlanMode") || normalized.contains("exitplanmode") {
-        PermissionDialogKind::PlanExit
-    } else if normalized.contains("AskUserQuestion") || normalized.contains("askuserquestion") {
-        PermissionDialogKind::AskUserQuestion
-    } else if normalized.contains("1.") && normalized.contains("2.") && normalized.contains("?") {
-        PermissionDialogKind::Unknown
-    } else {
-        return None;
-    };
-
-    let visible: Vec<String> = plain_rows
-        .iter()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty() && !is_spinner_or_status(l))
-        .collect();
-    let title = visible
-        .iter()
-        .find(|l| {
-            l.contains("Trust")
-                || l.contains("Do you want")
-                || l.contains("permission")
-                || l.contains("Permission")
-        })
-        .cloned()
-        .unwrap_or_else(|| match kind {
-            PermissionDialogKind::TrustFolder => "Trust folder dialog".to_string(),
-            PermissionDialogKind::ToolUse => "Tool permission dialog".to_string(),
-            PermissionDialogKind::PlanExit => "Plan permission dialog".to_string(),
-            PermissionDialogKind::AskUserQuestion => "Ask user question dialog".to_string(),
-            PermissionDialogKind::PlanEnter | PermissionDialogKind::Unknown => {
-                "Permission dialog".to_string()
-            }
-        });
-    let body = visible.join("\n");
-    let options: Vec<String> = visible
-        .iter()
-        .filter(|l| {
-            l.starts_with("1.")
-                || l.starts_with("2.")
-                || l.starts_with("3.")
-                || l.starts_with("[1]")
-                || l.starts_with("[2]")
-                || l.starts_with("[3]")
-        })
-        .cloned()
-        .collect();
-    let tool_name = visible
-        .iter()
-        .find_map(|l| l.split_once('(').map(|(head, _)| head.trim().to_string()))
-        .filter(|s| !s.is_empty() && s.len() < 80);
-    let path_or_command = visible
-        .iter()
-        .find(|l| l.contains('/') || l.contains("git ") || l.contains("cargo "))
-        .cloned();
+    let kind = permission_dialog_kind(normalized)?;
+    let visible = visible_permission_rows(plain_rows);
+    let title = permission_dialog_title(&visible, kind);
 
     Some(PermissionDialog {
         kind,
         title,
-        body,
-        tool_name,
-        path_or_command,
-        options,
+        body: visible.join("\n"),
+        tool_name: permission_dialog_tool_name(&visible),
+        path_or_command: permission_dialog_path_or_command(&visible),
+        options: permission_dialog_options(&visible),
         selected_option: Some(0),
         frame_generation,
     })
+}
+
+fn permission_dialog_kind(normalized: &str) -> Option<PermissionDialogKind> {
+    if normalized.contains("1.Yes")
+        && (normalized.contains("trustthisfolder") || normalized.contains("projectyoucreated"))
+    {
+        Some(PermissionDialogKind::TrustFolder)
+    } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
+        Some(PermissionDialogKind::ToolUse)
+    } else if normalized.contains("ExitPlanMode") || normalized.contains("exitplanmode") {
+        Some(PermissionDialogKind::PlanExit)
+    } else if normalized.contains("AskUserQuestion") || normalized.contains("askuserquestion") {
+        Some(PermissionDialogKind::AskUserQuestion)
+    } else if normalized.contains("1.") && normalized.contains("2.") && normalized.contains("?") {
+        Some(PermissionDialogKind::Unknown)
+    } else {
+        None
+    }
+}
+
+fn visible_permission_rows(plain_rows: &[String]) -> Vec<String> {
+    plain_rows
+        .iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !is_spinner_or_status(l))
+        .collect()
+}
+
+fn permission_dialog_title(visible: &[String], kind: PermissionDialogKind) -> String {
+    visible
+        .iter()
+        .find(|l| permission_title_candidate(l))
+        .cloned()
+        .unwrap_or_else(|| default_permission_title(kind))
+}
+
+fn permission_title_candidate(line: &str) -> bool {
+    line.contains("Trust")
+        || line.contains("Do you want")
+        || line.contains("permission")
+        || line.contains("Permission")
+}
+
+fn default_permission_title(kind: PermissionDialogKind) -> String {
+    match kind {
+        PermissionDialogKind::TrustFolder => "Trust folder dialog",
+        PermissionDialogKind::ToolUse => "Tool permission dialog",
+        PermissionDialogKind::PlanExit => "Plan permission dialog",
+        PermissionDialogKind::AskUserQuestion => "Ask user question dialog",
+        PermissionDialogKind::PlanEnter | PermissionDialogKind::Unknown => "Permission dialog",
+    }
+    .to_string()
+}
+
+fn permission_dialog_options(visible: &[String]) -> Vec<String> {
+    visible
+        .iter()
+        .filter(|l| permission_option_line(l))
+        .cloned()
+        .collect()
+}
+
+fn permission_option_line(line: &str) -> bool {
+    line.starts_with("1.")
+        || line.starts_with("2.")
+        || line.starts_with("3.")
+        || line.starts_with("[1]")
+        || line.starts_with("[2]")
+        || line.starts_with("[3]")
+}
+
+fn permission_dialog_tool_name(visible: &[String]) -> Option<String> {
+    visible
+        .iter()
+        .find_map(|l| l.split_once('(').map(|(head, _)| head.trim().to_string()))
+        .filter(|s| !s.is_empty() && s.len() < 80)
+}
+
+fn permission_dialog_path_or_command(visible: &[String]) -> Option<String> {
+    visible
+        .iter()
+        .find(|l| l.contains('/') || l.contains("git ") || l.contains("cargo "))
+        .cloned()
 }
 
 struct ControlSequenceObserver {
@@ -918,6 +971,481 @@ impl ControlSequenceObserver {
     }
 }
 
+struct TuiReadContext<'a> {
+    tx: &'a mpsc::Sender<Event>,
+    terminal_state: &'a Arc<Mutex<TerminalState>>,
+    recorder: Option<&'a Recorder>,
+    ansi_regex: Regex,
+    vt: vt100::Parser,
+    accumulated: String,
+    active_confirmation: Option<&'static str>,
+    prompt_count: usize,
+    last_response_count: usize,
+    prev_chat_lines: Vec<String>,
+    frame_generation: u64,
+    observer: ControlSequenceObserver,
+    dropped_raw_events: u64,
+    last_activity: Instant,
+    pending_prompt: bool,
+    pending_response_count: usize,
+    reader_error: Option<String>,
+}
+
+impl<'a> TuiReadContext<'a> {
+    fn new(
+        rows: u16,
+        cols: u16,
+        tx: &'a mpsc::Sender<Event>,
+        terminal_state: &'a Arc<Mutex<TerminalState>>,
+        recorder: Option<&'a Recorder>,
+    ) -> Self {
+        let ansi_regex = Regex::new(
+            r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[0-?@-Z\\^-~]",
+        )
+        .expect("valid ansi regex");
+        Self {
+            tx,
+            terminal_state,
+            recorder,
+            ansi_regex,
+            vt: vt100::Parser::new(rows, cols, 0),
+            accumulated: String::new(),
+            active_confirmation: None,
+            prompt_count: 0,
+            last_response_count: 0,
+            prev_chat_lines: Vec::new(),
+            frame_generation: 0,
+            observer: ControlSequenceObserver::default(),
+            dropped_raw_events: 0,
+            last_activity: Instant::now(),
+            pending_prompt: false,
+            pending_response_count: 0,
+            reader_error: None,
+        }
+    }
+
+    fn process_chunk(&mut self, chunk: Vec<u8>) -> bool {
+        let (cursor_row, cursor_col, raw) = self.record_and_process_chunk(&chunk);
+        self.observe_control_modes(&raw);
+        self.push_accumulated(&raw);
+        let cleaned_chunk = self.ansi_regex.replace_all(&raw, "").to_string();
+        let cleaned_acc = self
+            .ansi_regex
+            .replace_all(&self.accumulated, "")
+            .to_string();
+
+        self.emit_assistant_message(&cleaned_chunk);
+        self.update_permission_confirmation(&cleaned_acc);
+
+        let (plain_rows, ansi_rows) = self.screen_rows();
+        let (start, end) = chat_region_bounds(&plain_rows);
+        self.update_prompt_state(&plain_rows, start, end);
+        self.emit_chat_delta(&plain_rows, &ansi_rows, start, end, cursor_row, cursor_col);
+        self.emit_raw_output(cleaned_chunk, cursor_row, cursor_col)
+    }
+
+    fn record_and_process_chunk(&mut self, chunk: &[u8]) -> (u16, u16, String) {
+        self.last_activity = Instant::now();
+        self.frame_generation = self.frame_generation.saturating_add(1);
+        if let Some(recorder) = self.recorder {
+            recorder.record(RecordingEvent::Output {
+                at_ms: 0,
+                bytes: chunk.to_vec(),
+            });
+        }
+        self.vt.process(chunk);
+        let (cursor_row, cursor_col) = self.vt.screen().cursor_position();
+        let raw = String::from_utf8_lossy(chunk).to_string();
+        (cursor_row, cursor_col, raw)
+    }
+
+    fn observe_control_modes(&mut self, raw: &str) {
+        for (mode, enabled) in self.observer.observe(raw) {
+            self.apply_terminal_mode(mode, enabled);
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::PtyModeChanged {
+                    mode,
+                    enabled,
+                    frame_generation: self.frame_generation,
+                },
+            );
+        }
+    }
+
+    fn apply_terminal_mode(&mut self, mode: TerminalMode, enabled: bool) {
+        match mode {
+            TerminalMode::BracketedPaste => {
+                if let Ok(mut state) = self.terminal_state.lock() {
+                    state.bracketed_paste = enabled;
+                }
+            }
+            TerminalMode::AlternateScreen => {
+                if let Ok(mut state) = self.terminal_state.lock() {
+                    state.alternate_screen = enabled;
+                }
+                self.prev_chat_lines.clear();
+                self.frame_generation = self.frame_generation.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn push_accumulated(&mut self, raw: &str) {
+        self.accumulated.push_str(raw);
+        if self.accumulated.len() <= 30_000 {
+            return;
+        }
+        let start = self.accumulated.ceil_char_boundary(20_000);
+        let cut = self.accumulated[start..]
+            .find('\n')
+            .map(|i| start + i + 1)
+            .unwrap_or(start);
+        let cut = self.accumulated.ceil_char_boundary(cut);
+        self.accumulated = self.accumulated[cut..].to_string();
+    }
+
+    fn emit_assistant_message(&self, cleaned_chunk: &str) {
+        let Some(content) = cleaned_chunk.split('●').next_back() else {
+            return;
+        };
+        if cleaned_chunk.contains('●') && !content.trim().is_empty() {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::TuiAssistantMessage {
+                    content: content.to_string(),
+                },
+            );
+        }
+    }
+
+    fn update_permission_confirmation(&mut self, cleaned_acc: &str) {
+        let normalized = cleaned_acc.replace([' ', '\u{a0}'], "");
+        let current_confirmation = current_confirmation_message(&normalized);
+        if current_confirmation == self.active_confirmation {
+            return;
+        }
+        if let Some(msg) = current_confirmation {
+            self.emit_permission_confirmation(&normalized, msg);
+        }
+        self.active_confirmation = current_confirmation;
+    }
+
+    fn emit_permission_confirmation(&self, normalized: &str, msg: &str) {
+        let plain_rows = self.plain_screen_rows();
+        if let Some(dialog) =
+            detect_permission_dialog(normalized, &plain_rows, self.frame_generation)
+        {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::PermissionDialogDetected { dialog },
+            );
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::SessionStateChanged {
+                    state: SessionState::WaitingForPermission,
+                },
+            );
+        }
+        emit_critical(
+            self.tx,
+            self.recorder,
+            Event::TuiToolConfirmation {
+                message: msg.to_string(),
+            },
+        );
+    }
+
+    fn plain_screen_rows(&self) -> Vec<String> {
+        self.vt
+            .screen()
+            .contents()
+            .lines()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    fn screen_rows(&self) -> (Vec<String>, Vec<String>) {
+        let screen_ref = self.vt.screen();
+        let plain_rows: Vec<String> = screen_ref
+            .contents()
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+        let ansi_rows: Vec<String> = (0..plain_rows.len() as u16)
+            .map(|r| ansi_row(screen_ref, r))
+            .collect();
+        (plain_rows, ansi_rows)
+    }
+
+    fn update_prompt_state(&mut self, plain_rows: &[String], start: usize, end: usize) {
+        let prompt_visible = plain_rows[end..]
+            .iter()
+            .any(|l| l.contains("❯\u{a0}") || l.trim_end() == "❯");
+        let response_count = plain_rows[start..end]
+            .iter()
+            .filter(|l| l.contains('⏺') || l.contains('●'))
+            .count();
+        let should_fire =
+            prompt_visible && (self.prompt_count == 0 || response_count > self.last_response_count);
+        if should_fire {
+            self.fire_prompt_if_ready(response_count);
+        } else {
+            self.pending_prompt = false;
+        }
+    }
+
+    fn fire_prompt_if_ready(&mut self, response_count: usize) {
+        if self.prompt_count == 0 {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::SessionStateChanged {
+                    state: SessionState::ReadyForInput,
+                },
+            );
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::PtyActivity {
+                    source: ActivitySource::Prompt,
+                },
+            );
+            emit_critical(self.tx, self.recorder, Event::TuiPrompt);
+            self.prompt_count += 1;
+            self.last_response_count = response_count;
+        } else if !self.pending_prompt {
+            self.pending_prompt = true;
+            self.pending_response_count = response_count;
+        }
+    }
+
+    fn emit_chat_delta(
+        &mut self,
+        plain_rows: &[String],
+        ansi_rows: &[String],
+        start: usize,
+        end: usize,
+        cursor_row: u16,
+        cursor_col: u16,
+    ) {
+        let (chat_plain, chat_ansi) = trimmed_chat_rows(plain_rows, ansi_rows, start, end);
+        let common = common_prefix_len(&self.prev_chat_lines, &chat_plain);
+        let meaningful = self.collect_meaningful_lines(&chat_plain, &chat_ansi, common);
+        self.emit_meaningful_lines(meaningful, cursor_row, cursor_col);
+        self.prev_chat_lines = chat_plain;
+    }
+
+    fn collect_meaningful_lines(
+        &self,
+        chat_plain: &[String],
+        chat_ansi: &[String],
+        common: usize,
+    ) -> Vec<(String, String)> {
+        let mut meaningful = Vec::new();
+        for idx in common..chat_plain.len() {
+            if self.skip_chat_line(chat_plain, idx) {
+                continue;
+            }
+            meaningful.push((chat_plain[idx].clone(), chat_ansi[idx].clone()));
+        }
+        meaningful
+    }
+
+    fn skip_chat_line(&self, chat_plain: &[String], idx: usize) -> bool {
+        if is_spinner_or_status(&chat_plain[idx]) {
+            self.emit_activity(activity_source(&chat_plain[idx]));
+            return true;
+        }
+        if is_empty_table_bottom(chat_plain, idx) {
+            self.emit_activity(ActivitySource::Redraw);
+            return true;
+        }
+        if chat_plain[idx].trim().is_empty() {
+            self.emit_activity(ActivitySource::EmptyLine);
+            return true;
+        }
+        false
+    }
+
+    fn emit_activity(&self, source: ActivitySource) {
+        emit_lossy(self.tx, self.recorder, Event::PtyActivity { source });
+    }
+
+    fn emit_meaningful_lines(
+        &self,
+        meaningful: Vec<(String, String)>,
+        cursor_row: u16,
+        cursor_col: u16,
+    ) {
+        if meaningful.is_empty() {
+            return;
+        }
+        for (text, ansi) in &meaningful {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::FilteredLine {
+                    text: text.clone(),
+                    ansi: ansi.clone(),
+                    source: line_source(text),
+                    frame_generation: self.frame_generation,
+                },
+            );
+        }
+        let (lines, lines_ansi): (Vec<String>, Vec<String>) = meaningful.into_iter().unzip();
+        emit_critical(
+            self.tx,
+            self.recorder,
+            Event::TuiScreen {
+                lines,
+                lines_ansi,
+                cursor_row,
+                cursor_col,
+            },
+        );
+    }
+
+    fn emit_raw_output(&mut self, cleaned_chunk: String, cursor_row: u16, cursor_col: u16) -> bool {
+        if cleaned_chunk.is_empty() {
+            return false;
+        }
+        match emit_raw_output_lossy(
+            self.tx,
+            self.recorder,
+            Event::TuiOutput {
+                text: cleaned_chunk,
+                cursor_row,
+                cursor_col,
+            },
+        ) {
+            LossyEmit::Sent => false,
+            LossyEmit::Dropped => {
+                self.dropped_raw_events = self.dropped_raw_events.saturating_add(1);
+                false
+            }
+            LossyEmit::Closed => true,
+        }
+    }
+
+    fn process_timeout(&mut self, idle_timeout: Duration) -> bool {
+        self.emit_pending_prompt_if_idle(idle_timeout);
+        self.emit_reader_error_if_idle(idle_timeout)
+    }
+
+    fn emit_pending_prompt_if_idle(&mut self, idle_timeout: Duration) {
+        if !self.pending_prompt || self.last_activity.elapsed() < idle_timeout {
+            return;
+        }
+        emit_critical(
+            self.tx,
+            self.recorder,
+            Event::SessionStateChanged {
+                state: SessionState::ReadyForInput,
+            },
+        );
+        emit_critical(self.tx, self.recorder, Event::TuiPrompt);
+        self.prompt_count += 1;
+        self.last_response_count = self.pending_response_count;
+        self.pending_prompt = false;
+    }
+
+    fn emit_reader_error_if_idle(&mut self, idle_timeout: Duration) -> bool {
+        if self.reader_error.is_none() || self.last_activity.elapsed() < idle_timeout {
+            return false;
+        }
+        if let Some(message) = self.reader_error.take() {
+            emit_critical(self.tx, self.recorder, Event::LibError { message });
+        }
+        true
+    }
+
+    fn process_disconnect(&mut self) {
+        if self.pending_prompt {
+            emit_critical(self.tx, self.recorder, Event::TuiPrompt);
+        }
+        if let Some(message) = self.reader_error.take() {
+            emit_critical(self.tx, self.recorder, Event::LibError { message });
+        } else {
+            self.emit_clean_disconnect();
+        }
+    }
+
+    fn emit_clean_disconnect(&self) {
+        if self.dropped_raw_events > 0 {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::ParserWarning {
+                    message: format!("dropped {} raw PTY events", self.dropped_raw_events),
+                },
+            );
+        }
+        emit_critical(
+            self.tx,
+            self.recorder,
+            Event::SessionStateChanged {
+                state: SessionState::Exited,
+            },
+        );
+        emit_critical(
+            self.tx,
+            self.recorder,
+            Event::ProcessExited { status: None },
+        );
+        emit_critical(self.tx, self.recorder, Event::LibDone);
+    }
+}
+
+fn current_confirmation_message(normalized: &str) -> Option<&'static str> {
+    if normalized.contains("1.Yes")
+        && (normalized.contains("trustthisfolder") || normalized.contains("projectyoucreated"))
+    {
+        Some("Trust folder dialog")
+    } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
+        Some("Tool confirmation dialog")
+    } else {
+        None
+    }
+}
+
+fn trimmed_chat_rows(
+    plain_rows: &[String],
+    ansi_rows: &[String],
+    start: usize,
+    end: usize,
+) -> (Vec<String>, Vec<String>) {
+    let mut chat_plain: Vec<String> = plain_rows[start..end].to_vec();
+    let mut chat_ansi: Vec<String> = ansi_rows[start..end].to_vec();
+    while chat_plain.first().is_some_and(|l| l.trim().is_empty()) {
+        chat_plain.remove(0);
+        chat_ansi.remove(0);
+    }
+    while chat_plain.last().is_some_and(|l| l.trim().is_empty()) {
+        chat_plain.pop();
+        chat_ansi.pop();
+    }
+    (chat_plain, chat_ansi)
+}
+
+fn common_prefix_len(prev: &[String], next: &[String]) -> usize {
+    prev.iter()
+        .zip(next.iter())
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+fn is_empty_table_bottom(chat_plain: &[String], idx: usize) -> bool {
+    is_table_bottom_border(&chat_plain[idx]) && idx > 0 && is_table_mid_rule(&chat_plain[idx - 1])
+}
+
+type TuiDataReceiver = std::sync::mpsc::Receiver<Result<Vec<u8>, String>>;
+type TuiDataEvent = Result<Result<Vec<u8>, String>, std::sync::mpsc::RecvTimeoutError>;
+
 fn read_tui(
     reader: Box<dyn Read + Send>,
     tx: mpsc::Sender<Event>,
@@ -926,29 +1454,14 @@ fn read_tui(
     terminal_state: Arc<Mutex<TerminalState>>,
     recorder: Option<Recorder>,
 ) {
-    let ansi_regex = Regex::new(
-        r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[0-?@-Z\\^-~]",
-    )
-    .expect("valid ansi regex");
-
-    let mut vt = vt100::Parser::new(rows, cols, 0);
-
-    let mut accumulated = String::new();
-    let mut active_confirmation: Option<&'static str> = None;
-    let mut prompt_count: usize = 0;
-    let mut last_response_count: usize = 0;
-    let mut prev_chat_lines: Vec<String> = Vec::new();
-    let mut frame_generation: u64 = 0;
-    let mut observer = ControlSequenceObserver::default();
-    let mut dropped_raw_events: u64 = 0;
-
     let idle_timeout = Duration::from_secs(5);
     let poll_interval = Duration::from_millis(100);
-    let mut last_activity = Instant::now();
-    let mut pending_prompt = false;
-    let mut pending_response_count: usize = 0;
-    let mut reader_error: Option<String> = None;
+    let mut ctx = TuiReadContext::new(rows, cols, &tx, &terminal_state, recorder.as_ref());
+    let data_rx = spawn_tui_reader(reader);
+    run_tui_read_loop(&mut ctx, &data_rx, poll_interval, idle_timeout);
+}
 
+fn spawn_tui_reader(reader: Box<dyn Read + Send>) -> TuiDataReceiver {
     // Decouple blocking reads from timeout-based prompt detection:
     // a reader thread sends raw chunks through a channel, and the
     // processing loop uses recv_timeout to check idle timers.
@@ -971,330 +1484,37 @@ fn read_tui(
             }
         }
     });
+    data_rx
+}
 
+fn run_tui_read_loop(
+    ctx: &mut TuiReadContext<'_>,
+    data_rx: &TuiDataReceiver,
+    poll_interval: Duration,
+    idle_timeout: Duration,
+) {
     loop {
-        match data_rx.recv_timeout(poll_interval) {
-            Ok(Ok(chunk)) => {
-                last_activity = Instant::now();
-                frame_generation = frame_generation.saturating_add(1);
-                if let Some(recorder) = &recorder {
-                    recorder.record(RecordingEvent::Output {
-                        at_ms: 0,
-                        bytes: chunk.clone(),
-                    });
-                }
-                vt.process(&chunk);
-                let (cursor_row, cursor_col) = vt.screen().cursor_position();
+        if handle_tui_data_event(ctx, data_rx.recv_timeout(poll_interval), idle_timeout) {
+            break;
+        }
+    }
+}
 
-                let raw = String::from_utf8_lossy(&chunk).to_string();
-                for (mode, enabled) in observer.observe(&raw) {
-                    if mode == TerminalMode::BracketedPaste {
-                        if let Ok(mut state) = terminal_state.lock() {
-                            state.bracketed_paste = enabled;
-                        }
-                    }
-                    if mode == TerminalMode::AlternateScreen {
-                        if let Ok(mut state) = terminal_state.lock() {
-                            state.alternate_screen = enabled;
-                        }
-                        prev_chat_lines.clear();
-                        frame_generation = frame_generation.saturating_add(1);
-                    }
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::PtyModeChanged {
-                            mode,
-                            enabled,
-                            frame_generation,
-                        },
-                    );
-                }
-                accumulated.push_str(&raw);
-                if accumulated.len() > 30_000 {
-                    let start = accumulated.ceil_char_boundary(20_000);
-                    let cut = accumulated[start..]
-                        .find('\n')
-                        .map(|i| start + i + 1)
-                        .unwrap_or(start);
-                    let cut = accumulated.ceil_char_boundary(cut);
-                    accumulated = accumulated[cut..].to_string();
-                }
-                let cleaned_chunk = ansi_regex.replace_all(&raw, "").to_string();
-                let cleaned_acc = ansi_regex.replace_all(&accumulated, "").to_string();
-
-                if cleaned_chunk.contains('●') {
-                    if let Some(content) = cleaned_chunk.split('●').next_back() {
-                        if !content.trim().is_empty() {
-                            emit_critical(
-                                &tx,
-                                recorder.as_ref(),
-                                Event::TuiAssistantMessage {
-                                    content: content.to_string(),
-                                },
-                            );
-                        }
-                    }
-                }
-
-                let normalized = cleaned_acc.replace([' ', '\u{a0}'], "");
-                let current_confirmation: Option<&'static str> = if normalized.contains("1.Yes")
-                    && (normalized.contains("trustthisfolder")
-                        || normalized.contains("projectyoucreated"))
-                {
-                    Some("Trust folder dialog")
-                } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
-                    Some("Tool confirmation dialog")
-                } else {
-                    None
-                };
-                if current_confirmation != active_confirmation {
-                    if let Some(msg) = current_confirmation {
-                        let screen_ref = vt.screen();
-                        let plain_rows: Vec<String> = screen_ref
-                            .contents()
-                            .lines()
-                            .map(|s| s.to_string())
-                            .collect();
-                        if let Some(dialog) =
-                            detect_permission_dialog(&normalized, &plain_rows, frame_generation)
-                        {
-                            emit_critical(
-                                &tx,
-                                recorder.as_ref(),
-                                Event::PermissionDialogDetected { dialog },
-                            );
-                            emit_critical(
-                                &tx,
-                                recorder.as_ref(),
-                                Event::SessionStateChanged {
-                                    state: SessionState::WaitingForPermission,
-                                },
-                            );
-                        }
-                        emit_critical(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::TuiToolConfirmation {
-                                message: msg.to_string(),
-                            },
-                        );
-                    }
-                    active_confirmation = current_confirmation;
-                }
-
-                let screen_ref = vt.screen();
-                let contents = screen_ref.contents();
-                let plain_rows: Vec<String> = contents.lines().map(|s| s.to_string()).collect();
-                let ansi_rows: Vec<String> = (0..plain_rows.len() as u16)
-                    .map(|r| ansi_row(screen_ref, r))
-                    .collect();
-
-                let (start, end) = chat_region_bounds(&plain_rows);
-
-                let prompt_visible = plain_rows[end..]
-                    .iter()
-                    .any(|l| l.contains("❯\u{a0}") || l.trim_end() == "❯");
-                let response_count = plain_rows[start..end]
-                    .iter()
-                    .filter(|l| l.contains('⏺') || l.contains('●'))
-                    .count();
-                let should_fire =
-                    prompt_visible && (prompt_count == 0 || response_count > last_response_count);
-                if should_fire {
-                    if prompt_count == 0 {
-                        emit_critical(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::SessionStateChanged {
-                                state: SessionState::ReadyForInput,
-                            },
-                        );
-                        emit_critical(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::PtyActivity {
-                                source: ActivitySource::Prompt,
-                            },
-                        );
-                        emit_critical(&tx, recorder.as_ref(), Event::TuiPrompt);
-                        prompt_count += 1;
-                        last_response_count = response_count;
-                    } else if !pending_prompt {
-                        pending_prompt = true;
-                        pending_response_count = response_count;
-                    }
-                } else {
-                    pending_prompt = false;
-                }
-
-                let mut chat_plain: Vec<String> = plain_rows[start..end].to_vec();
-                let mut chat_ansi: Vec<String> = ansi_rows[start..end].to_vec();
-                while chat_plain.first().is_some_and(|l| l.trim().is_empty()) {
-                    chat_plain.remove(0);
-                    chat_ansi.remove(0);
-                }
-                while chat_plain.last().is_some_and(|l| l.trim().is_empty()) {
-                    chat_plain.pop();
-                    chat_ansi.pop();
-                }
-
-                let common = prev_chat_lines
-                    .iter()
-                    .zip(chat_plain.iter())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                let mut meaningful: Vec<(String, String)> = Vec::new();
-                for idx in common..chat_plain.len() {
-                    if is_spinner_or_status(&chat_plain[idx]) {
-                        emit_lossy(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::PtyActivity {
-                                source: activity_source(&chat_plain[idx]),
-                            },
-                        );
-                        continue;
-                    }
-                    // Suppress the closing border of an *empty* table: a
-                    // `└──┘` bottom rule immediately after a `├──┤` header
-                    // rule means Claude rendered the table skeleton before any
-                    // body rows arrived. Keep it out of this frame without
-                    // poisoning later real table output.
-                    if is_table_bottom_border(&chat_plain[idx])
-                        && idx > 0
-                        && is_table_mid_rule(&chat_plain[idx - 1])
-                    {
-                        emit_lossy(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::PtyActivity {
-                                source: ActivitySource::Redraw,
-                            },
-                        );
-                        continue;
-                    }
-                    if chat_plain[idx].trim().is_empty() {
-                        emit_lossy(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::PtyActivity {
-                                source: ActivitySource::EmptyLine,
-                            },
-                        );
-                        continue;
-                    }
-                    meaningful.push((chat_plain[idx].clone(), chat_ansi[idx].clone()));
-                }
-                if !meaningful.is_empty() {
-                    let (lines, lines_ansi): (Vec<String>, Vec<String>) =
-                        meaningful.into_iter().unzip();
-                    for l in &lines {
-                        emit_critical(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::FilteredLine {
-                                text: l.clone(),
-                                ansi: lines_ansi
-                                    .get(lines.iter().position(|x| x == l).unwrap_or(0))
-                                    .cloned()
-                                    .unwrap_or_else(|| l.clone()),
-                                source: line_source(l),
-                                frame_generation,
-                            },
-                        );
-                    }
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::TuiScreen {
-                            lines,
-                            lines_ansi,
-                            cursor_row,
-                            cursor_col,
-                        },
-                    );
-                }
-                prev_chat_lines = chat_plain;
-
-                if !cleaned_chunk.is_empty() {
-                    match emit_raw_output_lossy(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::TuiOutput {
-                            text: cleaned_chunk.clone(),
-                            cursor_row,
-                            cursor_col,
-                        },
-                    ) {
-                        LossyEmit::Sent => {}
-                        LossyEmit::Dropped => {
-                            dropped_raw_events = dropped_raw_events.saturating_add(1);
-                        }
-                        LossyEmit::Closed => break,
-                    }
-                }
-            }
-            Ok(Err(err_msg)) => {
-                reader_error = Some(err_msg);
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if pending_prompt && last_activity.elapsed() >= idle_timeout {
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::SessionStateChanged {
-                            state: SessionState::ReadyForInput,
-                        },
-                    );
-                    emit_critical(&tx, recorder.as_ref(), Event::TuiPrompt);
-                    prompt_count += 1;
-                    last_response_count = pending_response_count;
-                    pending_prompt = false;
-                }
-                if reader_error.is_some() && last_activity.elapsed() >= idle_timeout {
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::LibError {
-                            message: reader_error.take().unwrap(),
-                        },
-                    );
-                    break;
-                }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                if pending_prompt {
-                    emit_critical(&tx, recorder.as_ref(), Event::TuiPrompt);
-                }
-                if let Some(msg) = reader_error {
-                    emit_critical(&tx, recorder.as_ref(), Event::LibError { message: msg });
-                } else {
-                    if dropped_raw_events > 0 {
-                        emit_critical(
-                            &tx,
-                            recorder.as_ref(),
-                            Event::ParserWarning {
-                                message: format!("dropped {dropped_raw_events} raw PTY events"),
-                            },
-                        );
-                    }
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::SessionStateChanged {
-                            state: SessionState::Exited,
-                        },
-                    );
-                    emit_critical(
-                        &tx,
-                        recorder.as_ref(),
-                        Event::ProcessExited { status: None },
-                    );
-                    emit_critical(&tx, recorder.as_ref(), Event::LibDone);
-                }
-                break;
-            }
+fn handle_tui_data_event(
+    ctx: &mut TuiReadContext<'_>,
+    event: TuiDataEvent,
+    idle_timeout: Duration,
+) -> bool {
+    match event {
+        Ok(Ok(chunk)) => ctx.process_chunk(chunk),
+        Ok(Err(err_msg)) => {
+            ctx.reader_error = Some(err_msg);
+            false
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ctx.process_timeout(idle_timeout),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            ctx.process_disconnect();
+            true
         }
     }
 }

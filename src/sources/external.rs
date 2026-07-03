@@ -23,6 +23,14 @@ fn url_encode(s: &str) -> String {
     result
 }
 
+fn title_with_optional_body(title: &str, body: &str) -> String {
+    if body.is_empty() {
+        title.to_string()
+    } else {
+        format!("{}\n\n{}", title, body)
+    }
+}
+
 /// Print a warning to stderr at most once per flag.
 fn warn_once(flag: &AtomicBool, msg: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
@@ -59,7 +67,7 @@ fn try_sonar_fetch(
     }
 }
 
-use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
+use super::custom::{output_piped_command, SUBPROCESS_TIMEOUT_SECS};
 use super::types::SourceItem;
 
 /// Fetch items from a GitHub Issues source using the `gh` CLI.
@@ -84,13 +92,7 @@ pub(crate) fn fetch_github_issues(
     }
 
     cmd.current_dir(project_root);
-
-    let child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
+    let output = output_piped_command(cmd)?;
 
     if !output.status.success() {
         return Err(DirigentError::Source(format!(
@@ -110,11 +112,8 @@ pub(crate) fn fetch_github_issues(
             let url = issue.get("url")?.as_str()?;
             let body = issue.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
-            let text = if body.is_empty() {
-                format!("[#{}] {}", number, title)
-            } else {
-                format!("[#{}] {}\n\n{}", number, title, body)
-            };
+            let summary = format!("[#{}] {}", number, title);
+            let text = title_with_optional_body(&summary, body);
 
             Some(SourceItem::new(url, text, source_label))
         })
@@ -670,11 +669,7 @@ fn trello_card_to_item(
         }
     }
 
-    let text = if desc.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}\n\n{}", name, desc)
-    };
+    let text = title_with_optional_body(name, desc);
 
     Some(SourceItem::new(url, text, source_label))
 }
@@ -753,11 +748,7 @@ pub(crate) fn fetch_asana_tasks(
                 .and_then(|u| u.as_str())
                 .unwrap_or("");
 
-            let text = if notes.is_empty() {
-                name.to_string()
-            } else {
-                format!("{}\n\n{}", name, notes)
-            };
+            let text = title_with_optional_body(name, notes);
 
             let external_id = if permalink.is_empty() {
                 format!("asana:{}", gid)
@@ -1429,11 +1420,7 @@ fn build_fallback_item(
     source_label: &str,
 ) -> SourceItem {
     let body = lines.join("\n").trim().to_string();
-    let text = if body.is_empty() {
-        title
-    } else {
-        format!("{}\n\n{}", title, body)
-    };
+    let text = title_with_optional_body(&title, &body);
     SourceItem::new(id, text, source_label)
 }
 

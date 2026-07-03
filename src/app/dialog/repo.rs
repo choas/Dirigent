@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
@@ -62,6 +63,54 @@ fn worktree_label(wt: &git::WorktreeInfo) -> String {
         s.push_str(" (orphaned)");
     }
     s
+}
+
+fn branch_push_status_label(branch: &str, status: Option<&jj::BookmarkPushStatus>) -> String {
+    match status {
+        Some(jj::BookmarkPushStatus::NotPushed) => format!("{branch}  \u{2191} not pushed"),
+        Some(jj::BookmarkPushStatus::NeedsPush) => format!("{branch}  \u{2191} needs push"),
+        Some(jj::BookmarkPushStatus::Synced) => format!("{branch}  \u{2713} synced"),
+        None => branch.to_string(),
+    }
+}
+
+fn branch_label_text(label: &str, is_own: bool, accent: egui::Color32) -> egui::RichText {
+    let text = egui::RichText::new(label).monospace();
+    if is_own {
+        text.color(accent)
+    } else {
+        text
+    }
+}
+
+fn render_checked_out_branch_label(ui: &mut egui::Ui, branch: &str, color: egui::Color32) {
+    ui.add_enabled(
+        false,
+        egui::Label::new(
+            egui::RichText::new(format!("{branch}  (in a worktree)"))
+                .monospace()
+                .color(color),
+        ),
+    );
+}
+
+fn force_remove_message(dirty: &HashMap<String, char>) -> String {
+    let mut files: Vec<_> = dirty.iter().collect();
+    files.sort_by_key(|(path, _)| (*path).clone());
+    let listing: Vec<String> = files
+        .iter()
+        .take(10)
+        .map(|(path, status)| format!("  {} {}", status, path))
+        .collect();
+    let mut msg = format!(
+        "{} modified or untracked file(s):\n{}",
+        dirty.len(),
+        listing.join("\n")
+    );
+    if dirty.len() > 10 {
+        msg.push_str(&format!("\n  … and {} more", dirty.len() - 10));
+    }
+    msg
 }
 
 /// Accumulated deferred actions from the worktree panel UI.
@@ -279,9 +328,20 @@ impl DirigentApp {
         switch_to: &mut Option<String>,
         create: &mut Option<String>,
     ) {
-        let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
+        self.render_switch_branch_create_row(ui, create);
+        ui.add_space(6.0);
+        self.render_current_branch_label(ui);
 
-        // New-branch creation row, directly under the dialog headline.
+        if self.git.available_branches.is_empty() {
+            self.empty_label(ui, self.empty_branch_list_message());
+            return;
+        }
+
+        self.render_switch_branch_list(ui, switch_to);
+    }
+
+    fn render_switch_branch_create_row(&mut self, ui: &mut egui::Ui, create: &mut Option<String>) {
+        let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
         ui.horizontal(|ui| {
             let hint = if is_jj { "New bookmark" } else { "New branch" };
             let resp = ui.add(
@@ -298,8 +358,9 @@ impl DirigentApp {
                 *create = Some(name);
             }
         });
-        ui.add_space(6.0);
+    }
 
+    fn render_current_branch_label(&self, ui: &mut egui::Ui) {
         if let Some(ref info) = self.git.info {
             ui.label(
                 egui::RichText::new(format!("Current: {}", info.branch))
@@ -308,48 +369,45 @@ impl DirigentApp {
             );
             ui.add_space(4.0);
         }
+    }
 
-        if self.git.available_branches.is_empty() {
-            let msg = if self.settings.vcs_backend == VcsBackend::Jj {
-                "No other bookmarks available"
-            } else {
-                "No other branches available"
-            };
-            self.empty_label(ui, msg);
-            return;
+    fn empty_branch_list_message(&self) -> &'static str {
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => "No other bookmarks available",
+            VcsBackend::Git => "No other branches available",
         }
+    }
 
+    fn render_switch_branch_list(&self, ui: &mut egui::Ui, switch_to: &mut Option<String>) {
         egui::ScrollArea::vertical()
             .max_height(250.0)
             .show(ui, |ui| {
                 for branch in &self.git.available_branches {
-                    let label = match self.git.bookmark_push_statuses.get(branch) {
-                        Some(jj::BookmarkPushStatus::NotPushed) => {
-                            format!("{branch}  \u{2191} not pushed")
-                        }
-                        Some(jj::BookmarkPushStatus::NeedsPush) => {
-                            format!("{branch}  \u{2191} needs push")
-                        }
-                        Some(jj::BookmarkPushStatus::Synced) => {
-                            format!("{branch}  \u{2713} synced")
-                        }
-                        None => branch.clone(),
-                    };
-                    let is_own = self.git.own_branches.contains(branch);
-                    let is_trunk = self.git.trunk_bookmarks.contains(branch)
-                        || branch == "main"
-                        || branch == "master";
-                    let mut text = egui::RichText::new(&label).monospace();
-                    if is_own {
-                        text = text.color(self.semantic.accent);
-                    }
-                    // Reverse-highlight the trunk branch (main/master) so it
-                    // stands out as the default destination in the list.
-                    if ui.selectable_label(is_trunk, text).clicked() {
+                    if self.render_switch_branch_row(ui, branch) {
                         *switch_to = Some(branch.clone());
                     }
                 }
             });
+    }
+
+    fn render_switch_branch_row(&self, ui: &mut egui::Ui, branch: &str) -> bool {
+        let label = branch_push_status_label(branch, self.git.bookmark_push_statuses.get(branch));
+        let text = branch_label_text(
+            &label,
+            self.git.own_branches.contains(branch),
+            self.semantic.accent,
+        );
+        ui.selectable_label(self.is_trunk_branch(branch), text)
+            .clicked()
+    }
+
+    fn is_trunk_branch(&self, branch: &str) -> bool {
+        self.git
+            .trunk_bookmarks
+            .iter()
+            .any(|bookmark| bookmark == branch)
+            || branch == "main"
+            || branch == "master"
     }
 
     /// Execute a branch switch and update state accordingly.
@@ -471,7 +529,9 @@ impl DirigentApp {
                 );
                 if ui
                     .small_button("Prune")
-                    .on_hover_text("git worktree prune — clear registrations whose folders are gone")
+                    .on_hover_text(
+                        "git worktree prune — clear registrations whose folders are gone",
+                    )
                     .clicked()
                 {
                     actions.prune = true;
@@ -532,74 +592,73 @@ impl DirigentApp {
         ui.add_space(SPACE_SM);
         ui.label("Create new worktree:");
 
-        // Show available branches as a scrollable list when there are any.
         if !self.git.available_branches.is_empty() {
-            ui.add_space(2.0);
-            ui.label(
-                egui::RichText::new("Pick an existing branch:")
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
-            // Branches already checked out in a live worktree can't get a second
-            // one, so show them greyed out and non-selectable.
-            let checked_out: std::collections::HashSet<&str> = self
-                .git
-                .worktrees
-                .iter()
-                .filter(|w| !w.orphaned)
-                .map(|w| w.name.as_str())
-                .collect();
-            let mut selected_branch: Option<String> = None;
-            egui::ScrollArea::vertical()
-                .id_salt("branch_picker")
-                .max_height(120.0)
-                .show(ui, |ui| {
-                    for branch in self.git.available_branches.iter() {
-                        if checked_out.contains(branch.as_str()) {
-                            ui.add_enabled(
-                                false,
-                                egui::Label::new(
-                                    egui::RichText::new(format!("{branch}  (in a worktree)"))
-                                        .monospace()
-                                        .color(self.semantic.tertiary_text),
-                                ),
-                            );
-                            continue;
-                        }
-                        let label = match self.git.bookmark_push_statuses.get(branch) {
-                            Some(jj::BookmarkPushStatus::NotPushed) => {
-                                format!("{branch}  \u{2191} not pushed")
-                            }
-                            Some(jj::BookmarkPushStatus::NeedsPush) => {
-                                format!("{branch}  \u{2191} needs push")
-                            }
-                            Some(jj::BookmarkPushStatus::Synced) => {
-                                format!("{branch}  \u{2713} synced")
-                            }
-                            None => branch.clone(),
-                        };
-                        if ui
-                            .selectable_label(
-                                self.git.new_worktree_name == *branch,
-                                egui::RichText::new(&label).monospace(),
-                            )
-                            .clicked()
-                        {
-                            selected_branch = Some(branch.clone());
-                        }
-                    }
-                });
-            if let Some(branch) = selected_branch {
+            if let Some(branch) = self.render_worktree_branch_picker(ui) {
                 self.git.new_worktree_name = branch;
             }
-            ui.add_space(2.0);
-            ui.label(
-                egui::RichText::new("Or type a new branch name:")
-                    .small()
-                    .color(self.semantic.secondary_text),
-            );
         }
 
+        self.render_worktree_name_input(ui, actions);
+    }
+
+    fn render_worktree_branch_picker(&self, ui: &mut egui::Ui) -> Option<String> {
+        ui.add_space(2.0);
+        self.render_worktree_hint(ui, "Pick an existing branch:");
+        let checked_out = self.checked_out_worktree_names();
+        let selected = self.render_worktree_branch_picker_rows(ui, &checked_out);
+        ui.add_space(2.0);
+        self.render_worktree_hint(ui, "Or type a new branch name:");
+        selected
+    }
+
+    fn render_worktree_hint(&self, ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .small()
+                .color(self.semantic.secondary_text),
+        );
+    }
+
+    fn checked_out_worktree_names(&self) -> HashSet<&str> {
+        self.git
+            .worktrees
+            .iter()
+            .filter(|w| !w.orphaned)
+            .map(|w| w.name.as_str())
+            .collect()
+    }
+
+    fn render_worktree_branch_picker_rows(
+        &self,
+        ui: &mut egui::Ui,
+        checked_out: &HashSet<&str>,
+    ) -> Option<String> {
+        let mut selected_branch = None;
+        egui::ScrollArea::vertical()
+            .id_salt("branch_picker")
+            .max_height(120.0)
+            .show(ui, |ui| {
+                for branch in self.git.available_branches.iter() {
+                    if checked_out.contains(branch.as_str()) {
+                        render_checked_out_branch_label(ui, branch, self.semantic.tertiary_text);
+                    } else if self.render_worktree_branch_option(ui, branch) {
+                        selected_branch = Some(branch.clone());
+                    }
+                }
+            });
+        selected_branch
+    }
+
+    fn render_worktree_branch_option(&self, ui: &mut egui::Ui, branch: &str) -> bool {
+        let label = branch_push_status_label(branch, self.git.bookmark_push_statuses.get(branch));
+        ui.selectable_label(
+            self.git.new_worktree_name == branch,
+            egui::RichText::new(&label).monospace(),
+        )
+        .clicked()
+    }
+
+    fn render_worktree_name_input(&mut self, ui: &mut egui::Ui, actions: &mut WorktreeActions) {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.git.new_worktree_name)
@@ -677,12 +736,7 @@ impl DirigentApp {
     /// Process all deferred actions collected during the worktree panel frame.
     fn handle_worktree_actions(&mut self, actions: WorktreeActions) {
         if let Some(path) = actions.switch_to {
-            self.git.show_worktree_panel = false;
-            if let Ok(canonical) = std::fs::canonicalize(&path) {
-                self.switch_repo(canonical);
-            } else {
-                self.switch_repo(path);
-            }
+            self.switch_to_worktree(path);
         }
 
         if let Some(path) = actions.remove_path {
@@ -690,25 +744,7 @@ impl DirigentApp {
         }
 
         if let Some(name) = actions.create_name {
-            let create_result = match self.settings.vcs_backend {
-                VcsBackend::Jj => {
-                    jj::jj_create_workspace(&self.project_root, &name, &self.settings.jj_cli_path)
-                }
-                VcsBackend::Git => git::create_worktree(&self.project_root, &name),
-            };
-            match create_result {
-                Ok(_path) => {
-                    self.git.new_worktree_name.clear();
-                    self.reload_worktrees();
-                }
-                Err(e) => {
-                    let label = match self.settings.vcs_backend {
-                        VcsBackend::Jj => "workspace",
-                        VcsBackend::Git => "worktree",
-                    };
-                    self.set_status_message(format!("Failed to create {}: {}", label, e));
-                }
-            }
+            self.create_worktree_from_action(&name);
         }
 
         if let Some(path) = actions.delete_archive_pending {
@@ -716,23 +752,64 @@ impl DirigentApp {
         }
 
         if let Some(path) = actions.reveal_path {
-            if let Err(e) = reveal_in_file_manager(&path) {
-                self.set_status_message(format!("Failed to reveal in file manager: {}", e));
-            }
+            self.reveal_worktree_path(&path);
         }
 
         if actions.prune {
-            match git::prune_worktrees(&self.project_root) {
-                Ok(()) => {
-                    self.set_status_message("Pruned orphaned worktrees".into());
-                    self.reload_worktrees();
-                }
-                Err(e) => self.set_status_message(format!("Prune failed: {e}")),
-            }
+            self.prune_worktrees_from_action();
         }
 
         if let Some(left) = actions.compare_left {
             self.start_folder_compare(left);
+        }
+    }
+
+    fn switch_to_worktree(&mut self, path: PathBuf) {
+        self.git.show_worktree_panel = false;
+        match std::fs::canonicalize(&path) {
+            Ok(canonical) => self.switch_repo(canonical),
+            Err(_) => self.switch_repo(path),
+        }
+    }
+
+    fn create_worktree_from_action(&mut self, name: &str) {
+        match self.create_worktree(name) {
+            Ok(_path) => {
+                self.git.new_worktree_name.clear();
+                self.reload_worktrees();
+            }
+            Err(e) => {
+                self.set_status_message(format!(
+                    "Failed to create {}: {}",
+                    self.worktree_kind_label(),
+                    e
+                ));
+            }
+        }
+    }
+
+    fn create_worktree(&self, name: &str) -> crate::error::Result<PathBuf> {
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => {
+                jj::jj_create_workspace(&self.project_root, name, &self.settings.jj_cli_path)
+            }
+            VcsBackend::Git => git::create_worktree(&self.project_root, name),
+        }
+    }
+
+    fn reveal_worktree_path(&mut self, path: &Path) {
+        if let Err(e) = reveal_in_file_manager(path) {
+            self.set_status_message(format!("Failed to reveal in file manager: {}", e));
+        }
+    }
+
+    fn prune_worktrees_from_action(&mut self) {
+        match git::prune_worktrees(&self.project_root) {
+            Ok(()) => {
+                self.set_status_message("Pruned orphaned worktrees".into());
+                self.reload_worktrees();
+            }
+            Err(e) => self.set_status_message(format!("Prune failed: {e}")),
         }
     }
 
@@ -742,120 +819,112 @@ impl DirigentApp {
     /// If removal fails due to modified/untracked files, stores state for the
     /// force-remove confirmation dialog instead of just showing a status message.
     fn do_remove_worktree(&mut self, path: PathBuf, force: bool) {
-        // Preflight: check for dirty files before attempting removal.
-        // No archive is created here — archiving only happens once the user
-        // confirms removal (or if there are no dirty files).
-        if !force {
-            let dirty = super::super::vcs_dispatch::get_dirty_files(
-                &self.settings.vcs_backend,
-                &self.settings.jj_cli_path,
-                &path,
-            );
-            if !dirty.is_empty() {
-                let mut files: Vec<_> = dirty.iter().collect();
-                files.sort_by_key(|(p, _)| (*p).clone());
-                let listing: Vec<String> = files
-                    .iter()
-                    .take(10)
-                    .map(|(p, status)| format!("  {} {}", status, p))
-                    .collect();
-                let mut msg = format!(
-                    "{} modified or untracked file(s):\n{}",
-                    dirty.len(),
-                    listing.join("\n")
-                );
-                if dirty.len() > 10 {
-                    msg.push_str(&format!("\n  … and {} more", dirty.len() - 10));
-                }
-                self.git.pending_force_remove = Some((path, msg));
-                self.git.pending_archive_msg = None;
-                return;
-            }
+        if let Some(msg) = self.force_remove_warning(&path, force) {
+            self.git.pending_force_remove = Some((path, msg));
+            self.git.pending_archive_msg = None;
+            return;
         }
 
-        let label = match self.settings.vcs_backend {
-            VcsBackend::Jj => "workspace",
-            VcsBackend::Git => "worktree",
+        let label = self.worktree_kind_label();
+        let Some(archive_msg) = self.archive_worktree_before_remove(&path, label) else {
+            return;
         };
 
-        // Archive the worktree's DB just before removal.
-        let archive_msg = match git::main_worktree_path(&self.project_root) {
-            Ok(main_path) => {
-                let wt_name = self
-                    .git
-                    .worktrees
-                    .iter()
-                    .find(|wt| wt.path == path)
-                    .map(|wt| wt.name.clone())
-                    .unwrap_or_else(|| {
-                        path.file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "unknown".to_string())
-                    });
-                match git::archive_worktree_db(&main_path, &path, &wt_name) {
-                    Ok(Some(archive_path)) => {
-                        let name = archive_path
-                            .file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        Some(format!("DB archived as {}", name))
-                    }
-                    Ok(None) => None,
-                    Err(e) => {
-                        self.set_status_message(format!(
-                            "Cannot remove {}: failed to archive DB: {}",
-                            label, e
-                        ));
-                        return;
-                    }
-                }
+        match self.remove_worktree(&path, force) {
+            Ok(()) => {
+                self.git.pending_force_remove = None;
+                self.git.pending_archive_msg = None;
+                self.reload_worktrees();
+                self.report_worktree_removed(label, archive_msg);
             }
+            Err(e) => {
+                self.set_status_message(format!("Failed to remove {}: {}", label, e));
+            }
+        }
+    }
+
+    fn force_remove_warning(&self, path: &Path, force: bool) -> Option<String> {
+        if force {
+            return None;
+        }
+        let dirty = super::super::vcs_dispatch::get_dirty_files(
+            &self.settings.vcs_backend,
+            &self.settings.jj_cli_path,
+            path,
+        );
+        (!dirty.is_empty()).then(|| force_remove_message(&dirty))
+    }
+
+    fn archive_worktree_before_remove(
+        &mut self,
+        path: &Path,
+        label: &str,
+    ) -> Option<Option<String>> {
+        let main_path = match git::main_worktree_path(&self.project_root) {
+            Ok(main_path) => main_path,
             Err(e) => {
                 self.set_status_message(format!(
                     "Cannot remove {}: could not determine main worktree path: {}",
                     label, e
                 ));
-                return;
+                return None;
             }
         };
+        let wt_name = self.worktree_name_for_path(path, "unknown");
+        match git::archive_worktree_db(&main_path, path, &wt_name) {
+            Ok(Some(archive_path)) => Some(Some(format!(
+                "DB archived as {}",
+                archive_path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            ))),
+            Ok(None) => Some(None),
+            Err(e) => {
+                self.set_status_message(format!(
+                    "Cannot remove {}: failed to archive DB: {}",
+                    label, e
+                ));
+                None
+            }
+        }
+    }
 
-        let remove_result = match self.settings.vcs_backend {
+    fn remove_worktree(&self, path: &Path, force: bool) -> crate::error::Result<()> {
+        match self.settings.vcs_backend {
             VcsBackend::Jj => {
-                let ws_name = self
-                    .git
-                    .worktrees
-                    .iter()
-                    .find(|wt| wt.path == path)
-                    .map(|wt| wt.name.clone())
-                    .unwrap_or_else(|| {
-                        path.file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    });
+                let ws_name = self.worktree_name_for_path(path, "");
                 jj::jj_remove_workspace(&self.project_root, &ws_name, &self.settings.jj_cli_path)
             }
-            VcsBackend::Git => git::remove_worktree(&self.project_root, &path, force),
-        };
-        match remove_result {
-            Ok(()) => {
-                self.git.pending_force_remove = None;
-                self.git.pending_archive_msg = None;
-                self.reload_worktrees();
-                if let Some(msg) = archive_msg {
-                    self.set_status_message(format!(
-                        "{} removed. {}",
-                        if label == "workspace" {
-                            "Workspace"
-                        } else {
-                            "Worktree"
-                        },
-                        msg
-                    ));
-                }
-            }
-            Err(e) => {
-                self.set_status_message(format!("Failed to remove {}: {}", label, e));
-            }
+            VcsBackend::Git => git::remove_worktree(&self.project_root, path, force),
+        }
+    }
+
+    fn worktree_name_for_path(&self, path: &Path, fallback: &str) -> String {
+        self.git
+            .worktrees
+            .iter()
+            .find(|wt| wt.path == path)
+            .map(|wt| wt.name.clone())
+            .or_else(|| path.file_name().map(|f| f.to_string_lossy().to_string()))
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
+    fn worktree_kind_label(&self) -> &'static str {
+        match self.settings.vcs_backend {
+            VcsBackend::Jj => "workspace",
+            VcsBackend::Git => "worktree",
+        }
+    }
+
+    fn report_worktree_removed(&mut self, label: &str, archive_msg: Option<String>) {
+        if let Some(msg) = archive_msg {
+            let noun = if label == "workspace" {
+                "Workspace"
+            } else {
+                "Worktree"
+            };
+            self.set_status_message(format!("{noun} removed. {msg}"));
         }
     }
 

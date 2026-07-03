@@ -51,6 +51,12 @@ pub(super) enum ChangeSetOutcome {
     Nothing,
 }
 
+struct PartialCommitParts {
+    whole_files: Vec<String>,
+    patches: Vec<String>,
+    warned: Vec<String>,
+}
+
 pub(super) type ChangeSetResult = Result<ChangeSetOutcome, String>;
 
 /// Read-only result of analyzing the diff between two refs: the grouped change
@@ -119,21 +125,7 @@ fn build_change_set_prompt(file_diffs: &[FileRawDiff]) -> String {
             body.push_str(&format!("File: {} (binary — whole file only)\n", f.path));
             continue;
         }
-        body.push_str(&format!("File: {}\n", f.path));
-        for i in 0..f.hunk_count() {
-            if let Some(lines) = f.hunk_lines(i) {
-                body.push_str(&format!("  Hunk {}: {}\n", i + 1, lines.first().map(|s| s.as_str()).unwrap_or("")));
-                for line in lines.iter().skip(1) {
-                    if budget == 0 {
-                        break;
-                    }
-                    body.push_str("    ");
-                    body.push_str(line);
-                    body.push('\n');
-                    budget = budget.saturating_sub(line.len());
-                }
-            }
-        }
+        append_file_hunks(&mut body, &mut budget, f);
     }
     format!(
         "You are organizing a messy git working tree. Below is the working diff, \
@@ -153,6 +145,33 @@ fn build_change_set_prompt(file_diffs: &[FileRawDiff]) -> String {
          - Do NOT modify any files. Only analyze and return JSON.\n\n\
          Changes:\n{body}"
     )
+}
+
+fn append_file_hunks(body: &mut String, budget: &mut usize, file_diff: &FileRawDiff) {
+    body.push_str(&format!("File: {}\n", file_diff.path));
+    for i in 0..file_diff.hunk_count() {
+        let Some(lines) = file_diff.hunk_lines(i) else {
+            continue;
+        };
+        body.push_str(&format!(
+            "  Hunk {}: {}\n",
+            i + 1,
+            lines.first().map(|s| s.as_str()).unwrap_or("")
+        ));
+        append_hunk_body_lines(body, budget, lines);
+    }
+}
+
+fn append_hunk_body_lines(body: &mut String, budget: &mut usize, lines: &[String]) {
+    for line in lines.iter().skip(1) {
+        if *budget == 0 {
+            break;
+        }
+        body.push_str("    ");
+        body.push_str(line);
+        body.push('\n');
+        *budget = budget.saturating_sub(line.len());
+    }
 }
 
 /// Pure short-circuit decision shared by the run path and tests: return
@@ -472,49 +491,21 @@ impl DirigentApp {
         let diff = crate::git::get_working_diff(&self.project_root, &[]).unwrap_or_default();
         let file_diffs = crate::git::split_into_file_diffs(&diff);
 
-        let mut whole_files: Vec<String> = Vec::new();
-        let mut patches: Vec<String> = Vec::new();
-        let mut warned: Vec<String> = Vec::new();
+        let parts = build_partial_commit_parts(&group, &file_diffs);
 
-        for path in &group.files {
-            match group.hunk_selection.get(path) {
-                None => whole_files.push(path.clone()),
-                Some(headers) => {
-                    let fd = file_diffs.iter().find(|f| &f.path == path);
-                    let mut file_patches: Vec<String> = Vec::new();
-                    let mut ok = fd.is_some();
-                    if let Some(fd) = fd {
-                        for h in headers {
-                            match crate::git::match_hunk_header(fd, h)
-                                .and_then(|idx| crate::git::build_hunk_patch(fd, idx))
-                            {
-                                Some(p) => file_patches.push(p),
-                                None => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if ok && !file_patches.is_empty() {
-                        patches.extend(file_patches);
-                    } else {
-                        // Mapping failed: commit the whole file rather than guess.
-                        whole_files.push(path.clone());
-                        warned.push(path.clone());
-                    }
-                }
-            }
-        }
-
-        match crate::git::commit_partial(&self.project_root, &whole_files, &patches, &msg) {
+        match crate::git::commit_partial(
+            &self.project_root,
+            &parts.whole_files,
+            &parts.patches,
+            &msg,
+        ) {
             Ok(_) => {
-                if warned.is_empty() {
+                if parts.warned.is_empty() {
                     self.set_status_message("Committed change set".into());
                 } else {
                     self.set_status_message(format!(
                         "Committed; hunk mapping failed for {} — committed whole file",
-                        warned.join(", ")
+                        parts.warned.join(", ")
                     ));
                 }
                 self.advance_commit_queue();
@@ -553,6 +544,54 @@ impl DirigentApp {
         self.git.show_commit_dialog = true;
         self.load_commit_group(next);
     }
+}
+
+fn build_partial_commit_parts(
+    group: &CommitGroup,
+    file_diffs: &[FileRawDiff],
+) -> PartialCommitParts {
+    let mut parts = PartialCommitParts {
+        whole_files: Vec::new(),
+        patches: Vec::new(),
+        warned: Vec::new(),
+    };
+    for path in &group.files {
+        if let Some(headers) = group.hunk_selection.get(path) {
+            append_selected_hunk_patches(path, headers, file_diffs, &mut parts);
+        } else {
+            parts.whole_files.push(path.clone());
+        }
+    }
+    parts
+}
+
+fn append_selected_hunk_patches(
+    path: &str,
+    headers: &[String],
+    file_diffs: &[FileRawDiff],
+    parts: &mut PartialCommitParts,
+) {
+    let file_patches = file_diffs
+        .iter()
+        .find(|f| f.path == path)
+        .and_then(|file_diff| build_selected_hunk_patches(file_diff, headers));
+    if let Some(file_patches) = file_patches {
+        parts.patches.extend(file_patches);
+    } else {
+        // Mapping failed: commit the whole file rather than guess.
+        parts.whole_files.push(path.to_string());
+        parts.warned.push(path.to_string());
+    }
+}
+
+fn build_selected_hunk_patches(file_diff: &FileRawDiff, headers: &[String]) -> Option<Vec<String>> {
+    let mut patches = Vec::new();
+    for header in headers {
+        let patch = crate::git::match_hunk_header(file_diff, header)
+            .and_then(|idx| crate::git::build_hunk_patch(file_diff, idx))?;
+        patches.push(patch);
+    }
+    (!patches.is_empty()).then_some(patches)
 }
 
 /// Swap the group at `pos` with its neighbor in direction `delta` (`-1` =
@@ -615,126 +654,159 @@ pub(super) fn normalize_change_sets(
     changed_files: &[String],
     file_diffs: &[FileRawDiff],
 ) -> Vec<ChangeSetGroup> {
+    let mut builds = build_group_builds(raw, changed_files, file_diffs);
+    drop_partials_for_whole_paths(&mut builds);
+    let mut merged = merge_whole_file_groups(builds);
+    dedupe_partial_hunks(&mut merged);
+    let mut result = groups_from_builds(merged);
+    push_leftover_group(&mut result, changed_files);
+    result
+}
+
+fn build_group_builds(
+    raw: Vec<ChangeSetGroupRaw>,
+    changed_files: &[String],
+    file_diffs: &[FileRawDiff],
+) -> Vec<GroupBuild> {
     let changed: HashSet<&str> = changed_files.iter().map(String::as_str).collect();
-    let find_file = |path: &str| file_diffs.iter().find(|f| f.path == path);
+    raw.into_iter()
+        .filter_map(|g| build_group(g, &changed, file_diffs))
+        .collect()
+}
 
-    // 1. Resolve each raw group into whole/partial ownership.
-    let mut builds: Vec<GroupBuild> = Vec::new();
-    for g in raw {
-        let mut whole: Vec<String> = Vec::new();
-        let mut partial: HashMap<String, Vec<String>> = HashMap::new();
-        for f in &g.files {
-            let path = f.path.clone();
-            if !changed.contains(path.as_str()) {
-                continue; // hallucinated file
-            }
-            let ordinals = f.hunk_indices();
-            let resolved = if ordinals.is_empty() {
-                None // whole file
-            } else {
-                resolve_hunks(find_file(&path), &ordinals)
-            };
-            match resolved {
-                Some(headers) if !headers.is_empty() => {
-                    let e = partial.entry(path).or_default();
-                    for h in headers {
-                        if !e.contains(&h) {
-                            e.push(h);
-                        }
-                    }
-                }
-                // Whole file, or hunks that couldn't be resolved -> fall back whole.
-                _ => {
-                    if !whole.contains(&path) {
-                        whole.push(path);
-                    }
-                }
-            }
-        }
-        if whole.is_empty() && partial.is_empty() {
-            continue;
-        }
-        builds.push(GroupBuild {
-            title: g.title.trim().to_string(),
-            description: g.description.trim().to_string(),
-            whole,
-            partial,
-        });
+fn build_group(
+    raw: ChangeSetGroupRaw,
+    changed: &HashSet<&str>,
+    file_diffs: &[FileRawDiff],
+) -> Option<GroupBuild> {
+    let mut build = GroupBuild {
+        title: raw.title.trim().to_string(),
+        description: raw.description.trim().to_string(),
+        whole: Vec::new(),
+        partial: HashMap::new(),
+    };
+    for file in &raw.files {
+        append_group_file(&mut build, file, changed, file_diffs);
     }
+    (!build.whole.is_empty() || !build.partial.is_empty()).then_some(build)
+}
 
-    // 2. A path claimed whole anywhere is whole everywhere: drop partial claims.
-    let whole_paths: HashSet<String> = builds.iter().flat_map(|b| b.whole.iter().cloned()).collect();
-    for b in builds.iter_mut() {
-        b.partial.retain(|p, _| !whole_paths.contains(p));
+fn append_group_file(
+    build: &mut GroupBuild,
+    file: &crate::fast_llm::ChangeSetFileRaw,
+    changed: &HashSet<&str>,
+    file_diffs: &[FileRawDiff],
+) {
+    let path = file.path.clone();
+    if !changed.contains(path.as_str()) {
+        return;
     }
+    let ordinals = file.hunk_indices();
+    let file_diff = file_diffs.iter().find(|f| f.path == path);
+    if let Some(headers) = resolve_partial_headers(file_diff, &ordinals) {
+        append_unique_all(build.partial.entry(path).or_default(), headers);
+    } else {
+        append_unique(&mut build.whole, path);
+    }
+}
 
-    // 3. Merge groups sharing a whole file (union-find), preserving order.
-    let n = builds.len();
-    let mut parent: Vec<usize> = (0..n).collect();
+fn resolve_partial_headers(file: Option<&FileRawDiff>, ordinals: &[usize]) -> Option<Vec<String>> {
+    if ordinals.is_empty() {
+        None
+    } else {
+        resolve_hunks(file, ordinals)
+    }
+}
+
+fn drop_partials_for_whole_paths(builds: &mut [GroupBuild]) {
+    let whole_paths: HashSet<String> = builds
+        .iter()
+        .flat_map(|b| b.whole.iter().cloned())
+        .collect();
+    for build in builds {
+        build.partial.retain(|path, _| !whole_paths.contains(path));
+    }
+}
+
+fn merge_whole_file_groups(builds: Vec<GroupBuild>) -> Vec<GroupBuild> {
+    let mut parent: Vec<usize> = (0..builds.len()).collect();
+    union_groups_with_shared_whole_files(&builds, &mut parent);
+    collect_group_roots(builds, &mut parent)
+}
+
+fn union_groups_with_shared_whole_files(builds: &[GroupBuild], parent: &mut [usize]) {
     let mut owner: HashMap<&str, usize> = HashMap::new();
-    for (i, b) in builds.iter().enumerate() {
-        for p in &b.whole {
-            match owner.get(p.as_str()) {
-                Some(&j) => union(&mut parent, i, j),
-                None => {
-                    owner.insert(p.as_str(), i);
-                }
+    for (i, build) in builds.iter().enumerate() {
+        for path in &build.whole {
+            if let Some(&j) = owner.get(path.as_str()) {
+                union(parent, i, j);
+            } else {
+                owner.insert(path.as_str(), i);
             }
         }
     }
+}
+
+fn collect_group_roots(builds: Vec<GroupBuild>, parent: &mut [usize]) -> Vec<GroupBuild> {
     let mut order: Vec<usize> = Vec::new();
     let mut by_root: HashMap<usize, GroupBuild> = HashMap::new();
-    for (i, b) in builds.into_iter().enumerate() {
-        let root = find(&mut parent, i);
-        match by_root.get_mut(&root) {
-            Some(dst) => merge_build(dst, b),
-            None => {
-                order.push(root);
-                by_root.insert(root, b);
-            }
+    for (i, build) in builds.into_iter().enumerate() {
+        let root = find(parent, i);
+        if let Some(dst) = by_root.get_mut(&root) {
+            merge_build(dst, build);
+        } else {
+            order.push(root);
+            by_root.insert(root, build);
         }
     }
-    let mut merged: Vec<GroupBuild> =
-        order.into_iter().filter_map(|r| by_root.remove(&r)).collect();
-
-    // 4. Enforce partial-hunk disjointness across groups (first-wins per header).
-    let mut claimed: HashMap<String, HashSet<String>> = HashMap::new();
-    for b in merged.iter_mut() {
-        let mut drop_paths: Vec<String> = Vec::new();
-        for (path, headers) in b.partial.iter_mut() {
-            let seen = claimed.entry(path.clone()).or_default();
-            headers.retain(|h| seen.insert(h.clone()));
-            if headers.is_empty() {
-                drop_paths.push(path.clone());
-            }
-        }
-        for p in drop_paths {
-            b.partial.remove(&p);
-        }
-    }
-
-    // 5. Convert to ChangeSetGroup; append "Other changes" for omitted files.
-    let mut result: Vec<ChangeSetGroup> = merged
+    order
         .into_iter()
-        .filter_map(|b| {
-            let mut files = b.whole.clone();
-            for p in b.partial.keys() {
-                if !files.contains(p) {
-                    files.push(p.clone());
-                }
-            }
-            if files.is_empty() {
-                return None;
-            }
-            Some(ChangeSetGroup {
-                title: b.title,
-                description: b.description,
-                files,
-                hunk_selection: b.partial,
-            })
-        })
-        .collect();
+        .filter_map(|root| by_root.remove(&root))
+        .collect()
+}
 
+fn dedupe_partial_hunks(builds: &mut [GroupBuild]) {
+    let mut claimed: HashMap<String, HashSet<String>> = HashMap::new();
+    for build in builds {
+        drop_empty_or_duplicate_partial_hunks(build, &mut claimed);
+    }
+}
+
+fn drop_empty_or_duplicate_partial_hunks(
+    build: &mut GroupBuild,
+    claimed: &mut HashMap<String, HashSet<String>>,
+) {
+    let mut drop_paths: Vec<String> = Vec::new();
+    for (path, headers) in build.partial.iter_mut() {
+        let seen = claimed.entry(path.clone()).or_default();
+        headers.retain(|h| seen.insert(h.clone()));
+        if headers.is_empty() {
+            drop_paths.push(path.clone());
+        }
+    }
+    for path in drop_paths {
+        build.partial.remove(&path);
+    }
+}
+
+fn groups_from_builds(builds: Vec<GroupBuild>) -> Vec<ChangeSetGroup> {
+    builds.into_iter().filter_map(group_from_build).collect()
+}
+
+fn group_from_build(build: GroupBuild) -> Option<ChangeSetGroup> {
+    let mut files = build.whole.clone();
+    for path in build.partial.keys() {
+        append_unique(&mut files, path.clone());
+    }
+    (!files.is_empty()).then_some(ChangeSetGroup {
+        title: build.title,
+        description: build.description,
+        files,
+        hunk_selection: build.partial,
+    })
+}
+
+fn push_leftover_group(result: &mut Vec<ChangeSetGroup>, changed_files: &[String]) {
     let owned: HashSet<&str> = result
         .iter()
         .flat_map(|g| g.files.iter().map(String::as_str))
@@ -752,8 +824,6 @@ pub(super) fn normalize_change_sets(
             hunk_selection: HashMap::new(),
         });
     }
-
-    result
 }
 
 /// Resolve 1-based hunk ordinals to their `@@` headers in `file`. Returns `None`
@@ -776,32 +846,34 @@ fn resolve_hunks(file: Option<&FileRawDiff>, ordinals: &[usize]) -> Option<Vec<S
 
 /// Merge `src` into `dst`: union whole files and partial selections, join titles.
 fn merge_build(dst: &mut GroupBuild, src: GroupBuild) {
-    if !src.title.is_empty() {
-        if dst.title.is_empty() {
-            dst.title = src.title;
-        } else {
-            dst.title = format!("{} + {}", dst.title, src.title);
-        }
-    }
-    if !src.description.is_empty() {
-        if dst.description.is_empty() {
-            dst.description = src.description;
-        } else {
-            dst.description = format!("{}; {}", dst.description, src.description);
-        }
-    }
-    for f in src.whole {
-        if !dst.whole.contains(&f) {
-            dst.whole.push(f);
-        }
-    }
+    append_joined(&mut dst.title, src.title, " + ");
+    append_joined(&mut dst.description, src.description, "; ");
+    append_unique_all(&mut dst.whole, src.whole);
     for (path, headers) in src.partial {
-        let e = dst.partial.entry(path).or_default();
-        for h in headers {
-            if !e.contains(&h) {
-                e.push(h);
-            }
-        }
+        append_unique_all(dst.partial.entry(path).or_default(), headers);
+    }
+}
+
+fn append_joined(dst: &mut String, src: String, sep: &str) {
+    if src.is_empty() {
+        return;
+    }
+    if dst.is_empty() {
+        *dst = src;
+    } else {
+        *dst = format!("{dst}{sep}{src}");
+    }
+}
+
+fn append_unique<T: Eq>(dst: &mut Vec<T>, item: T) {
+    if !dst.contains(&item) {
+        dst.push(item);
+    }
+}
+
+fn append_unique_all<T: Eq>(dst: &mut Vec<T>, items: impl IntoIterator<Item = T>) {
+    for item in items {
+        append_unique(dst, item);
     }
 }
 
@@ -867,8 +939,11 @@ mod tests {
     #[test]
     fn disjoint_groups_pass_through() {
         let changed = vec!["a.rs".to_string(), "b.rs".to_string()];
-        let groups =
-            normalize_change_sets(vec![raw("A", &["a.rs"]), raw("B", &["b.rs"])], &changed, &[]);
+        let groups = normalize_change_sets(
+            vec![raw("A", &["a.rs"]), raw("B", &["b.rs"])],
+            &changed,
+            &[],
+        );
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].title, "A");
         assert_eq!(groups[0].files, vec!["a.rs"]);
@@ -949,7 +1024,10 @@ mod tests {
         let groups = normalize_change_sets(vec![raw_hunks("A", "a.rs", &[9])], &changed, &fds);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].files, vec!["a.rs"]);
-        assert!(groups[0].hunk_selection.is_empty(), "must not stage a guessed range");
+        assert!(
+            groups[0].hunk_selection.is_empty(),
+            "must not stage a guessed range"
+        );
     }
 
     #[test]
