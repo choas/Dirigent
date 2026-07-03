@@ -77,90 +77,67 @@ fn run_jj_checked<const N: usize>(
     }
 }
 
-/// Push the current bookmarks to the remote via `jj git push`.
-pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
-    let output = super::jj_cmd(jj_path)
-        .args(["git", "push"])
+fn summarize_jj_git_output(prefix: &str, output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary = stdout.lines().next().unwrap_or("ok").trim();
+    format!("{} ({})", prefix, summary)
+}
+
+fn jj_git_command_error(
+    repo_path: &Path,
+    jj_path: &str,
+    action: &str,
+    stderr: &str,
+    explain_conflicts: bool,
+) -> DirigentError {
+    if explain_conflicts && is_conflicted_commit_rejection(stderr) {
+        return DirigentError::JjCommand(conflicted_ancestor_message(repo_path, jj_path, stderr));
+    }
+    DirigentError::JjCommand(format!("jj git {} failed: {}", action, stderr.trim()))
+}
+
+fn run_jj_git_command(
+    repo_path: &Path,
+    jj_path: &str,
+    action: &str,
+    success_prefix: &str,
+    explain_conflicts: bool,
+) -> crate::error::Result<String> {
+    let mut output = super::jj_cmd(jj_path)
+        .args(["git", action])
         .current_dir(repo_path)
         .output()?;
 
     if is_stale_working_copy(&output) {
         update_stale_working_copy(repo_path, jj_path)?;
-        let output = super::jj_cmd(jj_path)
-            .args(["git", "push"])
+        output = super::jj_cmd(jj_path)
+            .args(["git", action])
             .current_dir(repo_path)
             .output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if is_conflicted_commit_rejection(&stderr) {
-                return Err(DirigentError::JjCommand(conflicted_ancestor_message(
-                    repo_path, jj_path, &stderr,
-                )));
-            }
-            return Err(DirigentError::JjCommand(format!(
-                "jj git push failed: {}",
-                stderr.trim()
-            )));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let summary = stdout.lines().next().unwrap_or("ok").trim();
-        return Ok(format!("Pushed ({})", summary));
     }
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_conflicted_commit_rejection(&stderr) {
-            return Err(DirigentError::JjCommand(conflicted_ancestor_message(
-                repo_path, jj_path, &stderr,
-            )));
-        }
-        return Err(DirigentError::JjCommand(format!(
-            "jj git push failed: {}",
-            stderr.trim()
-        )));
+    if output.status.success() {
+        return Ok(summarize_jj_git_output(success_prefix, &output));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let summary = stdout.lines().next().unwrap_or("ok").trim();
-    Ok(format!("Pushed ({})", summary))
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(jj_git_command_error(
+        repo_path,
+        jj_path,
+        action,
+        &stderr,
+        explain_conflicts,
+    ))
+}
+
+/// Push the current bookmarks to the remote via `jj git push`.
+pub(crate) fn jj_push(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
+    run_jj_git_command(repo_path, jj_path, "push", "Pushed", true)
 }
 
 /// Fetch from remote via `jj git fetch`.
 pub(crate) fn jj_pull(repo_path: &Path, jj_path: &str) -> crate::error::Result<String> {
-    let output = super::jj_cmd(jj_path)
-        .args(["git", "fetch"])
-        .current_dir(repo_path)
-        .output()?;
-
-    if is_stale_working_copy(&output) {
-        update_stale_working_copy(repo_path, jj_path)?;
-        let output = super::jj_cmd(jj_path)
-            .args(["git", "fetch"])
-            .current_dir(repo_path)
-            .output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DirigentError::JjCommand(format!(
-                "jj git fetch failed: {}",
-                stderr.trim()
-            )));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let summary = stdout.lines().next().unwrap_or("ok").trim();
-        return Ok(format!("Fetched ({})", summary));
-    }
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DirigentError::JjCommand(format!(
-            "jj git fetch failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let summary = stdout.lines().next().unwrap_or("ok").trim();
-    Ok(format!("Fetched ({})", summary))
+    run_jj_git_command(repo_path, jj_path, "fetch", "Fetched", false)
 }
 
 /// Read bookmarks for a given revision (e.g. `@`, `@-`).
