@@ -611,22 +611,27 @@ pub(crate) fn render_side_by_side_diff(
     colors: &SemanticColors,
 ) -> Option<(String, usize)> {
     let dc = DiffColors::from_semantic(colors);
-    let sep_color = colors.separator;
+    let sbs_ctx = SbsFileRenderCtx {
+        search,
+        colors,
+        dc: &dc,
+        sep_color: colors.separator,
+    };
 
     render_diff_files(
         ui,
         diff,
         collapsed_files,
         colors,
-        |ui, file, file_idx, budget| {
-            let style = SbsStyle {
-                colors,
-                dc: &dc,
-                sep_color,
-            };
-            render_sbs_file_hunks(ui, file, file_idx, search, &style, budget)
-        },
+        |ui, file, file_idx, budget| render_sbs_file_hunks(ui, file, file_idx, &sbs_ctx, budget),
     )
+}
+
+struct SbsFileRenderCtx<'a> {
+    search: Option<&'a DiffSearchHighlight<'a>>,
+    colors: &'a SemanticColors,
+    dc: &'a DiffColors,
+    sep_color: egui::Color32,
 }
 
 /// Render all hunks for a single file in side-by-side mode, consuming from the
@@ -643,8 +648,7 @@ fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
     file_idx: usize,
-    search: Option<&DiffSearchHighlight<'_>>,
-    style: &SbsStyle<'_>,
+    sbs_ctx: &SbsFileRenderCtx<'_>,
     budget: &mut usize,
 ) -> bool {
     let colors = style.colors;
@@ -666,10 +670,10 @@ fn render_sbs_file_hunks(
             let ctx = DiffRowContext {
                 file_idx,
                 hunk_idx,
-                current_match: search.as_ref().and_then(|s| s.current),
-                query_lower: search.as_ref().map(|s| s.query_lower).unwrap_or(""),
-                colors,
-                dc,
+                current_match: sbs_ctx.search.as_ref().and_then(|s| s.current),
+                query_lower: sbs_ctx.search.as_ref().map(|s| s.query_lower).unwrap_or(""),
+                colors: sbs_ctx.colors,
+                dc: sbs_ctx.dc,
             };
 
             for (left_idx, right_idx) in &hunk.sbs_pairs {
@@ -679,7 +683,7 @@ fn render_sbs_file_hunks(
                 }
                 let left = left_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
                 let right = right_idx.and_then(|i| hunk.lines.get(i).map(|l| (i, l)));
-                render_sbs_row(ui, left, right, &ctx, sep_color);
+                render_sbs_row(ui, left, right, &ctx, sbs_ctx.sep_color);
                 ui.end_row();
                 *budget -= 1;
             }
