@@ -42,25 +42,7 @@ impl DirigentApp {
             .min_size(150.0)
             .max_size(400.0)
             .show_inside(ui, |ui| {
-                {
-                    let fs = self.settings.font_size * FONT_SCALE_SUBHEADING;
-                    ui.horizontal(|ui| {
-                        let _ = ui.selectable_label(true, egui::RichText::new("Files").size(fs));
-                        let n = self.git.dirty_files.len();
-                        if n > 0 {
-                            if ui
-                                .selectable_label(
-                                    false,
-                                    egui::RichText::new(format!("Changes ({n})")).size(fs),
-                                )
-                                .clicked()
-                            {
-                                self.git.show_git_view = true;
-                                self.expand_git_view_dirs();
-                            }
-                        }
-                    });
-                }
+                self.render_file_tree_header(ui);
                 ui.separator();
 
                 let file_tree_height = Self::compute_file_tree_height(
@@ -68,33 +50,8 @@ impl DirigentApp {
                     self.viewer.active().is_some_and(|t| !t.symbols.is_empty()),
                     self.git.show_log,
                 );
-                let (tree_action, tree_status_msg) = egui::ScrollArea::vertical()
-                    .id_salt("file_tree_scroll")
-                    .max_height(file_tree_height)
-                    .show(ui, |ui| {
-                        let mut action = None;
-                        let mut status_msg = None;
-                        if let Some(ref tree) = self.file_tree {
-                            let current_file = self.viewer.current_file().cloned();
-                            let mut ctx = FileTreeCtx {
-                                expanded: &mut self.expanded_dirs,
-                                current_file: &current_file,
-                                action: &mut action,
-                                project_root: &self.project_root,
-                                dirty_files: &self.git.dirty_files,
-                                dirty_dirs: &self.git.dirty_dirs,
-                                semantic: &self.semantic,
-                                depth: 0,
-                                font_size: self.settings.font_size,
-                                status_msg: &mut status_msg,
-                            };
-                            for entry in &tree.entries {
-                                Self::render_file_entry(ui, entry, &mut ctx);
-                            }
-                        }
-                        (action, status_msg)
-                    })
-                    .inner;
+                let (tree_action, tree_status_msg) =
+                    self.render_file_tree_scroll(ui, file_tree_height);
                 if let Some(msg) = tree_status_msg {
                     self.set_status_message(msg);
                 }
@@ -105,6 +62,64 @@ impl DirigentApp {
                 self.render_symbol_outline(ui);
                 self.render_git_log_section(ui);
             });
+    }
+
+    fn render_file_tree_header(&mut self, ui: &mut egui::Ui) {
+        let fs = self.settings.font_size * FONT_SCALE_SUBHEADING;
+        ui.horizontal(|ui| {
+            let _ = ui.selectable_label(true, egui::RichText::new("Files").size(fs));
+            let dirty_count = self.git.dirty_files.len();
+            if dirty_count > 0
+                && ui
+                    .selectable_label(
+                        false,
+                        egui::RichText::new(format!("Changes ({dirty_count})")).size(fs),
+                    )
+                    .clicked()
+            {
+                self.git.show_git_view = true;
+                self.expand_git_view_dirs();
+            }
+        });
+    }
+
+    fn render_file_tree_scroll(
+        &mut self,
+        ui: &mut egui::Ui,
+        file_tree_height: f32,
+    ) -> (Option<FileTreeAction>, Option<String>) {
+        egui::ScrollArea::vertical()
+            .id_salt("file_tree_scroll")
+            .max_height(file_tree_height)
+            .show(ui, |ui| self.render_file_tree_entries(ui))
+            .inner
+    }
+
+    fn render_file_tree_entries(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> (Option<FileTreeAction>, Option<String>) {
+        let mut action = None;
+        let mut status_msg = None;
+        if let Some(ref tree) = self.file_tree {
+            let current_file = self.viewer.current_file().cloned();
+            let mut ctx = FileTreeCtx {
+                expanded: &mut self.expanded_dirs,
+                current_file: &current_file,
+                action: &mut action,
+                project_root: &self.project_root,
+                dirty_files: &self.git.dirty_files,
+                dirty_dirs: &self.git.dirty_dirs,
+                semantic: &self.semantic,
+                depth: 0,
+                font_size: self.settings.font_size,
+                status_msg: &mut status_msg,
+            };
+            for entry in &tree.entries {
+                Self::render_file_entry(ui, entry, &mut ctx);
+            }
+        }
+        (action, status_msg)
     }
 
     /// Compute the height available for the file tree scroll area.
@@ -608,25 +623,13 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let (row_rect, response) =
         ui.allocate_exact_size(egui::vec2(full_width, row_height), egui::Sense::click());
 
-    // Branch lineage highlight (tinted row background).
-    if params.highlight_lane.is_some() {
-        let tint = if is_dark {
-            egui::Color32::from_white_alpha(8)
-        } else {
-            egui::Color32::from_black_alpha(6)
-        };
-        ui.painter().rect_filled(row_rect, 0, tint);
-    }
-
-    // Hover highlight.
-    if response.hovered() {
-        let hover = if is_dark {
-            egui::Color32::from_white_alpha(15)
-        } else {
-            egui::Color32::from_black_alpha(12)
-        };
-        ui.painter().rect_filled(row_rect, 0, hover);
-    }
+    paint_commit_row_background(
+        ui,
+        row_rect,
+        response.hovered(),
+        is_dark,
+        params.highlight_lane,
+    );
 
     // Paint graph column.
     if let Some(graph) = params.graph_row {
@@ -660,13 +663,7 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let dot = if params.is_unpushed { "\u{25CF} " } else { "" };
     let label = format!("{}{} {}", dot, params.commit.short_hash, msg);
 
-    let text_color = if params.commit.is_working_copy {
-        params.semantic.accent
-    } else if params.is_unpushed {
-        ui.visuals().warn_fg_color
-    } else {
-        ui.visuals().text_color()
-    };
+    let text_color = commit_text_color(ui, params);
 
     let label_font = egui::FontId::monospace(ui.text_style_height(&egui::TextStyle::Small) * 0.85);
     ui.painter().text(
@@ -696,6 +693,42 @@ fn render_commit_row(ui: &mut egui::Ui, params: &CommitRowParams<'_>) -> (bool, 
     let response = response.on_hover_text(hover_text);
 
     (response.clicked(), hovered)
+}
+
+fn paint_commit_row_background(
+    ui: &egui::Ui,
+    row_rect: egui::Rect,
+    hovered: bool,
+    is_dark: bool,
+    highlight_lane: Option<usize>,
+) {
+    if highlight_lane.is_some() {
+        let tint = if is_dark {
+            egui::Color32::from_white_alpha(8)
+        } else {
+            egui::Color32::from_black_alpha(6)
+        };
+        ui.painter().rect_filled(row_rect, 0, tint);
+    }
+
+    if hovered {
+        let hover = if is_dark {
+            egui::Color32::from_white_alpha(15)
+        } else {
+            egui::Color32::from_black_alpha(12)
+        };
+        ui.painter().rect_filled(row_rect, 0, hover);
+    }
+}
+
+fn commit_text_color(ui: &egui::Ui, params: &CommitRowParams<'_>) -> egui::Color32 {
+    if params.commit.is_working_copy {
+        params.semantic.accent
+    } else if params.is_unpushed {
+        ui.visuals().warn_fg_color
+    } else {
+        ui.visuals().text_color()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -887,42 +920,72 @@ fn render_copy_path_items(
         *status_msg = Some("Relative path copied".into());
         ui.close();
     }
-    if abs_path.is_file() {
-        const MAX_COPY_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+    render_copy_contents_item(ui, abs_path, status_msg);
+}
 
-        let cache_id = egui::Id::new(("copy_contents_cache", abs_path));
-        let cached: Option<(bool, bool)> = ui.data(|d| d.get_temp(cache_id));
-        let (too_large, likely_binary) = match cached {
-            Some(v) => v,
-            None => {
-                let meta = std::fs::metadata(abs_path).ok();
-                let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let result = (file_size > MAX_COPY_SIZE, is_likely_binary(abs_path));
-                ui.data_mut(|d| d.insert_temp(cache_id, result));
-                result
-            }
-        };
+struct CopyContentsState {
+    too_large: bool,
+    likely_binary: bool,
+}
 
-        let enabled = !too_large && !likely_binary;
-        let label = if too_large {
+impl CopyContentsState {
+    fn enabled(&self) -> bool {
+        !self.too_large && !self.likely_binary
+    }
+
+    fn label(&self) -> &'static str {
+        if self.too_large {
             "Copy Contents (file too large)"
-        } else if likely_binary {
+        } else if self.likely_binary {
             "Copy Contents (binary file)"
         } else {
             "Copy Contents"
-        };
+        }
+    }
+}
 
-        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-            match std::fs::read_to_string(abs_path) {
-                Ok(contents) => {
-                    ui.ctx().copy_text(contents);
-                    *status_msg = Some("File contents copied".into());
-                }
-                Err(err) => {
-                    *status_msg = Some(format!("Failed to read file: {err}"));
-                }
-            }
-            ui.close();
+fn render_copy_contents_item(ui: &mut egui::Ui, abs_path: &Path, status_msg: &mut Option<String>) {
+    if !abs_path.is_file() {
+        return;
+    }
+
+    let state = copy_contents_state(ui, abs_path);
+    if ui
+        .add_enabled(state.enabled(), egui::Button::new(state.label()))
+        .clicked()
+    {
+        copy_file_contents(ui, abs_path, status_msg);
+        ui.close();
+    }
+}
+
+fn copy_contents_state(ui: &egui::Ui, abs_path: &Path) -> CopyContentsState {
+    let cache_id = egui::Id::new(("copy_contents_cache", abs_path));
+    if let Some((too_large, likely_binary)) = ui.data(|d| d.get_temp(cache_id)) {
+        return CopyContentsState {
+            too_large,
+            likely_binary,
+        };
+    }
+
+    const MAX_COPY_SIZE: u64 = 10 * 1024 * 1024;
+    let file_size = std::fs::metadata(abs_path).map(|m| m.len()).unwrap_or(0);
+    let state = CopyContentsState {
+        too_large: file_size > MAX_COPY_SIZE,
+        likely_binary: is_likely_binary(abs_path),
+    };
+    ui.data_mut(|d| d.insert_temp(cache_id, (state.too_large, state.likely_binary)));
+    state
+}
+
+fn copy_file_contents(ui: &egui::Ui, abs_path: &Path, status_msg: &mut Option<String>) {
+    match std::fs::read_to_string(abs_path) {
+        Ok(contents) => {
+            ui.ctx().copy_text(contents);
+            *status_msg = Some("File contents copied".into());
+        }
+        Err(err) => {
+            *status_msg = Some(format!("Failed to read file: {err}"));
         }
     }
 }
