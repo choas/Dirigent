@@ -543,6 +543,9 @@ mod tests {
         assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
         // ...but the branch ref is preserved.
         let branches = list_branches(p).unwrap();
-        assert!(branches.iter().any(|b| b == "feat"), "branch must survive retire");
+        assert!(
+            branches.iter().any(|b| b == "feat"),
+            "branch must survive retire"
+        );
     }
 }
