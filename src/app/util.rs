@@ -146,6 +146,23 @@ pub(crate) fn paint_u8_grid_at<const WIDTH: usize, const HEIGHT: usize>(
     }
 }
 
+pub(crate) fn paint_pixel_grid(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    width: usize,
+    height: usize,
+    px: f32,
+    mut color_at: impl FnMut(usize, usize) -> Option<egui::Color32>,
+) {
+    for row in 0..height {
+        for col in 0..width {
+            if let Some(color) = color_at(row, col) {
+                paint_grid_cell(painter, origin, col, row, px, color);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
