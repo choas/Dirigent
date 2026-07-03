@@ -42,6 +42,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
+type LinesWithCuesCache = Option<(String, u64, Arc<HashMap<usize, bool>>)>;
+
 // -- Timing constants --
 const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
 const LOG_SYNC_INTERVAL: Duration = Duration::from_secs(3);
@@ -108,6 +110,18 @@ use claude_run::ClaudeRunState;
 use sources_poll::SourceState;
 use tasks::TaskHandle;
 use theme::{icon, icon_small};
+
+struct InitialProjectState {
+    file_tree: Option<FileTree>,
+    cues: Vec<Cue>,
+    archived_cue_count: usize,
+    git_info: Option<git::GitInfo>,
+    dirty_files: HashMap<String, char>,
+    ahead_of_remote: usize,
+    commit_history: Vec<git::CommitInfo>,
+    commit_history_total: usize,
+    worktrees: Vec<git::WorktreeInfo>,
+}
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
     GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
@@ -393,7 +407,7 @@ pub struct DirigentApp {
     /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
     cue_generation: u64,
     /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
-    cached_lines_with_cues: Option<(String, u64, std::sync::Arc<HashMap<usize, bool>>)>,
+    cached_lines_with_cues: LinesWithCuesCache,
 
     // Prompt history search
     prompt_history_query: String,
@@ -603,6 +617,102 @@ fn start_fs_watcher(
     Some(watcher)
 }
 
+fn load_initial_project_state(
+    skip_scan: bool,
+    project_root: &Path,
+    db: &Database,
+    settings: &Settings,
+) -> InitialProjectState {
+    if skip_scan {
+        return InitialProjectState::empty();
+    }
+    let file_tree = FileTree::scan(project_root).ok();
+    let cues = db.all_cues_limited_archived(10).unwrap_or_default();
+    let archived_cue_count = db.archived_cue_count().unwrap_or(0);
+    let (git_info, dirty_files, ahead_of_remote) = initial_vcs_state(project_root, settings);
+    let limit = 10_usize.max(ahead_of_remote);
+    let (commit_history, commit_history_total) =
+        initial_commit_history(project_root, settings, limit);
+    let worktrees = initial_worktrees(project_root, settings);
+    InitialProjectState {
+        file_tree,
+        cues,
+        archived_cue_count,
+        git_info,
+        dirty_files,
+        ahead_of_remote,
+        commit_history,
+        commit_history_total,
+        worktrees,
+    }
+}
+
+impl InitialProjectState {
+    fn empty() -> Self {
+        Self {
+            file_tree: None,
+            cues: Vec::new(),
+            archived_cue_count: 0,
+            git_info: None,
+            dirty_files: HashMap::new(),
+            ahead_of_remote: 0,
+            commit_history: Vec::new(),
+            commit_history_total: 0,
+            worktrees: Vec::new(),
+        }
+    }
+}
+
+fn initial_vcs_state(
+    project_root: &Path,
+    settings: &Settings,
+) -> (Option<git::GitInfo>, HashMap<String, char>, usize) {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            let jj_path = &settings.jj_cli_path;
+            (
+                jj::jj_read_info(project_root, jj_path),
+                jj::jj_get_dirty_files(project_root, jj_path),
+                jj::jj_get_ahead_of_remote(project_root, jj_path),
+            )
+        }
+        VcsBackend::Git => (
+            git::read_git_info(project_root),
+            git::get_dirty_files(project_root),
+            git::get_ahead_of_remote(project_root),
+        ),
+    }
+}
+
+fn initial_commit_history(
+    project_root: &Path,
+    settings: &Settings,
+    limit: usize,
+) -> (Vec<git::CommitInfo>, usize) {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            let jj_path = &settings.jj_cli_path;
+            (
+                jj::jj_read_commit_history(project_root, limit, jj_path),
+                jj::jj_count_commits(project_root, jj_path),
+            )
+        }
+        VcsBackend::Git => (
+            git::read_commit_history(project_root, limit),
+            git::count_commits(project_root),
+        ),
+    }
+}
+
+fn initial_worktrees(project_root: &Path, settings: &Settings) -> Vec<git::WorktreeInfo> {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            jj::jj_list_workspaces(project_root, &settings.jj_cli_path).unwrap_or_default()
+        }
+        VcsBackend::Git => git::list_worktrees(project_root).unwrap_or_default(),
+    }
+}
+
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
@@ -625,7 +735,7 @@ impl DirigentApp {
         // ~/Movies, and ~/Library which triggers the macOS TCC "would like to
         // access Apple Music" permission dialog.  Skip everything that walks
         // the file system until the user picks a real repo.
-        let (
+        let InitialProjectState {
             file_tree,
             cues,
             archived_cue_count,
@@ -635,72 +745,8 @@ impl DirigentApp {
             commit_history,
             commit_history_total,
             worktrees,
-            mut _fs_watcher,
-        ) = if skip_scan {
-            (
-                None,
-                Vec::new(),
-                0_usize,
-                None,
-                HashMap::new(),
-                0_usize,
-                Vec::new(),
-                0_usize,
-                Vec::new(),
-                None,
-            )
-        } else {
-            let file_tree = FileTree::scan(&project_root).ok();
-            let cues = db.all_cues_limited_archived(10).unwrap_or_default();
-            let archived_cue_count = db.archived_cue_count().unwrap_or(0);
-            let (git_info, dirty_files, ahead_of_remote) = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    let jp = &settings.jj_cli_path;
-                    (
-                        jj::jj_read_info(&project_root, jp),
-                        jj::jj_get_dirty_files(&project_root, jp),
-                        jj::jj_get_ahead_of_remote(&project_root, jp),
-                    )
-                }
-                VcsBackend::Git => (
-                    git::read_git_info(&project_root),
-                    git::get_dirty_files(&project_root),
-                    git::get_ahead_of_remote(&project_root),
-                ),
-            };
-            let limit = 10_usize.max(ahead_of_remote);
-            let (commit_history, commit_history_total) = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    let jp = &settings.jj_cli_path;
-                    (
-                        jj::jj_read_commit_history(&project_root, limit, jp),
-                        jj::jj_count_commits(&project_root, jp),
-                    )
-                }
-                VcsBackend::Git => (
-                    git::read_commit_history(&project_root, limit),
-                    git::count_commits(&project_root),
-                ),
-            };
-            let worktrees = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    jj::jj_list_workspaces(&project_root, &settings.jj_cli_path).unwrap_or_default()
-                }
-                VcsBackend::Git => git::list_worktrees(&project_root).unwrap_or_default(),
-            };
-            (
-                file_tree,
-                cues,
-                archived_cue_count,
-                git_info,
-                dirty_files,
-                ahead_of_remote,
-                commit_history,
-                commit_history_total,
-                worktrees,
-                None,
-            )
-        };
+        } = load_initial_project_state(skip_scan, &project_root, &db, &settings);
+        let mut _fs_watcher = None;
 
         let fs_changed = Arc::new(AtomicBool::new(false));
         let egui_ctx = Arc::new(OnceLock::new());
