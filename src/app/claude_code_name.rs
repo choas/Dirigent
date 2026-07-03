@@ -128,63 +128,79 @@ pub fn paint_at(
     let t = ctx.input(|i| i.time) as f32;
 
     let colors = compute_colors(accent, is_dark);
+    let mut char_origin = paint_display_name(painter, origin, display_name, scale, px, &colors);
+    char_origin.y += bob_offset(t) * px;
 
-    // Two glow centers move up and down through the body on discrete ticks
-    let glow_step = tick(t, 0.8);
-    let g1_idx = (glow_step.rem_euclid(GLOW1_Y.len() as i32)) as usize;
-    let g2_idx = (glow_step.rem_euclid(GLOW2_Y.len() as i32)) as usize;
-    let glows = [
-        (4.5_f32, GLOW1_Y[g1_idx], 3.0_f32),
-        (4.5, GLOW2_Y[g2_idx], 2.5),
-    ];
+    paint_body(painter, char_origin, px, t, &colors);
+    paint_arms(painter, char_origin, px, t, &colors);
 
-    // Blink: eyes close for one full tick every ~8 ticks (4s)
-    let blink_tick = tick(t, 0.5).rem_euclid(8);
-    let eyes_closed = blink_tick == 7;
+    ctx.request_repaint_after(std::time::Duration::from_millis(500));
+}
 
-    let mut char_origin = origin;
+fn paint_display_name(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    display_name: &str,
+    scale: f32,
+    px: f32,
+    colors: &BodyColors,
+) -> egui::Pos2 {
     let full_char_w = (W + 2 * ARM_LEN) as f32 * px;
-
-    if !display_name.is_empty() {
-        let text_size = 10.0 * scale;
-        let text_w = display_name.chars().count() as f32 * 6.0 * scale;
-        let total_w = full_char_w.max(text_w);
-        let text_x = origin.x + (total_w - text_w) / 2.0;
-        painter.text(
-            egui::pos2(text_x, origin.y),
-            egui::Align2::LEFT_TOP,
-            display_name,
-            egui::FontId::monospace(text_size),
-            colors.text,
-        );
-        char_origin.y += text_size + 4.0 * scale;
-        let body_w = W as f32 * px;
-        char_origin.x = origin.x + (total_w - body_w) / 2.0;
-    } else {
-        char_origin.x = origin.x + ARM_LEN as f32 * px;
+    if display_name.is_empty() {
+        return egui::pos2(origin.x + ARM_LEN as f32 * px, origin.y);
     }
+    let text_size = 10.0 * scale;
+    let text_w = display_name.chars().count() as f32 * 6.0 * scale;
+    let total_w = full_char_w.max(text_w);
+    let text_x = origin.x + (total_w - text_w) / 2.0;
+    painter.text(
+        egui::pos2(text_x, origin.y),
+        egui::Align2::LEFT_TOP,
+        display_name,
+        egui::FontId::monospace(text_size),
+        colors.text,
+    );
+    let body_w = W as f32 * px;
+    egui::pos2(
+        origin.x + (total_w - body_w) / 2.0,
+        origin.y + text_size + 4.0 * scale,
+    )
+}
 
+fn bob_offset(t: f32) -> f32 {
     // Bob snapped to whole-pixel offsets: cycles 0, -1, 0, +1 pixels
     let bob_pattern: [i32; 4] = [0, -1, 0, 1];
     let bob_idx = (tick(t, 0.6).rem_euclid(4)) as usize;
-    let bob = bob_pattern[bob_idx] as f32 * px;
-    char_origin.y += bob;
+    bob_pattern[bob_idx] as f32
+}
 
-    for row in 0..H {
-        for col in 0..W {
-            let cell = CHARACTER[row][col];
+fn current_glows(t: f32) -> [(f32, f32, f32); 2] {
+    let glow_step = tick(t, 0.8);
+    let g1_idx = (glow_step.rem_euclid(GLOW1_Y.len() as i32)) as usize;
+    let g2_idx = (glow_step.rem_euclid(GLOW2_Y.len() as i32)) as usize;
+    [(4.5, GLOW1_Y[g1_idx], 3.0), (4.5, GLOW2_Y[g2_idx], 2.5)]
+}
+
+fn eyes_closed(t: f32) -> bool {
+    tick(t, 0.5).rem_euclid(8) == 7
+}
+
+fn paint_body(
+    painter: &egui::Painter,
+    char_origin: egui::Pos2,
+    px: f32,
+    t: f32,
+    colors: &BodyColors,
+) {
+    let glows = current_glows(t);
+    let eyes_closed = eyes_closed(t);
+    for (row, cells) in CHARACTER.iter().enumerate().take(H) {
+        for (col, cell) in cells.iter().enumerate().take(W) {
+            let cell = *cell;
             if cell == 0 {
                 continue;
             }
-            let color = if cell == 2 {
-                if eyes_closed {
-                    colors.eye_closed
-                } else {
-                    colors.eye
-                }
-            } else {
-                body_pixel_color(row, col, &glows, &colors)
-            };
+            let color = character_pixel_color(cell, row, col, eyes_closed, &glows, colors);
             let px_rect = egui::Rect::from_min_size(
                 char_origin + egui::vec2(col as f32 * px, row as f32 * px),
                 egui::vec2(px, px),
@@ -192,7 +208,32 @@ pub fn paint_at(
             painter.rect_filled(px_rect, 0.0, color);
         }
     }
+}
 
+fn character_pixel_color(
+    cell: u8,
+    row: usize,
+    col: usize,
+    eyes_closed: bool,
+    glows: &[(f32, f32, f32); 2],
+    colors: &BodyColors,
+) -> egui::Color32 {
+    if cell == 2 && eyes_closed {
+        colors.eye_closed
+    } else if cell == 2 {
+        colors.eye
+    } else {
+        body_pixel_color(row, col, glows, colors)
+    }
+}
+
+fn paint_arms(
+    painter: &egui::Painter,
+    char_origin: egui::Pos2,
+    px: f32,
+    t: f32,
+    colors: &BodyColors,
+) {
     // Arms wave in discrete pixel steps: offset cycles -1, 0, +1, 0
     let arm_pattern: [i32; 4] = [-1, 0, 1, 0];
     let left_idx = (tick(t, 0.5).rem_euclid(4)) as usize;
@@ -226,6 +267,4 @@ pub fn paint_at(
             colors.body_mid,
         );
     }
-
-    ctx.request_repaint_after(std::time::Duration::from_millis(500));
 }
