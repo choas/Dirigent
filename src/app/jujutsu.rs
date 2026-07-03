@@ -158,7 +158,15 @@ pub fn paint_at(
     let colors = compute_colors(accent, is_dark);
     let stance = current_stance(t);
 
-    // Rotating enso (incomplete circle) behind the figure.
+    paint_enso(painter, origin, t, colors.enso, px);
+    paint_figure(painter, origin, stance, &colors, px);
+    paint_mat(painter, origin, accent, is_dark, px);
+
+    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+}
+
+/// Rotating enso (incomplete circle) behind the figure.
+fn paint_enso(painter: &egui::Painter, origin: egui::Pos2, t: f32, color: egui::Color32, px: f32) {
     let center = origin + egui::vec2(W as f32 * px * 0.5, H as f32 * px * 0.45);
     let radius = 8.0 * px;
     let angle_offset = t * 0.6;
@@ -172,40 +180,63 @@ pub fn paint_at(
         let a1 = angle_offset + ((i + 1) as f32 / segments as f32) * std::f32::consts::TAU;
         let p0 = center + egui::vec2(a0.cos() * radius, a0.sin() * radius);
         let p1 = center + egui::vec2(a1.cos() * radius, a1.sin() * radius);
-        painter.line_segment([p0, p1], egui::Stroke::new(px * 0.8, colors.enso));
+        painter.line_segment([p0, p1], egui::Stroke::new(px * 0.8, color));
     }
+}
 
-    // Pixel figure
+/// Pixel figure
+fn paint_figure(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    stance: &[[u8; W]; H],
+    colors: &JujutsuColors,
+    px: f32,
+) {
     for row in 0..H {
         for col in 0..W {
-            let cell = stance[row][col];
-            if cell == 0 {
+            if stance[row][col] == 0 {
                 continue;
             }
-            let above = if row > 0 { stance[row - 1][col] } else { 0 };
-            let below = if row + 1 < H { stance[row + 1][col] } else { 0 };
-
-            let color = if cell == 2 {
-                colors.belt
-            } else if row <= 2 {
-                colors.head
-            } else if above == 0 {
-                colors.highlight
-            } else if below == 0 {
-                colors.shadow
-            } else {
-                colors.gi
-            };
-
             let rect = egui::Rect::from_min_size(
                 origin + egui::vec2(col as f32 * px, row as f32 * px),
                 egui::vec2(px, px),
             );
-            painter.rect_filled(rect, 0.0, color);
+            painter.rect_filled(rect, 0.0, cell_color(stance, row, col, colors));
         }
     }
+}
 
-    // Floor / mat line
+fn cell_color(
+    stance: &[[u8; W]; H],
+    row: usize,
+    col: usize,
+    colors: &JujutsuColors,
+) -> egui::Color32 {
+    let cell = stance[row][col];
+    let above = if row > 0 { stance[row - 1][col] } else { 0 };
+    let below = if row + 1 < H { stance[row + 1][col] } else { 0 };
+
+    if cell == 2 {
+        colors.belt
+    } else if row <= 2 {
+        colors.head
+    } else if above == 0 {
+        colors.highlight
+    } else if below == 0 {
+        colors.shadow
+    } else {
+        colors.gi
+    }
+}
+
+/// Floor / mat line
+fn paint_mat(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    accent: egui::Color32,
+    is_dark: bool,
+    px: f32,
+) {
     let mat_color = egui::Color32::from_rgba_premultiplied(
         accent.r(),
         accent.g(),
@@ -220,6 +251,4 @@ pub fn paint_at(
         );
         painter.rect_filled(rect, 0.0, mat_color);
     }
-
-    ctx.request_repaint_after(std::time::Duration::from_millis(100));
 }
