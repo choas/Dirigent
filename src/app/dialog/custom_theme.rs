@@ -105,32 +105,48 @@ impl DirigentApp {
     }
 
     fn apply_custom_theme_dialog_actions(&mut self, actions: CustomThemeDialogActions) {
-        if actions.export {
-            if let Some(edit) = &self.custom_theme_edit {
-                match export_theme(&edit.theme) {
-                    Ok(msg) => self.set_status_message(msg),
-                    Err(ExportThemeError::Cancelled) => {}
-                    Err(e) => self.set_status_message(e.to_string()),
-                }
-            }
-        }
-        if actions.import {
-            match import_theme() {
-                Ok(imported) => {
-                    if let Some(edit) = self.custom_theme_edit.as_mut() {
-                        edit.theme = imported;
-                    }
-                }
-                Err(e) => {
-                    if e != "No file selected" {
-                        self.set_status_message(format!("Import failed: {e}"));
-                    }
-                }
-            }
-        }
+        self.apply_custom_theme_file_actions(&actions);
         if actions.generate {
             self.spawn_ai_theme_generation();
         }
+        self.apply_custom_theme_finish_actions(actions);
+    }
+
+    fn apply_custom_theme_file_actions(&mut self, actions: &CustomThemeDialogActions) {
+        if actions.export {
+            self.export_current_custom_theme();
+        }
+        if actions.import {
+            self.import_custom_theme_file();
+        }
+    }
+
+    fn export_current_custom_theme(&mut self) {
+        let Some(edit) = &self.custom_theme_edit else {
+            return;
+        };
+        match export_theme(&edit.theme) {
+            Ok(msg) => self.set_status_message(msg),
+            Err(ExportThemeError::Cancelled) => {}
+            Err(e) => self.set_status_message(e.to_string()),
+        }
+    }
+
+    fn import_custom_theme_file(&mut self) {
+        match import_theme() {
+            Ok(imported) => {
+                if let Some(edit) = self.custom_theme_edit.as_mut() {
+                    edit.theme = imported;
+                }
+            }
+            Err(e) if e != "No file selected" => {
+                self.set_status_message(format!("Import failed: {e}"));
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn apply_custom_theme_finish_actions(&mut self, actions: CustomThemeDialogActions) {
         if actions.save {
             cancel_theme_generation(self.custom_theme_edit.as_ref());
             self.save_custom_theme();

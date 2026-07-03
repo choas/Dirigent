@@ -1443,6 +1443,9 @@ fn is_empty_table_bottom(chat_plain: &[String], idx: usize) -> bool {
     is_table_bottom_border(&chat_plain[idx]) && idx > 0 && is_table_mid_rule(&chat_plain[idx - 1])
 }
 
+type TuiDataReceiver = std::sync::mpsc::Receiver<Result<Vec<u8>, String>>;
+type TuiDataEvent = Result<Result<Vec<u8>, String>, std::sync::mpsc::RecvTimeoutError>;
+
 fn read_tui(
     reader: Box<dyn Read + Send>,
     tx: mpsc::Sender<Event>,
@@ -1454,7 +1457,11 @@ fn read_tui(
     let idle_timeout = Duration::from_secs(5);
     let poll_interval = Duration::from_millis(100);
     let mut ctx = TuiReadContext::new(rows, cols, &tx, &terminal_state, recorder.as_ref());
+    let data_rx = spawn_tui_reader(reader);
+    run_tui_read_loop(&mut ctx, &data_rx, poll_interval, idle_timeout);
+}
 
+fn spawn_tui_reader(reader: Box<dyn Read + Send>) -> TuiDataReceiver {
     // Decouple blocking reads from timeout-based prompt detection:
     // a reader thread sends raw chunks through a channel, and the
     // processing loop uses recv_timeout to check idle timers.
@@ -1477,26 +1484,37 @@ fn read_tui(
             }
         }
     });
+    data_rx
+}
 
+fn run_tui_read_loop(
+    ctx: &mut TuiReadContext<'_>,
+    data_rx: &TuiDataReceiver,
+    poll_interval: Duration,
+    idle_timeout: Duration,
+) {
     loop {
-        match data_rx.recv_timeout(poll_interval) {
-            Ok(Ok(chunk)) => {
-                if ctx.process_chunk(chunk) {
-                    break;
-                }
-            }
-            Ok(Err(err_msg)) => {
-                ctx.reader_error = Some(err_msg);
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if ctx.process_timeout(idle_timeout) {
-                    break;
-                }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                ctx.process_disconnect();
-                break;
-            }
+        if handle_tui_data_event(ctx, data_rx.recv_timeout(poll_interval), idle_timeout) {
+            break;
+        }
+    }
+}
+
+fn handle_tui_data_event(
+    ctx: &mut TuiReadContext<'_>,
+    event: TuiDataEvent,
+    idle_timeout: Duration,
+) -> bool {
+    match event {
+        Ok(Ok(chunk)) => ctx.process_chunk(chunk),
+        Ok(Err(err_msg)) => {
+            ctx.reader_error = Some(err_msg);
+            false
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ctx.process_timeout(idle_timeout),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            ctx.process_disconnect();
+            true
         }
     }
 }
