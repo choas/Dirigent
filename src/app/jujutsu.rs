@@ -193,21 +193,9 @@ fn paint_figure(
     colors: &JujutsuColors,
     px: f32,
 ) {
-    for row in 0..H {
-        for col in 0..W {
-            if stance[row][col] == 0 {
-                continue;
-            }
-            util::paint_grid_cell(
-                painter,
-                origin,
-                col,
-                row,
-                px,
-                cell_color(stance, row, col, colors),
-            );
-        }
-    }
+    util::paint_u8_grid(painter, origin, stance, px, |row, col, _| {
+        cell_color(stance, row, col, colors)
+    });
 }
 
 fn cell_color(
@@ -217,8 +205,7 @@ fn cell_color(
     colors: &JujutsuColors,
 ) -> egui::Color32 {
     let cell = stance[row][col];
-    let above = if row > 0 { stance[row - 1][col] } else { 0 };
-    let below = if row + 1 < H { stance[row + 1][col] } else { 0 };
+    let (above, below) = util::vertical_neighbors(stance, row, col);
 
     if cell == 2 {
         colors.belt
@@ -247,8 +234,5 @@ fn paint_mat(
         accent.b(),
         if is_dark { 80 } else { 60 },
     );
-    let mat_row = 17;
-    for col in 1..(W - 1) {
-        util::paint_grid_cell(painter, origin, col, mat_row, px, mat_color);
-    }
+    util::paint_grid_row(painter, origin, 17, 1..(W - 1), px, mat_color);
 }
