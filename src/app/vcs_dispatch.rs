@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::types::DiffLineKind;
-use crate::diff_view::{parse_unified_diff, DiffLineKind as DiffViewLineKind};
+use crate::diff_view::{parse_unified_diff, DiffHunk, DiffLineKind as DiffViewLineKind};
 use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;
@@ -146,45 +146,43 @@ pub(super) fn compute_diff_lines(
     for file_diff in &parsed.files {
         let file_map = result_raw.entry(file_diff.new_path.clone()).or_default();
         for hunk in &file_diff.hunks {
-            let mut has_deletions = false;
-            for line in &hunk.lines {
-                if line.kind == DiffViewLineKind::Deletion {
-                    has_deletions = true;
-                    break;
-                }
-            }
-            for line in &hunk.lines {
-                if line.kind == DiffViewLineKind::Addition {
-                    if let Some(lineno) = line.new_lineno {
-                        let kind = if has_deletions {
-                            DiffLineKind::Modified
-                        } else {
-                            DiffLineKind::Added
-                        };
-                        file_map.insert(lineno, kind);
-                    }
-                }
-            }
-            // Mark a single "deleted" indicator at the line just before the deletion point
-            if has_deletions {
-                let mut has_additions = false;
-                for line in &hunk.lines {
-                    if line.kind == DiffViewLineKind::Addition {
-                        has_additions = true;
-                        break;
-                    }
-                }
-                if !has_additions {
-                    let delete_at = hunk.new_start.saturating_sub(1);
-                    if delete_at > 0 {
-                        file_map.entry(delete_at).or_insert(DiffLineKind::Deleted);
-                    }
-                }
-            }
+            mark_hunk_lines(file_map, hunk);
         }
     }
     result_raw
         .into_iter()
         .map(|(k, v)| (k, Arc::new(v)))
         .collect()
+}
+
+/// Record diff line indicators for a single hunk into `file_map`.
+fn mark_hunk_lines(file_map: &mut HashMap<usize, DiffLineKind>, hunk: &DiffHunk) {
+    let has_deletions = hunk
+        .lines
+        .iter()
+        .any(|line| line.kind == DiffViewLineKind::Deletion);
+    let has_additions = hunk
+        .lines
+        .iter()
+        .any(|line| line.kind == DiffViewLineKind::Addition);
+    let kind = if has_deletions {
+        DiffLineKind::Modified
+    } else {
+        DiffLineKind::Added
+    };
+    for line in &hunk.lines {
+        if line.kind != DiffViewLineKind::Addition {
+            continue;
+        }
+        if let Some(lineno) = line.new_lineno {
+            file_map.insert(lineno, kind);
+        }
+    }
+    // Mark a single "deleted" indicator at the line just before the deletion point
+    if has_deletions && !has_additions {
+        let delete_at = hunk.new_start.saturating_sub(1);
+        if delete_at > 0 {
+            file_map.entry(delete_at).or_insert(DiffLineKind::Deleted);
+        }
+    }
 }
