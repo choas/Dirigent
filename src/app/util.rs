@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use eframe::egui;
+
 /// Expand a leading `~` to the user's home directory.
 pub fn expand_tilde(raw: &str) -> PathBuf {
     if raw == "~" || raw.starts_with("~/") || raw.starts_with("~\\") {
@@ -31,6 +33,54 @@ pub fn format_duration_ms(ms: u64) -> String {
     } else {
         format!("{:.1}s", ms as f64 / 1000.0)
     }
+}
+
+pub(crate) fn pixel_grid_size(width: usize, height: usize, px: f32, scale: f32) -> (f32, f32) {
+    let scaled = px * scale;
+    (width as f32 * scaled, height as f32 * scaled)
+}
+
+pub(crate) struct GridRect {
+    pub(crate) col: f32,
+    pub(crate) row: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl GridRect {
+    pub(crate) fn cell(col: usize, row: usize) -> Self {
+        Self {
+            col: col as f32,
+            row: row as f32,
+            width: 1.0,
+            height: 1.0,
+        }
+    }
+}
+
+pub(crate) fn paint_grid_cell(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    col: usize,
+    row: usize,
+    px: f32,
+    color: egui::Color32,
+) {
+    paint_grid_rect(painter, origin, GridRect::cell(col, row), px, color);
+}
+
+pub(crate) fn paint_grid_rect(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    grid_rect: GridRect,
+    px: f32,
+    color: egui::Color32,
+) {
+    let rect = egui::Rect::from_min_size(
+        origin + egui::vec2(grid_rect.col * px, grid_rect.row * px),
+        egui::vec2(grid_rect.width * px, grid_rect.height * px),
+    );
+    painter.rect_filled(rect, 0.0, color);
 }
 
 #[cfg(test)]

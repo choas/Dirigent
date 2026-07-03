@@ -6,6 +6,8 @@
 
 use eframe::egui;
 
+use super::util;
+
 // -- Pixel grid dimensions --
 const W: usize = 7;
 const H: usize = 14;
@@ -178,8 +180,7 @@ fn pixel_color(
 
 /// Total pixel dimensions of the lamp widget at the given scale.
 pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+    util::pixel_grid_size(W, H, PX, scale)
 }
 
 /// Paint the lava lamp at a specific position using the given painter.
@@ -212,11 +213,7 @@ pub fn paint_at(
     for row in 0..H {
         for col in 0..W {
             if let Some(color) = pixel_color(row, col, &blob_positions, &colors) {
-                let px_rect = egui::Rect::from_min_size(
-                    origin + egui::vec2(col as f32 * px, row as f32 * px),
-                    egui::vec2(px, px),
-                );
-                painter.rect_filled(px_rect, 0.0, color);
+                util::paint_grid_cell(painter, origin, col, row, px, color);
             }
         }
     }
