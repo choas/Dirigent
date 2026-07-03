@@ -49,61 +49,52 @@ impl DirigentApp {
 
                 let panel_rect = ui.max_rect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut actions: Vec<(i64, CueAction)> = Vec::new();
-                    let mut load_more_archived = false;
-
-                    // Temporarily move cues out so we can borrow them immutably
-                    // while calling &mut self methods for rendering (zero-cost
-                    // vs the previous .clone()).
-                    let cues_owned = std::mem::take(&mut self.cues);
-                    let source_filter = self.sources.filter.clone();
-                    let filtered_archived_count = self.cached_filtered_archived_count;
-
-                    // Single pass: group cues by status (avoids 6 separate full scans).
-                    let grouped = helpers::group_cues_by_status(&cues_owned, &source_filter);
-                    for &status in CueStatus::all() {
-                        let section_cues =
-                            grouped.get(&status).map(|v| v.as_slice()).unwrap_or(&[]);
-                        self.render_cue_section(
-                            ui,
-                            status,
-                            section_cues,
-                            &mut actions,
-                            &mut load_more_archived,
-                            filtered_archived_count,
-                        );
-                    }
-                    self.cues = cues_owned;
-
-                    if load_more_archived {
-                        self.archived_cue_limit += 10;
-                        self.reload_cues();
-                    }
-
-                    self.claude.expand_running = false;
-
-                    // If ShowRunningLog is present for a cue, drop any
-                    // ShowDiff for the same cue so the log viewer wins.
-                    let log_cue_ids: std::collections::HashSet<i64> = actions
-                        .iter()
-                        .filter_map(|(_, a)| match a {
-                            CueAction::ShowRunningLog(id) => Some(*id),
-                            _ => None,
-                        })
-                        .collect();
-                    if !log_cue_ids.is_empty() {
-                        actions.retain(|(_, a)| {
-                            !matches!(a, CueAction::ShowDiff(id) if log_cue_ids.contains(id))
-                        });
-                    }
-
-                    for (id, action) in actions {
-                        self.process_cue_action(id, action);
-                    }
+                    self.render_cue_pool_scroll_contents(ui);
                 });
 
                 self.render_lava_lamp(ui, panel_rect);
             });
+    }
+
+    fn render_cue_pool_scroll_contents(&mut self, ui: &mut egui::Ui) {
+        let mut actions: Vec<(i64, CueAction)> = Vec::new();
+        let mut load_more_archived = false;
+
+        let cues_owned = std::mem::take(&mut self.cues);
+        let source_filter = self.sources.filter.clone();
+        let filtered_archived_count = self.cached_filtered_archived_count;
+        let grouped = helpers::group_cues_by_status(&cues_owned, &source_filter);
+
+        for &status in CueStatus::all() {
+            let section_cues = grouped.get(&status).map(|v| v.as_slice()).unwrap_or(&[]);
+            self.render_cue_section(
+                ui,
+                status,
+                section_cues,
+                &mut actions,
+                &mut load_more_archived,
+                filtered_archived_count,
+            );
+        }
+
+        self.cues = cues_owned;
+        self.handle_load_more_archived(load_more_archived);
+        self.claude.expand_running = false;
+        self.process_cue_pool_actions(actions);
+    }
+
+    fn handle_load_more_archived(&mut self, load_more_archived: bool) {
+        if load_more_archived {
+            self.archived_cue_limit += 10;
+            self.reload_cues();
+        }
+    }
+
+    fn process_cue_pool_actions(&mut self, mut actions: Vec<(i64, CueAction)>) {
+        suppress_diff_actions_when_log_opens(&mut actions);
+        for (id, action) in actions {
+            self.process_cue_action(id, action);
+        }
     }
 
     fn render_cue_pool_header(
@@ -513,5 +504,20 @@ impl DirigentApp {
             }
             RunningAnimation::Off => {}
         }
+    }
+}
+
+fn suppress_diff_actions_when_log_opens(actions: &mut Vec<(i64, CueAction)>) {
+    let log_cue_ids: std::collections::HashSet<i64> = actions
+        .iter()
+        .filter_map(|(_, action)| match action {
+            CueAction::ShowRunningLog(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    if !log_cue_ids.is_empty() {
+        actions.retain(
+            |(_, action)| !matches!(action, CueAction::ShowDiff(id) if log_cue_ids.contains(id)),
+        );
     }
 }
