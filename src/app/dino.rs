@@ -5,6 +5,8 @@
 
 use eframe::egui;
 
+use super::util;
+
 const PX: f32 = 2.0;
 
 // Total grid dimensions (dino + ground + pebbles).
@@ -221,8 +223,7 @@ fn jump_offset(t: f32, stones: &[Stone]) -> f32 {
 
 /// Total pixel dimensions of the widget at the given scale.
 pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+    util::pixel_grid_size(W, H, PX, scale)
 }
 
 /// Paint the desert-running dino at `origin`.
@@ -286,11 +287,7 @@ fn paint_dino_grid(
                 continue;
             }
             let color = dino_cell_color(grid, row, col, cell, colors);
-            let rect = egui::Rect::from_min_size(
-                origin + egui::vec2(col as f32 * px, row as f32 * px),
-                egui::vec2(px, px),
-            );
-            painter.rect_filled(rect, 0.0, color);
+            util::paint_grid_cell(painter, origin, col, row, px, color);
         }
     }
 }
@@ -317,11 +314,7 @@ fn dino_cell_color(
 
 fn paint_ground(painter: &egui::Painter, origin: egui::Pos2, px: f32, colors: &DinoColors) {
     for col in 0..W {
-        let rect = egui::Rect::from_min_size(
-            origin + egui::vec2(col as f32 * px, GROUND_ROW as f32 * px),
-            egui::vec2(px, px),
-        );
-        painter.rect_filled(rect, 0.0, colors.sand);
+        util::paint_grid_cell(painter, origin, col, GROUND_ROW, px, colors.sand);
     }
 }
 
@@ -333,13 +326,19 @@ fn paint_stones(
     colors: &DinoColors,
 ) {
     for stone in stones {
-        let stone_w_px = 3.0 * px;
-        let stone_h_px = stone.height as f32 * px;
         let top_row = GROUND_ROW - stone.height as usize;
-        let x = origin.x + stone.col_f * px;
-        let y = origin.y + top_row as f32 * px;
-        let rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(stone_w_px, stone_h_px));
-        painter.rect_filled(rect, 0.0, colors.stone);
+        util::paint_grid_rect(
+            painter,
+            origin,
+            util::GridRect {
+                col: stone.col_f,
+                row: top_row as f32,
+                width: 3.0,
+                height: stone.height as f32,
+            },
+            px,
+            colors.stone,
+        );
     }
 }
 
@@ -373,11 +372,7 @@ fn paint_pebble_row(
         if !should_paint_pebble(col, row_off, scroll) {
             continue;
         }
-        let rect = egui::Rect::from_min_size(
-            origin + egui::vec2(col as f32 * px, row_idx as f32 * px),
-            egui::vec2(px, px),
-        );
-        painter.rect_filled(rect, 0.0, colors.pebble);
+        util::paint_grid_cell(painter, origin, col, row_idx, px, colors.pebble);
     }
 }
 

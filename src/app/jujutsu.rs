@@ -6,6 +6,8 @@
 
 use eframe::egui;
 
+use super::util;
+
 const PX: f32 = 2.0;
 
 const W: usize = 18;
@@ -140,8 +142,7 @@ fn current_stance(t: f32) -> &'static [[u8; W]; H] {
 
 /// Total pixel dimensions of the widget at the given scale.
 pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+    util::pixel_grid_size(W, H, PX, scale)
 }
 
 /// Paint the jujutsu figure at `origin`.
@@ -197,11 +198,14 @@ fn paint_figure(
             if stance[row][col] == 0 {
                 continue;
             }
-            let rect = egui::Rect::from_min_size(
-                origin + egui::vec2(col as f32 * px, row as f32 * px),
-                egui::vec2(px, px),
+            util::paint_grid_cell(
+                painter,
+                origin,
+                col,
+                row,
+                px,
+                cell_color(stance, row, col, colors),
             );
-            painter.rect_filled(rect, 0.0, cell_color(stance, row, col, colors));
         }
     }
 }
@@ -245,10 +249,6 @@ fn paint_mat(
     );
     let mat_row = 17;
     for col in 1..(W - 1) {
-        let rect = egui::Rect::from_min_size(
-            origin + egui::vec2(col as f32 * px, mat_row as f32 * px),
-            egui::vec2(px, px),
-        );
-        painter.rect_filled(rect, 0.0, mat_color);
+        util::paint_grid_cell(painter, origin, col, mat_row, px, mat_color);
     }
 }

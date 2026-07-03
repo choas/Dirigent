@@ -7,6 +7,8 @@
 
 use eframe::egui;
 
+use super::util;
+
 const PX: f32 = 2.0;
 
 // Total grid dimensions (skull + room for the headbang bounce + side bolts).
@@ -109,8 +111,7 @@ fn compute_colors(accent: egui::Color32, is_dark: bool) -> DomeColors {
 
 /// Total pixel dimensions of the widget at the given scale.
 pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+    util::pixel_grid_size(W, H, PX, scale)
 }
 
 /// Paint the headbanging Thunderdome skull at `origin`.
@@ -168,11 +169,18 @@ fn draw_skull(
             let color = skull_cell_color(cell, above, below, flashing, colors);
             let gx = (SKULL_COL + col) as f32;
             let gy = (SKULL_ROW + row) as f32;
-            let rect = egui::Rect::from_min_size(
-                skull_origin + egui::vec2(gx * px, gy * px),
-                egui::vec2(px, px),
+            util::paint_grid_rect(
+                painter,
+                skull_origin,
+                util::GridRect {
+                    col: gx,
+                    row: gy,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                px,
+                color,
             );
-            painter.rect_filled(rect, 0.0, color);
         }
     }
 }
@@ -217,22 +225,30 @@ fn draw_bolts(
             let gy = (BOLT_ROW + row) as f32;
             // Left bolt.
             let lx = col as f32;
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    origin + egui::vec2(lx * px, gy * px),
-                    egui::vec2(px, px),
-                ),
-                0.0,
+            util::paint_grid_rect(
+                painter,
+                origin,
+                util::GridRect {
+                    col: lx,
+                    row: gy,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                px,
                 l_color,
             );
             // Right bolt (mirrored).
             let rx = (W - 1 - col) as f32;
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    origin + egui::vec2(rx * px, gy * px),
-                    egui::vec2(px, px),
-                ),
-                0.0,
+            util::paint_grid_rect(
+                painter,
+                origin,
+                util::GridRect {
+                    col: rx,
+                    row: gy,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                px,
                 r_color,
             );
         }
