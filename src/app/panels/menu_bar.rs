@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::agents::{AgentKind, AgentStatus};
-use crate::settings::{SemanticColors, VcsBackend};
+use crate::settings::{SemanticColors, SshServer, VcsBackend};
 
 /// Actions deferred from the menu bar closures.
 #[derive(Default)]
@@ -28,6 +28,24 @@ struct MenuBarActions {
     ssh_connect: Option<usize>,
     ssh_disconnect: bool,
     ssh_show_panel: bool,
+}
+
+fn tidy_working_tree_label(dirty: usize, generating: bool) -> String {
+    if generating {
+        "Tidying\u{2026}".to_string()
+    } else if dirty > 0 {
+        format!("Tidy my working tree ({dirty} dirty)")
+    } else {
+        "Tidy my working tree".to_string()
+    }
+}
+
+fn ssh_server_label(server: &SshServer) -> String {
+    if server.name.is_empty() {
+        format!("{}@{}", server.username, server.host)
+    } else {
+        server.name.clone()
+    }
 }
 
 impl DirigentApp {
@@ -77,91 +95,16 @@ impl DirigentApp {
     fn render_git_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let menu_label = self.settings.vcs_backend.menu_label();
         ui.menu_button(menu_label, |ui| {
-            if self.git.info.is_none() {
-                let no_repo_msg = match self.settings.vcs_backend {
-                    VcsBackend::Jj => "No jj repository",
-                    VcsBackend::Git => "No git repository",
-                };
-                ui.label(
-                    egui::RichText::new(no_repo_msg)
-                        .italics()
-                        .color(self.semantic.tertiary_text),
-                );
+            if self.render_git_menu_no_repo(ui) {
                 return;
             }
 
-            if let Some(ref info) = self.git.info {
-                ui.label(egui::RichText::new(format!("\u{25CF} {}", info.branch)).strong());
-                ui.separator();
-            }
-
+            self.render_git_menu_current_branch(ui);
             self.render_git_menu_pull_push(ui, actions);
-
             ui.separator();
-
-            // The named front door for untangling a multi-agent dirty tree:
-            // triggers the split-commit flow (group -> review -> commit each).
-            let dirty = self.git.dirty_files.len();
-            let tidy_label = if self.change_set_generating {
-                "Tidying\u{2026}".to_string()
-            } else if dirty > 0 {
-                format!("Tidy my working tree ({dirty} dirty)")
-            } else {
-                "Tidy my working tree".to_string()
-            };
-            if ui
-                .add_enabled(
-                    dirty > 0 && !self.change_set_generating,
-                    egui::Button::new(tidy_label),
-                )
-                .on_hover_text(
-                    "Group the dirty working tree into logical change sets, \
-                     then review and commit each in turn",
-                )
-                .clicked()
-            {
-                actions.tidy_clicked = true;
-                ui.close();
-            }
-
-            // Show "Move to Branch" when on main/master with commits ahead
-            let is_default = self
-                .git
-                .info
-                .as_ref()
-                .map(|i| i.branch == "main" || i.branch == "master")
-                .unwrap_or(false);
-            if is_default && self.git.ahead_of_remote > 0 {
-                let target = if self.settings.vcs_backend == VcsBackend::Jj {
-                    "bookmark"
-                } else {
-                    "branch"
-                };
-                let label = format!(
-                    "Move {} commit{} to {}",
-                    self.git.ahead_of_remote,
-                    if self.git.ahead_of_remote == 1 {
-                        ""
-                    } else {
-                        "s"
-                    },
-                    target
-                );
-                if ui.button(label).clicked() {
-                    actions.move_to_branch_clicked = true;
-                    ui.close();
-                }
-            }
-
-            let switch_label = if self.settings.vcs_backend == VcsBackend::Jj {
-                "Switch Bookmark"
-            } else {
-                "Switch Branch"
-            };
-            if ui.button(switch_label).clicked() {
-                actions.switch_branch_clicked = true;
-                ui.close();
-            }
+            self.render_git_menu_tidy(ui, actions);
+            self.render_git_menu_move_to_branch(ui, actions);
+            self.render_git_menu_switch_branch(ui, actions);
 
             if self.settings.vcs_backend == VcsBackend::Jj {
                 ui.separator();
@@ -172,6 +115,95 @@ impl DirigentApp {
 
             self.render_git_menu_pr(ui, actions);
         });
+    }
+
+    fn render_git_menu_no_repo(&self, ui: &mut egui::Ui) -> bool {
+        if self.git.info.is_some() {
+            return false;
+        }
+        let no_repo_msg = match self.settings.vcs_backend {
+            VcsBackend::Jj => "No jj repository",
+            VcsBackend::Git => "No git repository",
+        };
+        ui.label(
+            egui::RichText::new(no_repo_msg)
+                .italics()
+                .color(self.semantic.tertiary_text),
+        );
+        true
+    }
+
+    fn render_git_menu_current_branch(&self, ui: &mut egui::Ui) {
+        if let Some(ref info) = self.git.info {
+            ui.label(egui::RichText::new(format!("\u{25CF} {}", info.branch)).strong());
+            ui.separator();
+        }
+    }
+
+    fn render_git_menu_tidy(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let dirty = self.git.dirty_files.len();
+        let tidy_label = tidy_working_tree_label(dirty, self.change_set_generating);
+        if ui
+            .add_enabled(
+                dirty > 0 && !self.change_set_generating,
+                egui::Button::new(tidy_label),
+            )
+            .on_hover_text(
+                "Group the dirty working tree into logical change sets, \
+                 then review and commit each in turn",
+            )
+            .clicked()
+        {
+            actions.tidy_clicked = true;
+            ui.close();
+        }
+    }
+
+    fn render_git_menu_move_to_branch(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        if !self.on_default_branch() || self.git.ahead_of_remote == 0 {
+            return;
+        }
+        if ui.button(self.move_to_branch_label()).clicked() {
+            actions.move_to_branch_clicked = true;
+            ui.close();
+        }
+    }
+
+    fn on_default_branch(&self) -> bool {
+        self.git
+            .info
+            .as_ref()
+            .map(|i| i.branch == "main" || i.branch == "master")
+            .unwrap_or(false)
+    }
+
+    fn move_to_branch_label(&self) -> String {
+        let target = if self.settings.vcs_backend == VcsBackend::Jj {
+            "bookmark"
+        } else {
+            "branch"
+        };
+        let plural = if self.git.ahead_of_remote == 1 {
+            ""
+        } else {
+            "s"
+        };
+        format!(
+            "Move {} commit{} to {}",
+            self.git.ahead_of_remote, plural, target
+        )
+    }
+
+    fn render_git_menu_switch_branch(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let switch_label = if self.settings.vcs_backend == VcsBackend::Jj {
+            "Switch Bookmark"
+        } else {
+            "Switch Branch"
+        };
+        if ui.button(switch_label).clicked() {
+            actions.switch_branch_clicked = true;
+            ui.close();
+        }
     }
 
     fn render_git_menu_pull_push(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
@@ -249,12 +281,15 @@ impl DirigentApp {
     }
 
     fn render_git_menu_jj_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
-        let has_changes = self
-            .git
-            .info
-            .as_ref()
-            .map(|i| i.modified_count + i.added_count + i.deleted_count > 0)
-            .unwrap_or(false);
+        self.render_jj_commit_action(ui, actions);
+        ui.separator();
+        self.render_jj_bookmark_actions(ui, actions);
+        self.render_jj_history_actions(ui, actions);
+        ui.separator();
+        self.render_jj_abandon_action(ui, actions);
+    }
+
+    fn render_jj_commit_action(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let commit_label = if self.git.committing {
             "Committing..."
         } else {
@@ -262,7 +297,7 @@ impl DirigentApp {
         };
         if ui
             .add_enabled(
-                has_changes && !self.git.committing,
+                self.has_working_copy_changes() && !self.git.committing,
                 egui::Button::new(commit_label),
             )
             .on_hover_text("Describe the working copy and create a new change")
@@ -271,9 +306,9 @@ impl DirigentApp {
             actions.commit_clicked = true;
             ui.close();
         }
+    }
 
-        ui.separator();
-
+    fn render_jj_bookmark_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         if ui.button("Create Bookmark").clicked() {
             actions.create_bookmark_clicked = true;
             ui.close();
@@ -315,7 +350,9 @@ impl DirigentApp {
             actions.cleanup_bookmarks_clicked = true;
             ui.close();
         }
+    }
 
+    fn render_jj_history_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let squash_label = if self.git.squashing {
             "Squashing..."
         } else {
@@ -343,9 +380,9 @@ impl DirigentApp {
             actions.undo_clicked = true;
             ui.close();
         }
+    }
 
-        ui.separator();
-
+    fn render_jj_abandon_action(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let abandon_label = if self.git.abandoning_empty {
             "Abandoning..."
         } else {
@@ -359,6 +396,14 @@ impl DirigentApp {
             actions.abandon_empty_heads_clicked = true;
             ui.close();
         }
+    }
+
+    fn has_working_copy_changes(&self) -> bool {
+        self.git
+            .info
+            .as_ref()
+            .map(|i| i.modified_count + i.added_count + i.deleted_count > 0)
+            .unwrap_or(false)
     }
 
     fn render_agents_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
@@ -474,73 +519,87 @@ impl DirigentApp {
 
     fn render_ssh_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         ui.menu_button("SSH", |ui| {
-            let is_connected = self.ssh_worker.is_some();
-            let is_connecting = self.ssh_connecting;
-
-            if is_connected {
-                let name = self
-                    .ssh_worker
-                    .as_ref()
-                    .map(|w| w.config.name.clone())
-                    .unwrap_or_default();
-                ui.label(
-                    egui::RichText::new(format!("\u{25CF} Connected: {}", name))
-                        .color(self.semantic.success),
-                );
-                ui.separator();
-                if ui.button("Browse Files").clicked() {
-                    actions.ssh_show_panel = true;
-                    ui.close();
-                }
-                if ui.button("Disconnect").clicked() {
-                    actions.ssh_disconnect = true;
-                    ui.close();
-                }
-            } else if is_connecting {
-                ui.label(
-                    egui::RichText::new("Connecting...")
-                        .italics()
-                        .color(self.semantic.tertiary_text),
-                );
+            if self.ssh_worker.is_some() {
+                self.render_ssh_connected_menu(ui, actions);
+            } else if self.ssh_connecting {
+                self.render_ssh_connecting_menu(ui);
             } else if self.settings.ssh_servers.is_empty() {
-                ui.label(
-                    egui::RichText::new("No servers configured")
-                        .italics()
-                        .color(self.semantic.tertiary_text),
-                );
-                ui.separator();
-                if ui.button("Open Settings...").clicked() {
-                    self.dismiss_central_overlays();
-                    self.reload_settings_from_disk();
-                    self.show_settings = true;
-                    self.ssh_expanded = true;
-                    ui.close();
-                }
+                self.render_ssh_empty_menu(ui);
             } else {
-                for (i, server) in self.settings.ssh_servers.iter().enumerate() {
-                    let label = if server.name.is_empty() {
-                        format!("{}@{}", server.username, server.host)
-                    } else {
-                        server.name.clone()
-                    };
-                    if ui.button(&label).clicked() {
-                        actions.ssh_connect = Some(i);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.button("Settings...").clicked() {
-                    self.dismiss_central_overlays();
-                    self.reload_settings_from_disk();
-                    self.show_settings = true;
-                    self.ssh_expanded = true;
-                    ui.close();
-                }
+                self.render_ssh_server_menu(ui, actions);
             }
         });
     }
 
+    fn render_ssh_connected_menu(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        let name = self
+            .ssh_worker
+            .as_ref()
+            .map(|w| w.config.name.clone())
+            .unwrap_or_default();
+        ui.label(
+            egui::RichText::new(format!("\u{25CF} Connected: {}", name))
+                .color(self.semantic.success),
+        );
+        ui.separator();
+        if ui.button("Browse Files").clicked() {
+            actions.ssh_show_panel = true;
+            ui.close();
+        }
+        if ui.button("Disconnect").clicked() {
+            actions.ssh_disconnect = true;
+            ui.close();
+        }
+    }
+
+    fn render_ssh_connecting_menu(&self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("Connecting...")
+                .italics()
+                .color(self.semantic.tertiary_text),
+        );
+    }
+
+    fn render_ssh_empty_menu(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("No servers configured")
+                .italics()
+                .color(self.semantic.tertiary_text),
+        );
+        ui.separator();
+        if ui.button("Open Settings...").clicked() {
+            self.open_ssh_settings_from_menu(ui);
+        }
+    }
+
+    fn render_ssh_server_menu(&mut self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
+        for (i, server) in self.settings.ssh_servers.iter().enumerate() {
+            if ui.button(ssh_server_label(server)).clicked() {
+                actions.ssh_connect = Some(i);
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button("Settings...").clicked() {
+            self.open_ssh_settings_from_menu(ui);
+        }
+    }
+
+    fn open_ssh_settings_from_menu(&mut self, ui: &mut egui::Ui) {
+        self.dismiss_central_overlays();
+        self.reload_settings_from_disk();
+        self.show_settings = true;
+        self.ssh_expanded = true;
+        ui.close();
+    }
+
     fn apply_menu_bar_actions(&mut self, actions: MenuBarActions) {
+        self.apply_git_menu_actions(&actions);
+        self.apply_agent_menu_actions(&actions);
+        self.apply_ssh_menu_actions(&actions);
+    }
+
+    fn apply_git_menu_actions(&mut self, actions: &MenuBarActions) {
         if actions.pull_clicked {
             self.start_git_pull();
         }
@@ -586,14 +645,22 @@ impl DirigentApp {
         if actions.abandon_empty_heads_clicked {
             self.start_abandon_empty_heads();
         }
+    }
+
+    fn apply_agent_menu_actions(&mut self, actions: &MenuBarActions) {
         if let Some(kind) = actions.agent_to_cancel {
             self.cancel_agent(kind);
         }
         if actions.run_all_agents {
             self.run_all_agents();
-        } else if let Some(kind) = actions.agent_to_trigger {
+            return;
+        }
+        if let Some(kind) = actions.agent_to_trigger {
             self.trigger_agent_manual(kind);
         }
+    }
+
+    fn apply_ssh_menu_actions(&mut self, actions: &MenuBarActions) {
         if let Some(idx) = actions.ssh_connect {
             self.ssh_connect(idx);
         }
