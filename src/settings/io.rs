@@ -117,11 +117,26 @@ fn validate_shell_init(init: &str) -> bool {
 
 pub(crate) fn load_settings(project_root: &Path) -> Settings {
     let path = project_root.join(".Dirigent").join("settings.json");
-    let mut settings = match std::fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => Settings::default(),
-    };
-    // Reject shell_init values that contain known dangerous patterns.
+    let mut settings = load_settings_file(&path);
+    sanitize_shell_init(&mut settings);
+    detect_cli_paths(&mut settings);
+    detect_vcs_backend(project_root, &mut settings);
+    merge_default_playbook(&mut settings);
+    merge_default_commands(&mut settings);
+    if normalize_lsp_env_vars(&mut settings) {
+        save_settings_after_env_migration(project_root, &settings);
+    }
+    settings
+}
+
+fn load_settings_file(path: &Path) -> Settings {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .unwrap_or_default()
+}
+
+fn sanitize_shell_init(settings: &mut Settings) {
     if !validate_shell_init(&settings.agent_shell_init) {
         log::warn!(
             "[settings] rejecting agent_shell_init with blocked command pattern: {:?}",
@@ -129,24 +144,28 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
         );
         settings.agent_shell_init = String::new();
     }
-    // Auto-detect CLI paths on first launch (when paths are empty)
-    if settings.claude_cli_path.is_empty() {
-        settings.claude_cli_path = resolve_in_path("claude").unwrap_or_default();
+}
+
+fn detect_cli_paths(settings: &mut Settings) {
+    fill_cli_path(&mut settings.claude_cli_path, "claude");
+    fill_cli_path(&mut settings.opencode_cli_path, "opencode");
+    fill_cli_path(&mut settings.codex_cli_path, "codex");
+    fill_cli_path(&mut settings.jj_cli_path, "jj");
+}
+
+fn fill_cli_path(slot: &mut String, command: &str) {
+    if slot.is_empty() {
+        *slot = resolve_in_path(command).unwrap_or_default();
     }
-    if settings.opencode_cli_path.is_empty() {
-        settings.opencode_cli_path = resolve_in_path("opencode").unwrap_or_default();
-    }
-    if settings.codex_cli_path.is_empty() {
-        settings.codex_cli_path = resolve_in_path("codex").unwrap_or_default();
-    }
-    if settings.jj_cli_path.is_empty() {
-        settings.jj_cli_path = resolve_in_path("jj").unwrap_or_default();
-    }
-    // Auto-detect VCS backend: if the project has a .jj directory, use jj.
+}
+
+fn detect_vcs_backend(project_root: &Path, settings: &mut Settings) {
     if project_root.join(".jj").is_dir() {
         settings.vcs_backend = crate::settings::VcsBackend::Jj;
     }
-    // Append any new default plays that aren't already in the user's playbook
+}
+
+fn merge_default_playbook(settings: &mut Settings) {
     for default_play in default_playbook() {
         if !settings
             .playbook
@@ -156,14 +175,17 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
             settings.playbook.push(default_play);
         }
     }
-    // Append any new default commands that aren't already defined
+}
+
+fn merge_default_commands(settings: &mut Settings) {
     for default_cmd in default_commands() {
         if !settings.commands.iter().any(|c| c.name == default_cmd.name) {
             settings.commands.push(default_cmd);
         }
     }
-    // Normalize LSP env vars: flatten any entries with embedded newlines
-    // (legacy corruption from join/split mismatch).
+}
+
+fn normalize_lsp_env_vars(settings: &mut Settings) -> bool {
     let mut env_changed = false;
     for server in &mut settings.lsp_servers {
         if server.env.iter().any(|s| s.contains('\n')) {
@@ -177,12 +199,13 @@ pub(crate) fn load_settings(project_root: &Path) -> Settings {
             env_changed = true;
         }
     }
-    if env_changed {
-        if let Err(e) = save_settings(project_root, &settings) {
-            log::warn!("Failed to save settings after env migration: {e}");
-        }
+    env_changed
+}
+
+fn save_settings_after_env_migration(project_root: &Path, settings: &Settings) {
+    if let Err(e) = save_settings(project_root, settings) {
+        log::warn!("Failed to save settings after env migration: {e}");
     }
-    settings
 }
 
 pub(crate) fn save_settings(project_root: &Path, settings: &Settings) -> Result<(), String> {
