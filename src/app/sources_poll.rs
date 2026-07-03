@@ -89,25 +89,7 @@ impl DirigentApp {
             if cancel_thread.load(Ordering::Relaxed) {
                 return;
             }
-            match &result {
-                Ok(items) if items.is_empty() => {
-                    let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
-                }
-                Ok(items) => {
-                    for item in items.iter().cloned() {
-                        let _ = source_tx.send(item);
-                    }
-                }
-                Err(e) => {
-                    let _ = error_tx.send(format!("Source \"{}\": {}", source_name, e));
-                }
-            }
-            if let Some(tx) = status_tx {
-                let _ = tx.send(match result {
-                    Ok(items) => Ok(items.len()),
-                    Err(e) => Err(e.to_string()),
-                });
-            }
+            publish_source_fetch_result(result, &source_name, &source_tx, &error_tx, status_tx);
             if let Some(c) = ctx.get() {
                 c.request_repaint();
             }
@@ -158,11 +140,7 @@ impl DirigentApp {
     }
 
     pub(super) fn process_source_results(&mut self) {
-        // Surface any source fetch errors/status to the UI
-        let errors: Vec<String> = self.sources.error_rx.try_iter().collect();
-        for msg in errors {
-            self.set_status_message(msg);
-        }
+        self.process_source_errors();
 
         let items: Vec<SourceItem> = self.sources.rx.try_iter().collect();
 
@@ -174,40 +152,9 @@ impl DirigentApp {
         let mut new_count = 0;
         let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
-            match self.db.cue_exists_by_source_ref(&item.external_id) {
-                Ok(true) => {
-                    // Refresh text so metrics (e.g. duplication values) stay current.
-                    let _ = self
-                        .db
-                        .update_cue_text_by_source_ref(&item.external_id, &item.text);
-                    // Backfill source_id on migrated rows that have it NULL.
-                    if !item.source_id.is_empty() {
-                        let _ = self.db.backfill_source_id(
-                            &item.external_id,
-                            &item.source_id,
-                            &item.source_label,
-                        );
-                    }
-                    continue;
-                }
-                Ok(false) => {}
-                Err(_) => continue,
-            }
-            let source_allows_runnable = self
-                .settings
-                .sources
-                .iter()
-                .find(|s| s.id.as_deref() == Some(&item.source_id))
-                .is_some_and(|s| s.allow_runnable);
-            let runnable = source_allows_runnable && has_runnable_marker(&item.text);
-            let text = if runnable {
-                strip_runnable_marker(&item.text)
-            } else {
-                item.text.clone()
-            };
-            if text.trim().is_empty() {
+            let Some((text, runnable)) = self.prepare_source_item(&item) else {
                 continue;
-            }
+            };
             if let Ok(cue_id) = self.db.insert_cue_from_source(
                 &text,
                 &item.source_label,
@@ -222,26 +169,104 @@ impl DirigentApp {
                 }
             }
         }
-        if new_count > 0 {
-            self.reload_cues();
-            let auto_count = auto_run_ids.len();
-            if auto_count > 0 {
-                for cue_id in auto_run_ids {
-                    self.process_cue_action(cue_id, CueAction::MoveTo(CueStatus::Ready));
-                }
-                self.set_status_message(format!(
-                    "{} new cue(s) from sources ({} auto-running)",
-                    new_count, auto_count
-                ));
-            } else {
-                self.set_status_message(format!("{} new cue(s) from sources", new_count));
+        self.finish_source_import(new_count, auto_run_ids, total_received);
+    }
+
+    fn process_source_errors(&mut self) {
+        let errors: Vec<String> = self.sources.error_rx.try_iter().collect();
+        for msg in errors {
+            self.set_status_message(msg);
+        }
+    }
+
+    fn prepare_source_item(&mut self, item: &SourceItem) -> Option<(String, bool)> {
+        match self.db.cue_exists_by_source_ref(&item.external_id) {
+            Ok(true) => {
+                self.refresh_existing_source_cue(item);
+                return None;
             }
+            Ok(false) => {}
+            Err(_) => return None,
+        }
+        let runnable = self.source_allows_runnable(item) && has_runnable_marker(&item.text);
+        let text = if runnable {
+            strip_runnable_marker(&item.text)
         } else {
+            item.text.clone()
+        };
+        (!text.trim().is_empty()).then_some((text, runnable))
+    }
+
+    fn refresh_existing_source_cue(&self, item: &SourceItem) {
+        let _ = self
+            .db
+            .update_cue_text_by_source_ref(&item.external_id, &item.text);
+        if !item.source_id.is_empty() {
+            let _ =
+                self.db
+                    .backfill_source_id(&item.external_id, &item.source_id, &item.source_label);
+        }
+    }
+
+    fn source_allows_runnable(&self, item: &SourceItem) -> bool {
+        self.settings
+            .sources
+            .iter()
+            .find(|source| source.id.as_deref() == Some(&item.source_id))
+            .is_some_and(|source| source.allow_runnable)
+    }
+
+    fn finish_source_import(
+        &mut self,
+        new_count: usize,
+        auto_run_ids: Vec<i64>,
+        total_received: usize,
+    ) {
+        if new_count == 0 {
             self.set_status_message(format!(
                 "Source fetch complete: {} item(s) received, no new items",
                 total_received
             ));
+            return;
         }
+        self.reload_cues();
+        let auto_count = auto_run_ids.len();
+        for cue_id in auto_run_ids {
+            self.process_cue_action(cue_id, CueAction::MoveTo(CueStatus::Ready));
+        }
+        if auto_count > 0 {
+            self.set_status_message(format!(
+                "{} new cue(s) from sources ({} auto-running)",
+                new_count, auto_count
+            ));
+        } else {
+            self.set_status_message(format!("{} new cue(s) from sources", new_count));
+        }
+    }
+}
+
+fn publish_source_fetch_result(
+    result: crate::error::Result<Vec<SourceItem>>,
+    source_name: &str,
+    source_tx: &mpsc::Sender<SourceItem>,
+    error_tx: &mpsc::Sender<String>,
+    status_tx: Option<mpsc::Sender<Result<usize, String>>>,
+) {
+    match &result {
+        Ok(items) if items.is_empty() => {
+            let _ = error_tx.send(format!("Source \"{}\": fetched 0 items", source_name));
+        }
+        Ok(items) => {
+            for item in items.iter().cloned() {
+                let _ = source_tx.send(item);
+            }
+        }
+        Err(e) => {
+            let _ = error_tx.send(format!("Source \"{}\": {}", source_name, e));
+        }
+    }
+    if let Some(tx) = status_tx {
+        let _ = tx.send(result.map(|items| items.len()).map_err(|e| e.to_string()));
     }
 }
 
