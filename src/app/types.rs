@@ -845,6 +845,13 @@ impl GitState {
     /// Dismiss the topmost git-related modal dialog (priority order).
     /// Returns `true` if a modal was dismissed.
     pub(super) fn dismiss_topmost_modal(&mut self) -> bool {
+        self.dismiss_pending_modal()
+            || self.dismiss_error_modal()
+            || self.dismiss_review_modal()
+            || self.dismiss_branch_modal()
+    }
+
+    fn dismiss_pending_modal(&mut self) -> bool {
         if self.pending_force_remove.is_some() {
             self.pending_force_remove = None;
             return true;
@@ -857,6 +864,10 @@ impl GitState {
             self.show_merge_conflicts = false;
             return true;
         }
+        false
+    }
+
+    fn dismiss_error_modal(&mut self) -> bool {
         if self.show_push_error {
             self.show_push_error = false;
             self.push_error_message.clear();
@@ -875,6 +886,10 @@ impl GitState {
             self.show_pull_unmerged = false;
             return true;
         }
+        false
+    }
+
+    fn dismiss_review_modal(&mut self) -> bool {
         if self.show_pr_filter {
             self.show_pr_filter = false;
             self.pr_findings_pending.clear();
@@ -886,16 +901,7 @@ impl GitState {
             return true;
         }
         if self.show_commit_dialog {
-            self.commit_suggest_cancel
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            self.commit_suggesting = false;
-            self.commit_suggest_rx = None;
-            self.commit_in_background = false;
-            self.commit_files.clear();
-            self.commit_queue.clear();
-            self.commit_queue_pos = 0;
-            self.show_commit_dialog = false;
-            self.commit_review_cue_id = None;
+            self.dismiss_commit_dialog();
             return true;
         }
         if self.show_cleanup_bookmarks {
@@ -914,6 +920,23 @@ impl GitState {
             self.show_create_bookmark = false;
             return true;
         }
+        false
+    }
+
+    fn dismiss_commit_dialog(&mut self) {
+        self.commit_suggest_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.commit_suggesting = false;
+        self.commit_suggest_rx = None;
+        self.commit_in_background = false;
+        self.commit_files.clear();
+        self.commit_queue.clear();
+        self.commit_queue_pos = 0;
+        self.show_commit_dialog = false;
+        self.commit_review_cue_id = None;
+    }
+
+    fn dismiss_branch_modal(&mut self) -> bool {
         if self.show_move_to_branch_error {
             self.show_move_to_branch_error = false;
             self.move_to_branch_error_message.clear();
