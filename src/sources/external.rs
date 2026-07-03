@@ -23,6 +23,14 @@ fn url_encode(s: &str) -> String {
     result
 }
 
+fn title_with_optional_body(title: &str, body: &str) -> String {
+    if body.is_empty() {
+        title.to_string()
+    } else {
+        format!("{}\n\n{}", title, body)
+    }
+}
+
 /// Print a warning to stderr at most once per flag.
 fn warn_once(flag: &AtomicBool, msg: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
@@ -110,11 +118,8 @@ pub(crate) fn fetch_github_issues(
             let url = issue.get("url")?.as_str()?;
             let body = issue.get("body").and_then(|b| b.as_str()).unwrap_or("");
 
-            let text = if body.is_empty() {
-                format!("[#{}] {}", number, title)
-            } else {
-                format!("[#{}] {}\n\n{}", number, title, body)
-            };
+            let summary = format!("[#{}] {}", number, title);
+            let text = title_with_optional_body(&summary, body);
 
             Some(SourceItem::new(url, text, source_label))
         })
@@ -670,11 +675,7 @@ fn trello_card_to_item(
         }
     }
 
-    let text = if desc.is_empty() {
-        name.to_string()
-    } else {
-        format!("{}\n\n{}", name, desc)
-    };
+    let text = title_with_optional_body(name, desc);
 
     Some(SourceItem::new(url, text, source_label))
 }
@@ -753,11 +754,7 @@ pub(crate) fn fetch_asana_tasks(
                 .and_then(|u| u.as_str())
                 .unwrap_or("");
 
-            let text = if notes.is_empty() {
-                name.to_string()
-            } else {
-                format!("{}\n\n{}", name, notes)
-            };
+            let text = title_with_optional_body(name, notes);
 
             let external_id = if permalink.is_empty() {
                 format!("asana:{}", gid)
@@ -1429,11 +1426,7 @@ fn build_fallback_item(
     source_label: &str,
 ) -> SourceItem {
     let body = lines.join("\n").trim().to_string();
-    let text = if body.is_empty() {
-        title
-    } else {
-        format!("{}\n\n{}", title, body)
-    };
+    let text = title_with_optional_body(&title, &body);
     SourceItem::new(id, text, source_label)
 }
 
