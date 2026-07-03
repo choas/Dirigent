@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Child;
+use std::process::{Child, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,11 +17,59 @@ pub(crate) fn spawn_cancel_watchdog(
     std::thread::spawn(move || {
         while !done.load(Ordering::Relaxed) {
             if cancel.load(Ordering::Relaxed) {
-                let _ = child.lock().map(|mut c| c.kill());
+                kill_child(&child);
                 return;
             }
             std::thread::sleep(WATCHDOG_POLL_INTERVAL);
         }
+    })
+}
+
+pub(crate) fn wait_for_child(child: &Arc<Mutex<Child>>) -> std::io::Result<ExitStatus> {
+    match child.lock() {
+        Ok(mut child) => child.wait(),
+        Err(poisoned) => poisoned.into_inner().wait(),
+    }
+}
+
+pub(crate) fn kill_child(child: &Arc<Mutex<Child>>) {
+    match child.lock() {
+        Ok(mut child) => {
+            let _ = child.kill();
+        }
+        Err(poisoned) => {
+            let _ = poisoned.into_inner().kill();
+        }
+    }
+}
+
+pub(crate) fn with_locked_log<F, R>(
+    on_log: &Arc<Mutex<F>>,
+    context: &str,
+    body: impl FnOnce(&mut F) -> R,
+) -> R
+where
+    F: FnMut(&str),
+{
+    let mut log = on_log.lock().unwrap_or_else(|e| {
+        log::error!("Mutex poisoned while acquiring on_log for {context}: {e:?}");
+        e.into_inner()
+    });
+    body(&mut *log)
+}
+
+pub(crate) fn run_hook_with_locked_log<F>(
+    on_log: &Arc<Mutex<F>>,
+    label: &str,
+    script: &str,
+    project_root: &Path,
+    fail_on_error: bool,
+) -> Result<(), std::io::Error>
+where
+    F: FnMut(&str),
+{
+    with_locked_log(on_log, label, |log| {
+        run_hook_script(label, script, project_root, log, fail_on_error)
     })
 }
 
