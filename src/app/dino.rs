@@ -18,80 +18,31 @@ const DINO_W: usize = 22;
 const DINO_BASE_ROWS: usize = 14;
 
 /// Dino body without the legs. 1 = body, 2 = eye.
-const DINO_BASE: [[u8; DINO_W]; DINO_BASE_ROWS] = [
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0,
-    ], //  0  head bump
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
-    ], //  1  head top
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
-    ], //  2  head
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 1, 1, 1, 1, 0, 0, 0, 0,
-    ], //  3  eye
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
-    ], //  4  head
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
-    ], //  5  jaw
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0,
-    ], //  6  mouth + lower jaw
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
-    ], //  7  neck
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
-    ], //  8  neck wider
-    [
-        1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
-    ], //  9  tail + body
-    [
-        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0,
-    ], // 10  body + arm
-    [
-        0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0,
-    ], // 11  body + arm
-    [
-        0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-    ], // 12  belly
-    [
-        0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ], // 13  hip
+const DINO_BASE: [&str; DINO_BASE_ROWS] = [
+    "0000000000000111000000", //  0  head bump
+    "0000000000011111100000", //  1  head top
+    "0000000000011111110000", //  2  head
+    "0000000000012111110000", //  3  eye
+    "0000000000011111110000", //  4  head
+    "0000000000011111111100", //  5  jaw
+    "0000000000011110011000", //  6  mouth + lower jaw
+    "0000000000111111100000", //  7  neck
+    "0000000001111111100000", //  8  neck wider
+    "1000011111111111000000", //  9  tail + body
+    "0111111111111111011000", // 10  body + arm
+    "0011111111111110011000", // 11  body + arm
+    "0001111111111100000000", // 12  belly
+    "0000011111110000000000", // 13  hip
 ];
 
 /// Running leg frame A (back foot forward).
-const LEGS_A: [[u8; DINO_W]; 2] = [
-    [
-        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-    [
-        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-];
+const LEGS_A: [&str; 2] = ["0000011000110000000000", "0000011000000000000000"];
 
 /// Running leg frame B (front foot forward).
-const LEGS_B: [[u8; DINO_W]; 2] = [
-    [
-        0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-];
+const LEGS_B: [&str; 2] = ["0000000110110000000000", "0000000000110000000000"];
 
 /// Legs tucked up while airborne.
-const LEGS_JUMP: [[u8; DINO_W]; 2] = [
-    [
-        0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
-];
+const LEGS_JUMP: [&str; 2] = ["0000011000110000000000", "0000000000000000000000"];
 
 const GROUND_ROW: usize = 17;
 
@@ -244,7 +195,7 @@ pub fn paint_at(
     let airborne = jump_px > 0.01;
 
     let run_phase = (t * 8.0).sin() > 0.0;
-    let legs: &[[u8; DINO_W]; 2] = if airborne {
+    let legs: &[&str; 2] = if airborne {
         &LEGS_JUMP
     } else if run_phase {
         &LEGS_A
@@ -254,8 +205,7 @@ pub fn paint_at(
 
     let dino_origin = origin + egui::vec2(0.0, -jump_px * px);
 
-    let grid = dino_grid(legs);
-    paint_dino_grid(painter, dino_origin, px, &grid, &colors);
+    paint_dino_grid(painter, dino_origin, px, legs, &colors);
     paint_ground(painter, origin, px, &colors);
     paint_stones(painter, origin, px, &stones, &colors);
     paint_pebbles(painter, origin, px, t, &colors);
@@ -265,34 +215,30 @@ pub fn paint_at(
 
 const DINO_TOTAL_ROWS: usize = DINO_BASE_ROWS + 2;
 
-fn dino_grid(legs: &[[u8; DINO_W]; 2]) -> [[u8; DINO_W]; DINO_TOTAL_ROWS] {
-    let mut grid = [[0u8; DINO_W]; DINO_TOTAL_ROWS];
-    grid[..DINO_BASE_ROWS].copy_from_slice(&DINO_BASE);
-    grid[DINO_BASE_ROWS] = legs[0];
-    grid[DINO_BASE_ROWS + 1] = legs[1];
-    grid
-}
-
 fn paint_dino_grid(
     painter: &egui::Painter,
     origin: egui::Pos2,
     px: f32,
-    grid: &[[u8; DINO_W]; DINO_TOTAL_ROWS],
+    legs: &[&str; 2],
     colors: &DinoColors,
 ) {
-    util::paint_u8_grid(painter, origin, grid, px, |row, col, cell| {
-        dino_cell_color(grid, row, col, cell, colors)
+    util::paint_pixel_grid(painter, origin, DINO_W, DINO_TOTAL_ROWS, px, |row, col| {
+        let cell = dino_cell(legs, row, col);
+        (cell != 0).then(|| dino_cell_color(legs, row, col, cell, colors))
     });
 }
 
 fn dino_cell_color(
-    grid: &[[u8; DINO_W]; DINO_TOTAL_ROWS],
+    legs: &[&str; 2],
     row: usize,
     col: usize,
     cell: u8,
     colors: &DinoColors,
 ) -> egui::Color32 {
-    let (above, below) = util::vertical_neighbors(grid, row, col);
+    let above = row
+        .checked_sub(1)
+        .map_or(0, |prev| dino_cell(legs, prev, col));
+    let below = dino_cell(legs, row + 1, col);
     if cell == 2 {
         colors.eye
     } else if above == 0 {
@@ -301,6 +247,14 @@ fn dino_cell_color(
         colors.shadow
     } else {
         colors.body
+    }
+}
+
+fn dino_cell(legs: &[&str; 2], row: usize, col: usize) -> u8 {
+    if row < DINO_BASE_ROWS {
+        util::mask_value(&DINO_BASE, row, col)
+    } else {
+        util::mask_value(legs, row - DINO_BASE_ROWS, col)
     }
 }
 

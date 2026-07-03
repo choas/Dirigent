@@ -106,6 +106,13 @@ pub(crate) fn vertical_neighbors<const WIDTH: usize, const HEIGHT: usize>(
     (above, below)
 }
 
+pub(crate) fn mask_value(mask: &[&str], row: usize, col: usize) -> u8 {
+    mask.get(row)
+        .and_then(|line| line.as_bytes().get(col))
+        .and_then(|byte| byte.is_ascii_digit().then_some(byte - b'0'))
+        .unwrap_or(0)
+}
+
 pub(crate) fn paint_u8_grid<const WIDTH: usize, const HEIGHT: usize>(
     painter: &egui::Painter,
     origin: egui::Pos2,
