@@ -253,48 +253,69 @@ pub fn paint_at(
 
     let dino_origin = origin + egui::vec2(0.0, -jump_px * px);
 
-    // Build combined body+legs grid for edge-detection shading.
-    const TOTAL_ROWS: usize = DINO_BASE_ROWS + 2;
-    let mut grid = [[0u8; DINO_W]; TOTAL_ROWS];
-    let mut r = 0;
-    while r < DINO_BASE_ROWS {
-        grid[r] = DINO_BASE[r];
-        r += 1;
-    }
+    let grid = dino_grid(legs);
+    paint_dino_grid(painter, dino_origin, px, &grid, &colors);
+    paint_ground(painter, origin, px, &colors);
+    paint_stones(painter, origin, px, &stones, &colors);
+    paint_pebbles(painter, origin, px, t, &colors);
+
+    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+}
+
+const DINO_TOTAL_ROWS: usize = DINO_BASE_ROWS + 2;
+
+fn dino_grid(legs: &[[u8; DINO_W]; 2]) -> [[u8; DINO_W]; DINO_TOTAL_ROWS] {
+    let mut grid = [[0u8; DINO_W]; DINO_TOTAL_ROWS];
+    grid[..DINO_BASE_ROWS].copy_from_slice(&DINO_BASE);
     grid[DINO_BASE_ROWS] = legs[0];
     grid[DINO_BASE_ROWS + 1] = legs[1];
+    grid
+}
 
-    #[allow(clippy::needless_range_loop)]
-    for row in 0..TOTAL_ROWS {
+fn paint_dino_grid(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    grid: &[[u8; DINO_W]; DINO_TOTAL_ROWS],
+    colors: &DinoColors,
+) {
+    for row in 0..DINO_TOTAL_ROWS {
         for col in 0..DINO_W {
             let cell = grid[row][col];
             if cell == 0 {
                 continue;
             }
-            let above = if row > 0 { grid[row - 1][col] } else { 0 };
-            let below = if row + 1 < TOTAL_ROWS {
-                grid[row + 1][col]
-            } else {
-                0
-            };
-            let color = if cell == 2 {
-                colors.eye
-            } else if above == 0 {
-                colors.highlight
-            } else if below == 0 {
-                colors.shadow
-            } else {
-                colors.body
-            };
+            let color = dino_cell_color(grid, row, col, cell, colors);
             let rect = egui::Rect::from_min_size(
-                dino_origin + egui::vec2(col as f32 * px, row as f32 * px),
+                origin + egui::vec2(col as f32 * px, row as f32 * px),
                 egui::vec2(px, px),
             );
             painter.rect_filled(rect, 0.0, color);
         }
     }
+}
 
-    // Ground line
+fn dino_cell_color(
+    grid: &[[u8; DINO_W]; DINO_TOTAL_ROWS],
+    row: usize,
+    col: usize,
+    cell: u8,
+    colors: &DinoColors,
+) -> egui::Color32 {
+    let above = row.checked_sub(1).map_or(0, |r| grid[r][col]);
+    let below = grid.get(row + 1).map_or(0, |r| r[col]);
+    if cell == 2 {
+        colors.eye
+    } else if above == 0 {
+        colors.highlight
+    } else if below == 0 {
+        colors.shadow
+    } else {
+        colors.body
+    }
+}
+
+fn paint_ground(painter: &egui::Painter, origin: egui::Pos2, px: f32, colors: &DinoColors) {
     for col in 0..W {
         let rect = egui::Rect::from_min_size(
             origin + egui::vec2(col as f32 * px, GROUND_ROW as f32 * px),
@@ -302,9 +323,16 @@ pub fn paint_at(
         );
         painter.rect_filled(rect, 0.0, colors.sand);
     }
+}
 
-    // Stones (obstacles)
-    for stone in &stones {
+fn paint_stones(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    stones: &[Stone],
+    colors: &DinoColors,
+) {
+    for stone in stones {
         let stone_w_px = 3.0 * px;
         let stone_h_px = stone.height as f32 * px;
         let top_row = GROUND_ROW - stone.height as usize;
@@ -313,32 +341,52 @@ pub fn paint_at(
         let rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(stone_w_px, stone_h_px));
         painter.rect_filled(rect, 0.0, colors.stone);
     }
+}
 
-    // Scrolling pebbles below the ground line.
+fn paint_pebbles(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    t: f32,
+    colors: &DinoColors,
+) {
     let scroll = (t * 27.0) as i32;
     for row_off in 0..3 {
         let row_idx = GROUND_ROW + 1 + row_off;
         if row_idx >= H {
             break;
         }
-        for col in 0..W {
-            let key = ((col as i32 + scroll) as u32).wrapping_mul(73)
-                ^ (row_off as u32).wrapping_mul(919);
-            let h = hash_u32(key);
-            let threshold = match row_off {
-                0 => 0x16,
-                1 => 0x09,
-                _ => 0x05,
-            };
-            if h & 0xFF < threshold {
-                let rect = egui::Rect::from_min_size(
-                    origin + egui::vec2(col as f32 * px, row_idx as f32 * px),
-                    egui::vec2(px, px),
-                );
-                painter.rect_filled(rect, 0.0, colors.pebble);
-            }
-        }
+        paint_pebble_row(painter, origin, px, scroll, row_off, row_idx, colors);
     }
+}
 
-    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+fn paint_pebble_row(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    scroll: i32,
+    row_off: usize,
+    row_idx: usize,
+    colors: &DinoColors,
+) {
+    for col in 0..W {
+        if !should_paint_pebble(col, row_off, scroll) {
+            continue;
+        }
+        let rect = egui::Rect::from_min_size(
+            origin + egui::vec2(col as f32 * px, row_idx as f32 * px),
+            egui::vec2(px, px),
+        );
+        painter.rect_filled(rect, 0.0, colors.pebble);
+    }
+}
+
+fn should_paint_pebble(col: usize, row_off: usize, scroll: i32) -> bool {
+    let key = ((col as i32 + scroll) as u32).wrapping_mul(73) ^ (row_off as u32).wrapping_mul(919);
+    let threshold = match row_off {
+        0 => 0x16,
+        1 => 0x09,
+        _ => 0x05,
+    };
+    hash_u32(key) & 0xFF < threshold
 }
