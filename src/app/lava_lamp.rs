@@ -14,39 +14,39 @@ const H: usize = 14;
 const PX: f32 = 3.0;
 
 /// Lamp frame outline (1 = frame pixel, 0 = empty or interior).
-const FRAME: [[u8; W]; H] = [
-    [0, 0, 1, 1, 1, 0, 0], //  0  cap top
-    [0, 1, 1, 1, 1, 1, 0], //  1  cap
-    [0, 1, 0, 0, 0, 1, 0], //  2  glass top
-    [0, 1, 0, 0, 0, 1, 0], //  3  body narrow
-    [1, 0, 0, 0, 0, 0, 1], //  4  body wide
-    [1, 0, 0, 0, 0, 0, 1], //  5
-    [1, 0, 0, 0, 0, 0, 1], //  6
-    [1, 0, 0, 0, 0, 0, 1], //  7
-    [1, 0, 0, 0, 0, 0, 1], //  8
-    [0, 1, 0, 0, 0, 1, 0], //  9  narrowing
-    [0, 1, 0, 0, 0, 1, 0], // 10  base
-    [0, 1, 1, 1, 1, 1, 0], // 11  base plate
-    [0, 0, 1, 1, 1, 0, 0], // 12  base bottom
-    [0, 0, 0, 1, 0, 0, 0], // 13  foot
+const FRAME: [&str; H] = [
+    "0011100", //  0  cap top
+    "0111110", //  1  cap
+    "0100010", //  2  glass top
+    "0100010", //  3  body narrow
+    "1000001", //  4  body wide
+    "1000001", //  5
+    "1000001", //  6
+    "1000001", //  7
+    "1000001", //  8
+    "0100010", //  9  narrowing
+    "0100010", // 10  base
+    "0111110", // 11  base plate
+    "0011100", // 12  base bottom
+    "0001000", // 13  foot
 ];
 
 /// Interior mask (1 = inside glass where liquid and blobs are visible).
-const INTERIOR: [[u8; W]; H] = [
-    [0, 0, 0, 0, 0, 0, 0], //  0
-    [0, 0, 0, 0, 0, 0, 0], //  1
-    [0, 0, 1, 1, 1, 0, 0], //  2  narrow top
-    [0, 0, 1, 1, 1, 0, 0], //  3
-    [0, 1, 1, 1, 1, 1, 0], //  4  wide belly
-    [0, 1, 1, 1, 1, 1, 0], //  5
-    [0, 1, 1, 1, 1, 1, 0], //  6
-    [0, 1, 1, 1, 1, 1, 0], //  7
-    [0, 1, 1, 1, 1, 1, 0], //  8
-    [0, 0, 1, 1, 1, 0, 0], //  9  narrow bottom
-    [0, 0, 1, 1, 1, 0, 0], // 10
-    [0, 0, 0, 0, 0, 0, 0], // 11
-    [0, 0, 0, 0, 0, 0, 0], // 12
-    [0, 0, 0, 0, 0, 0, 0], // 13
+const INTERIOR: [&str; H] = [
+    "0000000", //  0
+    "0000000", //  1
+    "0011100", //  2  narrow top
+    "0011100", //  3
+    "0111110", //  4  wide belly
+    "0111110", //  5
+    "0111110", //  6
+    "0111110", //  7
+    "0111110", //  8
+    "0011100", //  9  narrow bottom
+    "0011100", // 10
+    "0000000", // 11
+    "0000000", // 12
+    "0000000", // 13
 ];
 
 /// A wax blob definition with its own oscillation parameters.
@@ -142,7 +142,7 @@ fn pixel_color(
     blob_positions: &[(f32, f32, f32)],
     colors: &LampColors,
 ) -> Option<egui::Color32> {
-    if FRAME[row][col] == 1 {
+    if util::mask_value(&FRAME, row, col) == 1 {
         let color = if row <= 1 || row >= 11 {
             colors.cap_color
         } else {
@@ -151,7 +151,7 @@ fn pixel_color(
         return Some(color);
     }
 
-    if INTERIOR[row][col] != 1 {
+    if util::mask_value(&INTERIOR, row, col) != 1 {
         return None;
     }
 
