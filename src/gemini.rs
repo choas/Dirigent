@@ -314,13 +314,6 @@ fn record_edited_file(tool: &serde_json::Value, edited_files: &mut Vec<String>) 
     }
 }
 
-fn wait_for_child(child: &Arc<Mutex<std::process::Child>>) -> Option<std::process::ExitStatus> {
-    match child.lock() {
-        Ok(mut c) => c.wait().ok(),
-        Err(poisoned) => poisoned.into_inner().wait().ok(),
-    }
-}
-
 fn is_stderr_noise(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with("(node:") && trimmed.contains("DeprecationWarning") {
@@ -410,34 +403,21 @@ pub(crate) fn invoke_gemini_streaming(
 
     let gemini_bin = resolve_gemini_bin(config.cli_path)?;
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!("Mutex poisoned while acquiring on_log for pre-run: {:?}", e);
-            e.into_inner()
-        });
-        ai_process::run_hook_script(
-            "pre-run",
-            config.pre_run_script,
-            project_root,
-            &mut *log,
-            true,
-        )
-        .map_err(GeminiError::SpawnFailed)?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "pre-run",
+        config.pre_run_script,
+        project_root,
+        true,
+    )
+    .map_err(GeminiError::SpawnFailed)?;
 
     let run_start = Instant::now();
-    let mut child = {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for command build: {:?}",
-                e
-            );
-            e.into_inner()
-        });
+    let mut child = ai_process::with_locked_log(&on_log, "command build", |log| {
         build_gemini_command(&gemini_bin, prompt, project_root, config, &mut *log)?
             .spawn()
-            .map_err(GeminiError::SpawnFailed)?
-    };
+            .map_err(GeminiError::SpawnFailed)
+    })?;
 
     let stderr_handle = child.stderr.take().expect("stderr must be piped");
     let stdout_handle = child.stdout.take().expect("stdout must be piped");
@@ -460,14 +440,16 @@ pub(crate) fn invoke_gemini_streaming(
                         continue;
                     }
                     let display = simplify_stderr_line(&line);
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    log(&display);
-                    log("\n");
+                    ai_process::with_locked_log(&on_log_for_stderr, "stderr", |log| {
+                        log(&display);
+                        log("\n");
+                    });
                 }
                 Err(e) => {
                     let msg = format!("stderr read error: {e}\n");
-                    let mut log = on_log_for_stderr.lock().unwrap_or_else(|e| e.into_inner());
-                    log(&msg);
+                    ai_process::with_locked_log(&on_log_for_stderr, "stderr error", |log| {
+                        log(&msg);
+                    });
                     full_stderr.push_str(&msg);
                     break;
                 }
@@ -477,13 +459,12 @@ pub(crate) fn invoke_gemini_streaming(
     });
 
     let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
-        let mut log = on_log.lock().unwrap_or_else(|e| e.into_inner());
-        log(text);
+        ai_process::with_locked_log(&on_log, "stdout", |log| log(text));
     });
 
     done.store(true, Ordering::Relaxed);
     let _ = watchdog.join();
-    let exit_status = wait_for_child(&child);
+    let exit_status = ai_process::wait_for_child(&child).ok();
 
     let (final_result, edited_files, stream_metrics) =
         stream_result.map_err(GeminiError::StreamReadError)?;
@@ -496,33 +477,19 @@ pub(crate) fn invoke_gemini_streaming(
     check_exit_status(exit_status, &stderr, &on_log)?;
 
     if final_result.is_empty() && !stderr.is_empty() {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for empty-result error: {:?}",
-                e
-            );
-            e.into_inner()
+        ai_process::with_locked_log(&on_log, "empty-result error", |log| {
+            log(&format!("\nError: {}\n", stderr));
         });
-        log(&format!("\nError: {}\n", stderr));
     }
 
-    {
-        let mut log = on_log.lock().unwrap_or_else(|e| {
-            log::error!(
-                "Mutex poisoned while acquiring on_log for post-run: {:?}",
-                e
-            );
-            e.into_inner()
-        });
-        ai_process::run_hook_script(
-            "post-run",
-            config.post_run_script,
-            project_root,
-            &mut *log,
-            false,
-        )
-        .map_err(GeminiError::SpawnFailed)?;
-    }
+    ai_process::run_hook_with_locked_log(
+        &on_log,
+        "post-run",
+        config.post_run_script,
+        project_root,
+        false,
+    )
+    .map_err(GeminiError::SpawnFailed)?;
 
     let elapsed_ms = run_start.elapsed().as_millis() as u64;
 
