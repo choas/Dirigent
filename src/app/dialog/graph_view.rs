@@ -193,7 +193,7 @@ fn render_graph_view_row(
         egui::Sense::click(),
     );
 
-    paint_graph_view_row_background(
+    graph_helpers::paint_graph_row_background(
         ui,
         row_rect,
         response.hovered(),
@@ -214,31 +214,6 @@ fn render_graph_view_row(
         layout.warning,
     );
     apply_graph_view_row_response(response, &row, actions);
-}
-
-fn paint_graph_view_row_background(
-    ui: &egui::Ui,
-    row_rect: egui::Rect,
-    hovered: bool,
-    is_dark: bool,
-    highlight_lane: Option<usize>,
-) {
-    if highlight_lane.is_some() {
-        let tint = if is_dark {
-            egui::Color32::from_white_alpha(8)
-        } else {
-            egui::Color32::from_black_alpha(6)
-        };
-        ui.painter().rect_filled(row_rect, 0, tint);
-    }
-    if hovered {
-        let hover = if is_dark {
-            egui::Color32::from_white_alpha(15)
-        } else {
-            egui::Color32::from_black_alpha(12)
-        };
-        ui.painter().rect_filled(row_rect, 0, hover);
-    }
 }
 
 fn paint_graph_view_column(
