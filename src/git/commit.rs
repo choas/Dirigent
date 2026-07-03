@@ -61,6 +61,19 @@ fn commit_staged(
     Ok(format!("{}", oid))
 }
 
+fn reset_index_to_head(repo_path: &Path) -> crate::error::Result<()> {
+    let repo = Repository::discover(repo_path)?;
+    let head_commit = repo
+        .head()?
+        .peel_to_commit()
+        .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
+    let head_tree = head_commit.tree()?;
+    let mut idx = repo.index()?;
+    idx.read_tree(&head_tree)?;
+    idx.write()?;
+    Ok(())
+}
+
 /// Commit the working-tree state of files touched by `diff_text`.
 /// This stages the actual files the user sees (including any post-run formatting),
 /// so the committed state matches the working tree and files appear clean afterwards.
@@ -78,17 +91,7 @@ pub(crate) fn commit_diff(
     }
 
     // Reset the index to HEAD so pre-existing staged changes aren't included.
-    {
-        let repo = Repository::discover(repo_path)?;
-        let head_commit = repo
-            .head()?
-            .peel_to_commit()
-            .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
-        let head_tree = head_commit.tree()?;
-        let mut idx = repo.index()?;
-        idx.read_tree(&head_tree)?;
-        idx.write()?;
-    }
+    reset_index_to_head(repo_path)?;
 
     // Stage the working-tree state of the affected files.
     stage_files(repo_path, &file_paths)?;
@@ -119,17 +122,7 @@ pub(crate) fn commit_partial(
 
     // Reset the index to HEAD so pre-existing staged changes aren't included and
     // the hunk patches (built against HEAD) apply cleanly to the index.
-    {
-        let repo = Repository::discover(repo_path)?;
-        let head_commit = repo
-            .head()?
-            .peel_to_commit()
-            .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
-        let head_tree = head_commit.tree()?;
-        let mut idx = repo.index()?;
-        idx.read_tree(&head_tree)?;
-        idx.write()?;
-    }
+    reset_index_to_head(repo_path)?;
 
     // Stage whole files, then apply each owned hunk to the index.
     stage_files(repo_path, whole_files)?;
@@ -271,6 +264,17 @@ fn format_description(text: &str) -> String {
     desc.trim_end_matches('.').to_string()
 }
 
+fn commit_subject(commit_type: &str, description: &str) -> String {
+    let prefix = format!("{}: ", commit_type);
+    let max_desc = 72 - prefix.len();
+    let subject_desc = if description.len() > max_desc {
+        format!("{}...", crate::app::truncate_str(description, max_desc - 3))
+    } else {
+        description.to_string()
+    };
+    format!("{}{}", prefix, subject_desc)
+}
+
 /// Validate a raw commit message using commitlint-rs rules.
 /// Returns a list of violation messages (empty = valid).
 pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
@@ -305,18 +309,7 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let commit_type = detect_commit_type(first_line);
         let raw_desc = strip_type_prefix(first_line);
         let description = format_description(raw_desc);
-
-        let prefix = format!("{}: ", commit_type);
-        let max_desc = 72 - prefix.len();
-        let subject_desc = if description.len() > max_desc {
-            format!(
-                "{}...",
-                crate::app::truncate_str(&description, max_desc - 3)
-            )
-        } else {
-            description
-        };
-        let subject = format!("{}{}", prefix, subject_desc);
+        let subject = commit_subject(commit_type, &description);
 
         let mut parts = Vec::new();
         // Include the CLI message in the body. Only an over-long message
@@ -335,18 +328,7 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let commit_type = detect_commit_type(cue_text);
         let raw_desc = strip_type_prefix(cue_text);
         let description = format_description(raw_desc);
-
-        let prefix = format!("{}: ", commit_type);
-        let max_desc = 72 - prefix.len();
-        let subject_desc = if description.len() > max_desc {
-            format!(
-                "{}...",
-                crate::app::truncate_str(&description, max_desc - 3)
-            )
-        } else {
-            description
-        };
-        let subject = format!("{}{}", prefix, subject_desc);
+        let subject = commit_subject(commit_type, &description);
 
         let mut parts = Vec::new();
         if cue_text.len() > 68 {

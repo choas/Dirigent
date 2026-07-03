@@ -93,31 +93,14 @@ pub(crate) fn jj_create_workspace(
     let src_claude = repo_path.join(".claude");
     if src_claude.is_dir() {
         let dst_claude = ws_path.join(".claude");
-        if let Err(e) = copy_dir_recursive(&src_claude, &dst_claude, &["worktrees"]) {
+        if let Err(e) =
+            crate::util::fs::copy_dir_recursive(&src_claude, &dst_claude, &["worktrees"])
+        {
             eprintln!("warning: failed to copy .claude/ settings to workspace: {e}");
         }
     }
 
     Ok(ws_path)
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path, skip: &[&str]) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if skip.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
-            continue;
-        }
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path, &[])?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 /// Remove a jj workspace (equivalent to `git worktree remove`).
