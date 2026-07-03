@@ -258,14 +258,7 @@ pub(super) fn parse_source_object(
 ) -> Option<SourceItem> {
     let id = obj.get("id")?.as_str()?;
     let text = obj.get("text")?.as_str()?;
-    Some(SourceItem {
-        external_id: id.to_string(),
-        text: text.to_string(),
-        source_label: source_label.to_string(),
-        source_id: source_id.to_string(),
-        file_path: String::new(),
-        line_number: 0,
-    })
+    Some(SourceItem::new(id, text, source_label).with_source_id(source_id))
 }
 
 #[cfg(test)]
