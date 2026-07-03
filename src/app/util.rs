@@ -83,6 +83,69 @@ pub(crate) fn paint_grid_rect(
     painter.rect_filled(rect, 0.0, color);
 }
 
+pub(crate) fn paint_grid_row(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    row: usize,
+    columns: std::ops::Range<usize>,
+    px: f32,
+    color: egui::Color32,
+) {
+    for col in columns {
+        paint_grid_cell(painter, origin, col, row, px, color);
+    }
+}
+
+pub(crate) fn vertical_neighbors<const WIDTH: usize, const HEIGHT: usize>(
+    grid: &[[u8; WIDTH]; HEIGHT],
+    row: usize,
+    col: usize,
+) -> (u8, u8) {
+    let above = row.checked_sub(1).map_or(0, |r| grid[r][col]);
+    let below = grid.get(row + 1).map_or(0, |r| r[col]);
+    (above, below)
+}
+
+pub(crate) fn paint_u8_grid<const WIDTH: usize, const HEIGHT: usize>(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    grid: &[[u8; WIDTH]; HEIGHT],
+    px: f32,
+    color_for: impl FnMut(usize, usize, u8) -> egui::Color32,
+) {
+    paint_u8_grid_at(painter, origin, grid, px, 0.0, 0.0, color_for);
+}
+
+pub(crate) fn paint_u8_grid_at<const WIDTH: usize, const HEIGHT: usize>(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    grid: &[[u8; WIDTH]; HEIGHT],
+    px: f32,
+    col_offset: f32,
+    row_offset: f32,
+    mut color_for: impl FnMut(usize, usize, u8) -> egui::Color32,
+) {
+    for (row, cells) in grid.iter().enumerate() {
+        for (col, cell) in cells.iter().copied().enumerate() {
+            if cell == 0 {
+                continue;
+            }
+            paint_grid_rect(
+                painter,
+                origin,
+                GridRect {
+                    col: col_offset + col as f32,
+                    row: row_offset + row as f32,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                px,
+                color_for(row, col, cell),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
