@@ -137,35 +137,35 @@ pub fn paint_at(
     // A short flash window right after each kick.
     let flashing = beat_phase < 0.18;
 
-    // Draw the skull with edge-detection shading (highlight on top edges,
-    // shadow on bottom edges) for a chunky pixel-art look.
-    #[allow(clippy::needless_range_loop)]
-    for row in 0..SKULL_H {
-        for col in 0..SKULL_W {
-            let cell = SKULL[row][col];
+    draw_skull(painter, skull_origin, px, flashing, &colors);
+
+    // Lightning cracks on the beat.
+    if flashing {
+        let lead_left = beat_index % 2 == 0;
+        draw_bolts(painter, origin, px, lead_left, &colors);
+    }
+
+    ctx.request_repaint_after(std::time::Duration::from_millis(30));
+}
+
+/// Draw the skull with edge-detection shading (highlight on top edges,
+/// shadow on bottom edges) for a chunky pixel-art look.
+fn draw_skull(
+    painter: &egui::Painter,
+    skull_origin: egui::Pos2,
+    px: f32,
+    flashing: bool,
+    colors: &DomeColors,
+) {
+    for (row, cells) in SKULL.iter().enumerate().take(SKULL_H) {
+        for (col, cell) in cells.iter().enumerate().take(SKULL_W) {
+            let cell = *cell;
             if cell == 0 {
                 continue;
             }
-            let above = if row > 0 { SKULL[row - 1][col] } else { 0 };
-            let below = if row + 1 < SKULL_H {
-                SKULL[row + 1][col]
-            } else {
-                0
-            };
-            let color = match cell {
-                // Eye sockets glow red on the kick, otherwise sit dark.
-                2 => {
-                    if flashing {
-                        colors.eye_glow
-                    } else {
-                        colors.socket
-                    }
-                }
-                3 => colors.socket,
-                _ if above == 0 => colors.highlight,
-                _ if below == 0 => colors.shadow,
-                _ => colors.bone,
-            };
+            let above = row.checked_sub(1).map_or(0, |r| SKULL[r][col]);
+            let below = SKULL.get(row + 1).map_or(0, |r| r[col]);
+            let color = skull_cell_color(cell, above, below, flashing, colors);
             let gx = (SKULL_COL + col) as f32;
             let gy = (SKULL_ROW + row) as f32;
             let rect = egui::Rect::from_min_size(
@@ -175,51 +175,66 @@ pub fn paint_at(
             painter.rect_filled(rect, 0.0, color);
         }
     }
+}
 
-    // Lightning cracks on the beat. Alternate which side leads for variety,
-    // but flash both for a proper thunderclap.
-    if flashing {
-        let lead_left = beat_index % 2 == 0;
-        #[allow(clippy::needless_range_loop)]
-        for row in 0..BOLT_H {
-            for col in 0..BOLT_W {
-                if BOLT[row][col] == 0 {
-                    continue;
-                }
-                let gy = (BOLT_ROW + row) as f32;
-                // Left bolt.
-                let lx = col as f32;
-                let l_color = if lead_left {
-                    colors.bolt
-                } else {
-                    colors.shadow
-                };
-                painter.rect_filled(
-                    egui::Rect::from_min_size(
-                        origin + egui::vec2(lx * px, gy * px),
-                        egui::vec2(px, px),
-                    ),
-                    0.0,
-                    l_color,
-                );
-                // Right bolt (mirrored).
-                let rx = (W - 1 - col) as f32;
-                let r_color = if lead_left {
-                    colors.shadow
-                } else {
-                    colors.bolt
-                };
-                painter.rect_filled(
-                    egui::Rect::from_min_size(
-                        origin + egui::vec2(rx * px, gy * px),
-                        egui::vec2(px, px),
-                    ),
-                    0.0,
-                    r_color,
-                );
+/// Shading color for one skull cell given its vertical neighbours.
+fn skull_cell_color(
+    cell: u8,
+    above: u8,
+    below: u8,
+    flashing: bool,
+    colors: &DomeColors,
+) -> egui::Color32 {
+    match cell {
+        // Eye sockets glow red on the kick, otherwise sit dark.
+        2 if flashing => colors.eye_glow,
+        2 | 3 => colors.socket,
+        _ if above == 0 => colors.highlight,
+        _ if below == 0 => colors.shadow,
+        _ => colors.bone,
+    }
+}
+
+/// Draw both side bolts. Alternate which side leads for variety,
+/// but flash both for a proper thunderclap.
+fn draw_bolts(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    lead_left: bool,
+    colors: &DomeColors,
+) {
+    let (l_color, r_color) = if lead_left {
+        (colors.bolt, colors.shadow)
+    } else {
+        (colors.shadow, colors.bolt)
+    };
+    for (row, cells) in BOLT.iter().enumerate().take(BOLT_H) {
+        for (col, cell) in cells.iter().enumerate().take(BOLT_W) {
+            if *cell == 0 {
+                continue;
             }
+            let gy = (BOLT_ROW + row) as f32;
+            // Left bolt.
+            let lx = col as f32;
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    origin + egui::vec2(lx * px, gy * px),
+                    egui::vec2(px, px),
+                ),
+                0.0,
+                l_color,
+            );
+            // Right bolt (mirrored).
+            let rx = (W - 1 - col) as f32;
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    origin + egui::vec2(rx * px, gy * px),
+                    egui::vec2(px, px),
+                ),
+                0.0,
+                r_color,
+            );
         }
     }
-
-    ctx.request_repaint_after(std::time::Duration::from_millis(30));
 }
