@@ -158,31 +158,18 @@ fn draw_skull(
     flashing: bool,
     colors: &DomeColors,
 ) {
-    for (row, cells) in SKULL.iter().enumerate().take(SKULL_H) {
-        for (col, cell) in cells.iter().enumerate().take(SKULL_W) {
-            let cell = *cell;
-            if cell == 0 {
-                continue;
-            }
-            let above = row.checked_sub(1).map_or(0, |r| SKULL[r][col]);
-            let below = SKULL.get(row + 1).map_or(0, |r| r[col]);
-            let color = skull_cell_color(cell, above, below, flashing, colors);
-            let gx = (SKULL_COL + col) as f32;
-            let gy = (SKULL_ROW + row) as f32;
-            util::paint_grid_rect(
-                painter,
-                skull_origin,
-                util::GridRect {
-                    col: gx,
-                    row: gy,
-                    width: 1.0,
-                    height: 1.0,
-                },
-                px,
-                color,
-            );
-        }
-    }
+    util::paint_u8_grid_at(
+        painter,
+        skull_origin,
+        &SKULL,
+        px,
+        SKULL_COL as f32,
+        SKULL_ROW as f32,
+        |row, col, cell| {
+            let (above, below) = util::vertical_neighbors(&SKULL, row, col);
+            skull_cell_color(cell, above, below, flashing, colors)
+        },
+    );
 }
 
 /// Shading color for one skull cell given its vertical neighbours.
