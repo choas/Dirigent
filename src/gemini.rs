@@ -2,11 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+use crate::ai_process;
 use crate::claude;
-
-const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
 pub(crate) enum GeminiError {
@@ -178,53 +177,6 @@ fn build_gemini_command(
     Ok(cmd)
 }
 
-fn spawn_watchdog(
-    child: &Arc<Mutex<std::process::Child>>,
-    cancel: &Arc<AtomicBool>,
-    done: &Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    let child = Arc::clone(child);
-    let cancel = Arc::clone(cancel);
-    let done = Arc::clone(done);
-    std::thread::spawn(move || {
-        while !done.load(Ordering::Relaxed) {
-            if cancel.load(Ordering::Relaxed) {
-                let _ = child.lock().map(|mut c| c.kill());
-                return;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
-        }
-    })
-}
-
-fn is_file_related_tool(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "write"
-            | "edit"
-            | "bash"
-            | "execute_bash"
-            | "task"
-            | "write_file"
-            | "edit_file"
-            | "create_file"
-            | "str_replace_editor"
-            | "file_editor"
-            | "write_to_file"
-            | "apply_diff"
-    )
-}
-
-fn extract_file_path_from_input(input: &serde_json::Value) -> Option<String> {
-    input
-        .get("file_path")
-        .or_else(|| input.get("path"))
-        .or_else(|| input.get("file"))
-        .and_then(|p| p.as_str())
-        .map(|s| s.to_string())
-}
-
 fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
@@ -322,82 +274,98 @@ fn dispatch_event(
                 on_log(&format!("[Gemini: {}]\n", model));
             }
         }
-        "messages" => {
-            if let Some(messages) = event.get("messages").and_then(|m| m.as_array()) {
-                for msg in messages {
-                    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-                    if role != "assistant" && role != "model" {
-                        continue;
-                    }
-                    if let Some(content) = msg.get("content") {
-                        if let Some(text) = content.as_str() {
-                            on_log(text);
-                            on_log("\n");
-                            final_result.push_str(text);
-                            final_result.push('\n');
-                        } else if let Some(parts) = content.as_array() {
-                            for part in parts {
-                                if part.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                        on_log(text);
-                                        on_log("\n");
-                                        final_result.push_str(text);
-                                        final_result.push('\n');
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "tools" => {
-            if let Some(tools) = event.get("tools").and_then(|t| t.as_array()) {
-                for tool in tools {
-                    let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                    if is_file_related_tool(name) {
-                        if let Some(input) = tool.get("input") {
-                            if let Some(path) = extract_file_path_from_input(input) {
-                                if !edited_files.contains(&path) {
-                                    edited_files.push(path);
-                                }
-                            }
-                        }
-                    }
-                    on_log(&format!("\u{2192} {}", name));
-                    if let Some(input) = tool.get("input") {
-                        let detail = build_tool_detail(input);
-                        if !detail.is_empty() {
-                            on_log(&detail);
-                        }
-                    }
-                    on_log("\n");
-                }
-            }
-        }
+        "messages" => handle_messages_event(event, final_result, on_log),
+        "tools" => handle_tools_event(event, edited_files, on_log),
         "turn_complete" => {
             metrics.num_turns += 1;
             on_log("\n");
         }
         "response" => {
             if let Some(text) = event.get("text").and_then(|t| t.as_str()) {
-                on_log(text);
-                on_log("\n");
-                final_result.push_str(text);
-                final_result.push('\n');
+                emit_text(text, final_result, on_log);
             }
         }
         _ => {}
     }
 }
 
-fn build_tool_detail(input: &serde_json::Value) -> String {
-    if let Some(file_path) = input.get("file_path").and_then(|p| p.as_str()) {
-        format!(" {}", file_path)
-    } else if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-        format!(" $ {}", command.lines().next().unwrap_or(""))
-    } else {
-        String::new()
+fn emit_text(text: &str, final_result: &mut String, on_log: &mut impl FnMut(&str)) {
+    on_log(text);
+    on_log("\n");
+    final_result.push_str(text);
+    final_result.push('\n');
+}
+
+fn handle_messages_event(
+    event: &serde_json::Value,
+    final_result: &mut String,
+    on_log: &mut impl FnMut(&str),
+) {
+    let Some(messages) = event.get("messages").and_then(|m| m.as_array()) else {
+        return;
+    };
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "assistant" && role != "model" {
+            continue;
+        }
+        if let Some(content) = msg.get("content") {
+            handle_message_content(content, final_result, on_log);
+        }
+    }
+}
+
+fn handle_message_content(
+    content: &serde_json::Value,
+    final_result: &mut String,
+    on_log: &mut impl FnMut(&str),
+) {
+    if let Some(text) = content.as_str() {
+        emit_text(text, final_result, on_log);
+    } else if let Some(parts) = content.as_array() {
+        for part in parts {
+            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                    emit_text(text, final_result, on_log);
+                }
+            }
+        }
+    }
+}
+
+fn handle_tools_event(
+    event: &serde_json::Value,
+    edited_files: &mut Vec<String>,
+    on_log: &mut impl FnMut(&str),
+) {
+    let Some(tools) = event.get("tools").and_then(|t| t.as_array()) else {
+        return;
+    };
+    for tool in tools {
+        let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+        if ai_process::is_file_related_tool(name) {
+            record_edited_file(tool, edited_files);
+        }
+        on_log(&format!("\u{2192} {}", name));
+        if let Some(input) = tool.get("input") {
+            let detail = ai_process::build_tool_detail(input, false);
+            if !detail.is_empty() {
+                on_log(&detail);
+            }
+        }
+        on_log("\n");
+    }
+}
+
+fn record_edited_file(tool: &serde_json::Value, edited_files: &mut Vec<String>) {
+    let Some(input) = tool.get("input") else {
+        return;
+    };
+    let Some(path) = ai_process::extract_file_path_from_input(input) else {
+        return;
+    };
+    if !edited_files.contains(&path) {
+        edited_files.push(path);
     }
 }
 
@@ -530,7 +498,7 @@ pub(crate) fn invoke_gemini_streaming(
 
     let child = Arc::new(Mutex::new(child));
     let done = Arc::new(AtomicBool::new(false));
-    let watchdog = spawn_watchdog(&child, &cancel, &done);
+    let watchdog = ai_process::spawn_cancel_watchdog(&child, &cancel, &done);
 
     let on_log_for_stderr = Arc::clone(&on_log);
     let stderr_thread = std::thread::spawn(move || {
