@@ -177,6 +177,7 @@ Detailed documentation is organized following the [Diataxis](https://diataxis.fr
 | Reference | [Reference](docs/reference.md) | Complete settings, keyboard shortcuts, cue commands, playbook, and environment variables |
 | Explanation | [Explanation](docs/explanation.md) | Architecture, design decisions, and core concepts |
 | How-To Guide | [Observability Setup](docs/observability-setup.md) | OpenTelemetry + Grafana local observability stack |
+| How-To Guide | [Git Workflows](docs/git-workflows.md) | AI-assisted commit splitting, hunk staging, cross-branch review, worktrees |
 
 ## Architecture
 
