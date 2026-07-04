@@ -666,6 +666,10 @@ pub(crate) struct GitState {
     /// Whether a PR creation is in progress.
     pub(super) creating_pr: bool,
     pub(super) pr_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Whether the Create PR dialog is still waiting for its async prefill
+    /// (default branch + body) to arrive.
+    pub(super) pr_prefill_loading: bool,
+    pub(super) pr_prefill_rx: Option<mpsc::Receiver<(String, String)>>,
     /// Whether the Import PR Findings dialog is open.
     pub(super) show_import_pr: bool,
     /// PR number input for importing findings.

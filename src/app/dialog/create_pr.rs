@@ -80,6 +80,12 @@ impl DirigentApp {
                             .monospace()
                             .color(self.semantic.accent),
                     );
+                    if self.git.pr_prefill_loading {
+                        ui.label(
+                            egui::RichText::new("Detecting base branch and commits\u{2026}")
+                                .color(self.semantic.secondary_text),
+                        );
+                    }
                     ui.add_space(SPACE_SM);
 
                     // Title

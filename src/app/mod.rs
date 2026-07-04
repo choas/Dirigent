@@ -885,6 +885,8 @@ impl DirigentApp {
                 pr_draft: false,
                 creating_pr: false,
                 pr_rx: None,
+                pr_prefill_loading: false,
+                pr_prefill_rx: None,
                 show_import_pr: false,
                 import_pr_number: String::new(),
                 importing_pr: false,
@@ -1457,6 +1459,7 @@ impl eframe::App for DirigentApp {
         self.process_push_result();
         self.process_pull_result();
         self.process_pr_result();
+        self.process_pr_prefill_result();
         self.process_import_pr_result();
         self.process_pr_notify_result();
         self.process_move_to_branch_result();

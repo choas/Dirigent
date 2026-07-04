@@ -144,7 +144,9 @@ impl DirigentApp {
         }
     }
 
-    /// Open the Create PR dialog with pre-filled fields.
+    /// Open the Create PR dialog and pre-fill base/body from a background
+    /// thread — default-branch detection and the PR body may involve `gh`,
+    /// network calls, or `git log`, which must not block the UI thread.
     pub(super) fn open_create_pr_dialog(&mut self) {
         let branch = self
             .git
@@ -152,15 +154,56 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch.clone())
             .unwrap_or_default();
-        let base = git::get_default_branch(&self.project_root);
-        let body = git::build_pr_body(&self.project_root, &base);
         // Use branch name as default title (replace hyphens/underscores with spaces)
         let title = branch.replace(['-', '_'], " ");
         self.git.pr_title = title;
-        self.git.pr_body = body;
-        self.git.pr_base = base;
+        self.git.pr_body = String::new();
+        self.git.pr_base = "main".to_string();
         self.git.pr_draft = false;
         self.git.show_create_pr = true;
+
+        let (tx, rx) = mpsc::channel();
+        self.git.pr_prefill_rx = Some(rx);
+        self.git.pr_prefill_loading = true;
+        let root = self.project_root.clone();
+        let ctx = std::sync::Arc::clone(&self.egui_ctx);
+        std::thread::spawn(move || {
+            let base = git::get_default_branch(&root);
+            let body = git::build_pr_body(&root, &base);
+            let _ = tx.send((base, body));
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
+        });
+    }
+
+    /// Apply the async Create PR prefill once it arrives. Fields the user has
+    /// already edited in the meantime are left untouched.
+    pub(super) fn process_pr_prefill_result(&mut self) {
+        let rx = match self.git.pr_prefill_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let (base, body) = match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.git.pr_prefill_rx = None;
+                self.git.pr_prefill_loading = false;
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.pr_prefill_rx = None;
+        self.git.pr_prefill_loading = false;
+        if !self.git.show_create_pr {
+            return;
+        }
+        if self.git.pr_base == "main" {
+            self.git.pr_base = base;
+        }
+        if self.git.pr_body.is_empty() {
+            self.git.pr_body = body;
+        }
     }
 
     /// Start an async PR creation (pushes first, then creates the PR).
