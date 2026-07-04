@@ -637,13 +637,6 @@ struct SbsFileRenderCtx<'a> {
 /// Render all hunks for a single file in side-by-side mode, consuming from the
 /// shared line `budget`. Returns `true` if it stopped before rendering every
 /// row because the budget ran out.
-/// Styling shared across side-by-side hunk rendering.
-struct SbsStyle<'a> {
-    colors: &'a SemanticColors,
-    dc: &'a DiffColors,
-    sep_color: egui::Color32,
-}
-
 fn render_sbs_file_hunks(
     ui: &mut egui::Ui,
     file: &FileDiff,
@@ -651,9 +644,6 @@ fn render_sbs_file_hunks(
     sbs_ctx: &SbsFileRenderCtx<'_>,
     budget: &mut usize,
 ) -> bool {
-    let colors = style.colors;
-    let dc = style.dc;
-    let sep_color = style.sep_color;
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
         if *budget == 0 {
             return true;

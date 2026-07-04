@@ -1410,8 +1410,29 @@ impl DirigentApp {
     fn finish_commit_success(&mut self, pending_cue: Option<i64>, in_queue: bool, msg: String) {
         if let Some(id) = pending_cue {
             let _ = self.db.update_cue_status(id, CueStatus::Done);
-            let _ = self.db.log_activity(id, "Committed");
+            // The worker reports success as "Committed: <hash>"; record it
+            // as "Committed (<hash>)" so cue_commit_hash can recover the
+            // hash and offer "Save as Play" on the cue.
+            let activity = match msg.strip_prefix("Committed: ") {
+                Some(hash) => format!("Committed ({})", hash),
+                None => "Committed".to_string(),
+            };
+            let _ = self.db.log_activity(id, &activity);
             self.clear_review_question_and_recheck_workflow(id);
+            // Run configured AfterCommit agents (format/lint/build/test)
+            // for changes committed via the diff-review dialog, matching
+            // the old direct-commit path's behavior.
+            let cue_prompt = self
+                .cues
+                .iter()
+                .find(|c| c.id == id)
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+            self.trigger_agents_for(
+                &crate::agents::AgentTrigger::AfterCommit,
+                Some(id),
+                &cue_prompt,
+            );
         }
         self.set_status_message(msg);
         if in_queue {

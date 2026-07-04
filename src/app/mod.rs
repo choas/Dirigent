@@ -212,9 +212,6 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
     }
 }
 
-/// Cached `lines_with_cues` for the code viewer: (file path, cue generation, line→has-cue map).
-type LinesWithCuesCache = (String, u64, std::sync::Arc<HashMap<usize, bool>>);
-
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
