@@ -1,3 +1,7 @@
+# Linux prerequisite: SonarQube's embedded Elasticsearch requires
+# vm.max_map_count >= 524288 or the container crash-loops on startup.
+# Set it with:  sudo sysctl -w vm.max_map_count=524288
+# (scripts/sonar.sh up warns when the value is too low)
 services:
   sonarqube:
     container_name: dirigent_sonarqube

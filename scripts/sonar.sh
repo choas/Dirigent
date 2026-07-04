@@ -67,6 +67,16 @@ load_token() {
 }
 
 cmd_up() {
+  # SonarQube's embedded Elasticsearch needs vm.max_map_count >= 524288 on
+  # Linux hosts; otherwise the container crash-loops without a clear error.
+  if [ "$(uname -s)" = "Linux" ]; then
+    MAX_MAP_COUNT=$(sysctl -n vm.max_map_count 2>/dev/null || echo 0)
+    if [ "${MAX_MAP_COUNT}" -lt 524288 ]; then
+      echo "${YELLOW}WARNING: vm.max_map_count is ${MAX_MAP_COUNT}, but SonarQube's embedded"
+      echo "Elasticsearch needs at least 524288. Fix it with:"
+      echo "  sudo sysctl -w vm.max_map_count=524288${RESET}"
+    fi
+  fi
   exec "$(engine)" compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d
 }
 
