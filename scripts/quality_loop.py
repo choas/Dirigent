@@ -505,8 +505,10 @@ def commit_leftovers() -> None:
     if not working_tree_dirty():
         return
     print("  Working tree has uncommitted changes -- committing leftovers.")
-    run(["git", "add", "-u"])
-    run(["git", "commit", "-m", "style: format and leftover fixes from quality loop"])
+    run(["git", "add", "-A"])
+    result = run(["git", "commit", "-m", "style: format and leftover fixes from quality loop"])
+    if result.returncode != 0:
+        print("  [warn] Leftover commit failed -- changes remain uncommitted.")
 
 
 def push(cfg: Config) -> bool:
