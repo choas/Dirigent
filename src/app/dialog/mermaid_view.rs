@@ -110,9 +110,11 @@ fn render_mermaid_toolbar(ui: &mut egui::Ui, zoom: &mut f32, export: &mut Option
 }
 
 fn apply_scroll_zoom(ui: &egui::Ui, zoom: &mut f32) {
-    let scroll = ui.input(|i| {
+    // Consume the delta (input_mut + take) so the ScrollArea below doesn't
+    // also scroll while the user is zooming with Cmd+wheel.
+    let scroll = ui.input_mut(|i| {
         if i.modifiers.command {
-            i.smooth_scroll_delta.y
+            std::mem::take(&mut i.smooth_scroll_delta.y)
         } else {
             0.0
         }
