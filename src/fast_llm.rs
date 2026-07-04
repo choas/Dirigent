@@ -188,29 +188,31 @@ pub(crate) fn parse_change_sets(response: &str) -> Result<Vec<ChangeSetGroupRaw>
     Ok(groups)
 }
 
-/// Summarize a git diff into a concise, conventional commit message subject line.
+/// Summarize a git diff into a detailed conventional commit message: a concise
+/// subject line followed by a body explaining what changed and why.
 pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<String, String> {
     const SYSTEM: &str = "You are a helpful assistant that writes git commit messages. \
-        Given a diff, respond with a single concise commit message subject line \
-        (imperative mood, no more than 72 characters). Output only the subject line, \
-        with no quotes, prefixes, or explanation.";
+        Given a diff, respond with a complete commit message: a concise subject line \
+        (imperative mood, no more than 72 characters), then a blank line, then a short \
+        body of 2-6 lines (plain sentences or bullet points) explaining what changed \
+        and why. Output only the commit message, with no quotes, markdown fences, \
+        prefixes, or explanation.";
 
     // Cap the diff so a huge change set doesn't blow past the model's context.
     let trimmed: String = diff.chars().take(12_000).collect();
     let prompt = format!("Summarize the following diff as a commit message:\n\n{trimmed}");
     let result = complete(config, Some(SYSTEM), &prompt)?;
-    // Defensively take only the first non-empty line.
-    let subject = result
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
+    // Defensively strip wrapping quotes/fences but keep the multi-line body.
+    let message = result
+        .trim()
         .trim_matches('"')
+        .trim_matches('`')
+        .trim()
         .to_string();
-    if subject.is_empty() {
+    if message.is_empty() {
         return Err("model returned an empty commit message".to_string());
     }
-    Ok(subject)
+    Ok(message)
 }
 
 #[cfg(test)]
