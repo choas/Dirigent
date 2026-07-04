@@ -347,11 +347,15 @@ pub struct DirigentApp {
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
     opencode_models_loading: bool,
+    // One-shot guard: the CLI returns an empty Vec on failure, so an
+    // is_empty() check alone would respawn the fetch every frame.
+    pub(super) opencode_models_fetch_attempted: bool,
     opencode_models_rx: mpsc::Receiver<Vec<String>>,
 
     // Gemini models (cached from CLI)
     pub(super) gemini_models: Vec<String>,
     gemini_models_loading: bool,
+    pub(super) gemini_models_fetch_attempted: bool,
     gemini_models_rx: mpsc::Receiver<Vec<String>>,
 
     // Agent run history cleanup tracking
@@ -1022,10 +1026,12 @@ impl DirigentApp {
             cached_agent_runs_for_cue: (None, Vec::new()),
             opencode_models: Vec::new(),
             opencode_models_loading: false,
+            opencode_models_fetch_attempted: false,
             opencode_models_rx: mpsc::channel().1,
 
             gemini_models: Vec::new(),
             gemini_models_loading: false,
+            gemini_models_fetch_attempted: false,
             gemini_models_rx: mpsc::channel().1,
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),

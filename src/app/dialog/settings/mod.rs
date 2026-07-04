@@ -125,12 +125,14 @@ impl DirigentApp {
         self.settings.cli_provider == CliProvider::OpenCode
             && self.opencode_models.is_empty()
             && !self.opencode_models_loading
+            && !self.opencode_models_fetch_attempted
     }
 
     fn should_fetch_gemini_models(&self) -> bool {
         self.settings.cli_provider == CliProvider::Gemini
             && self.gemini_models.is_empty()
             && !self.gemini_models_loading
+            && !self.gemini_models_fetch_attempted
     }
 
     fn render_settings_scroll_contents(
@@ -271,6 +273,7 @@ impl DirigentApp {
 
     fn spawn_gemini_models_fetch(&mut self) {
         self.gemini_models_loading = true;
+        self.gemini_models_fetch_attempted = true;
         let (tx, rx) = mpsc::channel();
         self.gemini_models_rx = rx;
         let cli_path = self.settings.gemini_cli_path.clone();
@@ -286,6 +289,7 @@ impl DirigentApp {
 
     fn spawn_opencode_models_fetch(&mut self) {
         self.opencode_models_loading = true;
+        self.opencode_models_fetch_attempted = true;
         let (tx, rx) = mpsc::channel();
         self.opencode_models_rx = rx;
         let cli_path = self.settings.opencode_cli_path.clone();
