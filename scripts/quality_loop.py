@@ -31,7 +31,8 @@ Requirements: gh (authenticated), sonar-scanner, podman/docker, claude.
 
 EXIT CODES
   0  clean -- no findings, no new comments
-  1  tests failing and Claude could not repair them
+  1  tests failing and Claude could not repair them, or a Claude Code
+     invocation failed (unprocessed items stay unseen for the next run)
   2  max rounds reached with issues remaining
 """
 
@@ -264,13 +265,20 @@ def _save_seen(cfg: Config, kind: str, seen: set[str]) -> None:
 
 
 def filter_unseen(cfg: Config, kind: str, items: list[dict], id_of) -> list[dict]:
-    """Return items not seen before; mark them seen (unless --dry-run)."""
+    """Return items not seen before. Items are only persisted as seen via
+    mark_processed after they were actually handled -- recording them here
+    would make a failed run silently skip them on the next attempt."""
     seen = _load_seen(cfg, kind)
-    unseen = [i for i in items if id_of(i) not in seen]
-    if not cfg.dry_run:
-        seen.update(id_of(i) for i in unseen)
-        _save_seen(cfg, kind, seen)
-    return unseen
+    return [i for i in items if id_of(i) not in seen]
+
+
+def mark_processed(cfg: Config, kind: str, items: list[dict], id_of) -> None:
+    """Persist items as seen. Call only after successful processing."""
+    if cfg.dry_run or not items:
+        return
+    seen = _load_seen(cfg, kind)
+    seen.update(id_of(i) for i in items)
+    _save_seen(cfg, kind, seen)
 
 
 # ---------------------------------------------------------------------------
@@ -620,8 +628,12 @@ def run_round(cfg: Config, round_no: int, pending_comments: list[dict]) -> tuple
                     print(prompt)
                 else:
                     banner(f"Round {round_no}: fixing {len(findings)} SonarQube finding(s)")
-                    claude_fix(prompt, f"round{round_no}_sonar")
+                    if not claude_fix(prompt, f"round{round_no}_sonar"):
+                        print("[error] Claude Code failed -- findings stay unprocessed"
+                              " for the next run.")
+                        sys.exit(1)
                     regression_guard(cfg)
+                    mark_processed(cfg, "sonar", findings, lambda f: f["key"])
 
     # --- Bot comments ---
     if pending_comments:
@@ -631,8 +643,12 @@ def run_round(cfg: Config, round_no: int, pending_comments: list[dict]) -> tuple
             print(prompt)
         else:
             banner(f"Round {round_no}: implementing {len(pending_comments)} bot suggestion(s)")
-            claude_fix(prompt, f"round{round_no}_comments")
+            if not claude_fix(prompt, f"round{round_no}_comments"):
+                print("[error] Claude Code failed -- comments stay unprocessed"
+                      " for the next run.")
+                sys.exit(1)
             regression_guard(cfg)
+            mark_processed(cfg, "comments", pending_comments, lambda c: c["id"])
 
     if cfg.dry_run:
         print("\n[dry-run] Stopping after the first round.")
