@@ -74,13 +74,15 @@ pub(crate) fn match_hunk_header(file: &FileRawDiff, header: &str) -> Option<usiz
     if let Some(idx) = (0..file.hunks.len()).find(|&i| file.hunk_header(i) == Some(header)) {
         return Some(idx);
     }
-    // 2. New-side range overlap, but only if exactly one hunk overlaps.
+    // 2. New-side range overlap, but only if exactly one hunk overlaps. Both
+    //    ranges are widened to at least one line so a zero-length range (a pure
+    //    deletion like `+9,0`) can still overlap an equal or shifted match.
     let (ws, wl) = parse_new_range(header)?;
-    let (we, want_end) = (ws, ws + wl);
+    let want_end = ws + wl.max(1);
     let mut matches = (0..file.hunks.len()).filter(|&i| {
         file.hunk_header(i)
             .and_then(parse_new_range)
-            .map(|(s, l)| s < want_end && we < s + l.max(1))
+            .map(|(s, l)| s < want_end && ws < s + l.max(1))
             .unwrap_or(false)
     });
     let first = matches.next()?;
@@ -469,6 +471,21 @@ mod tests {
         assert_eq!(match_hunk_header(f, "@@ -1,2 +1,2 @@"), Some(0));
         // No overlap at all.
         assert_eq!(match_hunk_header(f, "@@ -99,1 +99,1 @@"), None);
+    }
+
+    #[test]
+    fn match_hunk_header_zero_length_deletion_range() {
+        // A pure deletion has a zero-length new-side range (`+9,0`).
+        let diff = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -10,3 +9,0 @@\n-x\n-y\n-z\n";
+        let files = split_into_file_diffs(diff);
+        let f = &files[0];
+        // Old side drifted (earlier commit shifted lines), equal new-side range:
+        // must still match despite both ranges being zero-length.
+        assert_eq!(match_hunk_header(f, "@@ -12,3 +9,0 @@"), Some(0));
+        // Overlap between a zero-length wanted range and a non-empty hunk range.
+        let diff2 = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -8,4 +8,2 @@\n ctx\n-x\n-y\n ctx2\n";
+        let files2 = split_into_file_diffs(diff2);
+        assert_eq!(match_hunk_header(&files2[0], "@@ -10,2 +9,0 @@"), Some(0));
     }
 
     #[test]
