@@ -918,13 +918,14 @@ impl DirigentApp {
     }
 
     fn report_worktree_removed(&mut self, label: &str, archive_msg: Option<String>) {
-        if let Some(msg) = archive_msg {
-            let noun = if label == "workspace" {
-                "Workspace"
-            } else {
-                "Worktree"
-            };
-            self.set_status_message(format!("{noun} removed. {msg}"));
+        let noun = if label == "workspace" {
+            "Workspace"
+        } else {
+            "Worktree"
+        };
+        match archive_msg {
+            Some(msg) => self.set_status_message(format!("{noun} removed. {msg}")),
+            None => self.set_status_message(format!("{noun} removed.")),
         }
     }
 
