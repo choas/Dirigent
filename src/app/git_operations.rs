@@ -1272,7 +1272,9 @@ impl DirigentApp {
                 .flatten()
                 .and_then(|e| e.diff)
         } else if !selected_files.is_empty() {
-            let diff = super::vcs_dispatch::get_working_diff(
+            // Staged-inclusive diff: files fully staged via the Stage button
+            // must stay committable, and `commit_diff` only needs the paths.
+            let diff = super::vcs_dispatch::get_uncommitted_diff(
                 &self.settings.vcs_backend,
                 &self.settings.jj_cli_path,
                 &self.project_root,

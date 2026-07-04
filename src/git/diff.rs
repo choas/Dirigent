@@ -7,29 +7,33 @@ use git2::Repository;
 /// Returns the `git diff` output, or None if there are no changes.
 /// Also generates diffs for untracked (new) files so they appear in review and commits.
 pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
-    use std::process::Command;
+    diff_with_untracked(repo_path, files, false)
+}
 
+/// Diff of everything uncommitted — staged plus unstaged changes — relative to
+/// HEAD (`git diff HEAD`), including untracked files. Unlike
+/// [`get_working_diff`] this still reports files whose changes are fully
+/// staged, so commit flows keep working after a `git add`. Falls back to the
+/// index-relative diff on an unborn branch, where HEAD has no commit.
+pub(crate) fn get_uncommitted_diff(repo_path: &Path, files: &[String]) -> Option<String> {
+    diff_with_untracked(repo_path, files, true)
+}
+
+fn diff_with_untracked(repo_path: &Path, files: &[String], vs_head: bool) -> Option<String> {
     let rel_files: Vec<String> = files
         .iter()
         .map(|f| make_path_relative(repo_path, f))
         .collect();
 
     // Get diff for tracked/modified files
-    let mut cmd = Command::new("git");
-    cmd.arg("diff").current_dir(repo_path);
-    if !rel_files.is_empty() {
-        cmd.arg("--");
-        for f in &rel_files {
-            cmd.arg(f);
-        }
-    }
-
-    let output = cmd.output().ok()?;
-    let mut diff = if output.status.success() {
-        String::from_utf8_lossy(&output.stdout).to_string()
+    let mut diff = if vs_head {
+        tracked_diff(repo_path, &rel_files, true)
+            // Unborn branch: no HEAD commit to diff against.
+            .or_else(|| tracked_diff(repo_path, &rel_files, false))
     } else {
-        String::new()
-    };
+        tracked_diff(repo_path, &rel_files, false)
+    }
+    .unwrap_or_default();
 
     // Find untracked files and generate new-file diffs for them
     let untracked = find_untracked_files(repo_path);
@@ -50,6 +54,30 @@ pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<Str
         None
     } else {
         Some(diff)
+    }
+}
+
+/// Run `git diff` (optionally against HEAD) scoped to `rel_files`.
+/// Returns `None` when the command fails (e.g. `HEAD` on an unborn branch).
+fn tracked_diff(repo_path: &Path, rel_files: &[String], vs_head: bool) -> Option<String> {
+    use std::process::Command;
+
+    let mut cmd = Command::new("git");
+    cmd.arg("diff").current_dir(repo_path);
+    if vs_head {
+        cmd.arg("HEAD");
+    }
+    if !rel_files.is_empty() {
+        cmd.arg("--");
+        for f in rel_files {
+            cmd.arg(f);
+        }
+    }
+    let output = cmd.output().ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        None
     }
 }
 

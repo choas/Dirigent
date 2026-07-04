@@ -21,6 +21,21 @@ pub(super) fn get_working_diff(
     }
 }
 
+/// VCS-backend-aware dispatch for the full uncommitted diff (staged plus
+/// unstaged). jj has no staging area, so its working diff already covers
+/// everything uncommitted.
+pub(super) fn get_uncommitted_diff(
+    backend: &VcsBackend,
+    jj_path: &str,
+    repo_path: &Path,
+    files: &[String],
+) -> Option<String> {
+    match backend {
+        VcsBackend::Jj => jj::jj_get_working_diff(repo_path, files, jj_path),
+        VcsBackend::Git => git::get_uncommitted_diff(repo_path, files),
+    }
+}
+
 /// VCS-backend-aware dispatch for commit all.
 pub(super) fn commit_all(
     backend: &VcsBackend,

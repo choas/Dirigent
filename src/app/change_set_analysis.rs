@@ -196,7 +196,10 @@ fn run_change_set_analysis(
     provider: &CliProvider,
     cancel: Arc<AtomicBool>,
 ) -> ChangeSetResult {
-    let diff = super::vcs_dispatch::get_working_diff(backend, jj_path, project_root, &[]);
+    // Uncommitted (staged + unstaged) diff, so a `git add` beforehand — e.g. via
+    // the dialog's Stage button — doesn't turn the analysis into "Nothing to
+    // commit". The hunk patches later apply against HEAD, matching this view.
+    let diff = super::vcs_dispatch::get_uncommitted_diff(backend, jj_path, project_root, &[]);
     if let Some(outcome) = precheck(diff.as_deref()) {
         return Ok(outcome);
     }
@@ -488,7 +491,9 @@ impl DirigentApp {
         };
 
         // Re-read the live diff so the hunk mapping reflects the current tree.
-        let diff = crate::git::get_working_diff(&self.project_root, &[]).unwrap_or_default();
+        // Diffed against HEAD (staged + unstaged) to match both the analysis
+        // view and `commit_partial`, which applies patches onto a HEAD index.
+        let diff = crate::git::get_uncommitted_diff(&self.project_root, &[]).unwrap_or_default();
         let file_diffs = crate::git::split_into_file_diffs(&diff);
 
         let parts = build_partial_commit_parts(&group, &file_diffs);

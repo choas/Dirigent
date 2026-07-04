@@ -35,7 +35,7 @@ impl DirigentApp {
         egui::Window::new("Commit")
             .collapsible(false)
             .resizable(false)
-            .default_width(450.0)
+            .default_width(560.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .frame(self.semantic.dialog_frame())
             .order(egui::Order::Foreground)
@@ -65,7 +65,7 @@ impl DirigentApp {
         let response = ui.add(
             egui::TextEdit::multiline(&mut self.git.commit_message_input)
                 .desired_width(f32::INFINITY)
-                .desired_rows(3)
+                .desired_rows(8)
                 .hint_text("Describe what changed"),
         );
 
@@ -461,7 +461,9 @@ impl DirigentApp {
         } else {
             self.git.commit_files.clone()
         };
-        let diff = crate::app::vcs_dispatch::get_working_diff(
+        // Staged-inclusive: the draft describes what the commit will contain,
+        // which for Git includes changes already moved to the index.
+        let diff = crate::app::vcs_dispatch::get_uncommitted_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,
