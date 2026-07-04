@@ -390,9 +390,23 @@ impl DirigentApp {
     /// committing. Git-only; jj has no separate staging area. In queue mode a
     /// staged group is handled — it is dropped from the queue like a committed
     /// one, so the dialog closes once every group is committed or staged.
+    /// Refused for a group that owns only some hunks of a file: `git add`
+    /// stages the whole file, silently pulling in later groups' hunks.
     pub(in crate::app) fn stage_commit_files(&mut self) {
         if self.settings.vcs_backend != VcsBackend::Git {
             self.set_status_message("Staging is only available with Git".into());
+            return;
+        }
+        if self
+            .git
+            .commit_queue
+            .get(self.git.commit_queue_pos)
+            .map(|g| !g.hunk_selection.is_empty())
+            .unwrap_or(false)
+        {
+            self.set_status_message(
+                "This change set owns only some hunks of its files — commit it instead".into(),
+            );
             return;
         }
         let files = self.git.commit_files.clone();
