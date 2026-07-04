@@ -7,6 +7,8 @@
 
 use eframe::egui;
 
+use super::util;
+
 const PX: f32 = 2.0;
 
 // Total grid dimensions (skull + room for the headbang bounce + side bolts).
@@ -20,41 +22,41 @@ const SKULL_COL: usize = 5; // left column of the skull within the grid
 const SKULL_ROW: usize = 1; // resting top row of the skull within the grid
 
 /// Skull sprite. 0 = empty, 1 = bone, 2 = eye socket, 3 = nose.
-const SKULL: [[u8; SKULL_W]; SKULL_H] = [
-    [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0], //  0 cranium top
-    [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0], //  1
-    [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0], //  2
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], //  3
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], //  4
-    [1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1], //  5 eye sockets
-    [1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1], //  6
-    [1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1], //  7
-    [1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1, 1, 1, 1, 1, 1], //  8 nose
-    [0, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1, 1, 1, 1, 1, 0], //  9
-    [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0], // 10 cheeks
-    [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0], // 11 jaw narrows
-    [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0], // 12 teeth top
-    [0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0], // 13 teeth gaps
-    [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0], // 14
-    [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0], // 15 chin
+const SKULL: [&str; SKULL_H] = [
+    "0000111111110000", //  0 cranium top
+    "0011111111111100", //  1
+    "0111111111111110", //  2
+    "1111111111111111", //  3
+    "1111111111111111", //  4
+    "1122211111122211", //  5 eye sockets
+    "1122211111122211", //  6
+    "1122211111122211", //  7
+    "1111111331111111", //  8 nose
+    "0111111331111110", //  9
+    "0111111111111110", // 10 cheeks
+    "0011111111111100", // 11 jaw narrows
+    "0001111111111000", // 12 teeth top
+    "0001010110101000", // 13 teeth gaps
+    "0001111111111000", // 14
+    "0000111111110000", // 15 chin
 ];
 
 const BOLT_W: usize = 4;
 const BOLT_H: usize = 11;
 
 /// Lightning bolt drawn to the left of the skull (mirrored for the right).
-const BOLT: [[u8; BOLT_W]; BOLT_H] = [
-    [0, 0, 1, 1],
-    [0, 0, 1, 0],
-    [0, 1, 1, 0],
-    [0, 1, 0, 0],
-    [1, 1, 1, 0],
-    [0, 1, 1, 0],
-    [0, 0, 1, 0],
-    [0, 1, 1, 0],
-    [0, 1, 0, 0],
-    [1, 1, 0, 0],
-    [1, 0, 0, 0],
+const BOLT: [&str; BOLT_H] = [
+    "0011", //  0
+    "0010", //  1
+    "0110", //  2
+    "0100", //  3
+    "1110", //  4
+    "0110", //  5
+    "0010", //  6
+    "0110", //  7
+    "0100", //  8
+    "1100", //  9
+    "1000", // 10
 ];
 
 const BOLT_ROW: usize = 3; // top row of the side bolts within the grid
@@ -109,8 +111,7 @@ fn compute_colors(accent: egui::Color32, is_dark: bool) -> DomeColors {
 
 /// Total pixel dimensions of the widget at the given scale.
 pub fn size(scale: f32) -> (f32, f32) {
-    let px = PX * scale;
-    (W as f32 * px, H as f32 * px)
+    util::pixel_grid_size(W, H, PX, scale)
 }
 
 /// Paint the headbanging Thunderdome skull at `origin`.
@@ -137,89 +138,76 @@ pub fn paint_at(
     // A short flash window right after each kick.
     let flashing = beat_phase < 0.18;
 
-    // Draw the skull with edge-detection shading (highlight on top edges,
-    // shadow on bottom edges) for a chunky pixel-art look.
-    #[allow(clippy::needless_range_loop)]
-    for row in 0..SKULL_H {
-        for col in 0..SKULL_W {
-            let cell = SKULL[row][col];
-            if cell == 0 {
-                continue;
-            }
-            let above = if row > 0 { SKULL[row - 1][col] } else { 0 };
-            let below = if row + 1 < SKULL_H {
-                SKULL[row + 1][col]
-            } else {
-                0
-            };
-            let color = match cell {
-                // Eye sockets glow red on the kick, otherwise sit dark.
-                2 => {
-                    if flashing {
-                        colors.eye_glow
-                    } else {
-                        colors.socket
-                    }
-                }
-                3 => colors.socket,
-                _ if above == 0 => colors.highlight,
-                _ if below == 0 => colors.shadow,
-                _ => colors.bone,
-            };
-            let gx = (SKULL_COL + col) as f32;
-            let gy = (SKULL_ROW + row) as f32;
-            let rect = egui::Rect::from_min_size(
-                skull_origin + egui::vec2(gx * px, gy * px),
-                egui::vec2(px, px),
-            );
-            painter.rect_filled(rect, 0.0, color);
-        }
-    }
+    draw_skull(painter, skull_origin, px, flashing, &colors);
 
-    // Lightning cracks on the beat. Alternate which side leads for variety,
-    // but flash both for a proper thunderclap.
+    // Lightning cracks on the beat.
     if flashing {
         let lead_left = beat_index % 2 == 0;
-        #[allow(clippy::needless_range_loop)]
-        for row in 0..BOLT_H {
-            for col in 0..BOLT_W {
-                if BOLT[row][col] == 0 {
-                    continue;
-                }
-                let gy = (BOLT_ROW + row) as f32;
-                // Left bolt.
-                let lx = col as f32;
-                let l_color = if lead_left {
-                    colors.bolt
-                } else {
-                    colors.shadow
-                };
-                painter.rect_filled(
-                    egui::Rect::from_min_size(
-                        origin + egui::vec2(lx * px, gy * px),
-                        egui::vec2(px, px),
-                    ),
-                    0.0,
-                    l_color,
-                );
-                // Right bolt (mirrored).
-                let rx = (W - 1 - col) as f32;
-                let r_color = if lead_left {
-                    colors.shadow
-                } else {
-                    colors.bolt
-                };
-                painter.rect_filled(
-                    egui::Rect::from_min_size(
-                        origin + egui::vec2(rx * px, gy * px),
-                        egui::vec2(px, px),
-                    ),
-                    0.0,
-                    r_color,
-                );
-            }
-        }
+        draw_bolts(painter, origin, px, lead_left, &colors);
     }
 
     ctx.request_repaint_after(std::time::Duration::from_millis(30));
+}
+
+/// Draw the skull with edge-detection shading (highlight on top edges,
+/// shadow on bottom edges) for a chunky pixel-art look.
+fn draw_skull(
+    painter: &egui::Painter,
+    skull_origin: egui::Pos2,
+    px: f32,
+    flashing: bool,
+    colors: &DomeColors,
+) {
+    let origin = skull_origin + egui::vec2(SKULL_COL as f32 * px, SKULL_ROW as f32 * px);
+    util::paint_pixel_grid(painter, origin, SKULL_W, SKULL_H, px, |row, col| {
+        let cell = util::mask_value(&SKULL, row, col);
+        if cell == 0 {
+            return None;
+        }
+        let (above, below) = util::mask_vertical_neighbors(&SKULL, row, col);
+        Some(skull_cell_color(cell, above, below, flashing, colors))
+    });
+}
+
+/// Shading color for one skull cell given its vertical neighbours.
+fn skull_cell_color(
+    cell: u8,
+    above: u8,
+    below: u8,
+    flashing: bool,
+    colors: &DomeColors,
+) -> egui::Color32 {
+    match cell {
+        // Eye sockets glow red on the kick, otherwise sit dark.
+        2 if flashing => colors.eye_glow,
+        2 | 3 => colors.socket,
+        _ if above == 0 => colors.highlight,
+        _ if below == 0 => colors.shadow,
+        _ => colors.bone,
+    }
+}
+
+/// Draw both side bolts. Alternate which side leads for variety,
+/// but flash both for a proper thunderclap.
+fn draw_bolts(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    px: f32,
+    lead_left: bool,
+    colors: &DomeColors,
+) {
+    let (l_color, r_color) = if lead_left {
+        (colors.bolt, colors.shadow)
+    } else {
+        (colors.shadow, colors.bolt)
+    };
+    let bolt_origin = origin + egui::vec2(0.0, BOLT_ROW as f32 * px);
+    util::paint_pixel_grid(painter, bolt_origin, BOLT_W, BOLT_H, px, |row, col| {
+        (util::mask_value(&BOLT, row, col) != 0).then_some(l_color)
+    });
+
+    let mirrored_origin = origin + egui::vec2((W - BOLT_W) as f32 * px, BOLT_ROW as f32 * px);
+    util::paint_pixel_grid(painter, mirrored_origin, BOLT_W, BOLT_H, px, |row, col| {
+        (util::mask_value(&BOLT, row, BOLT_W - 1 - col) != 0).then_some(r_color)
+    });
 }

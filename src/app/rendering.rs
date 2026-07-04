@@ -74,6 +74,7 @@ impl DirigentApp {
             || self.git.show_switch_branch
             || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
+            || self.analyze_over_show_picker
     }
 
     /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
@@ -86,48 +87,36 @@ impl DirigentApp {
 
         let suppress = ctx.text_edit_focused() || self.has_modal_open();
 
-        if !suppress
-            && ctx
-                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::N))
-        {
+        if command_key_pressed(ctx, suppress, egui::Key::N) {
             if let Err(e) = crate::spawn_new_instance() {
                 self.set_status_message(e);
             }
         }
-        if !suppress
-            && ctx
-                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::W))
-        {
-            if self.settings.lsp_enabled {
-                if let Some(tab) = self.viewer.active() {
-                    let path = tab.file_path.clone();
-                    self.lsp.notify_file_closed(&path);
-                }
-            }
+        if command_key_pressed(ctx, suppress, egui::Key::W) {
+            self.notify_lsp_for_active_tab_close();
             self.viewer.close_active_tab();
         }
-        if !suppress
-            && ctx
-                .input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::P))
-        {
+        if command_key_pressed(ctx, suppress, egui::Key::P) {
             self.viewer.quick_open_active = !self.viewer.quick_open_active;
             self.viewer.quick_open_query.clear();
             self.viewer.quick_open_selected = 0;
         }
-        if !suppress
-            && ctx.input(|i| {
-                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::OpenBracket)
-            })
-        {
+        if command_key_pressed(ctx, suppress, egui::Key::OpenBracket) {
             self.push_nav_history();
             self.nav_back();
         }
-        if !suppress
-            && ctx.input(|i| {
-                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::CloseBracket)
-            })
-        {
+        if command_key_pressed(ctx, suppress, egui::Key::CloseBracket) {
             self.nav_forward();
+        }
+    }
+
+    fn notify_lsp_for_active_tab_close(&mut self) {
+        if !self.settings.lsp_enabled {
+            return;
+        }
+        if let Some(tab) = self.viewer.active() {
+            let path = tab.file_path.clone();
+            self.lsp.notify_file_closed(&path);
         }
     }
 
@@ -251,6 +240,7 @@ impl DirigentApp {
         self.render_pull_unmerged_dialog(ctx);
         self.render_cleanup_bookmarks_dialog(ctx);
         self.render_commit_dialog(ctx);
+        self.render_analyze_over(ctx);
         self.render_merge_conflicts_dialog(ctx);
         self.render_import_pr_dialog(ctx);
         self.render_filter_pr_dialog(ctx);
@@ -292,4 +282,8 @@ impl DirigentApp {
                 self.render_search_in_files_panel(ui);
             });
     }
+}
+
+fn command_key_pressed(ctx: &egui::Context, suppress: bool, key: egui::Key) -> bool {
+    !suppress && ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(key))
 }

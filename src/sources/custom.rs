@@ -149,6 +149,18 @@ pub(crate) fn output_with_timeout(
     })
 }
 
+/// Run a command with piped stdout/stderr and the standard source timeout.
+pub(crate) fn output_piped_command(mut command: Command) -> std::io::Result<std::process::Output> {
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = command.spawn()?;
+    output_with_timeout(
+        child,
+        std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS),
+    )
+}
+
 /// Parse JSON output from `gh api --paginate`.
 /// When paginating, `gh` may concatenate multiple JSON arrays: `[...][...]`.
 /// This function handles both a single valid array and concatenated arrays.
@@ -187,15 +199,9 @@ pub(crate) fn fetch_custom_command(
         )));
     }
 
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(project_root)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let timeout = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
-    let output = output_with_timeout(child, timeout)?;
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(command).current_dir(project_root);
+    let output = output_piped_command(cmd)?;
 
     if !output.status.success() {
         return Err(DirigentError::Source(format!(
@@ -258,14 +264,7 @@ pub(super) fn parse_source_object(
 ) -> Option<SourceItem> {
     let id = obj.get("id")?.as_str()?;
     let text = obj.get("text")?.as_str()?;
-    Some(SourceItem {
-        external_id: id.to_string(),
-        text: text.to_string(),
-        source_label: source_label.to_string(),
-        source_id: source_id.to_string(),
-        file_path: String::new(),
-        line_number: 0,
-    })
+    Some(SourceItem::new(id, text, source_label).with_source_id(source_id))
 }
 
 #[cfg(test)]

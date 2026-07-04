@@ -102,10 +102,12 @@ pub(crate) fn summarize_commit_message_via_cli(
     // Cap the diff so a huge change set doesn't blow past the model's context.
     let trimmed: String = diff.chars().take(12_000).collect();
     let prompt = format!(
-        "Summarize the following git diff as a commit message. Respond with a \
-         single concise subject line in imperative mood (no more than 72 \
-         characters). Wrap the commit message in <commit-message> and \
-         </commit-message> tags and output nothing else.\n\n{trimmed}"
+        "Summarize the following git diff as a commit message. Start with a \
+         concise subject line in imperative mood (no more than 72 characters), \
+         then a blank line, then a short body of 2-6 lines (plain sentences or \
+         bullet points) explaining what changed and why. Wrap the commit message \
+         in <commit-message> and </commit-message> tags and output nothing \
+         else.\n\n{trimmed}"
     );
 
     let response = invoke_claude_streaming(

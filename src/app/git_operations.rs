@@ -144,7 +144,9 @@ impl DirigentApp {
         }
     }
 
-    /// Open the Create PR dialog with pre-filled fields.
+    /// Open the Create PR dialog and pre-fill base/body from a background
+    /// thread — default-branch detection and the PR body may involve `gh`,
+    /// network calls, or `git log`, which must not block the UI thread.
     pub(super) fn open_create_pr_dialog(&mut self) {
         let branch = self
             .git
@@ -152,15 +154,56 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch.clone())
             .unwrap_or_default();
-        let base = git::get_default_branch(&self.project_root);
-        let body = git::build_pr_body(&self.project_root, &base);
         // Use branch name as default title (replace hyphens/underscores with spaces)
         let title = branch.replace(['-', '_'], " ");
         self.git.pr_title = title;
-        self.git.pr_body = body;
-        self.git.pr_base = base;
+        self.git.pr_body = String::new();
+        self.git.pr_base = "main".to_string();
         self.git.pr_draft = false;
         self.git.show_create_pr = true;
+
+        let (tx, rx) = mpsc::channel();
+        self.git.pr_prefill_rx = Some(rx);
+        self.git.pr_prefill_loading = true;
+        let root = self.project_root.clone();
+        let ctx = std::sync::Arc::clone(&self.egui_ctx);
+        std::thread::spawn(move || {
+            let base = git::get_default_branch(&root);
+            let body = git::build_pr_body(&root, &base);
+            let _ = tx.send((base, body));
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
+        });
+    }
+
+    /// Apply the async Create PR prefill once it arrives. Fields the user has
+    /// already edited in the meantime are left untouched.
+    pub(super) fn process_pr_prefill_result(&mut self) {
+        let rx = match self.git.pr_prefill_rx {
+            Some(ref rx) => rx,
+            None => return,
+        };
+        let (base, body) = match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.git.pr_prefill_rx = None;
+                self.git.pr_prefill_loading = false;
+                return;
+            }
+            Ok(r) => r,
+        };
+        self.git.pr_prefill_rx = None;
+        self.git.pr_prefill_loading = false;
+        if !self.git.show_create_pr {
+            return;
+        }
+        if self.git.pr_base == "main" {
+            self.git.pr_base = base;
+        }
+        if self.git.pr_body.is_empty() {
+            self.git.pr_body = body;
+        }
     }
 
     /// Start an async PR creation (pushes first, then creates the PR).
@@ -576,41 +619,7 @@ impl DirigentApp {
             return;
         }
 
-        // Collect all Done cues with PR source_ref
-        let pr_cues: Vec<(i64, String, String)> = self
-            .cues
-            .iter()
-            .filter(|c| c.status == CueStatus::Done)
-            .filter_map(|c| {
-                let source_ref = c.source_ref.as_ref()?;
-                if !source_ref.starts_with("pr") {
-                    return None;
-                }
-                // Check if already notified
-                let already_notified = self
-                    .db
-                    .get_last_activity_matching(c.id, "Notified PR")
-                    .ok()
-                    .flatten()
-                    .is_some();
-                if already_notified {
-                    return None;
-                }
-                let commit_hash = self
-                    .db
-                    .get_last_activity_matching(c.id, "Committed")
-                    .ok()
-                    .flatten()
-                    .and_then(|event| {
-                        event
-                            .strip_prefix("Committed (")
-                            .and_then(|s| s.strip_suffix(')'))
-                            .map(|s| s.to_string())
-                    })
-                    .unwrap_or_else(|| "latest commit".to_string());
-                Some((c.id, source_ref.clone(), commit_hash))
-            })
-            .collect();
+        let pr_cues = self.unnotified_pr_cues();
 
         if pr_cues.is_empty() {
             self.set_status_message("No un-notified PR findings in Done".to_string());
@@ -662,6 +671,44 @@ impl DirigentApp {
             let ids_str: Vec<String> = notified_ids.iter().map(|id| id.to_string()).collect();
             let _ = tx.send(Ok(format!("{}|{}", msg, ids_str.join(","))));
         });
+    }
+
+    fn unnotified_pr_cues(&self) -> Vec<(i64, String, String)> {
+        self.cues
+            .iter()
+            .filter(|cue| cue.status == CueStatus::Done)
+            .filter_map(|cue| self.pr_notification_payload(cue))
+            .collect()
+    }
+
+    fn pr_notification_payload(&self, cue: &crate::db::Cue) -> Option<(i64, String, String)> {
+        let source_ref = cue.source_ref.as_ref()?;
+        if !source_ref.starts_with("pr") || self.cue_has_pr_notification(cue.id) {
+            return None;
+        }
+        Some((cue.id, source_ref.clone(), self.last_commit_for_cue(cue.id)))
+    }
+
+    fn cue_has_pr_notification(&self, cue_id: i64) -> bool {
+        self.db
+            .get_last_activity_matching(cue_id, "Notified PR")
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    fn last_commit_for_cue(&self, cue_id: i64) -> String {
+        self.db
+            .get_last_activity_matching(cue_id, "Committed")
+            .ok()
+            .flatten()
+            .and_then(|event| {
+                event
+                    .strip_prefix("Committed (")
+                    .and_then(|s| s.strip_suffix(')'))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "latest commit".to_string())
     }
 
     pub(super) fn process_pr_notify_result(&mut self) {
@@ -1231,6 +1278,8 @@ impl DirigentApp {
     pub(super) fn open_commit_dialog(&mut self) {
         self.git.commit_message_input.clear();
         self.git.commit_review_cue_id = None;
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.commit_needs_focus = true;
         self.git.show_commit_dialog = true;
     }
@@ -1251,21 +1300,24 @@ impl DirigentApp {
             return;
         }
 
-        let cue_id = self.git.commit_review_cue_id.take();
+        let review_cue_id = self.git.commit_review_cue_id.take();
         let selected_files = std::mem::take(&mut self.git.commit_files);
 
         // Resolve the diff to commit:
         // - a reviewed cue commits its stored execution diff;
-        // - a Git-view selection commits only those files (path-scoped diff);
+        // - a Git-view selection or a queued change-set group commits only those
+        //   files (path-scoped diff);
         // - otherwise the whole working copy is committed (`commit_all`).
-        let diff_text = if let Some(id) = cue_id {
+        let diff_text = if let Some(id) = review_cue_id {
             self.db
                 .get_latest_execution(id)
                 .ok()
                 .flatten()
                 .and_then(|e| e.diff)
         } else if !selected_files.is_empty() {
-            let diff = super::vcs_dispatch::get_working_diff(
+            // Staged-inclusive diff: files fully staged via the Stage button
+            // must stay committable, and `commit_diff` only needs the paths.
+            let diff = super::vcs_dispatch::get_uncommitted_diff(
                 &self.settings.vcs_backend,
                 &self.settings.jj_cli_path,
                 &self.project_root,
@@ -1316,7 +1368,7 @@ impl DirigentApp {
             let _ = tx.send(result);
         });
 
-        self.git.commit_pending_cue_id = cue_id;
+        self.git.commit_pending_cue_id = review_cue_id;
         self.set_status_message("Committing...".into());
     }
 
@@ -1329,12 +1381,7 @@ impl DirigentApp {
         let result = match rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.committing = false;
-                self.git.commit_rx = None;
-                if let Some(id) = self.git.commit_pending_cue_id.take() {
-                    let _ = self.db.log_activity(id, "Commit failed");
-                }
-                self.set_status_message("Commit failed unexpectedly".into());
+                self.handle_commit_channel_disconnect();
                 return;
             }
             Ok(r) => r,
@@ -1342,45 +1389,73 @@ impl DirigentApp {
         self.git.committing = false;
         self.git.commit_rx = None;
         let pending_cue = self.git.commit_pending_cue_id.take();
+        let in_queue = !self.git.commit_queue.is_empty();
         match result {
-            Ok(msg) => {
-                if let Some(id) = pending_cue {
-                    let _ = self.db.update_cue_status(id, CueStatus::Done);
-                    // The worker reports success as "Committed: <hash>"; record it
-                    // as "Committed (<hash>)" so cue_commit_hash can recover the
-                    // hash and offer "Save as Play" on the cue.
-                    let activity = match msg.strip_prefix("Committed: ") {
-                        Some(hash) => format!("Committed ({})", hash),
-                        None => "Committed".to_string(),
-                    };
-                    let _ = self.db.log_activity(id, &activity);
-                    self.clear_review_question_and_recheck_workflow(id);
-                    // Run configured AfterCommit agents (format/lint/build/test)
-                    // for changes committed via the diff-review dialog, matching
-                    // the old direct-commit path's behavior.
-                    let cue_prompt = self
-                        .cues
-                        .iter()
-                        .find(|c| c.id == id)
-                        .map(|c| c.text.clone())
-                        .unwrap_or_default();
-                    self.trigger_agents_for(
-                        &crate::agents::AgentTrigger::AfterCommit,
-                        Some(id),
-                        &cue_prompt,
-                    );
-                }
-                self.set_status_message(msg);
-            }
-            Err(e) => {
-                if let Some(id) = pending_cue {
-                    let _ = self.db.log_activity(id, "Commit failed");
-                }
-                self.set_status_message(e);
-            }
+            Ok(msg) => self.finish_commit_success(pending_cue, in_queue, msg),
+            Err(e) => self.finish_commit_failure(pending_cue, in_queue, e),
         }
         self.reload_git_info();
         self.reload_commit_history();
+    }
+
+    fn handle_commit_channel_disconnect(&mut self) {
+        self.git.committing = false;
+        self.git.commit_rx = None;
+        if let Some(id) = self.git.commit_pending_cue_id.take() {
+            let _ = self.db.log_activity(id, "Commit failed");
+        }
+        self.set_status_message("Commit failed unexpectedly".into());
+    }
+
+    fn finish_commit_success(&mut self, pending_cue: Option<i64>, in_queue: bool, msg: String) {
+        if let Some(id) = pending_cue {
+            let _ = self.db.update_cue_status(id, CueStatus::Done);
+            // The worker reports success as "Committed: <hash>"; record it
+            // as "Committed (<hash>)" so cue_commit_hash can recover the
+            // hash and offer "Save as Play" on the cue.
+            let activity = match msg.strip_prefix("Committed: ") {
+                Some(hash) => format!("Committed ({})", hash),
+                None => "Committed".to_string(),
+            };
+            let _ = self.db.log_activity(id, &activity);
+            self.clear_review_question_and_recheck_workflow(id);
+            // Run configured AfterCommit agents (format/lint/build/test)
+            // for changes committed via the diff-review dialog, matching
+            // the old direct-commit path's behavior.
+            let cue_prompt = self
+                .cues
+                .iter()
+                .find(|c| c.id == id)
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+            self.trigger_agents_for(
+                &crate::agents::AgentTrigger::AfterCommit,
+                Some(id),
+                &cue_prompt,
+            );
+        }
+        self.set_status_message(msg);
+        if in_queue {
+            self.advance_commit_queue();
+        }
+    }
+
+    fn finish_commit_failure(&mut self, pending_cue: Option<i64>, in_queue: bool, error: String) {
+        if let Some(id) = pending_cue {
+            let _ = self.db.log_activity(id, "Commit failed");
+        }
+        if in_queue {
+            self.restore_current_commit_group();
+        }
+        self.set_status_message(error);
+    }
+
+    fn restore_current_commit_group(&mut self) {
+        let pos = self.git.commit_queue_pos;
+        if let Some(group) = self.git.commit_queue.get(pos) {
+            self.git.commit_files = group.files.clone();
+        }
+        self.git.show_commit_dialog = true;
     }
 
     pub(super) fn reload_git_info(&mut self) {

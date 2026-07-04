@@ -1,6 +1,7 @@
 mod agents_poll;
 mod ansi;
 mod background;
+mod change_set_analysis;
 mod claude_code_name;
 mod claude_run;
 mod code_viewer;
@@ -8,8 +9,10 @@ mod cue_pool;
 mod dialog;
 mod dino;
 mod file_navigation;
+mod folder_compare;
 mod git_operations;
 mod graph_helpers;
+mod hunk_staging;
 mod jujutsu;
 mod lava_lamp;
 mod markdown_parser;
@@ -38,6 +41,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+
+type LinesWithCuesCache = Option<(String, u64, Arc<HashMap<usize, bool>>)>;
 
 // -- Timing constants --
 const FS_RESCAN_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -105,9 +110,21 @@ use claude_run::ClaudeRunState;
 use sources_poll::SourceState;
 use tasks::TaskHandle;
 use theme::{icon, icon_small};
+
+struct InitialProjectState {
+    file_tree: Option<FileTree>,
+    cues: Vec<Cue>,
+    archived_cue_count: usize,
+    git_info: Option<git::GitInfo>,
+    dirty_files: HashMap<String, char>,
+    ahead_of_remote: usize,
+    commit_history: Vec<git::CommitInfo>,
+    commit_history_total: usize,
+    worktrees: Vec<git::WorktreeInfo>,
+}
 use types::{
     create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
-    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState,
+    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
 };
 
 /// Set the macOS Dock label and menu bar title to the given project name.
@@ -194,9 +211,6 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
         let _: () = msg_send![app, setApplicationIconImage:image];
     }
 }
-
-/// Cached `lines_with_cues` for the code viewer: (file path, cue generation, line→has-cue map).
-type LinesWithCuesCache = (String, u64, std::sync::Arc<HashMap<usize, bool>>);
 
 pub struct DirigentApp {
     project_root: PathBuf,
@@ -330,11 +344,15 @@ pub struct DirigentApp {
     // OpenCode models (cached from CLI)
     pub(super) opencode_models: Vec<String>,
     opencode_models_loading: bool,
+    // One-shot guard: the CLI returns an empty Vec on failure, so an
+    // is_empty() check alone would respawn the fetch every frame.
+    pub(super) opencode_models_fetch_attempted: bool,
     opencode_models_rx: mpsc::Receiver<Vec<String>>,
 
     // Gemini models (cached from CLI)
     pub(super) gemini_models: Vec<String>,
     gemini_models_loading: bool,
+    pub(super) gemini_models_fetch_attempted: bool,
     gemini_models_rx: mpsc::Receiver<Vec<String>>,
 
     // Agent run history cleanup tracking
@@ -393,7 +411,7 @@ pub struct DirigentApp {
     /// Generation counter bumped on reload_cues; used to invalidate lines_with_cues cache.
     cue_generation: u64,
     /// Cached lines_with_cues for the code viewer (file path + cue generation → map).
-    cached_lines_with_cues: Option<LinesWithCuesCache>,
+    cached_lines_with_cues: LinesWithCuesCache,
 
     // Prompt history search
     prompt_history_query: String,
@@ -451,6 +469,26 @@ pub struct DirigentApp {
     split_cue_source_id: Option<i64>,
     split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
     split_cue_cancel: Arc<AtomicBool>,
+
+    // Split-commit grouping async state: the "Commit Changes" button groups the
+    // working tree into logical change sets via the CLI, then feeds them to the
+    // commit dialog's queue.
+    change_set_generating: bool,
+    change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    /// Cancellation flag for the in-flight change-set CLI run.
+    change_set_cancel: Arc<AtomicBool>,
+
+    // "Analyze Changes over" (read-only cross-branch range analysis)
+    analyze_over_show_picker: bool,
+    analyze_over_base: String,
+    analyze_over_head: String,
+    analyze_over_generating: bool,
+    analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
+    analyze_over_cancel: Arc<AtomicBool>,
+    analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
+
+    // Folder "Compare to…" async state
+    folder_compare_rx: Option<mpsc::Receiver<folder_compare::FolderCompareMsg>>,
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
@@ -583,6 +621,102 @@ fn start_fs_watcher(
     Some(watcher)
 }
 
+fn load_initial_project_state(
+    skip_scan: bool,
+    project_root: &Path,
+    db: &Database,
+    settings: &Settings,
+) -> InitialProjectState {
+    if skip_scan {
+        return InitialProjectState::empty();
+    }
+    let file_tree = FileTree::scan(project_root).ok();
+    let cues = db.all_cues_limited_archived(10).unwrap_or_default();
+    let archived_cue_count = db.archived_cue_count().unwrap_or(0);
+    let (git_info, dirty_files, ahead_of_remote) = initial_vcs_state(project_root, settings);
+    let limit = 10_usize.max(ahead_of_remote);
+    let (commit_history, commit_history_total) =
+        initial_commit_history(project_root, settings, limit);
+    let worktrees = initial_worktrees(project_root, settings);
+    InitialProjectState {
+        file_tree,
+        cues,
+        archived_cue_count,
+        git_info,
+        dirty_files,
+        ahead_of_remote,
+        commit_history,
+        commit_history_total,
+        worktrees,
+    }
+}
+
+impl InitialProjectState {
+    fn empty() -> Self {
+        Self {
+            file_tree: None,
+            cues: Vec::new(),
+            archived_cue_count: 0,
+            git_info: None,
+            dirty_files: HashMap::new(),
+            ahead_of_remote: 0,
+            commit_history: Vec::new(),
+            commit_history_total: 0,
+            worktrees: Vec::new(),
+        }
+    }
+}
+
+fn initial_vcs_state(
+    project_root: &Path,
+    settings: &Settings,
+) -> (Option<git::GitInfo>, HashMap<String, char>, usize) {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            let jj_path = &settings.jj_cli_path;
+            (
+                jj::jj_read_info(project_root, jj_path),
+                jj::jj_get_dirty_files(project_root, jj_path),
+                jj::jj_get_ahead_of_remote(project_root, jj_path),
+            )
+        }
+        VcsBackend::Git => (
+            git::read_git_info(project_root),
+            git::get_dirty_files(project_root),
+            git::get_ahead_of_remote(project_root),
+        ),
+    }
+}
+
+fn initial_commit_history(
+    project_root: &Path,
+    settings: &Settings,
+    limit: usize,
+) -> (Vec<git::CommitInfo>, usize) {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            let jj_path = &settings.jj_cli_path;
+            (
+                jj::jj_read_commit_history(project_root, limit, jj_path),
+                jj::jj_count_commits(project_root, jj_path),
+            )
+        }
+        VcsBackend::Git => (
+            git::read_commit_history(project_root, limit),
+            git::count_commits(project_root),
+        ),
+    }
+}
+
+fn initial_worktrees(project_root: &Path, settings: &Settings) -> Vec<git::WorktreeInfo> {
+    match settings.vcs_backend {
+        VcsBackend::Jj => {
+            jj::jj_list_workspaces(project_root, &settings.jj_cli_path).unwrap_or_default()
+        }
+        VcsBackend::Git => git::list_worktrees(project_root).unwrap_or_default(),
+    }
+}
+
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
@@ -605,7 +739,7 @@ impl DirigentApp {
         // ~/Movies, and ~/Library which triggers the macOS TCC "would like to
         // access Apple Music" permission dialog.  Skip everything that walks
         // the file system until the user picks a real repo.
-        let (
+        let InitialProjectState {
             file_tree,
             cues,
             archived_cue_count,
@@ -615,72 +749,8 @@ impl DirigentApp {
             commit_history,
             commit_history_total,
             worktrees,
-            mut _fs_watcher,
-        ) = if skip_scan {
-            (
-                None,
-                Vec::new(),
-                0_usize,
-                None,
-                HashMap::new(),
-                0_usize,
-                Vec::new(),
-                0_usize,
-                Vec::new(),
-                None,
-            )
-        } else {
-            let file_tree = FileTree::scan(&project_root).ok();
-            let cues = db.all_cues_limited_archived(10).unwrap_or_default();
-            let archived_cue_count = db.archived_cue_count().unwrap_or(0);
-            let (git_info, dirty_files, ahead_of_remote) = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    let jp = &settings.jj_cli_path;
-                    (
-                        jj::jj_read_info(&project_root, jp),
-                        jj::jj_get_dirty_files(&project_root, jp),
-                        jj::jj_get_ahead_of_remote(&project_root, jp),
-                    )
-                }
-                VcsBackend::Git => (
-                    git::read_git_info(&project_root),
-                    git::get_dirty_files(&project_root),
-                    git::get_ahead_of_remote(&project_root),
-                ),
-            };
-            let limit = 10_usize.max(ahead_of_remote);
-            let (commit_history, commit_history_total) = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    let jp = &settings.jj_cli_path;
-                    (
-                        jj::jj_read_commit_history(&project_root, limit, jp),
-                        jj::jj_count_commits(&project_root, jp),
-                    )
-                }
-                VcsBackend::Git => (
-                    git::read_commit_history(&project_root, limit),
-                    git::count_commits(&project_root),
-                ),
-            };
-            let worktrees = match settings.vcs_backend {
-                VcsBackend::Jj => {
-                    jj::jj_list_workspaces(&project_root, &settings.jj_cli_path).unwrap_or_default()
-                }
-                VcsBackend::Git => git::list_worktrees(&project_root).unwrap_or_default(),
-            };
-            (
-                file_tree,
-                cues,
-                archived_cue_count,
-                git_info,
-                dirty_files,
-                ahead_of_remote,
-                commit_history,
-                commit_history_total,
-                worktrees,
-                None,
-            )
-        };
+        } = load_initial_project_state(skip_scan, &project_root, &db, &settings);
+        let mut _fs_watcher = None;
 
         let fs_changed = Arc::new(AtomicBool::new(false));
         let egui_ctx = Arc::new(OnceLock::new());
@@ -812,6 +882,8 @@ impl DirigentApp {
                 pr_draft: false,
                 creating_pr: false,
                 pr_rx: None,
+                pr_prefill_loading: false,
+                pr_prefill_rx: None,
                 show_import_pr: false,
                 import_pr_number: String::new(),
                 importing_pr: false,
@@ -870,6 +942,8 @@ impl DirigentApp {
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
                 commit_review_cue_id: None,
+                commit_queue: Vec::new(),
+                commit_queue_pos: 0,
                 committing: false,
                 commit_rx: None,
                 commit_pending_cue_id: None,
@@ -951,10 +1025,12 @@ impl DirigentApp {
             cached_agent_runs_for_cue: (None, Vec::new()),
             opencode_models: Vec::new(),
             opencode_models_loading: false,
+            opencode_models_fetch_attempted: false,
             opencode_models_rx: mpsc::channel().1,
 
             gemini_models: Vec::new(),
             gemini_models_loading: false,
+            gemini_models_fetch_attempted: false,
             gemini_models_rx: mpsc::channel().1,
             last_agent_cleanup: Instant::now(),
             run_queue: Vec::new(),
@@ -1017,6 +1093,20 @@ impl DirigentApp {
             split_cue_source_id: None,
             split_cue_rx: None,
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
+
+            change_set_generating: false,
+            change_set_rx: None,
+            change_set_cancel: Arc::new(AtomicBool::new(false)),
+
+            analyze_over_show_picker: false,
+            analyze_over_base: String::new(),
+            analyze_over_head: String::new(),
+            analyze_over_generating: false,
+            analyze_over_rx: None,
+            analyze_over_cancel: Arc::new(AtomicBool::new(false)),
+            analyze_over_result: None,
+
+            folder_compare_rx: None,
 
             custom_theme_edit: None,
 
@@ -1353,10 +1443,20 @@ impl eframe::App for DirigentApp {
         // Poll for split cue results
         self.process_split_cue_result();
 
+        // Poll for change-set analysis results
+        self.process_change_set_result();
+
+        // Poll for cross-branch range analysis results
+        self.process_analyze_over_result();
+
+        // Poll for folder comparison results
+        self.process_folder_compare_result();
+
         // Poll for git push/pull/PR results
         self.process_push_result();
         self.process_pull_result();
         self.process_pr_result();
+        self.process_pr_prefill_result();
         self.process_import_pr_result();
         self.process_pr_notify_result();
         self.process_move_to_branch_result();
@@ -1425,6 +1525,8 @@ impl eframe::App for DirigentApp {
 impl Drop for DirigentApp {
     fn drop(&mut self) {
         self.split_cue_cancel.store(true, Ordering::SeqCst);
+        self.change_set_cancel.store(true, Ordering::SeqCst);
+        self.analyze_over_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
     }
 }

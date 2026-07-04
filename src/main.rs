@@ -1,6 +1,7 @@
 #![allow(unexpected_cfgs)]
 
 mod agents;
+mod ai_process;
 mod app;
 mod claude;
 mod codex;

@@ -20,63 +20,78 @@ fn load_system_font(name: &str, weight: &FontWeight) -> Option<(Vec<u8>, u32)> {
     let dirs = font_dirs();
     let exts = ["ttf", "ttc", "otf"];
 
-    // For non-Regular weights, first try weight-suffixed filenames (e.g. "Menlo-Light.otf",
-    // "JetBrains Mono-Bold.ttf") so that weight-specific files are found even for fonts
-    // that appear in the hard-coded known list below.
-    if *weight != FontWeight::Regular {
-        let suffix = weight.file_suffix();
-        for dir in &dirs {
-            for ext in &exts {
-                for sep in &["-", " "] {
-                    let path = format!("{}/{}{}{}.{}", dir, name, sep, suffix, ext);
-                    if let Ok(data) = std::fs::read(&path) {
-                        return Some((data, 0));
-                    }
+    if let Some(font) = load_weighted_font(name, weight, &dirs, &exts) {
+        return Some(font);
+    }
+
+    if let Some(font) = load_known_font(name, weight) {
+        return Some(font);
+    }
+
+    load_base_font(name, &dirs, &exts)
+}
+
+fn load_weighted_font(
+    name: &str,
+    weight: &FontWeight,
+    dirs: &[String],
+    exts: &[&str],
+) -> Option<(Vec<u8>, u32)> {
+    if *weight == FontWeight::Regular {
+        return None;
+    }
+    let suffix = weight.file_suffix();
+    for dir in dirs {
+        for ext in exts {
+            for sep in &["-", " "] {
+                let path = format!("{}/{}{}{}.{}", dir, name, sep, suffix, ext);
+                if let Ok(data) = std::fs::read(&path) {
+                    return Some((data, 0));
                 }
             }
         }
     }
+    None
+}
 
-    // Known font paths on macOS — Menlo.ttc face indices: 0=Regular, 1=Bold
-    let known: Vec<(&str, u32)> = match name {
+fn load_known_font(name: &str, weight: &FontWeight) -> Option<(Vec<u8>, u32)> {
+    for (path, index) in known_font_paths(name, weight) {
+        if let Ok(data) = std::fs::read(path) {
+            return Some((data, index));
+        }
+    }
+    None
+}
+
+fn known_font_paths(name: &str, weight: &FontWeight) -> Vec<(&'static str, u32)> {
+    match name {
         "Menlo" => vec![(
             "/System/Library/Fonts/Menlo.ttc",
             if weight.is_bold() { 1 } else { 0 },
         )],
         "Monaco" => vec![("/System/Library/Fonts/Monaco.ttf", 0)],
         "SF Mono" => vec![("/System/Library/Fonts/SFNSMono.ttf", 0)],
-        "Courier New" => {
-            if weight.is_bold() {
-                vec![
-                    ("/System/Library/Fonts/Supplemental/Courier New Bold.ttf", 0),
-                    ("/Library/Fonts/Courier New Bold.ttf", 0),
-                ]
-            } else {
-                vec![
-                    ("/System/Library/Fonts/Supplemental/Courier New.ttf", 0),
-                    ("/Library/Fonts/Courier New.ttf", 0),
-                ]
-            }
-        }
+        "Courier New" if weight.is_bold() => vec![
+            ("/System/Library/Fonts/Supplemental/Courier New Bold.ttf", 0),
+            ("/Library/Fonts/Courier New Bold.ttf", 0),
+        ],
+        "Courier New" => vec![
+            ("/System/Library/Fonts/Supplemental/Courier New.ttf", 0),
+            ("/Library/Fonts/Courier New.ttf", 0),
+        ],
         _ => vec![],
-    };
-
-    for (path, index) in &known {
-        if let Ok(data) = std::fs::read(path) {
-            return Some((data, *index));
-        }
     }
+}
 
-    // Fall back to base font name
-    for dir in &dirs {
-        for ext in &exts {
+fn load_base_font(name: &str, dirs: &[String], exts: &[&str]) -> Option<(Vec<u8>, u32)> {
+    for dir in dirs {
+        for ext in exts {
             let path = format!("{}/{}.{}", dir, name, ext);
             if let Ok(data) = std::fs::read(&path) {
                 return Some((data, 0));
             }
         }
     }
-
     None
 }
 

@@ -977,24 +977,13 @@ fn find_heading_in_blocks(
     for block in blocks {
         match block {
             MarkdownBlock::Heading { segments, .. } => {
-                let base_slug = heading_to_slug(segments);
-                let occurrence = slug_counts.entry(base_slug.clone()).or_insert(0);
-                let actual_slug = if *occurrence == 0 {
-                    base_slug
-                } else {
-                    format!("{}-{}", base_slug, occurrence)
-                };
-                *occurrence += 1;
-                if actual_slug == anchor {
+                if heading_matches_anchor(segments, anchor, counter, slug_counts) {
                     return Some(*counter);
                 }
-                *counter += 1;
             }
             MarkdownBlock::List { items, .. } => {
-                for item in items {
-                    if let Some(idx) = find_heading_in_blocks(item, anchor, counter, slug_counts) {
-                        return Some(idx);
-                    }
+                if let Some(idx) = find_heading_in_list_items(items, anchor, counter, slug_counts) {
+                    return Some(idx);
                 }
             }
             MarkdownBlock::BlockQuote { blocks } => {
@@ -1003,6 +992,42 @@ fn find_heading_in_blocks(
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+fn heading_matches_anchor(
+    segments: &[TextSegment],
+    anchor: &str,
+    counter: &mut usize,
+    slug_counts: &mut std::collections::HashMap<String, usize>,
+) -> bool {
+    let base_slug = heading_to_slug(segments);
+    let occurrence = slug_counts.entry(base_slug.clone()).or_insert(0);
+    let actual_slug = if *occurrence == 0 {
+        base_slug
+    } else {
+        format!("{}-{}", base_slug, occurrence)
+    };
+    *occurrence += 1;
+    if actual_slug == anchor {
+        true
+    } else {
+        *counter += 1;
+        false
+    }
+}
+
+fn find_heading_in_list_items(
+    items: &[Vec<MarkdownBlock>],
+    anchor: &str,
+    counter: &mut usize,
+    slug_counts: &mut std::collections::HashMap<String, usize>,
+) -> Option<usize> {
+    for item in items {
+        if let Some(idx) = find_heading_in_blocks(item, anchor, counter, slug_counts) {
+            return Some(idx);
         }
     }
     None

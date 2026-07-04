@@ -524,7 +524,13 @@ mod tests {
         let dead_pid = child.id();
         child.wait().unwrap();
         let orphan = tmp.path().join(format!("dirigent-pty-done-{dead_pid}-1-0"));
-        upsert_stop_hook(&settings, &orphan, &orphan.with_extension("json"), Some("dead")).unwrap();
+        upsert_stop_hook(
+            &settings,
+            &orphan,
+            &orphan.with_extension("json"),
+            Some("dead"),
+        )
+        .unwrap();
 
         // A fresh run owned by this live process installs its hook. The orphan is
         // pruned, while the live run's hook and the unrelated user hook remain.

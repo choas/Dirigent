@@ -69,67 +69,83 @@ impl DirigentApp {
                 self.set_status_message("Split produced no sub-cues".into());
             }
             Ok(items) => {
-                let source_cue =
-                    source_id.and_then(|id| self.cues.iter().find(|c| c.id == id).cloned());
-                let (file_path, line) = source_cue
-                    .as_ref()
-                    .map(|c| (c.file_path.as_str(), c.line_number))
-                    .unwrap_or(("", 0));
-                let prepared: Vec<(String, &str, usize)> = items
-                    .iter()
-                    .map(|item| {
-                        let text = if let Some(ref r) = item.reference {
-                            format!("{}\n\nReference: {}", item.text, r)
-                        } else {
-                            item.text.clone()
-                        };
-                        (text, file_path, line)
-                    })
-                    .collect();
                 if let Some(id) = source_id {
-                    match self.db.insert_sub_cues_and_archive(id, &prepared) {
-                        Ok(count) => {
-                            self.conversation_replies.remove(&id);
-                            self.conversation_reply_images.remove(&id);
-                            remove_split_reference_file(&self.project_root, id);
-                            self.reload_cues();
-                            self.set_status_message(format!("Split into {} cues", count));
-                        }
-                        Err(e) => {
-                            self.set_status_message(format!("Split cue failed: {}", e));
-                        }
-                    }
+                    self.insert_archived_split_cues(id, &items);
                 } else {
-                    let mut success_count = 0usize;
-                    let mut failure_count = 0usize;
-                    let mut errors: Vec<String> = Vec::new();
-                    for (text, fp, ln) in &prepared {
-                        match self.db.insert_cue(text, fp, *ln, None, &[]) {
-                            Ok(_) => success_count += 1,
-                            Err(e) => {
-                                failure_count += 1;
-                                errors.push(format!("{}:{}: {}", fp, ln, e));
-                            }
-                        }
-                    }
-                    self.reload_cues();
-                    if failure_count > 0 {
-                        for err in &errors {
-                            log::error!("insert_cue failed: {}", err);
-                        }
-                        self.set_status_message(format!(
-                            "Split into {} cues, {} failed",
-                            success_count, failure_count
-                        ));
-                    } else {
-                        self.set_status_message(format!("Split into {} cues", success_count));
-                    }
+                    self.insert_global_split_cues(&items);
                 }
             }
             Err(e) => {
                 self.set_status_message(format!("Split cue failed: {}", e));
             }
         }
+    }
+
+    fn insert_archived_split_cues(&mut self, source_id: i64, items: &[SplitCueItem]) {
+        let source_cue = self.cues.iter().find(|cue| cue.id == source_id).cloned();
+        let prepared = prepare_split_items(items, source_cue.as_ref());
+        match self.db.insert_sub_cues_and_archive(source_id, &prepared) {
+            Ok(count) => {
+                self.conversation_replies.remove(&source_id);
+                self.conversation_reply_images.remove(&source_id);
+                remove_split_reference_file(&self.project_root, source_id);
+                self.reload_cues();
+                self.set_status_message(format!("Split into {} cues", count));
+            }
+            Err(e) => {
+                self.set_status_message(format!("Split cue failed: {}", e));
+            }
+        }
+    }
+
+    fn insert_global_split_cues(&mut self, items: &[SplitCueItem]) {
+        let prepared = prepare_split_items(items, None);
+        let mut success_count = 0usize;
+        let mut errors: Vec<String> = Vec::new();
+        for (text, file_path, line) in &prepared {
+            match self.db.insert_cue(text, file_path, *line, None, &[]) {
+                Ok(_) => success_count += 1,
+                Err(e) => errors.push(format!("{}:{}: {}", file_path, line, e)),
+            }
+        }
+        self.reload_cues();
+        report_split_insert_result(self, success_count, &errors);
+    }
+}
+
+fn prepare_split_items<'a>(
+    items: &'a [SplitCueItem],
+    source_cue: Option<&'a Cue>,
+) -> Vec<(String, &'a str, usize)> {
+    let (file_path, line) = source_cue
+        .map(|cue| (cue.file_path.as_str(), cue.line_number))
+        .unwrap_or(("", 0));
+    items
+        .iter()
+        .map(|item| (split_item_text(item), file_path, line))
+        .collect()
+}
+
+fn split_item_text(item: &SplitCueItem) -> String {
+    if let Some(ref reference) = item.reference {
+        format!("{}\n\nReference: {}", item.text, reference)
+    } else {
+        item.text.clone()
+    }
+}
+
+fn report_split_insert_result(app: &mut DirigentApp, success_count: usize, errors: &[String]) {
+    if !errors.is_empty() {
+        for err in errors {
+            log::error!("insert_cue failed: {}", err);
+        }
+        app.set_status_message(format!(
+            "Split into {} cues, {} failed",
+            success_count,
+            errors.len()
+        ));
+    } else {
+        app.set_status_message(format!("Split into {} cues", success_count));
     }
 }
 
@@ -264,6 +280,24 @@ fn run_split_analysis(
     settings: &crate::settings::Settings,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<SplitCueItem>, String> {
+    let response_text = run_cli_prompt(prompt, provider, project_root, settings, cancel)?;
+    parse_split_response(&response_text)
+}
+
+/// Run a one-shot, read-only prompt through the user's selected coding-agent CLI
+/// and return its raw stdout. Shared by analysis helpers (split cue, change-set
+/// analysis) that need a precise model judgement and are willing to pay the
+/// latency of the full CLI rather than the Fast LLM.
+///
+/// Claude is forced headless because PTY line-deduplication corrupts multi-line
+/// JSON output.
+pub(super) fn run_cli_prompt(
+    prompt: &str,
+    provider: &crate::settings::CliProvider,
+    project_root: &std::path::Path,
+    settings: &crate::settings::Settings,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
     use crate::settings::CliProvider;
 
     let pf = settings.provider_fields(provider);
@@ -347,5 +381,5 @@ fn run_split_analysis(
         }
     };
 
-    parse_split_response(&response_text)
+    Ok(response_text)
 }

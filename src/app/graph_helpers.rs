@@ -62,6 +62,31 @@ pub(in crate::app) fn compute_branch_lineage(
     Some(BranchLineage { rows, lane })
 }
 
+pub(in crate::app) fn paint_graph_row_background(
+    ui: &egui::Ui,
+    row_rect: egui::Rect,
+    hovered: bool,
+    is_dark: bool,
+    highlight_lane: Option<usize>,
+) {
+    if highlight_lane.is_some() {
+        let tint = if is_dark {
+            egui::Color32::from_white_alpha(8)
+        } else {
+            egui::Color32::from_black_alpha(6)
+        };
+        ui.painter().rect_filled(row_rect, 0, tint);
+    }
+    if hovered {
+        let hover = if is_dark {
+            egui::Color32::from_white_alpha(15)
+        } else {
+            egui::Color32::from_black_alpha(12)
+        };
+        ui.painter().rect_filled(row_rect, 0, hover);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Graph column painting
 // ---------------------------------------------------------------------------

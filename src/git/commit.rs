@@ -61,6 +61,29 @@ fn commit_staged(
     Ok(format!("{}", oid))
 }
 
+fn reset_index_to_head(repo_path: &Path) -> crate::error::Result<()> {
+    let repo = Repository::discover(repo_path)?;
+    let mut idx = repo.index()?;
+    match repo.head() {
+        Ok(head) => {
+            let head_commit = head.peel_to_commit().map_err(|e| {
+                DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}"))
+            })?;
+            let head_tree = head_commit.tree()?;
+            idx.read_tree(&head_tree)?;
+        }
+        // Fresh repository with no commits yet (unborn branch): HEAD points at a
+        // ref that doesn't exist, so there is no tree to reset to. Starting from
+        // an empty index lets the first commit be created normally.
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+            idx.clear()?;
+        }
+        Err(e) => return Err(e.into()),
+    }
+    idx.write()?;
+    Ok(())
+}
+
 /// Commit the working-tree state of files touched by `diff_text`.
 /// This stages the actual files the user sees (including any post-run formatting),
 /// so the committed state matches the working tree and files appear clean afterwards.
@@ -78,17 +101,7 @@ pub(crate) fn commit_diff(
     }
 
     // Reset the index to HEAD so pre-existing staged changes aren't included.
-    {
-        let repo = Repository::discover(repo_path)?;
-        let head_commit = repo
-            .head()?
-            .peel_to_commit()
-            .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
-        let head_tree = head_commit.tree()?;
-        let mut idx = repo.index()?;
-        idx.read_tree(&head_tree)?;
-        idx.write()?;
-    }
+    reset_index_to_head(repo_path)?;
 
     // Stage the working-tree state of the affected files.
     stage_files(repo_path, &file_paths)?;
@@ -99,6 +112,43 @@ pub(crate) fn commit_diff(
         commit_message,
         "nothing to commit — diff already applied",
     )
+}
+
+/// Commit a partial selection: stage `whole_files` entirely and apply each
+/// single-hunk patch in `hunk_patches` to the index, then commit the staged
+/// index. The working tree is left untouched, so any un-selected hunks of a
+/// shared file remain dirty afterwards.
+pub(crate) fn commit_partial(
+    repo_path: &Path,
+    whole_files: &[String],
+    hunk_patches: &[String],
+    commit_message: &str,
+) -> crate::error::Result<String> {
+    if whole_files.is_empty() && hunk_patches.is_empty() {
+        return Err(DirigentError::GitCommand(
+            "nothing selected to commit".into(),
+        ));
+    }
+
+    // Reset the index to HEAD so pre-existing staged changes aren't included and
+    // the hunk patches (built against HEAD) apply cleanly to the index.
+    reset_index_to_head(repo_path)?;
+
+    // Stage whole files, then apply each owned hunk to the index. Any failure
+    // rolls the index back to HEAD — without this a rejected hunk would leave
+    // the earlier stagings behind, silently widening the next commit.
+    let staged = stage_files(repo_path, whole_files).and_then(|_| {
+        hunk_patches
+            .iter()
+            .try_for_each(|patch| super::staging::stage_hunk(repo_path, patch))
+    });
+    if let Err(e) = staged {
+        let _ = reset_index_to_head(repo_path);
+        return Err(e);
+    }
+
+    let repo = Repository::discover(repo_path)?;
+    commit_staged(&repo, commit_message, "nothing to commit — selection empty")
 }
 
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {
@@ -152,49 +202,39 @@ pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error
 pub(crate) fn detect_commit_type(text: &str) -> &'static str {
     let lower = text.to_lowercase();
     let first_word = lower.split_whitespace().next().unwrap_or("");
+    conventional_type_prefix(first_word)
+        .or_else(|| keyword_commit_type(&lower))
+        .unwrap_or("feat")
+}
 
-    // If the text already starts with a known conventional type prefix, use it.
-    for &ct in CONVENTIONAL_TYPES {
-        if first_word == ct
+fn conventional_type_prefix(first_word: &str) -> Option<&'static str> {
+    CONVENTIONAL_TYPES.iter().copied().find(|ct| {
+        first_word == *ct
             || first_word.starts_with(&format!("{ct}:"))
             || first_word.starts_with(&format!("{ct}("))
-        {
-            return ct;
-        }
-    }
+    })
+}
 
-    // Keyword-based heuristics (order matters — more specific first).
-    if lower.contains("fix") || lower.contains("bug") || lower.contains("crash") {
-        "fix"
-    } else if lower.contains("refactor")
-        || lower.contains("rename")
-        || lower.contains("move ")
-        || lower.contains("extract")
-    {
-        "refactor"
-    } else if lower.contains("readme")
-        || lower.contains("documentation")
-        || lower.starts_with("doc")
-    {
-        "docs"
-    } else if lower.contains("test") {
-        "test"
-    } else if lower.contains("format") || lower.contains("whitespace") || lower.contains("lint") {
-        "style"
-    } else if lower.contains("performance") || lower.contains("optimiz") || lower.contains("speed")
-    {
-        "perf"
-    } else if lower.contains("dependenc") || lower.contains("upgrade") || lower.contains("cargo") {
-        "build"
-    } else if lower.contains(" ci") || lower.contains("pipeline") || lower.contains("workflow") {
-        "ci"
-    } else if lower.contains("cleanup") || lower.contains("chore") {
-        "chore"
-    } else if lower.contains("revert") {
-        "revert"
-    } else {
-        "feat"
-    }
+fn keyword_commit_type(lower: &str) -> Option<&'static str> {
+    const KEYWORDS: &[(&str, &[&str])] = &[
+        ("fix", &["fix", "bug", "crash"]),
+        ("refactor", &["refactor", "rename", "move ", "extract"]),
+        ("docs", &["readme", "documentation"]),
+        ("test", &["test"]),
+        ("style", &["format", "whitespace", "lint"]),
+        ("perf", &["performance", "optimiz", "speed"]),
+        ("build", &["dependenc", "upgrade", "cargo"]),
+        ("ci", &[" ci", "pipeline", "workflow"]),
+        ("chore", &["cleanup", "chore"]),
+        ("revert", &["revert"]),
+    ];
+    KEYWORDS
+        .iter()
+        .find(|(commit_type, terms)| {
+            terms.iter().any(|term| lower.contains(term))
+                || (*commit_type == "docs" && lower.starts_with("doc"))
+        })
+        .map(|(commit_type, _)| *commit_type)
 }
 
 /// Strip an existing conventional commit type prefix (e.g. "feat: " or "fix(scope): ").
@@ -241,6 +281,17 @@ fn format_description(text: &str) -> String {
     desc.trim_end_matches('.').to_string()
 }
 
+fn commit_subject(commit_type: &str, description: &str) -> String {
+    let prefix = format!("{}: ", commit_type);
+    let max_desc = 72 - prefix.len();
+    let subject_desc = if description.len() > max_desc {
+        format!("{}...", crate::app::truncate_str(description, max_desc - 3))
+    } else {
+        description.to_string()
+    };
+    format!("{}{}", prefix, subject_desc)
+}
+
 /// Validate a raw commit message using commitlint-rs rules.
 /// Returns a list of violation messages (empty = valid).
 pub(crate) fn lint_commit_message(raw: &str) -> Vec<String> {
@@ -275,18 +326,7 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let commit_type = detect_commit_type(first_line);
         let raw_desc = strip_type_prefix(first_line);
         let description = format_description(raw_desc);
-
-        let prefix = format!("{}: ", commit_type);
-        let max_desc = 72 - prefix.len();
-        let subject_desc = if description.len() > max_desc {
-            format!(
-                "{}...",
-                crate::app::truncate_str(&description, max_desc - 3)
-            )
-        } else {
-            description
-        };
-        let subject = format!("{}{}", prefix, subject_desc);
+        let subject = commit_subject(commit_type, &description);
 
         let mut parts = Vec::new();
         // Include the CLI message in the body. Only an over-long message
@@ -305,18 +345,7 @@ pub(crate) fn generate_commit_message(cue_text: &str, cli_message: Option<&str>)
         let commit_type = detect_commit_type(cue_text);
         let raw_desc = strip_type_prefix(cue_text);
         let description = format_description(raw_desc);
-
-        let prefix = format!("{}: ", commit_type);
-        let max_desc = 72 - prefix.len();
-        let subject_desc = if description.len() > max_desc {
-            format!(
-                "{}...",
-                crate::app::truncate_str(&description, max_desc - 3)
-            )
-        } else {
-            description
-        };
-        let subject = format!("{}{}", prefix, subject_desc);
+        let subject = commit_subject(commit_type, &description);
 
         let mut parts = Vec::new();
         if cue_text.len() > 68 {

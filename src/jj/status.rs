@@ -3,6 +3,13 @@ use std::path::Path;
 
 use crate::git::GitInfo;
 
+#[derive(Clone, Copy)]
+struct JjDiffTypeEntry<'a> {
+    from_type: u8,
+    to_type: u8,
+    file_path: &'a str,
+}
+
 /// Read repository info via `jj log` for the working-copy commit.
 pub(crate) fn jj_read_info(path: &Path, jj_path: &str) -> Option<GitInfo> {
     // Get the current bookmark (branch) name, change id, and description
@@ -113,16 +120,8 @@ fn count_status_entries(path: &Path, jj_path: &str) -> (usize, usize, usize, usi
     let mut deleted = 0;
     let mut conflicted = 0;
 
-    for line in stdout.lines() {
-        // Format: "FT path" where F=from-type, T=to-type
-        // Types: F=file, D=directory, L=symlink, C=conflict, -=absent
-        let trimmed = line.trim();
-        if trimmed.len() < 3 {
-            continue;
-        }
-        let from_type = trimmed.as_bytes()[0];
-        let to_type = trimmed.as_bytes()[1];
-        match (from_type, to_type) {
+    for entry in stdout.lines().filter_map(parse_diff_type_entry) {
+        match (entry.from_type, entry.to_type) {
             (b'-', _) => added += 1,
             (_, b'-') => deleted += 1,
             (b'C', _) | (_, b'C') => conflicted += 1,
@@ -147,30 +146,34 @@ pub(crate) fn jj_get_dirty_files(path: &Path, jj_path: &str) -> HashMap<String, 
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        // Format: "FT path" where F=from-type, T=to-type
-        // Types: F=file, D=directory, L=symlink, C=conflict, -=absent
-        let trimmed = line.trim();
-        if trimmed.len() < 3 {
-            continue;
-        }
-        let from_type = trimmed.as_bytes()[0];
-        let to_type = trimmed.as_bytes()[1];
-        let file_path = trimmed[2..].trim().to_string();
-
-        if file_path.is_empty() {
-            continue;
-        }
-
-        let letter = match (from_type, to_type) {
+    for entry in stdout.lines().filter_map(parse_diff_type_entry) {
+        let letter = match (entry.from_type, entry.to_type) {
             (b'-', _) => '?',             // new file (absent -> something)
             (_, b'-') => 'D',             // deleted (something -> absent)
             (b'C', _) | (_, b'C') => 'U', // conflict
             _ => 'M',                     // modified
         };
-        result.insert(file_path, letter);
+        result.insert(entry.file_path.to_string(), letter);
     }
     result
+}
+
+fn parse_diff_type_entry(line: &str) -> Option<JjDiffTypeEntry<'_>> {
+    // Format: "FT path" where F=from-type, T=to-type
+    // Types: F=file, D=directory, L=symlink, C=conflict, -=absent
+    let trimmed = line.trim();
+    if trimmed.len() < 3 {
+        return None;
+    }
+    let file_path = trimmed[2..].trim();
+    if file_path.is_empty() {
+        return None;
+    }
+    Some(JjDiffTypeEntry {
+        from_type: trimmed.as_bytes()[0],
+        to_type: trimmed.as_bytes()[1],
+        file_path,
+    })
 }
 
 /// Returns the number of commits ahead of the tracked remote bookmark.

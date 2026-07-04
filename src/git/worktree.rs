@@ -9,6 +9,9 @@ pub(crate) struct WorktreeInfo {
     pub is_current: bool,
     pub is_locked: bool,
     pub is_main: bool,
+    /// True when the worktree's folder no longer exists on disk (deleted by
+    /// hand). Git still lists it until `git worktree prune` runs.
+    pub orphaned: bool,
 }
 
 fn build_worktree_info(
@@ -27,13 +30,54 @@ fn build_worktree_info(
                 .unwrap_or_else(|| "main".to_string())
         });
     let is_current = canon_wt == current || current.starts_with(&canon_wt);
+    let orphaned = !p.exists();
     WorktreeInfo {
         name,
         path: p,
         is_current,
         is_locked,
         is_main: is_first,
+        orphaned,
     }
+}
+
+/// Branch names currently checked out in a live (non-orphaned) worktree. Such a
+/// branch cannot receive a second worktree, so it is ineligible in the
+/// "Worktree from Branch" picker. (The panel computes the same set inline to
+/// avoid a git call per frame; this is the standalone, tested primitive.)
+#[allow(dead_code)]
+pub(crate) fn checked_out_branches(repo_path: &Path) -> std::collections::HashSet<String> {
+    list_worktrees(repo_path)
+        .map(|wts| {
+            wts.into_iter()
+                .filter(|w| !w.orphaned)
+                .map(|w| w.name)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `branch` is eligible to get a new worktree: it must be one of the
+/// user's own branches and not already checked out in a live worktree.
+#[allow(dead_code)]
+pub(crate) fn is_branch_eligible_for_worktree(repo_path: &Path, branch: &str) -> bool {
+    own_branches(repo_path).contains(branch) && !checked_out_branches(repo_path).contains(branch)
+}
+
+/// Prune worktree registrations whose folders no longer exist
+/// (`git worktree prune`).
+pub(crate) fn prune_worktrees(repo_path: &Path) -> crate::error::Result<()> {
+    use std::process::Command;
+    let output = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
@@ -176,6 +220,19 @@ pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String
     Ok(branches.into_iter().collect())
 }
 
+/// List all branch names (local + remote-tracking) for ref pickers such as
+/// "Analyze changes over…". Unlike `list_branches`, branches checked out in a
+/// worktree (e.g. `main`) are included — they are valid refs to diff against.
+pub(crate) fn list_all_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
+    use std::collections::{BTreeSet, HashSet};
+
+    let no_exclusions = HashSet::new();
+    let mut branches = BTreeSet::new();
+    collect_local_branches(repo_path, &no_exclusions, &no_exclusions, &mut branches)?;
+    collect_remote_branches(repo_path, &no_exclusions, &mut branches)?;
+    Ok(branches.into_iter().collect())
+}
+
 /// Fetch latest remote refs and prune stale remote-tracking branches.
 /// Best-effort / fire-and-forget: the process is spawned in the background
 /// so callers on the UI thread are not blocked by network I/O.
@@ -187,6 +244,22 @@ fn fetch_and_prune(repo_path: &Path) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn(); // fire-and-forget — avoids blocking the UI thread
+}
+
+fn run_git_checked(repo_path: &Path, args: &[&str]) -> crate::error::Result<()> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
 }
 
 /// Return the set of local branch names whose upstream tracking branch has
@@ -333,64 +406,19 @@ fn copy_claude_settings(src_root: &Path, dst_root: &Path) {
         return;
     }
     let dst_dir = dst_root.join(".claude");
-    if let Err(e) = copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
+    if let Err(e) = crate::util::fs::copy_dir_recursive(&src_dir, &dst_dir, &["worktrees"]) {
         log::warn!("failed to copy .claude/ settings to worktree: {e}");
     }
 }
 
-/// Recursively copy `src` to `dst`, skipping entries whose file name matches
-/// any entry in `skip`.
-fn copy_dir_recursive(src: &Path, dst: &Path, skip: &[&str]) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if skip.iter().any(|s| *s == name.to_string_lossy().as_ref()) {
-            continue;
-        }
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path, &[])?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}
-
 /// Switch the current branch by running `git checkout <branch>`.
 pub(crate) fn checkout_branch(repo_path: &Path, branch: &str) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["checkout", branch])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-    Ok(())
+    run_git_checked(repo_path, &["checkout", branch])
 }
 
 /// Create a new branch and switch to it (`git checkout -b <branch>`).
 pub(crate) fn create_branch(repo_path: &Path, branch: &str) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["checkout", "-b", branch])
-        .current_dir(repo_path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
-    Ok(())
+    run_git_checked(repo_path, &["checkout", "-b", branch])
 }
 
 pub(crate) fn remove_worktree(
@@ -398,8 +426,6 @@ pub(crate) fn remove_worktree(
     wt_path: &Path,
     force: bool,
 ) -> crate::error::Result<()> {
-    use std::process::Command;
-
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
@@ -407,16 +433,90 @@ pub(crate) fn remove_worktree(
     let wt_str = wt_path.to_string_lossy();
     args.push(&wt_str);
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(repo_path)
-        .output()?;
+    run_git_checked(repo_path, &args)
+}
 
-    if !output.status.success() {
-        return Err(DirigentError::GitCommand(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let o = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            o.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&o.stderr)
+        );
     }
 
-    Ok(())
+    fn init(dir: &Path) {
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "user.email", "t@t.t"]);
+        git(dir, &["config", "user.name", "T"]);
+        std::fs::write(dir.join("f"), "x\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+    }
+
+    #[test]
+    fn eligibility_reflects_checkout() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        // An owned branch not checked out anywhere is eligible.
+        git(p, &["branch", "idle"]);
+        assert!(is_branch_eligible_for_worktree(p, "idle"));
+        // A branch checked out in a worktree is ineligible.
+        create_worktree(p, "feat").unwrap();
+        assert!(checked_out_branches(p).contains("feat"));
+        assert!(!is_branch_eligible_for_worktree(p, "feat"));
+    }
+
+    #[test]
+    fn orphan_detection_and_prune() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        let wt = create_worktree(p, "feat").unwrap();
+        // Live worktree: not orphaned.
+        assert!(list_worktrees(p)
+            .unwrap()
+            .iter()
+            .any(|w| w.name == "feat" && !w.orphaned));
+        // Delete the folder by hand -> orphaned, still listed by git.
+        std::fs::remove_dir_all(&wt).unwrap();
+        assert!(list_worktrees(p)
+            .unwrap()
+            .iter()
+            .any(|w| w.name == "feat" && w.orphaned));
+        // Prune removes the stale registration.
+        prune_worktrees(p).unwrap();
+        assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
+    }
+
+    #[test]
+    fn retire_keeps_the_branch() {
+        let d = tempfile::tempdir().unwrap();
+        let p = &d.path().join("repo");
+        std::fs::create_dir(p).unwrap();
+        init(p);
+        let wt = create_worktree(p, "feat").unwrap();
+        remove_worktree(p, &wt, false).unwrap();
+        // Worktree gone...
+        assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
+        // ...but the branch ref is preserved.
+        let branches = list_branches(p).unwrap();
+        assert!(
+            branches.iter().any(|b| b == "feat"),
+            "branch must survive retire"
+        );
+    }
 }

@@ -51,6 +51,24 @@ fn collapsible_section_header(
     result
 }
 
+fn render_settings_header(ui: &mut egui::Ui, fs: f32, save: &mut bool, close: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.strong("Settings");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(icon("\u{2715}", fs))
+                .on_hover_text("Close settings")
+                .clicked()
+            {
+                *close = true;
+            }
+            if ui.button("Save").clicked() {
+                *save = true;
+            }
+        });
+    });
+}
+
 impl DirigentApp {
     pub(in crate::app) fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         let mut save = false;
@@ -59,7 +77,31 @@ impl DirigentApp {
         let mut refresh_models = false;
         let fs = self.settings.font_size;
 
-        // Drain any completed background model fetch
+        self.drain_model_fetch_results();
+        self.start_selected_provider_model_fetch();
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            render_settings_header(ui, fs, &mut save, &mut close);
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    self.render_settings_scroll_contents(
+                        ui,
+                        fs,
+                        &mut save,
+                        &mut close,
+                        &mut refresh_models,
+                        &mut fetch_idx,
+                    );
+                }); // end ScrollArea
+        });
+
+        self.handle_settings_actions(save, close, refresh_models, fetch_idx);
+    }
+
+    fn drain_model_fetch_results(&mut self) {
         if let Ok(models) = self.opencode_models_rx.try_recv() {
             self.opencode_models = models;
             self.opencode_models_loading = false;
@@ -68,73 +110,54 @@ impl DirigentApp {
             self.gemini_models = models;
             self.gemini_models_loading = false;
         }
+    }
 
-        // Kick off background fetch if not yet loaded and not already loading.
-        // Only fetch for the currently selected provider — invoking another
-        // provider's CLI (e.g. `gemini models list`) can trigger a keychain
-        // access prompt for credentials we don't need yet.
-        if self.settings.cli_provider == CliProvider::OpenCode
-            && self.opencode_models.is_empty()
-            && !self.opencode_models_loading
-        {
+    fn start_selected_provider_model_fetch(&mut self) {
+        if self.should_fetch_opencode_models() {
             self.spawn_opencode_models_fetch();
         }
-        if self.settings.cli_provider == CliProvider::Gemini
-            && self.gemini_models.is_empty()
-            && !self.gemini_models_loading
-        {
+        if self.should_fetch_gemini_models() {
             self.spawn_gemini_models_fetch();
         }
+    }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("Settings");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(icon("\u{2715}", fs))
-                        .on_hover_text("Close settings")
-                        .clicked()
-                    {
-                        close = true;
-                    }
-                    if ui.button("Save").clicked() {
-                        save = true;
-                    }
-                });
-            });
-            ui.separator();
+    fn should_fetch_opencode_models(&self) -> bool {
+        self.settings.cli_provider == CliProvider::OpenCode
+            && self.opencode_models.is_empty()
+            && !self.opencode_models_loading
+            && !self.opencode_models_fetch_attempted
+    }
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    ui.add_space(SPACE_SM);
+    fn should_fetch_gemini_models(&self) -> bool {
+        self.settings.cli_provider == CliProvider::Gemini
+            && self.gemini_models.is_empty()
+            && !self.gemini_models_loading
+            && !self.gemini_models_fetch_attempted
+    }
 
-                    self.render_settings_general_grid(ui, &mut refresh_models);
-
-                    self.render_settings_smart_ai_section(ui);
-
-                    self.render_settings_fast_llm_section(ui);
-
-                    self.render_settings_sources_section(ui, fs, &mut fetch_idx);
-
-                    self.render_settings_agents_section(ui, fs, &mut close);
-
-                    self.render_settings_commands_section(ui, fs);
-
-                    self.render_settings_lsp_section(ui, fs);
-
-                    self.render_settings_ssh_section(ui, fs);
-
-                    self.render_settings_playbook_section(ui, fs);
-
-                    ui.add_space(SPACE_MD);
-                    if ui.button("Save").clicked() {
-                        save = true;
-                    }
-                }); // end ScrollArea
-        });
-
-        self.handle_settings_actions(save, close, refresh_models, fetch_idx);
+    fn render_settings_scroll_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        fs: f32,
+        save: &mut bool,
+        close: &mut bool,
+        refresh_models: &mut bool,
+        fetch_idx: &mut Option<usize>,
+    ) {
+        ui.add_space(SPACE_SM);
+        self.render_settings_general_grid(ui, refresh_models);
+        self.render_settings_smart_ai_section(ui);
+        self.render_settings_fast_llm_section(ui);
+        self.render_settings_sources_section(ui, fs, fetch_idx);
+        self.render_settings_agents_section(ui, fs, close);
+        self.render_settings_commands_section(ui, fs);
+        self.render_settings_lsp_section(ui, fs);
+        self.render_settings_ssh_section(ui, fs);
+        self.render_settings_playbook_section(ui, fs);
+        ui.add_space(SPACE_MD);
+        if ui.button("Save").clicked() {
+            *save = true;
+        }
     }
 
     fn render_settings_smart_ai_section(&mut self, ui: &mut egui::Ui) {
@@ -250,6 +273,7 @@ impl DirigentApp {
 
     fn spawn_gemini_models_fetch(&mut self) {
         self.gemini_models_loading = true;
+        self.gemini_models_fetch_attempted = true;
         let (tx, rx) = mpsc::channel();
         self.gemini_models_rx = rx;
         let cli_path = self.settings.gemini_cli_path.clone();
@@ -265,6 +289,7 @@ impl DirigentApp {
 
     fn spawn_opencode_models_fetch(&mut self) {
         self.opencode_models_loading = true;
+        self.opencode_models_fetch_attempted = true;
         let (tx, rx) = mpsc::channel();
         self.opencode_models_rx = rx;
         let cli_path = self.settings.opencode_cli_path.clone();
