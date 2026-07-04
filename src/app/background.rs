@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -10,6 +10,36 @@ use super::{
     DirigentApp, ELAPSED_REPAINT, FS_RESCAN_DEBOUNCE, LOG_SYNC_INTERVAL, REPAINT_FAST, REPAINT_SLOW,
 };
 use crate::settings;
+
+/// Beyond this many buffered rename paths, pairing old and new names is
+/// unreliable and the plain file-tree rescan takes over.
+const MAX_PAIRED_RENAMES: usize = 64;
+
+/// Find the new path a renamed-away `old` path most likely moved to, among
+/// the paths that appeared in the same batch of rename events: a unique
+/// candidate with the same file name (moved), else a unique candidate in the
+/// same directory (renamed in place), else the only candidate there is.
+fn find_rename_target(old: &Path, candidates: &[PathBuf]) -> Option<PathBuf> {
+    let candidates: Vec<&PathBuf> = candidates.iter().filter(|c| c.as_path() != old).collect();
+    let same_name: Vec<&&PathBuf> = candidates
+        .iter()
+        .filter(|c| c.file_name() == old.file_name())
+        .collect();
+    if let [only] = same_name[..] {
+        return Some((*only).clone());
+    }
+    let same_parent: Vec<&&PathBuf> = candidates
+        .iter()
+        .filter(|c| c.parent() == old.parent())
+        .collect();
+    if let [only] = same_parent[..] {
+        return Some((*only).clone());
+    }
+    if let [only] = candidates[..] {
+        return Some(only.clone());
+    }
+    None
+}
 
 impl DirigentApp {
     /// Re-read settings from disk (the file may have been changed externally by Claude Code).
@@ -105,6 +135,7 @@ impl DirigentApp {
         if !self.show_settings {
             self.reload_settings_from_disk();
         }
+        self.remap_renamed_tabs();
         self.reload_open_tabs();
         self.inbox_files = self.scan_and_filter_inbox();
         self.trigger_agents_for(&crate::agents::AgentTrigger::OnFileChange, None, "");
@@ -169,6 +200,69 @@ impl DirigentApp {
             tab.last_mtime = None;
         }
         self.reload_open_tabs();
+    }
+
+    /// Remap open tabs whose files were renamed on disk (e.g. `mv` in a
+    /// terminal) to their new paths, so the rename is followed instead of the
+    /// tab being closed as deleted. Old and new paths arrive as separate
+    /// rename events from the fs watcher; they are paired here by file name,
+    /// then by parent directory, then by being the only candidate.
+    pub(super) fn remap_renamed_tabs(&mut self) {
+        let drained: Vec<PathBuf> = match self.fs_rename_paths.lock() {
+            Ok(mut paths) => std::mem::take(&mut *paths),
+            Err(_) => return,
+        };
+        // A mass rename (e.g. an external branch checkout) can't be paired
+        // reliably; let the regular rescan handle it.
+        if drained.is_empty() || drained.len() > MAX_PAIRED_RENAMES {
+            return;
+        }
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let mut appeared_files: Vec<PathBuf> = Vec::new();
+        let mut appeared_dirs: Vec<PathBuf> = Vec::new();
+        let mut gone: Vec<PathBuf> = Vec::new();
+        for path in drained {
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            if path.is_file() {
+                appeared_files.push(path);
+            } else if path.is_dir() {
+                appeared_dirs.push(path);
+            } else {
+                gone.push(path);
+            }
+        }
+        let mut remaps: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
+        for old in &gone {
+            let tab_on_old = self.viewer.tabs.iter().any(|t| t.file_path == *old);
+            let tab_under_old = self
+                .viewer
+                .tabs
+                .iter()
+                .any(|t| t.file_path != *old && t.file_path.starts_with(old));
+            if tab_on_old {
+                if let Some(new_path) = find_rename_target(old, &appeared_files) {
+                    remaps.push((old.clone(), new_path, false));
+                }
+            } else if tab_under_old {
+                if let Some(new_path) = find_rename_target(old, &appeared_dirs) {
+                    remaps.push((old.clone(), new_path, true));
+                }
+            }
+        }
+        for (old, new_path, is_dir) in remaps {
+            self.update_tabs_after_rename(&old, &new_path, is_dir);
+            let old_name = old
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| old.display().to_string());
+            let new_display = new_path
+                .strip_prefix(&self.project_root)
+                .unwrap_or(&new_path)
+                .display();
+            self.set_status_message(format!("Renamed: {} → {}", old_name, new_display));
+        }
     }
 
     /// Reload content of all open tabs from disk, closing tabs for deleted files.
@@ -374,5 +468,52 @@ impl DirigentApp {
             });
         }
         min_delay
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_rename_target;
+    use std::path::{Path, PathBuf};
+
+    fn paths(items: &[&str]) -> Vec<PathBuf> {
+        items.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn rename_in_place_matches_same_parent() {
+        let target = find_rename_target(Path::new("/repo/src/a.rs"), &paths(&["/repo/src/b.rs"]));
+        assert_eq!(target, Some(PathBuf::from("/repo/src/b.rs")));
+    }
+
+    #[test]
+    fn move_across_dirs_matches_same_name() {
+        let target = find_rename_target(
+            Path::new("/repo/src/a.rs"),
+            &paths(&["/repo/lib/a.rs", "/repo/src/other.rs", "/repo/src/more.rs"]),
+        );
+        assert_eq!(target, Some(PathBuf::from("/repo/lib/a.rs")));
+    }
+
+    #[test]
+    fn single_candidate_matches_as_fallback() {
+        let target = find_rename_target(Path::new("/repo/src/a.rs"), &paths(&["/repo/lib/b.rs"]));
+        assert_eq!(target, Some(PathBuf::from("/repo/lib/b.rs")));
+    }
+
+    #[test]
+    fn ambiguous_candidates_match_nothing() {
+        let target = find_rename_target(
+            Path::new("/repo/src/a.rs"),
+            &paths(&["/repo/lib/b.rs", "/repo/docs/c.rs"]),
+        );
+        assert_eq!(target, None);
+    }
+
+    #[test]
+    fn old_path_itself_is_not_a_candidate() {
+        // Atomic-save editors emit a rename event for a path that still exists.
+        let target = find_rename_target(Path::new("/repo/src/a.rs"), &paths(&["/repo/src/a.rs"]));
+        assert_eq!(target, None);
     }
 }

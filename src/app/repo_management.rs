@@ -52,7 +52,15 @@ impl DirigentApp {
         }
         self.fs_changed
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self._fs_watcher = start_fs_watcher(&self.project_root, &self.fs_changed, &self.egui_ctx);
+        if let Ok(mut paths) = self.fs_rename_paths.lock() {
+            paths.clear();
+        }
+        self._fs_watcher = start_fs_watcher(
+            &self.project_root,
+            &self.fs_changed,
+            &self.fs_rename_paths,
+            &self.egui_ctx,
+        );
         self.archived_cue_limit = 10;
         self.confirm_delete_archived = false;
 

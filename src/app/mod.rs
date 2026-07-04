@@ -36,7 +36,7 @@ mod workflow_run;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 // -- Timing constants --
@@ -285,6 +285,9 @@ pub struct DirigentApp {
     // File-system watcher
     _fs_watcher: Option<RecommendedWatcher>,
     fs_changed: Arc<AtomicBool>,
+    // Paths from rename events, collected so external renames (e.g. `mv` in a
+    // terminal) can be matched to open tabs instead of closing them as deleted.
+    pub(super) fs_rename_paths: Arc<Mutex<Vec<PathBuf>>>,
     last_fs_rescan: Instant,
     egui_ctx: Arc<OnceLock<egui::Context>>,
 
@@ -556,19 +559,34 @@ fn detect_pr_info(project_root: &std::path::Path) -> Option<(u32, String)> {
     }
 }
 
+/// Upper bound on buffered rename-event paths; beyond this a mass rename
+/// (e.g. an external branch checkout) is in progress and pairing individual
+/// renames is unreliable, so further paths are dropped.
+const FS_RENAME_BUFFER_CAP: usize = 256;
+
 fn start_fs_watcher(
     root: &Path,
     changed: &Arc<AtomicBool>,
+    rename_paths: &Arc<Mutex<Vec<PathBuf>>>,
     egui_ctx: &Arc<OnceLock<egui::Context>>,
 ) -> Option<RecommendedWatcher> {
     let flag = Arc::clone(changed);
+    let renames = Arc::clone(rename_paths);
     let ctx = Arc::clone(egui_ctx);
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
+                use notify::event::ModifyKind;
                 use notify::EventKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) => {
+                        if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) {
+                            if let Ok(mut paths) = renames.lock() {
+                                if paths.len() < FS_RENAME_BUFFER_CAP {
+                                    paths.extend(event.paths.iter().cloned());
+                                }
+                            }
+                        }
                         flag.store(true, Ordering::Relaxed);
                         if let Some(ctx) = ctx.get() {
                             ctx.request_repaint();
@@ -683,12 +701,13 @@ impl DirigentApp {
         };
 
         let fs_changed = Arc::new(AtomicBool::new(false));
+        let fs_rename_paths = Arc::new(Mutex::new(Vec::new()));
         let egui_ctx = Arc::new(OnceLock::new());
 
         // Start the watcher using the same Arcs the app will store,
         // so the watcher can actually signal changes to the app.
         if !skip_scan {
-            _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &egui_ctx);
+            _fs_watcher = start_fs_watcher(&project_root, &fs_changed, &fs_rename_paths, &egui_ctx);
             split_cue::cleanup_stale_split_references(&project_root, &db);
         }
 
@@ -921,6 +940,7 @@ impl DirigentApp {
             logo_texture: None,
             _fs_watcher,
             fs_changed,
+            fs_rename_paths,
             last_fs_rescan: Instant::now(),
             egui_ctx,
             status_message: None,

@@ -116,7 +116,12 @@ impl DirigentApp {
 
     /// Updates open tabs after a rename: replaces the tab for a single file,
     /// or updates paths for all tabs inside a renamed directory.
-    fn update_tabs_after_rename(&mut self, old_path: &Path, new_path: &PathBuf, is_dir: bool) {
+    pub(in crate::app) fn update_tabs_after_rename(
+        &mut self,
+        old_path: &Path,
+        new_path: &PathBuf,
+        is_dir: bool,
+    ) {
         if is_dir {
             for tab in &mut self.viewer.tabs {
                 if let Ok(rel) = tab.file_path.strip_prefix(old_path) {
