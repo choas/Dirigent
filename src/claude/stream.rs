@@ -706,8 +706,7 @@ fn answer_session_rating(session: &Session, on_log: &mut dyn FnMut(&str)) {
 /// gate on `!prompt_sent` so quoted text in later session output (e.g. Claude
 /// reading this very file) cannot trigger a stray keypress.
 fn is_resume_choice_prompt(line: &str) -> bool {
-    line.contains("Resume from summary")
-        || line.contains("Resuming the full session will consume")
+    line.contains("Resume from summary") || line.contains("Resuming the full session will consume")
 }
 
 /// Answer the resume-choice dialog by confirming the pre-selected option 1
