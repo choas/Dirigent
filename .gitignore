@@ -3,7 +3,7 @@
 .dirigent/
 .Dirigent/
 .claude/
-analyze_*
+/analyze_*
 # macOS
 .DS_Store
 Dirigent.app
