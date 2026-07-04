@@ -387,9 +387,11 @@ impl DirigentApp {
     }
 
     /// Stage just the current commit target's files (`git add`), without
-    /// committing. Git-only; jj has no separate staging area. In queue mode a
-    /// staged group is handled — it is dropped from the queue like a committed
-    /// one, so the dialog closes once every group is committed or staged.
+    /// committing. Git-only; jj has no separate staging area. In queue mode the
+    /// staged group stays queued until it is actually committed: committing any
+    /// other group resets the index to HEAD (see [`crate::git::commit_diff`]),
+    /// which silently unstages this one — dropping it here would lose the
+    /// reviewed split. The dialog just moves on to the next group.
     /// Refused for a group that owns only some hunks of a file: `git add`
     /// stages the whole file, silently pulling in later groups' hunks.
     pub(in crate::app) fn stage_commit_files(&mut self) {
@@ -416,12 +418,21 @@ impl DirigentApp {
         }
         match crate::git::stage_files(&self.project_root, &files) {
             Ok(()) => {
-                // Advance first: on an emptied queue it sets its own status
-                // message, which the staged confirmation below replaces.
-                if !self.git.commit_queue.is_empty() {
-                    self.advance_commit_queue();
+                // Keep the group queued (the caller already persisted its
+                // message); only move the dialog to the next group, if any.
+                let in_queue = !self.git.commit_queue.is_empty();
+                let pos = self.git.commit_queue_pos;
+                if pos + 1 < self.git.commit_queue.len() {
+                    self.load_commit_group(pos + 1);
                 }
-                self.set_status_message(format!("Staged {} file(s)", files.len()));
+                if in_queue {
+                    self.set_status_message(format!(
+                        "Staged {} file(s) — the group stays queued until committed",
+                        files.len()
+                    ));
+                } else {
+                    self.set_status_message(format!("Staged {} file(s)", files.len()));
+                }
                 self.reload_git_info();
             }
             Err(e) => self.set_status_message(format!("Stage failed: {e}")),
@@ -556,9 +567,10 @@ impl DirigentApp {
         }
     }
 
-    /// After a queued group is handled (committed, or staged via the Stage
-    /// button), drop it and advance: reopen the dialog on the next group, or
-    /// finish when the queue is empty.
+    /// After a queued group is committed, drop it and advance: reopen the
+    /// dialog on the next group, or finish when the queue is empty. Staged
+    /// groups are NOT advanced past — they stay queued until committed (see
+    /// [`stage_commit_files`](Self::stage_commit_files)).
     pub(in crate::app) fn advance_commit_queue(&mut self) {
         let pos = self.git.commit_queue_pos;
         if pos < self.git.commit_queue.len() {
