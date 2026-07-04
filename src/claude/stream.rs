@@ -35,8 +35,9 @@ fn graceful_close(session: &mut Session, timeout: Duration, on_log: &mut dyn FnM
 
 /// Consume events from a PTY session, forwarding screen output to `on_log`.
 ///
-/// Auto-accepts all confirmation dialogs (trust-folder and tool permissions)
-/// and sends `prompt` on the first [`TuiPrompt`](Event::TuiPrompt). The loop
+/// Auto-accepts all confirmation dialogs (trust-folder and tool permissions),
+/// auto-confirms the `--resume` "Resume from summary" choice dialog, and sends
+/// `prompt` on the first [`TuiPrompt`](Event::TuiPrompt). The loop
 /// exits when:
 ///
 /// 1. The `done_sentinel` file appears (Claude Code `Stop` hook fired).
@@ -72,6 +73,7 @@ pub(super) fn consume_pty_events(
     let mut waiting_for_permission = false;
     let mut saw_filtered_line = false;
     let mut survey_answered = false;
+    let mut resume_choice_answered = false;
     let done_sentinel = done_hook.map(|h| h.sentinel_path());
 
     loop {
@@ -100,6 +102,11 @@ pub(super) fn consume_pty_events(
                         if !survey_answered && is_session_rating_prompt(text) {
                             answer_session_rating(session, on_log);
                             survey_answered = true;
+                        }
+                        if !prompt_sent && !resume_choice_answered && is_resume_choice_prompt(text)
+                        {
+                            answer_resume_choice(session, on_log);
+                            resume_choice_answered = true;
                         }
                     }
                     Event::PtyActivity { .. } => {
@@ -210,6 +217,13 @@ pub(super) fn consume_pty_events(
                             if !survey_answered && is_session_rating_prompt(plain) {
                                 answer_session_rating(session, on_log);
                                 survey_answered = true;
+                            }
+                            if !prompt_sent
+                                && !resume_choice_answered
+                                && is_resume_choice_prompt(plain)
+                            {
+                                answer_resume_choice(session, on_log);
+                                resume_choice_answered = true;
                             }
                         }
                     }
@@ -519,6 +533,45 @@ fn answer_session_rating(session: &Session, on_log: &mut dyn FnMut(&str)) {
     }
 }
 
+// ── Resume-choice dialog auto-answer ────────────────────────────────
+
+/// Detect Claude Code's resume-choice dialog, shown when `--resume` targets an
+/// old or token-heavy session, e.g.:
+///
+/// ```text
+/// This session is 1d 12h old and 166.2k tokens.
+///
+/// Resuming the full session will consume a substantial portion of your
+/// usage limits. We recommend resuming from a summary.
+///
+/// ❯ 1. Resume from summary (recommended)
+///   2. Resume full session as-is
+///   3. Don't ask me again
+///
+/// Enter to confirm · Esc to cancel
+/// ```
+///
+/// The dialog appears at session startup, before the TUI prompt, so it is not
+/// caught by `claude_pty`'s permission-dialog detection and would block the
+/// PTY forever (the idle timeout only arms after the prompt is sent). Callers
+/// gate on `!prompt_sent` so quoted text in later session output (e.g. Claude
+/// reading this very file) cannot trigger a stray keypress.
+fn is_resume_choice_prompt(line: &str) -> bool {
+    line.contains("Resume from summary")
+        || line.contains("Resuming the full session will consume")
+}
+
+/// Answer the resume-choice dialog by confirming the pre-selected option 1
+/// ("Resume from summary (recommended)") with Enter, matching the dialog's
+/// "Enter to confirm" footer — the same way the trust-folder dialog is
+/// accepted.
+fn answer_resume_choice(session: &Session, on_log: &mut dyn FnMut(&str)) {
+    match session.send_key(b"\r") {
+        Ok(()) => on_log("\n⏎ Resume prompt — confirmed 'Resume from summary (recommended)'\n"),
+        Err(e) => on_log(&format!("\n⚠ Failed to answer resume prompt: {e}\n")),
+    }
+}
+
 // ── Usage limit & question detection ────────────────────────────────
 
 /// Detect a usage-limit / hard rate-limit message in Claude output.
@@ -624,6 +677,23 @@ mod tests {
         ));
         assert!(!is_session_rating_prompt("How are you doing today?"));
         assert!(!is_session_rating_prompt(""));
+    }
+
+    #[test]
+    fn resume_choice_prompt_detected() {
+        assert!(is_resume_choice_prompt(
+            "❯ 1. Resume from summary (recommended)"
+        ));
+        assert!(is_resume_choice_prompt(
+            "Resuming the full session will consume a substantial portion of \
+             your usage limits. We recommend resuming from a summary."
+        ));
+        assert!(!is_resume_choice_prompt("2. Resume full session as-is"));
+        assert!(!is_resume_choice_prompt(
+            "This session is 1d 12h old and 166.2k tokens."
+        ));
+        assert!(!is_resume_choice_prompt("Enter to confirm · Esc to cancel"));
+        assert!(!is_resume_choice_prompt(""));
     }
 
     #[test]
