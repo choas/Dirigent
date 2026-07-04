@@ -666,7 +666,9 @@ def run_round(cfg: Config, round_no: int, pending_comments: list[dict]) -> tuple
     banner(f"Round {round_no}: pushing")
     pushed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if not push(cfg):
-        return True, []
+        print("[error] git push failed -- fix commits are local only and the bots"
+              " never saw them. Resolve the push failure and rerun.")
+        sys.exit(1)
     return True, poll_for_new_comments(cfg, pushed_at)
 
 
