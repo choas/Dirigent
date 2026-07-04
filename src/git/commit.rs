@@ -134,10 +134,17 @@ pub(crate) fn commit_partial(
     // the hunk patches (built against HEAD) apply cleanly to the index.
     reset_index_to_head(repo_path)?;
 
-    // Stage whole files, then apply each owned hunk to the index.
-    stage_files(repo_path, whole_files)?;
-    for patch in hunk_patches {
-        super::staging::stage_hunk(repo_path, patch)?;
+    // Stage whole files, then apply each owned hunk to the index. Any failure
+    // rolls the index back to HEAD — without this a rejected hunk would leave
+    // the earlier stagings behind, silently widening the next commit.
+    let staged = stage_files(repo_path, whole_files).and_then(|_| {
+        hunk_patches
+            .iter()
+            .try_for_each(|patch| super::staging::stage_hunk(repo_path, patch))
+    });
+    if let Err(e) = staged {
+        let _ = reset_index_to_head(repo_path);
+        return Err(e);
     }
 
     let repo = Repository::discover(repo_path)?;

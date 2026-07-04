@@ -522,6 +522,36 @@ mod tests {
     }
 
     #[test]
+    fn failed_partial_commit_rolls_back_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+
+        // Whole file `a.txt` stages fine, then the bogus hunk is rejected.
+        let bogus =
+            "diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1,1 +1,1 @@\n-zzz\n+yyy\n";
+        let err = crate::git::commit_partial(
+            p,
+            &["a.txt".to_string()],
+            &[bogus.to_string()],
+            "part: must fail",
+        );
+        assert!(err.is_err(), "rejected hunk must fail the commit");
+        // The index was rolled back: nothing is left staged from `a.txt`.
+        assert!(
+            get_staged_diff(p, &[]).is_none(),
+            "failed partial commit must not leave the index staged"
+        );
+        // The working tree still has the edit.
+        assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), "A\n");
+    }
+
+    #[test]
     fn rejected_patch_leaves_tree_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
