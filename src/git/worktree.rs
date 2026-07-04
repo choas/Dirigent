@@ -220,6 +220,19 @@ pub(crate) fn list_branches(repo_path: &Path) -> crate::error::Result<Vec<String
     Ok(branches.into_iter().collect())
 }
 
+/// List all branch names (local + remote-tracking) for ref pickers such as
+/// "Analyze changes over…". Unlike `list_branches`, branches checked out in a
+/// worktree (e.g. `main`) are included — they are valid refs to diff against.
+pub(crate) fn list_all_branches(repo_path: &Path) -> crate::error::Result<Vec<String>> {
+    use std::collections::{BTreeSet, HashSet};
+
+    let no_exclusions = HashSet::new();
+    let mut branches = BTreeSet::new();
+    collect_local_branches(repo_path, &no_exclusions, &no_exclusions, &mut branches)?;
+    collect_remote_branches(repo_path, &no_exclusions, &mut branches)?;
+    Ok(branches.into_iter().collect())
+}
+
 /// Fetch latest remote refs and prune stale remote-tracking branches.
 /// Best-effort / fire-and-forget: the process is spawned in the background
 /// so callers on the UI thread are not blocked by network I/O.

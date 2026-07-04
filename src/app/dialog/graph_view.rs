@@ -135,6 +135,21 @@ impl DirigentApp {
                 if ui.button("Close").clicked() {
                     self.git.show_graph_view = false;
                 }
+                // Cross-branch change-set review, mirroring the Git View panel
+                // header. Git only; jj has no such range diff here.
+                if self.settings.vcs_backend == VcsBackend::Git {
+                    let analyzing = self.analyze_over_generating;
+                    let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
+                    if ui
+                        .add_enabled(!analyzing, egui::Button::new(label).small())
+                        .on_hover_text(
+                            "Analyze changes over… (group a branch's changes for review)",
+                        )
+                        .clicked()
+                    {
+                        self.open_analyze_over_picker();
+                    }
+                }
             });
         });
         ui.separator();
