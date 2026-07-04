@@ -74,6 +74,7 @@ impl DirigentApp {
             || self.git.show_switch_branch
             || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
+            || self.analyze_over_show_picker
     }
 
     /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
