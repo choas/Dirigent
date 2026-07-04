@@ -612,10 +612,12 @@ def build_config(args: argparse.Namespace) -> Config:
     )
 
 
-def run_round(cfg: Config, round_no: int, pending_comments: list[dict]) -> tuple[bool, list[dict]]:
+def run_round(cfg: Config, round_no: int, pending_comments: list[dict],
+              sha_at_start: str) -> tuple[bool, list[dict]]:
     """One round: sonar fixes + comment fixes + push + poll.
-    Returns (work_was_done, comments_for_next_round)."""
-    sha_at_start = head_sha()
+    Returns (work_was_done, comments_for_next_round). sha_at_start is captured
+    by the caller before any commit-producing step (e.g. baseline repairs) so
+    those commits count as pushable work too."""
 
     # --- SonarQube findings ---
     if not cfg.skip_sonar:
@@ -685,6 +687,9 @@ def main() -> None:
         print("        the loop needs clean state to attribute commits correctly.")
         sys.exit(1)
 
+    # Capture before the baseline guard: its repair commits must be pushed too.
+    sha_at_start = head_sha()
+
     # --- Baseline ---
     if cfg.dry_run:
         print("\n  [dry-run] Skipping baseline tests.")
@@ -706,7 +711,8 @@ def main() -> None:
         print(f"  Unprocessed bot comments: {len(pending)}")
 
         for round_no in range(1, cfg.max_rounds + 1):
-            worked, pending = run_round(cfg, round_no, pending)
+            worked, pending = run_round(cfg, round_no, pending, sha_at_start)
+            sha_at_start = head_sha()
             if pending:
                 continue  # new bot comments -> next round
             banner("Quality loop complete -- "
