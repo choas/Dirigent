@@ -220,6 +220,7 @@ impl DirigentApp {
     }
 
     fn trigger_ready_workflow_cues(&mut self, cue_ids: &[i64]) {
+        let mut reverted = false;
         for &cue_id in cue_ids {
             let is_ready = self
                 .cues
@@ -227,7 +228,19 @@ impl DirigentApp {
                 .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
             if is_ready {
                 self.trigger_claude(cue_id);
+                // Verify the run actually started — trigger_claude may bail out
+                // (e.g. home guard sync failure) leaving the cue stuck in Ready.
+                if !self.claude.running_logs.contains_key(&cue_id) {
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                    let _ = self
+                        .db
+                        .log_activity(cue_id, "Workflow: run failed to start, moved back to Inbox");
+                    reverted = true;
+                }
             }
+        }
+        if reverted {
+            self.reload_cues();
         }
     }
 
