@@ -64,7 +64,9 @@ impl DirigentApp {
         }
 
         ui.horizontal(|ui| {
-            let can_create = !self.git.pr_title.trim().is_empty() && !self.git.creating_pr;
+            let can_create = !self.git.pr_title.trim().is_empty()
+                && !self.git.creating_pr
+                && !self.git.pr_prefill_loading;
             let create_btn = egui::Button::new(
                 icon("\u{2191} Push & Create PR", fs).color(self.semantic.badge_text),
             )
