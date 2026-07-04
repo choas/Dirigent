@@ -535,6 +535,47 @@ PROMPT_FOOTER
   echo "     claude \"take a look at the @${FIX_FILE} document and fix all changes (see also @${REPORT_FILE} as reference)\""
 }
 
+# Wait until the server-side Compute Engine has processed the last scanner
+# upload — the scanner returns before the analysis is visible via the API,
+# so reporting right away could read the previous analysis.
+wait_for_ce_task() {
+  TASK_FILE=".scannerwork/report-task.txt"
+  CE_TASK_ID=""
+  if [ -f "${TASK_FILE}" ]; then
+    CE_TASK_ID=$(grep '^ceTaskId=' "${TASK_FILE}" | cut -d'=' -f2- || true)
+  fi
+  if [ -z "${CE_TASK_ID}" ]; then
+    echo "WARNING: no ceTaskId found in ${TASK_FILE}; falling back to a fixed 15s wait."
+    sleep 15
+    return
+  fi
+
+  echo "Waiting for SonarQube to process analysis (task ${CE_TASK_ID}) ..."
+  MAX_ATTEMPTS="${SONAR_WAIT_ATTEMPTS:-60}"  # ~3 minutes at 3s interval
+  attempt=0
+  while true; do
+    STATUS=$(curl -sf -u "admin:${ADMIN_PASS}" "${SONAR_URL}/api/ce/task?id=${CE_TASK_ID}" \
+      | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    case "${STATUS}" in
+      SUCCESS)
+        echo "Analysis processed."
+        return 0
+        ;;
+      FAILED|CANCELED)
+        echo "ERROR: server-side analysis processing ended with status ${STATUS}."
+        echo "Check the background tasks at ${SONAR_URL}/admin/background_tasks"
+        exit 1
+        ;;
+    esac
+    attempt=$((attempt + 1))
+    if [ "${attempt}" -ge "${MAX_ATTEMPTS}" ]; then
+      echo "ERROR: analysis was not processed after ${MAX_ATTEMPTS} attempts."
+      exit 1
+    fi
+    sleep 3
+  done
+}
+
 cmd_run() {
   KEEP_RUNNING=false
   for arg in "$@"; do
@@ -564,7 +605,8 @@ cmd_run() {
   log "Running analysis"
   "$0" analyze
 
-  sleep 15
+  log "Waiting for server-side processing"
+  wait_for_ce_task
 
   log "Generating report and LLM fix instructions"
   cmd_report
