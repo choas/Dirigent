@@ -541,6 +541,12 @@ impl DirigentApp {
         }
         if self.git.commit_queue.is_empty() {
             self.git.commit_queue_pos = 0;
+            // Nothing left to commit: close the dialog. The whole-file path
+            // already hides it in `start_commit`, but the partial-commit path
+            // relies on us here, so without this the dialog would linger open
+            // (empty) after the last group is committed.
+            self.git.show_commit_dialog = false;
+            self.git.commit_files.clear();
             self.set_status_message("All change sets committed".into());
             return;
         }
