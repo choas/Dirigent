@@ -3,13 +3,16 @@
 .dirigent/
 .Dirigent/
 .claude/
-analyze_*
+/analyze_*
 # macOS
 .DS_Store
 Dirigent.app
 .cache
 .env
 .scannerwork/
+sonar-report-*.md
+sonar-fix-*.md
+__pycache__/
 Screenshot*
 code_review_prompts.md
 desert_dino.png

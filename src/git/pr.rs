@@ -245,17 +245,20 @@ fn codeberg_default_branch(repo_path: &Path, remote: &RemoteInfo) -> Option<Stri
 /// Get the default branch name for the repository (e.g. "main" or "master").
 /// Falls back to "main" if detection fails.
 pub(crate) fn get_default_branch(repo_path: &Path) -> String {
+    codeberg_default_branch_for_repo(repo_path)
+        .or_else(|| github_default_branch(repo_path))
+        .or_else(|| origin_head_default_branch(repo_path))
+        .unwrap_or_else(|| "main".to_string())
+}
+
+fn codeberg_default_branch_for_repo(repo_path: &Path) -> Option<String> {
+    forgejo::codeberg_remote(repo_path)
+        .and_then(|remote| codeberg_default_branch(repo_path, &remote))
+}
+
+fn github_default_branch(repo_path: &Path) -> Option<String> {
     use std::process::Command;
-
-    // Codeberg (Forgejo) repos: ask the Forgejo API; `gh` cannot reach them.
-    if let Some(remote) = forgejo::codeberg_remote(repo_path) {
-        if let Some(branch) = codeberg_default_branch(repo_path, &remote) {
-            return branch;
-        }
-    }
-
-    // Try gh api first (most reliable for GitHub repos)
-    if let Ok(output) = Command::new("gh")
+    let output = Command::new("gh")
         .args([
             "repo",
             "view",
@@ -266,29 +269,21 @@ pub(crate) fn get_default_branch(repo_path: &Path) -> String {
         ])
         .current_dir(repo_path)
         .output()
-    {
-        if output.status.success() {
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !branch.is_empty() {
-                return branch;
-            }
-        }
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!branch.is_empty()).then_some(branch)
+}
 
-    // Fallback: check refs/remotes/origin/HEAD
-    let repo = match Repository::discover(repo_path) {
-        Ok(r) => r,
-        Err(_) => return "main".to_string(),
-    };
-    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
-        if let Some(target) = reference.symbolic_target() {
-            if let Some(branch) = target.strip_prefix("refs/remotes/origin/") {
-                return branch.to_string();
-            }
-        }
-    }
-
-    "main".to_string()
+fn origin_head_default_branch(repo_path: &Path) -> Option<String> {
+    let repo = Repository::discover(repo_path).ok()?;
+    let reference = repo.find_reference("refs/remotes/origin/HEAD").ok()?;
+    reference
+        .symbolic_target()?
+        .strip_prefix("refs/remotes/origin/")
+        .map(|branch| branch.to_string())
 }
 
 /// Build a PR body from the commits on the current branch that are ahead of the base branch.

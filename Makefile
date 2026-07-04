@@ -14,7 +14,8 @@ IDENTITY ?= $(CODESIGN_IDENTITY)
 APPLE_ID ?= $(NOTARIZE_APPLE_ID)
 TEAM_ID ?= $(NOTARIZE_TEAM_ID)
 
-.PHONY: all test build install bundle sign dmg notarize clean
+.PHONY: all test build install bundle sign dmg notarize clean \
+	sonar-up sonar-down sonar-setup sonar-analyze sonar-report sonar-run
 
 build:
 	cargo build --release
@@ -71,3 +72,22 @@ clean:
 	cargo clean
 	rm -rf $(APP_BUNDLE)
 	rm -f $(APP_NAME)-*.dmg
+
+# SonarQube — see scripts/sonar.sh
+sonar-up:
+	bash scripts/sonar.sh up
+
+sonar-down:
+	bash scripts/sonar.sh down
+
+sonar-setup:
+	bash scripts/sonar.sh setup
+
+sonar-analyze:
+	bash scripts/sonar.sh analyze
+
+sonar-report:
+	bash scripts/sonar.sh report
+
+sonar-run:
+	bash scripts/sonar.sh run

@@ -78,51 +78,18 @@ impl DirigentApp {
 
     /// Start executing the workflow plan from the first step.
     pub(super) fn start_workflow(&mut self) {
-        let plan = match self.workflow_plan.as_mut() {
-            Some(p) => p,
+        let has_steps = match self.workflow_plan.as_ref() {
+            Some(p) => !p.steps.is_empty(),
             None => {
                 self.set_status_message("No workflow plan to start".into());
                 return;
             }
         };
-        if plan.steps.is_empty() {
+        if !has_steps {
             self.set_status_message("Workflow plan has no steps".into());
             return;
         }
-        plan.current_step = 0;
-        plan.steps[0].status = WorkflowStepStatus::Running;
-
-        // Collect cue IDs to trigger (can't borrow self mutably while iterating plan)
-        let cue_ids: Vec<i64> = plan.steps[0].cue_ids.clone();
-
-        let auto_commit = self.settings.auto_commit;
-        for &cue_id in &cue_ids {
-            // Only move cues that are still in Inbox — skip already-completed ones.
-            let is_inbox = self
-                .cues
-                .iter()
-                .any(|c| c.id == cue_id && c.status == CueStatus::Inbox);
-            if !is_inbox {
-                continue;
-            }
-            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
-            let _ = self.db.log_activity(cue_id, "Workflow: started (step 0)");
-            self.cue_move_flash
-                .insert(cue_id, std::time::Instant::now());
-        }
-        self.claude.expand_running = true;
-        self.reload_cues();
-
-        for &cue_id in &cue_ids {
-            let is_ready = self
-                .cues
-                .iter()
-                .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
-            if is_ready {
-                self.trigger_claude(cue_id);
-            }
-        }
+        self.start_workflow_step(0);
     }
 
     /// Called when a cue completes. Checks if the current workflow step is done.
@@ -191,7 +158,7 @@ impl DirigentApp {
 
     /// Advance to the next pending step in the workflow.
     fn advance_workflow(&mut self) {
-        let plan = match self.workflow_plan.as_mut() {
+        let plan = match self.workflow_plan.as_ref() {
             Some(p) => p,
             None => return,
         };
@@ -204,45 +171,76 @@ impl DirigentApp {
 
         match next_idx {
             Some(idx) => {
-                plan.current_step = idx;
-                plan.steps[idx].status = WorkflowStepStatus::Running;
-                let cue_ids: Vec<i64> = plan.steps[idx].cue_ids.clone();
-
-                let auto_commit = self.settings.auto_commit;
-                for &cue_id in &cue_ids {
-                    // Only move cues that are still in Inbox — skip already-completed ones.
-                    let is_inbox = self
-                        .cues
-                        .iter()
-                        .any(|c| c.id == cue_id && c.status == CueStatus::Inbox);
-                    if !is_inbox {
-                        continue;
-                    }
-                    let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
-                    let _ = self
-                        .db
-                        .log_activity(cue_id, &format!("Workflow: started (step {})", idx));
-                    self.cue_move_flash
-                        .insert(cue_id, std::time::Instant::now());
-                }
-                self.claude.expand_running = true;
-                self.reload_cues();
-
-                for &cue_id in &cue_ids {
-                    let is_ready = self
-                        .cues
-                        .iter()
-                        .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
-                    if is_ready {
-                        self.trigger_claude(cue_id);
-                    }
-                }
+                self.start_workflow_step(idx);
             }
             None => {
                 // All steps done
                 self.set_status_message("Workflow completed!".into());
             }
+        }
+    }
+
+    fn start_workflow_step(&mut self, step_idx: usize) {
+        let Some(cue_ids) = self.mark_workflow_step_running(step_idx) else {
+            return;
+        };
+        self.prepare_workflow_cues(&cue_ids, step_idx);
+        self.trigger_ready_workflow_cues(&cue_ids);
+    }
+
+    fn mark_workflow_step_running(&mut self, step_idx: usize) -> Option<Vec<i64>> {
+        let plan = self.workflow_plan.as_mut()?;
+        plan.current_step = step_idx;
+        let step = plan.steps.get_mut(step_idx)?;
+        step.status = WorkflowStepStatus::Running;
+        Some(step.cue_ids.clone())
+    }
+
+    fn prepare_workflow_cues(&mut self, cue_ids: &[i64], step_idx: usize) {
+        let auto_commit = self.settings.auto_commit;
+        for &cue_id in cue_ids {
+            // Only move cues that are still in Inbox — skip already-completed ones.
+            let is_inbox = self
+                .cues
+                .iter()
+                .any(|c| c.id == cue_id && c.status == CueStatus::Inbox);
+            if !is_inbox {
+                continue;
+            }
+            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
+            let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+            let _ = self
+                .db
+                .log_activity(cue_id, &format!("Workflow: started (step {})", step_idx));
+            self.cue_move_flash
+                .insert(cue_id, std::time::Instant::now());
+        }
+        self.claude.expand_running = true;
+        self.reload_cues();
+    }
+
+    fn trigger_ready_workflow_cues(&mut self, cue_ids: &[i64]) {
+        let mut reverted = false;
+        for &cue_id in cue_ids {
+            let is_ready = self
+                .cues
+                .iter()
+                .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
+            if is_ready {
+                self.trigger_claude(cue_id);
+                // Verify the run actually started — trigger_claude may bail out
+                // (e.g. home guard sync failure) leaving the cue stuck in Ready.
+                if !self.claude.running_logs.contains_key(&cue_id) {
+                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                    let _ = self
+                        .db
+                        .log_activity(cue_id, "Workflow: run failed to start, moved back to Inbox");
+                    reverted = true;
+                }
+            }
+        }
+        if reverted {
+            self.reload_cues();
         }
     }
 
@@ -397,90 +395,9 @@ fn run_workflow_analysis(
     project_root: &std::path::Path,
     settings: &crate::settings::Settings,
 ) -> Result<(WorkflowPlan, Option<String>), String> {
-    use crate::settings::CliProvider;
-
-    let pf = settings.provider_fields(provider);
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    let response_text = match provider {
-        CliProvider::Claude => {
-            // Always use headless mode for workflow analysis: the PTY's
-            // line-deduplication drops repeated JSON structural lines (e.g.
-            // `    {`, `    },`) which corrupts the multi-line JSON response.
-            let result = crate::claude::invoke_claude_streaming(
-                prompt,
-                project_root,
-                pf.model,
-                pf.cli_path,
-                pf.extra_args,
-                &[],
-                pf.env_vars,
-                pf.pre_run_script,
-                pf.post_run_script,
-                settings.allow_dangerous_skip_permissions,
-                false,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("Claude invocation failed: {}", e))?;
-            result.stdout
-        }
-        CliProvider::OpenCode => {
-            let config = crate::opencode::OpenCodeRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                post_run_script: pf.post_run_script,
-            };
-            let result = crate::opencode::invoke_opencode_streaming(
-                prompt,
-                project_root,
-                &config,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("OpenCode invocation failed: {}", e))?;
-            result.stdout
-        }
-        CliProvider::Gemini => {
-            let config = crate::gemini::GeminiRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                post_run_script: pf.post_run_script,
-            };
-            let result = crate::gemini::invoke_gemini_streaming(
-                prompt,
-                project_root,
-                &config,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("Gemini invocation failed: {}", e))?;
-            result.stdout
-        }
-        CliProvider::Codex => {
-            let config = crate::codex::CodexRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                pre_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
-                post_run_script: pf.post_run_script,
-                post_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
-                skip_permissions: settings.allow_dangerous_skip_permissions,
-            };
-            let result =
-                crate::codex::invoke_codex_streaming(prompt, project_root, &config, |_| {}, cancel)
-                    .map_err(|e| format!("Codex invocation failed: {}", e))?;
-            result.stdout
-        }
-    };
+    let response_text =
+        super::split_cue::run_cli_prompt(prompt, provider, project_root, settings, cancel)?;
 
     let (plan, warning) = workflow::parse_workflow_response(&response_text, expected_ids);
     if let Some(ref w) = warning {

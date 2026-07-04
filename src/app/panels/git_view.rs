@@ -5,7 +5,7 @@ use eframe::egui;
 use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
-use crate::settings::SemanticColors;
+use crate::settings::{SemanticColors, VcsBackend};
 
 use super::super::vcs_dispatch;
 
@@ -81,6 +81,22 @@ impl DirigentApp {
             }
             let label = format!("Changes ({})", self.git.dirty_files.len());
             let _ = ui.selectable_label(true, egui::RichText::new(label).size(fs));
+            // Cross-branch change-set review (Git only; jj has no such range diff here).
+            if self.settings.vcs_backend == VcsBackend::Git {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let analyzing = self.analyze_over_generating;
+                    let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
+                    if ui
+                        .add_enabled(!analyzing, egui::Button::new(label).small())
+                        .on_hover_text(
+                            "Analyze changes over… (group a branch's changes for review)",
+                        )
+                        .clicked()
+                    {
+                        self.open_analyze_over_picker();
+                    }
+                });
+            }
         });
     }
 
@@ -146,20 +162,15 @@ impl DirigentApp {
                 }
                 ui.add_space(2.0);
 
-                let ctx = DirtyTreeRenderCtx {
+                let mut tree_ctx = DirtyTreeRenderContext {
+                    ui,
+                    expanded: &mut self.git.git_view_expanded_dirs,
                     selected_files: &self.git.selected_files,
                     semantic: &self.semantic,
                     font_size: self.settings.font_size,
+                    action: &mut action,
                 };
-                render_dirty_tree_children(
-                    ui,
-                    &tree,
-                    0,
-                    &mut self.git.git_view_expanded_dirs,
-                    &ctx,
-                    "",
-                    &mut action,
-                );
+                render_dirty_tree_children(&mut tree_ctx, &tree, 0, "");
             });
 
         if view_all {
@@ -216,38 +227,68 @@ impl DirigentApp {
             return;
         }
         let has_selection = !self.git.selected_files.is_empty();
+        let analyzing = self.change_set_generating;
         egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
             ui.add_space(SPACE_SM);
-            let label = if has_selection {
-                "\u{2714} Commit Selected"
-            } else {
-                "\u{2714} Commit Changes"
-            };
-            let btn =
-                egui::Button::new(egui::RichText::new(label).color(self.semantic.accent_text()))
-                    .fill(self.semantic.accent);
-            if ui
-                .add_sized([ui.available_width(), 0.0], btn)
-                .on_hover_text("Analyze the changes and commit with an AI-generated message")
-                .clicked()
-            {
-                self.open_commit_dialog_for_changes();
-            }
+            self.render_git_view_commit_button(ui, has_selection, analyzing);
             if has_selection {
-                ui.add_space(SPACE_SM);
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 0.0],
-                        egui::Button::new("Reset Selected"),
-                    )
-                    .on_hover_text("Clear the current file selection")
-                    .clicked()
-                {
-                    self.git.selected_files.clear();
-                }
+                self.render_git_view_reset_button(ui);
             }
             ui.add_space(SPACE_SM);
         });
+    }
+
+    fn render_git_view_commit_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        has_selection: bool,
+        analyzing: bool,
+    ) {
+        // With a selection, commit just those files as one commit. With no
+        // selection, group the whole working tree into logical change sets
+        // (via the CLI) and commit them one-by-one through the dialog's queue.
+        let label = if analyzing {
+            "\u{29D7} Analyzing…"
+        } else if has_selection {
+            "\u{2714} Commit Selected"
+        } else {
+            "\u{2714} Commit Changes"
+        };
+        let hover = if has_selection {
+            "Commit the selected files with an AI-generated message"
+        } else {
+            "Group the changes into logical commits, each with an AI-generated message"
+        };
+        let btn = egui::Button::new(egui::RichText::new(label).color(self.semantic.accent_text()))
+            .fill(self.semantic.accent);
+        if ui
+            .add_enabled_ui(!analyzing, |ui| {
+                ui.add_sized([ui.available_width(), 0.0], btn)
+                    .on_hover_text(hover)
+                    .clicked()
+            })
+            .inner
+        {
+            if has_selection {
+                self.open_commit_dialog_for_changes();
+            } else {
+                self.start_split_commit();
+            }
+        }
+    }
+
+    fn render_git_view_reset_button(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(SPACE_SM);
+        if ui
+            .add_sized(
+                [ui.available_width(), 0.0],
+                egui::Button::new("Reset Selected"),
+            )
+            .on_hover_text("Clear the current file selection")
+            .clicked()
+        {
+            self.git.selected_files.clear();
+        }
     }
 
     fn open_git_view_file(&mut self, rel_path: &str) {
@@ -264,32 +305,55 @@ impl DirigentApp {
     }
 
     fn open_all_changes_diff(&mut self) {
-        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+        let is_git = self.settings.vcs_backend == VcsBackend::Git;
+        let working = vcs_dispatch::get_working_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,
             &[],
-        ) {
-            let parsed = diff_view::parse_unified_diff(&diff_text);
-            self.dismiss_central_overlays();
-            self.diff_review = Some(super::super::DiffReview {
-                cue_id: 0,
-                diff: diff_text,
-                cue_text: "All uncommitted changes".to_string(),
-                commit_hash: None,
-                commit_author: None,
-                parsed,
-                view_mode: DiffViewMode::Inline,
-                read_only: true,
-                collapsed_files: HashSet::new(),
-                prompt_expanded: false,
-                reply_text: String::new(),
-                search_active: false,
-                search_query: String::new(),
-                search_matches: Vec::new(),
-                search_current: None,
-            });
-        }
+        );
+        // With Git, everything may already be staged (e.g. via the commit
+        // dialog's Stage button), leaving the working-vs-index diff empty. Open
+        // directly in the staged view so the changes stay visible and can be
+        // unstaged, instead of silently doing nothing.
+        let (diff_text, staged_view) = match working {
+            Some(d) => (d, false),
+            None if is_git => match crate::git::get_staged_diff(&self.project_root, &[]) {
+                Some(d) => (d, true),
+                None => return,
+            },
+            None => return,
+        };
+        let parsed = diff_view::parse_unified_diff(&diff_text);
+        // Hunk-level staging is a Git-only feature (jj has no index).
+        let staging = if is_git {
+            Some(super::super::StagingState {
+                files: Vec::new(),
+                staged_view,
+                partial: self.compute_partial_staged(&parsed),
+            })
+        } else {
+            None
+        };
+        self.dismiss_central_overlays();
+        self.diff_review = Some(super::super::DiffReview {
+            cue_id: 0,
+            diff: diff_text,
+            cue_text: "All uncommitted changes".to_string(),
+            commit_hash: None,
+            commit_author: None,
+            parsed,
+            view_mode: DiffViewMode::Inline,
+            read_only: true,
+            collapsed_files: HashSet::new(),
+            prompt_expanded: false,
+            reply_text: String::new(),
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+            staging,
+        });
     }
 
     pub(super) fn expand_git_view_dirs(&mut self) {
@@ -316,6 +380,8 @@ impl DirigentApp {
         files.sort_unstable();
         self.git.commit_files = files;
         self.git.commit_review_cue_id = None;
+        self.git.commit_queue.clear();
+        self.git.commit_queue_pos = 0;
         self.git.commit_in_background = false;
         self.git.commit_message_input.clear();
         self.git.commit_needs_focus = true;
@@ -344,142 +410,191 @@ fn reveal_label() -> &'static str {
     }
 }
 
-/// Read-only context shared across the recursive dirty-tree rendering.
-struct DirtyTreeRenderCtx<'a> {
+struct DirtyTreeRenderContext<'a> {
+    ui: &'a mut egui::Ui,
+    expanded: &'a mut HashSet<String>,
     selected_files: &'a HashSet<String>,
     semantic: &'a SemanticColors,
     font_size: f32,
+    action: &'a mut Option<GitViewAction>,
 }
 
 fn render_dirty_tree_children(
-    ui: &mut egui::Ui,
+    ctx: &mut DirtyTreeRenderContext<'_>,
     node: &DirtyTreeNode,
     depth: usize,
-    expanded: &mut HashSet<String>,
-    ctx: &DirtyTreeRenderCtx<'_>,
     parent_path: &str,
-    action: &mut Option<GitViewAction>,
 ) {
-    let selected_files = ctx.selected_files;
-    let semantic = ctx.semantic;
-    let font_size = ctx.font_size;
-    let indent = depth as f32 * 16.0;
-
     for (name, child) in &node.children {
         let node_path = if parent_path.is_empty() {
             name.clone()
         } else {
             format!("{}/{}", parent_path, name)
         };
-
         if child.is_dir() {
-            let is_expanded = expanded.contains(&node_path);
-            let (row_rect, response) = allocate_tree_row(ui);
-            paint_hover_highlight(ui, &response, row_rect);
-
-            let triangle = if is_expanded { "\u{25BC}" } else { "\u{25B6}" };
-            let text_pos = row_rect.left_center() + egui::vec2(indent, 0.0);
-            ui.painter().text(
-                egui::pos2(text_pos.x + 6.0, text_pos.y),
-                egui::Align2::LEFT_CENTER,
-                triangle,
-                egui::FontId::proportional(10.0),
-                ui.visuals().weak_text_color(),
-            );
-
-            ui.painter().text(
-                egui::pos2(text_pos.x + 20.0, text_pos.y),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(font_size),
-                semantic.warning,
-            );
-
-            if response.clicked() {
-                if is_expanded {
-                    expanded.remove(&node_path);
-                } else {
-                    expanded.insert(node_path.clone());
-                }
-            }
-
-            response.context_menu(|ui| {
-                if ui.button(reveal_label()).clicked() {
-                    *action = Some(GitViewAction::Reveal(node_path.clone()));
-                    ui.close();
-                }
-            });
-
-            if is_expanded {
-                render_dirty_tree_children(ui, child, depth + 1, expanded, ctx, &node_path, action);
-            }
+            render_dirty_tree_dir(ctx, name, child, depth, &node_path);
         } else if let Some((rel_path, status)) = &child.file_status {
-            let (row_rect, response) = allocate_tree_row(ui);
-            paint_hover_highlight(ui, &response, row_rect);
-
-            let is_selected = selected_files.contains(rel_path.as_str());
-            let status_color = match status {
-                'D' => semantic.danger,
-                'A' | '?' => semantic.success,
-                _ => semantic.warning,
-            };
-            let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
-            let name_offset = if is_selected {
-                ui.painter().text(
-                    text_pos,
-                    egui::Align2::LEFT_CENTER,
-                    "\u{2714} ",
-                    egui::FontId::proportional(font_size),
-                    semantic.accent,
-                );
-                14.0
-            } else {
-                0.0
-            };
-            ui.painter().text(
-                text_pos + egui::vec2(name_offset, 0.0),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(font_size),
-                status_color,
-            );
-
-            paint_git_status_badge(ui, row_rect, Some(*status), semantic);
-
-            if response.clicked() {
-                *action = Some(GitViewAction::ClickFile(rel_path.clone()));
-            }
-
-            response.context_menu(|ui| {
-                let is_selected = selected_files.contains(rel_path.as_str());
-                let select_label = if is_selected { "Deselect" } else { "Select" };
-                if ui.button(select_label).clicked() {
-                    *action = Some(GitViewAction::ToggleSelect(rel_path.clone()));
-                    ui.close();
-                }
-                if ui.button("Restore").clicked() {
-                    *action = Some(GitViewAction::Restore(rel_path.clone()));
-                    ui.close();
-                }
-                if ui.button(reveal_label()).clicked() {
-                    *action = Some(GitViewAction::Reveal(rel_path.clone()));
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .button(egui::RichText::new("Delete File").color(semantic.danger))
-                    .clicked()
-                {
-                    *action = Some(GitViewAction::Delete(rel_path.clone()));
-                    ui.close();
-                }
-                if ui.button("Add to .gitignore").clicked() {
-                    *action = Some(GitViewAction::AddToGitignore(rel_path.clone()));
-                    ui.close();
-                }
-            });
-
-            response.on_hover_text(format!("{} [{}]", rel_path, status));
+            render_dirty_tree_file(ctx, name, rel_path, *status, depth);
         }
+    }
+}
+
+fn render_dirty_tree_dir(
+    ctx: &mut DirtyTreeRenderContext<'_>,
+    name: &str,
+    child: &DirtyTreeNode,
+    depth: usize,
+    node_path: &str,
+) {
+    let is_expanded = ctx.expanded.contains(node_path);
+    let (row_rect, response) = allocate_tree_row(ctx.ui);
+    paint_hover_highlight(ctx.ui, &response, row_rect);
+    paint_dirty_tree_dir_label(ctx, row_rect, name, depth, is_expanded);
+    if response.clicked() {
+        toggle_expanded(ctx.expanded, node_path, is_expanded);
+    }
+    response.context_menu(|ui| {
+        if ui.button(reveal_label()).clicked() {
+            *ctx.action = Some(GitViewAction::Reveal(node_path.to_string()));
+            ui.close();
+        }
+    });
+    if is_expanded {
+        render_dirty_tree_children(ctx, child, depth + 1, node_path);
+    }
+}
+
+fn paint_dirty_tree_dir_label(
+    ctx: &DirtyTreeRenderContext<'_>,
+    row_rect: egui::Rect,
+    name: &str,
+    depth: usize,
+    is_expanded: bool,
+) {
+    let indent = depth as f32 * 16.0;
+    let triangle = if is_expanded { "\u{25BC}" } else { "\u{25B6}" };
+    let text_pos = row_rect.left_center() + egui::vec2(indent, 0.0);
+    ctx.ui.painter().text(
+        egui::pos2(text_pos.x + 6.0, text_pos.y),
+        egui::Align2::LEFT_CENTER,
+        triangle,
+        egui::FontId::proportional(10.0),
+        ctx.ui.visuals().weak_text_color(),
+    );
+    ctx.ui.painter().text(
+        egui::pos2(text_pos.x + 20.0, text_pos.y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(ctx.font_size),
+        ctx.semantic.warning,
+    );
+}
+
+fn toggle_expanded(expanded: &mut HashSet<String>, path: &str, is_expanded: bool) {
+    if is_expanded {
+        expanded.remove(path);
+    } else {
+        expanded.insert(path.to_string());
+    }
+}
+
+fn render_dirty_tree_file(
+    ctx: &mut DirtyTreeRenderContext<'_>,
+    name: &str,
+    rel_path: &str,
+    status: char,
+    depth: usize,
+) {
+    let (row_rect, response) = allocate_tree_row(ctx.ui);
+    paint_hover_highlight(ctx.ui, &response, row_rect);
+    paint_dirty_tree_file_label(ctx, row_rect, name, rel_path, status, depth);
+    paint_git_status_badge(ctx.ui, row_rect, Some(status), ctx.semantic);
+    if response.clicked() {
+        *ctx.action = Some(GitViewAction::ClickFile(rel_path.to_string()));
+    }
+    response.context_menu(|ui| {
+        render_dirty_tree_file_menu(ui, ctx, rel_path);
+    });
+    response.on_hover_text(format!("{} [{}]", rel_path, status));
+}
+
+fn paint_dirty_tree_file_label(
+    ctx: &DirtyTreeRenderContext<'_>,
+    row_rect: egui::Rect,
+    name: &str,
+    rel_path: &str,
+    status: char,
+    depth: usize,
+) {
+    let indent = depth as f32 * 16.0;
+    let is_selected = ctx.selected_files.contains(rel_path);
+    let status_color = status_color(status, ctx.semantic);
+    let text_pos = row_rect.left_center() + egui::vec2(indent + 20.0, 0.0);
+    let name_offset = paint_selected_checkmark(ctx, text_pos, is_selected);
+    ctx.ui.painter().text(
+        text_pos + egui::vec2(name_offset, 0.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(ctx.font_size),
+        status_color,
+    );
+}
+
+fn paint_selected_checkmark(
+    ctx: &DirtyTreeRenderContext<'_>,
+    text_pos: egui::Pos2,
+    is_selected: bool,
+) -> f32 {
+    if !is_selected {
+        return 0.0;
+    }
+    ctx.ui.painter().text(
+        text_pos,
+        egui::Align2::LEFT_CENTER,
+        "\u{2714} ",
+        egui::FontId::proportional(ctx.font_size),
+        ctx.semantic.accent,
+    );
+    14.0
+}
+
+fn status_color(status: char, semantic: &SemanticColors) -> egui::Color32 {
+    match status {
+        'D' => semantic.danger,
+        'A' | '?' => semantic.success,
+        _ => semantic.warning,
+    }
+}
+
+fn render_dirty_tree_file_menu(
+    ui: &mut egui::Ui,
+    ctx: &mut DirtyTreeRenderContext<'_>,
+    rel_path: &str,
+) {
+    let is_selected = ctx.selected_files.contains(rel_path);
+    let select_label = if is_selected { "Deselect" } else { "Select" };
+    if ui.button(select_label).clicked() {
+        *ctx.action = Some(GitViewAction::ToggleSelect(rel_path.to_string()));
+        ui.close();
+    }
+    if ui.button("Restore").clicked() {
+        *ctx.action = Some(GitViewAction::Restore(rel_path.to_string()));
+        ui.close();
+    }
+    if ui.button(reveal_label()).clicked() {
+        *ctx.action = Some(GitViewAction::Reveal(rel_path.to_string()));
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .button(egui::RichText::new("Delete File").color(ctx.semantic.danger))
+        .clicked()
+    {
+        *ctx.action = Some(GitViewAction::Delete(rel_path.to_string()));
+        ui.close();
+    }
+    if ui.button("Add to .gitignore").clicked() {
+        *ctx.action = Some(GitViewAction::AddToGitignore(rel_path.to_string()));
+        ui.close();
     }
 }

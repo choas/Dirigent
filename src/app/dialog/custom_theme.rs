@@ -3,8 +3,18 @@ use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{CliProvider, CustomTheme};
+
+#[derive(Default)]
+struct CustomThemeDialogActions {
+    save: bool,
+    close: bool,
+    delete: bool,
+    generate: bool,
+    export: bool,
+    import: bool,
+}
 
 enum ExportThemeError {
     Cancelled,
@@ -63,42 +73,8 @@ impl DirigentApp {
             return;
         }
 
-        // Poll AI result channel
-        let mut ai_result: Option<Result<CustomTheme, String>> = None;
-        if let Some(edit) = &mut self.custom_theme_edit {
-            if let Some(rx) = &edit.ai_rx {
-                if let Ok(result) = rx.try_recv() {
-                    ai_result = Some(result);
-                }
-            }
-        }
-        if let Some(result) = ai_result {
-            let Some(edit) = self.custom_theme_edit.as_mut() else {
-                return;
-            };
-            edit.ai_generating = false;
-            edit.ai_rx = None;
-            match result {
-                Ok(generated) => {
-                    let name = edit.theme.name.clone();
-                    let is_dark = edit.theme.is_dark;
-                    edit.theme = generated;
-                    edit.theme.name = name;
-                    edit.theme.is_dark = is_dark;
-                    edit.ai_error = None;
-                }
-                Err(e) => {
-                    edit.ai_error = Some(e);
-                }
-            }
-        }
-
-        let mut save = false;
-        let mut close = false;
-        let mut delete = false;
-        let mut generate = false;
-        let mut do_export = false;
-        let mut do_import = false;
+        self.poll_custom_theme_ai_result();
+        let mut actions = CustomThemeDialogActions::default();
 
         egui::Window::new("Custom Theme")
             .collapsible(false)
@@ -111,211 +87,76 @@ impl DirigentApp {
                 let Some(edit) = self.custom_theme_edit.as_mut() else {
                     return;
                 };
-
-                // Name & type
-                egui::Grid::new("custom_theme_name_grid")
-                    .num_columns(2)
-                    .spacing([SPACE_MD, SPACE_SM])
-                    .show(ui, |ui| {
-                        ui.label("Name:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut edit.theme.name)
-                                .desired_width(280.0)
-                                .hint_text("My Custom Theme"),
-                        );
-                        ui.end_row();
-
-                        ui.label("Type:");
-                        egui::ComboBox::from_id_salt("custom_theme_type")
-                            .selected_text(if edit.theme.is_dark { "Dark" } else { "Light" })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut edit.theme.is_dark, true, "Dark");
-                                ui.selectable_value(&mut edit.theme.is_dark, false, "Light");
-                            });
-                        ui.end_row();
-                    });
-
-                ui.add_space(SPACE_SM);
-                ui.separator();
-                ui.add_space(SPACE_XS);
-                ui.strong("Colors");
-                ui.add_space(SPACE_XS);
-
-                egui::Grid::new("custom_theme_colors_grid")
-                    .num_columns(4)
-                    .spacing([SPACE_SM, SPACE_XS])
-                    .show(ui, |ui| {
-                        color_row(
-                            ui,
-                            "Panel Fill",
-                            &mut edit.theme.panel_fill,
-                            "Window Fill",
-                            &mut edit.theme.window_fill,
-                        );
-                        color_row(
-                            ui,
-                            "Extreme BG",
-                            &mut edit.theme.extreme_bg,
-                            "Faint BG",
-                            &mut edit.theme.faint_bg,
-                        );
-                        color_row(
-                            ui,
-                            "Text",
-                            &mut edit.theme.text,
-                            "Selection",
-                            &mut edit.theme.selection,
-                        );
-                        color_row(
-                            ui,
-                            "Non-interactive",
-                            &mut edit.theme.noninteractive,
-                            "Inactive",
-                            &mut edit.theme.inactive,
-                        );
-                        color_row(
-                            ui,
-                            "Hovered",
-                            &mut edit.theme.hovered,
-                            "Active",
-                            &mut edit.theme.active,
-                        );
-                        color_row(
-                            ui,
-                            "Hyperlink",
-                            &mut edit.theme.hyperlink,
-                            "Accent",
-                            &mut edit.theme.accent,
-                        );
-                        color_row(
-                            ui,
-                            "Warning/Badge",
-                            &mut edit.theme.warning,
-                            "Badge Text",
-                            &mut edit.theme.badge_text,
-                        );
-                    });
-
-                ui.add_space(SPACE_SM);
-                ui.separator();
-                ui.add_space(SPACE_XS);
-                ui.strong("Generate with AI");
-                ui.add_space(SPACE_XS);
-
-                ui.horizontal(|ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut edit.ai_prompt)
-                            .desired_width(320.0)
-                            .hint_text("e.g. ocean sunset, warm earth tones, cyberpunk neon..."),
-                    );
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let can_generate = !edit.ai_generating && !edit.ai_prompt.trim().is_empty();
-                    if edit.ai_generating {
-                        ui.spinner();
-                    } else if ui
-                        .add_enabled(can_generate, egui::Button::new("Generate"))
-                        .clicked()
-                        || enter && can_generate
-                    {
-                        generate = true;
-                    }
-                });
-
-                if let Some(err) = &edit.ai_error {
-                    ui.colored_label(egui::Color32::from_rgb(210, 95, 95), err);
-                }
-
-                ui.add_space(SPACE_SM);
-                ui.separator();
-                ui.add_space(SPACE_XS);
-                ui.horizontal(|ui| {
-                    ui.strong("Import / Export");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Export").clicked() {
-                            do_export = true;
-                        }
-                        if ui.button("Import").clicked() {
-                            do_import = true;
-                        }
-                    });
-                });
-
-                ui.add_space(SPACE_MD);
-
-                // Action buttons
-                let is_editing = edit.editing_index.is_some();
-                let name_valid = !edit.theme.name.trim().is_empty();
-                ui.horizontal(|ui| {
-                    if is_editing
-                        && ui
-                            .button(
-                                egui::RichText::new("Delete")
-                                    .color(egui::Color32::from_rgb(210, 95, 95)),
-                            )
-                            .clicked()
-                    {
-                        delete = true;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(name_valid, egui::Button::new("Save"))
-                            .clicked()
-                        {
-                            save = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
-                    });
-                });
+                render_custom_theme_contents(ui, edit, &mut actions);
             });
 
-        // Handle actions outside the closure to avoid borrow conflicts
-        if do_export {
-            if let Some(edit) = &self.custom_theme_edit {
-                match export_theme(&edit.theme) {
-                    Ok(msg) => self.set_status_message(msg),
-                    Err(ExportThemeError::Cancelled) => {}
-                    Err(e) => self.set_status_message(e.to_string()),
-                }
-            }
+        self.apply_custom_theme_dialog_actions(actions);
+    }
+
+    fn poll_custom_theme_ai_result(&mut self) {
+        let ai_result = self
+            .custom_theme_edit
+            .as_mut()
+            .and_then(|edit| edit.ai_rx.as_ref())
+            .and_then(|rx| rx.try_recv().ok());
+        if let (Some(edit), Some(result)) = (self.custom_theme_edit.as_mut(), ai_result) {
+            apply_custom_theme_ai_result(edit, result);
         }
-        if do_import {
-            match import_theme() {
-                Ok(imported) => {
-                    if let Some(edit) = self.custom_theme_edit.as_mut() {
-                        edit.theme = imported;
-                    }
-                }
-                Err(e) => {
-                    if e != "No file selected" {
-                        self.set_status_message(format!("Import failed: {e}"));
-                    }
-                }
-            }
-        }
-        if generate {
+    }
+
+    fn apply_custom_theme_dialog_actions(&mut self, actions: CustomThemeDialogActions) {
+        self.apply_custom_theme_file_actions(&actions);
+        if actions.generate {
             self.spawn_ai_theme_generation();
         }
-        if save {
-            if let Some(edit) = &self.custom_theme_edit {
-                edit.ai_cancel
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.apply_custom_theme_finish_actions(actions);
+    }
+
+    fn apply_custom_theme_file_actions(&mut self, actions: &CustomThemeDialogActions) {
+        if actions.export {
+            self.export_current_custom_theme();
+        }
+        if actions.import {
+            self.import_custom_theme_file();
+        }
+    }
+
+    fn export_current_custom_theme(&mut self) {
+        let Some(edit) = &self.custom_theme_edit else {
+            return;
+        };
+        match export_theme(&edit.theme) {
+            Ok(msg) => self.set_status_message(msg),
+            Err(ExportThemeError::Cancelled) => {}
+            Err(e) => self.set_status_message(e.to_string()),
+        }
+    }
+
+    fn import_custom_theme_file(&mut self) {
+        match import_theme() {
+            Ok(imported) => {
+                if let Some(edit) = self.custom_theme_edit.as_mut() {
+                    edit.theme = imported;
+                }
             }
+            Err(e) if e != "No file selected" => {
+                self.set_status_message(format!("Import failed: {e}"));
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn apply_custom_theme_finish_actions(&mut self, actions: CustomThemeDialogActions) {
+        if actions.save {
+            cancel_theme_generation(self.custom_theme_edit.as_ref());
             self.save_custom_theme();
         }
-        if delete {
-            if let Some(edit) = &self.custom_theme_edit {
-                edit.ai_cancel
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+        if actions.delete {
+            cancel_theme_generation(self.custom_theme_edit.as_ref());
             self.delete_custom_theme();
         }
-        if close {
-            if let Some(edit) = &self.custom_theme_edit {
-                edit.ai_cancel
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+        if actions.close {
+            cancel_theme_generation(self.custom_theme_edit.as_ref());
             self.custom_theme_edit = None;
         }
     }
@@ -328,34 +169,8 @@ impl DirigentApp {
         };
         let mut theme = edit.theme;
         theme.name = theme.name.trim().to_string();
-        let trimmed = &theme.name;
 
-        let dup_idx = self
-            .settings
-            .custom_themes
-            .iter()
-            .position(|t| t.name.trim().eq_ignore_ascii_case(trimmed));
-
-        if let Some(idx) = edit.editing_index {
-            if let Some(dup) = dup_idx {
-                if dup == idx {
-                    self.settings.custom_themes[idx] = theme.clone();
-                } else {
-                    // Renamed to match a different entry: replace that entry,
-                    // remove the old slot.
-                    self.settings.custom_themes[dup] = theme.clone();
-                    if idx < self.settings.custom_themes.len() {
-                        self.settings.custom_themes.remove(idx);
-                    }
-                }
-            } else if idx < self.settings.custom_themes.len() {
-                self.settings.custom_themes[idx] = theme.clone();
-            }
-        } else if let Some(dup) = dup_idx {
-            self.settings.custom_themes[dup] = theme.clone();
-        } else {
-            self.settings.custom_themes.push(theme.clone());
-        }
+        upsert_custom_theme(&mut self.settings.custom_themes, edit.editing_index, &theme);
 
         self.settings.theme = crate::settings::ThemeChoice::Custom(theme);
         if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
@@ -435,6 +250,237 @@ impl DirigentApp {
                 c.request_repaint();
             }
         });
+    }
+}
+
+fn apply_custom_theme_ai_result(edit: &mut CustomThemeEdit, result: Result<CustomTheme, String>) {
+    edit.ai_generating = false;
+    edit.ai_rx = None;
+    match result {
+        Ok(generated) => {
+            let name = edit.theme.name.clone();
+            let is_dark = edit.theme.is_dark;
+            edit.theme = generated;
+            edit.theme.name = name;
+            edit.theme.is_dark = is_dark;
+            edit.ai_error = None;
+        }
+        Err(e) => {
+            edit.ai_error = Some(e);
+        }
+    }
+}
+
+fn render_custom_theme_contents(
+    ui: &mut egui::Ui,
+    edit: &mut CustomThemeEdit,
+    actions: &mut CustomThemeDialogActions,
+) {
+    render_custom_theme_name_grid(ui, edit);
+    section_heading(ui, "Colors");
+    render_custom_theme_colors(ui, &mut edit.theme);
+    section_heading(ui, "Generate with AI");
+    render_custom_theme_ai(ui, edit, actions);
+    section_heading(ui, "Import / Export");
+    render_custom_theme_import_export(ui, actions);
+    ui.add_space(SPACE_MD);
+    render_custom_theme_buttons(ui, edit, actions);
+}
+
+fn section_heading(ui: &mut egui::Ui, heading: &str) {
+    ui.add_space(SPACE_SM);
+    ui.separator();
+    ui.add_space(SPACE_XS);
+    ui.strong(heading);
+    ui.add_space(SPACE_XS);
+}
+
+fn render_custom_theme_name_grid(ui: &mut egui::Ui, edit: &mut CustomThemeEdit) {
+    egui::Grid::new("custom_theme_name_grid")
+        .num_columns(2)
+        .spacing([SPACE_MD, SPACE_SM])
+        .show(ui, |ui| {
+            ui.label("Name:");
+            ui.add(
+                egui::TextEdit::singleline(&mut edit.theme.name)
+                    .desired_width(280.0)
+                    .hint_text("My Custom Theme"),
+            );
+            ui.end_row();
+
+            ui.label("Type:");
+            egui::ComboBox::from_id_salt("custom_theme_type")
+                .selected_text(if edit.theme.is_dark { "Dark" } else { "Light" })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut edit.theme.is_dark, true, "Dark");
+                    ui.selectable_value(&mut edit.theme.is_dark, false, "Light");
+                });
+            ui.end_row();
+        });
+}
+
+fn render_custom_theme_colors(ui: &mut egui::Ui, theme: &mut CustomTheme) {
+    egui::Grid::new("custom_theme_colors_grid")
+        .num_columns(4)
+        .spacing([SPACE_SM, SPACE_XS])
+        .show(ui, |ui| {
+            color_row(
+                ui,
+                "Panel Fill",
+                &mut theme.panel_fill,
+                "Window Fill",
+                &mut theme.window_fill,
+            );
+            color_row(
+                ui,
+                "Extreme BG",
+                &mut theme.extreme_bg,
+                "Faint BG",
+                &mut theme.faint_bg,
+            );
+            color_row(
+                ui,
+                "Text",
+                &mut theme.text,
+                "Selection",
+                &mut theme.selection,
+            );
+            color_row(
+                ui,
+                "Non-interactive",
+                &mut theme.noninteractive,
+                "Inactive",
+                &mut theme.inactive,
+            );
+            color_row(
+                ui,
+                "Hovered",
+                &mut theme.hovered,
+                "Active",
+                &mut theme.active,
+            );
+            color_row(
+                ui,
+                "Hyperlink",
+                &mut theme.hyperlink,
+                "Accent",
+                &mut theme.accent,
+            );
+            color_row(
+                ui,
+                "Warning/Badge",
+                &mut theme.warning,
+                "Badge Text",
+                &mut theme.badge_text,
+            );
+        });
+}
+
+fn render_custom_theme_ai(
+    ui: &mut egui::Ui,
+    edit: &mut CustomThemeEdit,
+    actions: &mut CustomThemeDialogActions,
+) {
+    ui.horizontal(|ui| {
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut edit.ai_prompt)
+                .desired_width(320.0)
+                .hint_text("e.g. ocean sunset, warm earth tones, cyberpunk neon..."),
+        );
+        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let can_generate = !edit.ai_generating && !edit.ai_prompt.trim().is_empty();
+        if edit.ai_generating {
+            ui.spinner();
+        } else if ui
+            .add_enabled(can_generate, egui::Button::new("Generate"))
+            .clicked()
+            || enter && can_generate
+        {
+            actions.generate = true;
+        }
+    });
+
+    if let Some(err) = &edit.ai_error {
+        ui.colored_label(egui::Color32::from_rgb(210, 95, 95), err);
+    }
+}
+
+fn render_custom_theme_import_export(ui: &mut egui::Ui, actions: &mut CustomThemeDialogActions) {
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Export").clicked() {
+                actions.export = true;
+            }
+            if ui.button("Import").clicked() {
+                actions.import = true;
+            }
+        });
+    });
+}
+
+fn render_custom_theme_buttons(
+    ui: &mut egui::Ui,
+    edit: &CustomThemeEdit,
+    actions: &mut CustomThemeDialogActions,
+) {
+    let name_valid = !edit.theme.name.trim().is_empty();
+    ui.horizontal(|ui| {
+        if edit.editing_index.is_some()
+            && ui
+                .button(egui::RichText::new("Delete").color(egui::Color32::from_rgb(210, 95, 95)))
+                .clicked()
+        {
+            actions.delete = true;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add_enabled(name_valid, egui::Button::new("Save"))
+                .clicked()
+            {
+                actions.save = true;
+            }
+            if ui.button("Cancel").clicked() {
+                actions.close = true;
+            }
+        });
+    });
+}
+
+fn cancel_theme_generation(edit: Option<&CustomThemeEdit>) {
+    if let Some(edit) = edit {
+        edit.ai_cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn upsert_custom_theme(
+    themes: &mut Vec<CustomTheme>,
+    editing_index: Option<usize>,
+    theme: &CustomTheme,
+) {
+    let dup_idx = themes
+        .iter()
+        .position(|t| t.name.trim().eq_ignore_ascii_case(theme.name.trim()));
+
+    match (editing_index, dup_idx) {
+        (Some(idx), Some(dup)) if dup == idx && idx < themes.len() => {
+            themes[idx] = theme.clone();
+        }
+        (Some(idx), Some(dup)) => {
+            themes[dup] = theme.clone();
+            if idx < themes.len() {
+                themes.remove(idx);
+            }
+        }
+        (Some(idx), None) if idx < themes.len() => {
+            themes[idx] = theme.clone();
+        }
+        (None, Some(dup)) => {
+            themes[dup] = theme.clone();
+        }
+        _ => {
+            themes.push(theme.clone());
+        }
     }
 }
 

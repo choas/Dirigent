@@ -261,118 +261,14 @@ impl DirigentApp {
                 );
 
                 let style = self.settings.heartbeat_style.clone();
-                match style {
-                    HeartbeatStyle::Heartbeat => {
-                        let n = (rect.width() as usize).clamp(32, 600);
-                        let mut points = Vec::with_capacity(n);
-                        for i in 0..n {
-                            let frac = i as f32 / (n as f32 - 1.0);
-                            let x = rect.left() + frac * rect.width();
-                            let t_from_now = (1.0 - frac) * window_secs;
-                            let mut deflection = 0.0_f32;
-                            for &age in &beats {
-                                deflection += ecg_waveform(t_from_now - age);
-                            }
-                            deflection = deflection.clamp(-0.3, 1.0);
-                            let y = baseline_y - deflection * peak_height;
-                            points.push(egui::pos2(x, y));
-                        }
-                        ui.painter().add(egui::Shape::line(
-                            points,
-                            egui::Stroke::new(1.5, stroke_color),
-                        ));
-                    }
-                    HeartbeatStyle::Wave => {
-                        let n = (rect.width() as usize).clamp(32, 600);
-                        let mut points = Vec::with_capacity(n);
-                        for i in 0..n {
-                            let frac = i as f32 / (n as f32 - 1.0);
-                            let x = rect.left() + frac * rect.width();
-                            let t_from_now = (1.0 - frac) * window_secs;
-                            let mut intensity = 0.0_f32;
-                            for &age in &beats {
-                                let dt = t_from_now - age;
-                                let norm = dt / HEARTBEAT_PULSE_SECS;
-                                let pulse = (-(norm * norm)).exp();
-                                if pulse > intensity {
-                                    intensity = pulse;
-                                }
-                            }
-                            let y = baseline_y - intensity * peak_height;
-                            points.push(egui::pos2(x, y));
-                        }
-                        ui.painter().add(egui::Shape::line(
-                            points,
-                            egui::Stroke::new(1.5, stroke_color),
-                        ));
-                    }
-                    HeartbeatStyle::GabbaPeak => {
-                        // One outlined rectangle per beat: hard edges, flat top.
-                        let rect_half_width = 3.0;
-                        let rect_top = baseline_y - peak_height;
-                        for &age in &beats {
-                            let frac = 1.0 - (age / window_secs);
-                            if !(0.0..=1.0).contains(&frac) {
-                                continue;
-                            }
-                            let x = rect.left() + frac * rect.width();
-                            let bar = egui::Rect::from_min_max(
-                                egui::pos2(x - rect_half_width, rect_top),
-                                egui::pos2(x + rect_half_width, baseline_y),
-                            );
-                            ui.painter().rect_stroke(
-                                bar,
-                                0.0,
-                                egui::Stroke::new(1.5, stroke_color),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                    }
-                    HeartbeatStyle::MorseCode => {
-                        // Dot at each beat, line connecting to the next beat.
-                        let dot_radius = 2.5;
-                        let line_y = baseline_y - peak_height * 0.5;
-                        let mut sorted: Vec<f32> = beats.clone();
-                        // Oldest first → drawn left-to-right.
-                        sorted
-                            .sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-                        for (i, &age) in sorted.iter().enumerate() {
-                            let frac = 1.0 - (age / window_secs);
-                            if !(0.0..=1.0).contains(&frac) {
-                                continue;
-                            }
-                            let x = rect.left() + frac * rect.width();
-                            ui.painter().circle_filled(
-                                egui::pos2(x, line_y),
-                                dot_radius,
-                                stroke_color,
-                            );
-                            let next_x = if i + 1 < sorted.len() {
-                                let next_age = sorted[i + 1];
-                                let nfrac = 1.0 - (next_age / window_secs);
-                                if (0.0..=1.0).contains(&nfrac) {
-                                    rect.left() + nfrac * rect.width()
-                                } else {
-                                    rect.right()
-                                }
-                            } else {
-                                rect.right()
-                            };
-                            let line_start_x = x + dot_radius + 1.5;
-                            let line_end_x = (next_x - dot_radius - 1.5).max(line_start_x);
-                            if line_end_x > line_start_x {
-                                ui.painter().line_segment(
-                                    [
-                                        egui::pos2(line_start_x, line_y),
-                                        egui::pos2(line_end_x, line_y),
-                                    ],
-                                    egui::Stroke::new(1.5, stroke_color),
-                                );
-                            }
-                        }
-                    }
-                    HeartbeatStyle::Off => {}
-                }
+                let paint = HeartbeatPaint {
+                    rect,
+                    baseline_y,
+                    peak_height,
+                    window_secs,
+                    stroke_color,
+                };
+                paint_heartbeat_style(ui, &beats, &paint, style);
 
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_millis(HEARTBEAT_REPAINT_MS));
@@ -868,6 +764,146 @@ fn ecg_waveform(dt: f32) -> f32 {
     // T wave – broad recovery bump
     let tw = 0.18 * (-(((t - 0.11) / 0.045).powi(2))).exp();
     p + q + r + s + tw
+}
+
+#[derive(Clone, Copy)]
+struct HeartbeatPaint {
+    rect: egui::Rect,
+    baseline_y: f32,
+    peak_height: f32,
+    window_secs: f32,
+    stroke_color: egui::Color32,
+}
+
+fn paint_heartbeat_style(
+    ui: &mut egui::Ui,
+    beats: &[f32],
+    paint: &HeartbeatPaint,
+    style: HeartbeatStyle,
+) {
+    match style {
+        HeartbeatStyle::Heartbeat => paint_heartbeat_line(ui, paint, beats),
+        HeartbeatStyle::Wave => paint_wave_line(ui, paint, beats),
+        HeartbeatStyle::GabbaPeak => paint_gabba_peaks(ui, paint, beats),
+        HeartbeatStyle::MorseCode => paint_morse_code(ui, paint, beats),
+        HeartbeatStyle::Off => {}
+    }
+}
+
+fn paint_heartbeat_line(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
+    let n = (paint.rect.width() as usize).clamp(32, 600);
+    let points = heartbeat_points(paint, n, |t_from_now| {
+        beats
+            .iter()
+            .map(|age| ecg_waveform(t_from_now - *age))
+            .sum::<f32>()
+            .clamp(-0.3, 1.0)
+    });
+    ui.painter().add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.5, paint.stroke_color),
+    ));
+}
+
+fn paint_wave_line(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
+    let n = (paint.rect.width() as usize).clamp(32, 600);
+    let points = heartbeat_points(paint, n, |t_from_now| {
+        beats
+            .iter()
+            .map(|age| {
+                let norm = (t_from_now - *age) / HEARTBEAT_PULSE_SECS;
+                (-(norm * norm)).exp()
+            })
+            .fold(0.0_f32, f32::max)
+    });
+    ui.painter().add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.5, paint.stroke_color),
+    ));
+}
+
+fn heartbeat_points(
+    paint: &HeartbeatPaint,
+    n: usize,
+    mut deflection_at: impl FnMut(f32) -> f32,
+) -> Vec<egui::Pos2> {
+    let mut points = Vec::with_capacity(n);
+    for i in 0..n {
+        let frac = i as f32 / (n as f32 - 1.0);
+        let x = paint.rect.left() + frac * paint.rect.width();
+        let t_from_now = (1.0 - frac) * paint.window_secs;
+        let y = paint.baseline_y - deflection_at(t_from_now) * paint.peak_height;
+        points.push(egui::pos2(x, y));
+    }
+    points
+}
+
+fn paint_gabba_peaks(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
+    let rect_half_width = 3.0;
+    let rect_top = paint.baseline_y - paint.peak_height;
+    for &age in beats {
+        let Some(x) = beat_x(paint.rect, paint.window_secs, age) else {
+            continue;
+        };
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(x - rect_half_width, rect_top),
+            egui::pos2(x + rect_half_width, paint.baseline_y),
+        );
+        ui.painter().rect_stroke(
+            bar,
+            0.0,
+            egui::Stroke::new(1.5, paint.stroke_color),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+fn paint_morse_code(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
+    let dot_radius = 2.5;
+    let line_y = paint.baseline_y - paint.peak_height * 0.5;
+    let mut sorted = beats.to_vec();
+    sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    for (i, &age) in sorted.iter().enumerate() {
+        let Some(x) = beat_x(paint.rect, paint.window_secs, age) else {
+            continue;
+        };
+        ui.painter()
+            .circle_filled(egui::pos2(x, line_y), dot_radius, paint.stroke_color);
+        paint_morse_tail(ui, paint, &sorted, i, x, line_y, dot_radius);
+    }
+}
+
+fn paint_morse_tail(
+    ui: &mut egui::Ui,
+    paint: &HeartbeatPaint,
+    beats: &[f32],
+    index: usize,
+    x: f32,
+    line_y: f32,
+    dot_radius: f32,
+) {
+    let next_x = beats
+        .get(index + 1)
+        .and_then(|next_age| beat_x(paint.rect, paint.window_secs, *next_age))
+        .unwrap_or_else(|| paint.rect.right());
+    let line_start_x = x + dot_radius + 1.5;
+    let line_end_x = (next_x - dot_radius - 1.5).max(line_start_x);
+    if line_end_x > line_start_x {
+        ui.painter().line_segment(
+            [
+                egui::pos2(line_start_x, line_y),
+                egui::pos2(line_end_x, line_y),
+            ],
+            egui::Stroke::new(1.5, paint.stroke_color),
+        );
+    }
+}
+
+fn beat_x(rect: egui::Rect, window_secs: f32, age: f32) -> Option<f32> {
+    let frac = 1.0 - (age / window_secs);
+    (0.0..=1.0)
+        .contains(&frac)
+        .then_some(rect.left() + frac * rect.width())
 }
 
 /// Quote a string for safe interpolation into a POSIX shell command line.

@@ -68,6 +68,28 @@ fn get_memory_usage_mb() -> Option<u64> {
     None
 }
 
+fn is_default_branch(branch: &str) -> bool {
+    branch == "main" || branch == "master"
+}
+
+fn paint_status_branch_badge(
+    ui: &mut egui::Ui,
+    branch: &str,
+    font_size: f32,
+    bg: egui::Color32,
+    fg: egui::Color32,
+) -> egui::Response {
+    let font = egui::FontId::monospace(font_size * 0.85);
+    let text = format!("\u{25CF} {}", branch);
+    let galley = ui.painter().layout_no_wrap(text, font, fg);
+    let desired = galley.size() + egui::vec2(8.0, 2.0);
+    let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::hover());
+    ui.painter().rect_filled(rect, 3.0, bg);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, fg);
+    resp
+}
+
 impl DirigentApp {
     pub(in super::super) fn render_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
@@ -84,74 +106,84 @@ impl DirigentApp {
 
     /// Render the git branch and status summary in the status bar.
     fn render_status_bar_git_info(&mut self, ui: &mut egui::Ui) {
-        if let Some(ref info) = self.git.info {
-            let is_default_branch = info.branch == "main" || info.branch == "master";
-            let branch_text = icon_small(
+        if let Some(info) = self.git.info.clone() {
+            self.render_status_bar_branch(ui, &info);
+            self.render_status_bar_pr(ui);
+            self.render_status_bar_summary(ui, &info);
+        } else {
+            self.render_status_bar_no_repo(ui);
+        }
+    }
+
+    fn render_status_bar_branch(&self, ui: &mut egui::Ui, info: &git::GitInfo) {
+        let branch_label = if is_default_branch(&info.branch) {
+            ui.label(icon_small(
                 &format!("\u{25CF} {}", info.branch),
                 self.settings.font_size,
-            );
-            let branch_label = if !is_default_branch {
-                let bg = self.semantic.warning;
-                let fg = self.semantic.badge_text;
-                let font = egui::FontId::monospace(self.settings.font_size * 0.85);
-                let text = format!("\u{25CF} {}", info.branch);
-                let galley = ui.painter().layout_no_wrap(text, font, fg);
-                let desired = galley.size() + egui::vec2(8.0, 2.0);
-                let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::hover());
-                ui.painter().rect_filled(rect, 3.0, bg);
-                let text_pos = rect.center() - galley.size() / 2.0;
-                ui.painter().galley(text_pos, galley, fg);
-                resp
-            } else {
-                ui.label(branch_text)
-            };
-            branch_label.on_hover_text(format!(
-                "{} {}",
-                info.last_commit_hash, info.last_commit_message
-            ));
-            if let Some(pr_num) = self.git.pr_number {
-                ui.separator();
-                let pr_label = format!("PR #{}", pr_num);
-                let resp = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&pr_label)
-                            .monospace()
-                            .small()
-                            .color(self.semantic.accent),
-                    )
-                    .sense(egui::Sense::click()),
-                );
-                if resp.clicked() {
-                    if let Some(ref url) = self.git.pr_url {
-                        let _ = std::process::Command::new("open").arg(url).spawn();
-                    }
-                }
-                resp.on_hover_text("Open pull request in browser");
-            }
-            let summary = git::format_status_summary(info);
-            if !summary.is_empty() {
-                ui.separator();
-                ui.label(egui::RichText::new(summary).monospace().small());
-            }
+            ))
         } else {
-            let init_label = match self.settings.vcs_backend {
-                VcsBackend::Jj => "not a jj repository \u{2014} click to init",
-                VcsBackend::Git => "not a git repository \u{2014} click to init",
-            };
-            if ui
-                .add(
-                    egui::Label::new(
-                        egui::RichText::new(init_label)
-                            .monospace()
-                            .small()
-                            .color(self.semantic.tertiary_text),
-                    )
-                    .sense(egui::Sense::click()),
-                )
-                .clicked()
-            {
-                self.git_init_confirm = Some(self.project_root.clone());
+            paint_status_branch_badge(
+                ui,
+                &info.branch,
+                self.settings.font_size,
+                self.semantic.warning,
+                self.semantic.badge_text,
+            )
+        };
+        branch_label.on_hover_text(format!(
+            "{} {}",
+            info.last_commit_hash, info.last_commit_message
+        ));
+    }
+
+    fn render_status_bar_pr(&self, ui: &mut egui::Ui) {
+        let Some(pr_num) = self.git.pr_number else {
+            return;
+        };
+        ui.separator();
+        let resp = ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("PR #{}", pr_num))
+                    .monospace()
+                    .small()
+                    .color(self.semantic.accent),
+            )
+            .sense(egui::Sense::click()),
+        );
+        if resp.clicked() {
+            if let Some(ref url) = self.git.pr_url {
+                let _ = std::process::Command::new("open").arg(url).spawn();
             }
+        }
+        resp.on_hover_text("Open pull request in browser");
+    }
+
+    fn render_status_bar_summary(&self, ui: &mut egui::Ui, info: &git::GitInfo) {
+        let summary = git::format_status_summary(info);
+        if !summary.is_empty() {
+            ui.separator();
+            ui.label(egui::RichText::new(summary).monospace().small());
+        }
+    }
+
+    fn render_status_bar_no_repo(&mut self, ui: &mut egui::Ui) {
+        let init_label = match self.settings.vcs_backend {
+            VcsBackend::Jj => "not a jj repository \u{2014} click to init",
+            VcsBackend::Git => "not a git repository \u{2014} click to init",
+        };
+        if ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(init_label)
+                        .monospace()
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            self.git_init_confirm = Some(self.project_root.clone());
         }
     }
 

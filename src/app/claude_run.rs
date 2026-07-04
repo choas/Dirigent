@@ -213,51 +213,8 @@ fn build_provider_config(
         .filter(|cmd| !cmd.post_agent.is_empty())
         .map(|cmd| cmd.post_agent.clone())
         .unwrap_or_else(|| pf.post_run_script.to_string());
-    // Append command-specific CLI args (e.g. --plan) to the provider extra_args.
-    if let Some(cmd) = matched_command.as_ref() {
-        let cmd_args = cmd.cli_args.trim();
-        if !cmd_args.is_empty() {
-            if extra_args.is_empty() {
-                extra_args = cmd_args.to_string();
-            } else {
-                extra_args = format!("{} {}", extra_args, cmd_args);
-            }
-        }
-    }
-    // Conditionally inject the Dirigent MCP server when the prompt references
-    // "Dirigent" — gives Claude tools to manage cues directly via --mcp-config.
-    let mut extra_args_vec = Vec::new();
-    if *provider == CliProvider::Claude && should_inject_dirigent_mcp(prompt) {
-        if let Some(db_path) = resolve_dirigent_db(project_root, settings) {
-            let mcp_bin = if settings.dirigent_mcp_server_path.is_empty() {
-                "dirigent-mcp".to_string()
-            } else {
-                settings.dirigent_mcp_server_path.clone()
-            };
-            if which::which(&mcp_bin).is_ok() || std::path::Path::new(&mcp_bin).exists() {
-                match write_dirigent_mcp_config(project_root, &mcp_bin, &db_path) {
-                    Ok(config_path) => {
-                        extra_args_vec.push("--mcp-config".to_string());
-                        extra_args_vec.push(config_path.display().to_string());
-                        log::info!(
-                            "Dirigent MCP server injected: {} {}",
-                            mcp_bin,
-                            db_path.display()
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to write Dirigent MCP config: {e}");
-                    }
-                }
-            } else {
-                log::warn!(
-                    "Dirigent MCP server binary '{}' not found — \
-                     install with: cd dirigent-mcp-server && npm install && npm run build && npm link",
-                    mcp_bin,
-                );
-            }
-        }
-    }
+    append_command_cli_args(&mut extra_args, matched_command);
+    let extra_args_vec = provider_extra_args_vec(settings, provider, prompt, project_root);
     ProviderConfig {
         model,
         cli_path,
@@ -269,6 +226,81 @@ fn build_provider_config(
         skip_permissions: settings.allow_dangerous_skip_permissions,
         use_pty: settings.claude_use_pty,
     }
+}
+
+fn append_command_cli_args(extra_args: &mut String, matched_command: &Option<CueCommand>) {
+    let Some(cmd) = matched_command.as_ref() else {
+        return;
+    };
+    let cmd_args = cmd.cli_args.trim();
+    if cmd_args.is_empty() {
+        return;
+    }
+    if extra_args.is_empty() {
+        *extra_args = cmd_args.to_string();
+    } else {
+        *extra_args = format!("{} {}", extra_args, cmd_args);
+    }
+}
+
+fn provider_extra_args_vec(
+    settings: &settings::Settings,
+    provider: &CliProvider,
+    prompt: &str,
+    project_root: &std::path::Path,
+) -> Vec<String> {
+    if *provider != CliProvider::Claude || !should_inject_dirigent_mcp(prompt) {
+        return Vec::new();
+    }
+    let Some(db_path) = resolve_dirigent_db(project_root, settings) else {
+        return Vec::new();
+    };
+    dirigent_mcp_args(project_root, settings, &db_path)
+}
+
+fn dirigent_mcp_args(
+    project_root: &std::path::Path,
+    settings: &settings::Settings,
+    db_path: &std::path::Path,
+) -> Vec<String> {
+    let mcp_bin = dirigent_mcp_bin(settings);
+    if !mcp_bin_exists(&mcp_bin) {
+        log::warn!(
+            "Dirigent MCP server binary '{}' not found — \
+             install with: cd dirigent-mcp-server && npm install && npm run build && npm link",
+            mcp_bin,
+        );
+        return Vec::new();
+    }
+    match write_dirigent_mcp_config(project_root, &mcp_bin, db_path) {
+        Ok(config_path) => {
+            log::info!(
+                "Dirigent MCP server injected: {} {}",
+                mcp_bin,
+                db_path.display()
+            );
+            vec![
+                "--mcp-config".to_string(),
+                config_path.display().to_string(),
+            ]
+        }
+        Err(e) => {
+            log::warn!("Failed to write Dirigent MCP config: {e}");
+            Vec::new()
+        }
+    }
+}
+
+fn dirigent_mcp_bin(settings: &settings::Settings) -> String {
+    if settings.dirigent_mcp_server_path.is_empty() {
+        "dirigent-mcp".to_string()
+    } else {
+        settings.dirigent_mcp_server_path.clone()
+    }
+}
+
+fn mcp_bin_exists(mcp_bin: &str) -> bool {
+    which::which(mcp_bin).is_ok() || std::path::Path::new(mcp_bin).exists()
 }
 
 /// Bundles the parameters needed by a single CLI provider invocation.

@@ -7,29 +7,33 @@ use git2::Repository;
 /// Returns the `git diff` output, or None if there are no changes.
 /// Also generates diffs for untracked (new) files so they appear in review and commits.
 pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<String> {
-    use std::process::Command;
+    diff_with_untracked(repo_path, files, false)
+}
 
+/// Diff of everything uncommitted — staged plus unstaged changes — relative to
+/// HEAD (`git diff HEAD`), including untracked files. Unlike
+/// [`get_working_diff`] this still reports files whose changes are fully
+/// staged, so commit flows keep working after a `git add`. Falls back to the
+/// index-relative diff on an unborn branch, where HEAD has no commit.
+pub(crate) fn get_uncommitted_diff(repo_path: &Path, files: &[String]) -> Option<String> {
+    diff_with_untracked(repo_path, files, true)
+}
+
+fn diff_with_untracked(repo_path: &Path, files: &[String], vs_head: bool) -> Option<String> {
     let rel_files: Vec<String> = files
         .iter()
         .map(|f| make_path_relative(repo_path, f))
         .collect();
 
     // Get diff for tracked/modified files
-    let mut cmd = Command::new("git");
-    cmd.arg("diff").current_dir(repo_path);
-    if !rel_files.is_empty() {
-        cmd.arg("--");
-        for f in &rel_files {
-            cmd.arg(f);
-        }
-    }
-
-    let output = cmd.output().ok()?;
-    let mut diff = if output.status.success() {
-        String::from_utf8_lossy(&output.stdout).to_string()
+    let mut diff = if vs_head {
+        tracked_diff(repo_path, &rel_files, true)
+            // Unborn branch: no HEAD commit to diff against.
+            .or_else(|| tracked_diff(repo_path, &rel_files, false))
     } else {
-        String::new()
-    };
+        tracked_diff(repo_path, &rel_files, false)
+    }
+    .unwrap_or_default();
 
     // Find untracked files and generate new-file diffs for them
     let untracked = find_untracked_files(repo_path);
@@ -50,6 +54,103 @@ pub(crate) fn get_working_diff(repo_path: &Path, files: &[String]) -> Option<Str
         None
     } else {
         Some(diff)
+    }
+}
+
+/// Run `git diff` (optionally against HEAD) scoped to `rel_files`.
+/// Returns `None` when the command fails (e.g. `HEAD` on an unborn branch).
+fn tracked_diff(repo_path: &Path, rel_files: &[String], vs_head: bool) -> Option<String> {
+    use std::process::Command;
+
+    let mut cmd = Command::new("git");
+    cmd.arg("diff").current_dir(repo_path);
+    if vs_head {
+        cmd.arg("HEAD");
+    }
+    if !rel_files.is_empty() {
+        cmd.arg("--");
+        for f in rel_files {
+            cmd.arg(f);
+        }
+    }
+    let output = cmd.output().ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        None
+    }
+}
+
+/// Diff between two refs using merge-base (three-dot) semantics: `git diff
+/// base...head`. This shows what `head` introduced relative to their common
+/// ancestor — the natural "what's new on this branch" view for review — rather
+/// than every difference between the two tips. Returns `None` when the refs are
+/// identical or produce no differences.
+pub(crate) fn get_range_diff(repo_path: &Path, base: &str, head: &str) -> Option<String> {
+    use std::process::Command;
+
+    let range = format!("{base}...{head}");
+    let output = Command::new("git")
+        .arg("diff")
+        .arg(&range)
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let diff = String::from_utf8_lossy(&output.stdout).to_string();
+    if diff.trim().is_empty() {
+        None
+    } else {
+        Some(diff)
+    }
+}
+
+/// Result of comparing two folders.
+pub(crate) enum FolderCompare {
+    /// Folders differ; carries the unified diff.
+    Diff(String),
+    /// Folders are identical.
+    Identical,
+}
+
+/// Compare two folders with `git diff --no-index left right` (works outside any
+/// repo). `git diff --no-index` exits 0 when identical, 1 when they differ, and
+/// >1 on error — so we map those to `Identical` / `Diff` / an error.
+pub(crate) fn compare_folders(left: &Path, right: &Path) -> crate::error::Result<FolderCompare> {
+    use crate::error::DirigentError;
+    use std::process::Command;
+
+    for p in [left, right] {
+        if !p.exists() {
+            return Err(DirigentError::GitCommand(format!(
+                "path does not exist: {}",
+                p.display()
+            )));
+        }
+    }
+
+    let output = Command::new("git")
+        .arg("diff")
+        .arg("--no-index")
+        .arg(left)
+        .arg(right)
+        .output()?;
+
+    match output.status.code() {
+        Some(0) => Ok(FolderCompare::Identical),
+        Some(1) => {
+            let diff = String::from_utf8_lossy(&output.stdout).into_owned();
+            if diff.trim().is_empty() {
+                Ok(FolderCompare::Identical)
+            } else {
+                Ok(FolderCompare::Diff(diff))
+            }
+        }
+        _ => Err(DirigentError::GitCommand(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )),
     }
 }
 
@@ -114,103 +215,131 @@ fn find_untracked_files(repo_path: &Path) -> HashSet<String> {
 /// Like parse_diff_file_paths but also strips a directory prefix if present.
 /// Use this when the diff may have been generated with paths relative to a parent dir.
 pub(crate) fn parse_diff_file_paths_for_repo(repo_path: &Path, diff_text: &str) -> Vec<String> {
-    let dir_name = repo_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir_prefix = if dir_name.is_empty() {
-        String::new()
-    } else {
-        format!("{}/", dir_name)
-    };
-
-    let mut paths = Vec::new();
-    for line in diff_text.lines() {
-        let rest = line
-            .strip_prefix("+++ b/")
-            .or_else(|| line.strip_prefix("--- a/"));
-        let rest = match rest {
-            Some(r) => r,
-            None => continue,
-        };
-        let path = rest.trim();
-        if path.is_empty() {
-            continue;
-        }
-        // Only strip the repo-name prefix when the original path does NOT exist
-        // in the repo (i.e., it was spuriously added by the AI). When the path
-        // exists as-is, keep it — it's a real subdirectory that happens to share
-        // the repo's name.
-        let path = if !dir_prefix.is_empty() {
-            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
-                if repo_path.join(path).exists() {
-                    path
-                } else {
-                    stripped
-                }
-            } else {
-                path
-            }
-        } else {
-            path
-        };
-        let path = path.to_string();
-        if !path.is_empty() && !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-    paths
+    parse_diff_paths_with_repo_prefix(repo_path, diff_text)
 }
 
 /// Parse file paths from diff text, stripping the repo directory prefix if present.
 pub(super) fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String> {
+    parse_diff_paths_with_repo_prefix(repo_path, diff_text)
+}
+
+fn parse_diff_paths_with_repo_prefix(repo_path: &Path, diff_text: &str) -> Vec<String> {
     let dir_name = repo_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let dir_prefix = if dir_name.is_empty() {
-        String::new()
-    } else {
-        format!("{}/", dir_name)
-    };
-
+    let dir_prefix = repo_dir_prefix(&dir_name);
     let mut file_paths = Vec::new();
     for line in diff_text.lines() {
-        let rest = line
-            .strip_prefix("+++ b/")
-            .or_else(|| line.strip_prefix("--- a/"));
-        let rest = match rest {
-            Some(r) => r,
-            None => continue,
-        };
-        let path = rest.trim();
-        if path.is_empty() {
+        let Some(path) = diff_line_path(repo_path, &dir_prefix, line) else {
             continue;
-        }
-        let path = if !dir_prefix.is_empty() {
-            if let Some(stripped) = path.strip_prefix(dir_prefix.as_str()) {
-                if repo_path.join(path).exists() {
-                    path
-                } else {
-                    stripped
-                }
-            } else {
-                path
-            }
-        } else {
-            path
         };
-        let path = path.to_string();
-        if !path.is_empty() && !file_paths.contains(&path) {
+        if !file_paths.contains(&path) {
             file_paths.push(path);
         }
     }
     file_paths
 }
 
+fn repo_dir_prefix(dir_name: &str) -> String {
+    if dir_name.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dir_name)
+    }
+}
+
+fn diff_line_path(repo_path: &Path, dir_prefix: &str, line: &str) -> Option<String> {
+    let path = line
+        .strip_prefix("+++ b/")
+        .or_else(|| line.strip_prefix("--- a/"))?
+        .trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some(strip_spurious_repo_prefix(repo_path, dir_prefix, path).to_string())
+}
+
+fn strip_spurious_repo_prefix<'a>(repo_path: &Path, dir_prefix: &str, path: &'a str) -> &'a str {
+    if dir_prefix.is_empty() || repo_path.join(path).exists() {
+        return path;
+    }
+    path.strip_prefix(dir_prefix).unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn compare_folders_differ_identical_and_missing() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        std::fs::write(a.join("f.txt"), "one\n").unwrap();
+        std::fs::write(b.join("f.txt"), "two\n").unwrap();
+
+        // Differing folders -> a diff mentioning the changed lines and paths.
+        match compare_folders(&a, &b).unwrap() {
+            FolderCompare::Diff(diff) => {
+                assert!(diff.contains("-one"));
+                assert!(diff.contains("+two"));
+                let paths = parse_diff_file_paths_for_repo(d.path(), &diff);
+                assert!(!paths.is_empty(), "diff should parse into file paths");
+            }
+            FolderCompare::Identical => panic!("folders differ"),
+        }
+
+        // Identical content -> Identical, not an error.
+        std::fs::write(b.join("f.txt"), "one\n").unwrap();
+        assert!(matches!(
+            compare_folders(&a, &b).unwrap(),
+            FolderCompare::Identical
+        ));
+
+        // Missing path -> error.
+        assert!(compare_folders(&a, &d.path().join("nope")).is_err());
+    }
+
+    #[test]
+    fn range_diff_diverged_vs_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        run(p, &["init", "-q"]);
+        run(p, &["config", "user.email", "t@t.t"]);
+        run(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("f.txt"), "a\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+        run(p, &["branch", "feature"]);
+        run(p, &["checkout", "-q", "feature"]);
+        std::fs::write(p.join("f.txt"), "a\nb\n").unwrap();
+        run(p, &["commit", "-qam", "feature work"]);
+
+        // Diverged: main...feature shows the feature's addition.
+        let d = get_range_diff(p, "master", "feature")
+            .or_else(|| get_range_diff(p, "main", "feature"))
+            .expect("diverged refs produce a diff");
+        assert!(d.contains("+b"));
+        // Identical refs -> nothing.
+        assert!(get_range_diff(p, "feature", "feature").is_none());
+    }
 
     #[test]
     fn parse_diff_file_paths_simple() {

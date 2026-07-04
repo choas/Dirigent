@@ -1,4 +1,5 @@
 mod agent_log;
+mod analyze_over;
 mod cleanup_bookmarks;
 mod commit_dialog;
 mod create_bookmark;
@@ -7,6 +8,7 @@ mod cue_agent_runs;
 mod custom_theme;
 mod delete_bookmark;
 mod diff_review;
+mod error_dialog;
 mod file_ops;
 mod filter_pr;
 mod git_init;

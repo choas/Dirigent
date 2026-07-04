@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use super::super::DirigentApp;
+use super::error_dialog::{create_global_error_cue, render_error_dialog, ErrorDialogSpec};
 
 impl DirigentApp {
     pub(in crate::app) fn render_move_to_branch_error_dialog(&mut self, ctx: &egui::Context) {
@@ -8,88 +9,42 @@ impl DirigentApp {
             return;
         }
 
-        let mut dismiss = false;
-        let mut try_again = false;
-        let mut create_cue = false;
-
         let suggestion = suggestion_for(&self.git.move_to_branch_error_message);
+        let actions = render_error_dialog(
+            ctx,
+            self.semantic.dialog_frame(),
+            ErrorDialogSpec {
+                title: "Move to Branch Failed",
+                intro: "Moving the commits to a new branch failed:",
+                error_message: &self.git.move_to_branch_error_message,
+                error_max_height: 160.0,
+                create_button: "Create Cue",
+                create_tooltip: "Create a cue for Claude to resolve the problem",
+                try_again_tooltip: Some("Reopen the Move Commits dialog"),
+                suggestion: Some(suggestion.text),
+                suggestion_color: self.semantic.tertiary_text,
+            },
+        );
 
-        egui::Window::new("Move to Branch Failed")
-            .collapsible(false)
-            .resizable(true)
-            .default_width(480.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(self.semantic.dialog_frame())
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.label("Moving the commits to a new branch failed:");
-                ui.add_space(8.0);
-
-                egui::ScrollArea::vertical()
-                    .max_height(160.0)
-                    .show(ui, |ui| {
-                        let mut error_text = self.git.move_to_branch_error_message.clone();
-                        ui.add(
-                            egui::TextEdit::multiline(&mut error_text)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
-
-                ui.add_space(10.0);
-
-                ui.label(egui::RichText::new("Suggestion").strong());
-                ui.add_space(2.0);
-                ui.label(egui::RichText::new(suggestion.text).color(self.semantic.tertiary_text));
-
-                ui.add_space(12.0);
-
-                ui.horizontal(|ui| {
-                    if ui
-                        .button("Try Again")
-                        .on_hover_text("Reopen the Move Commits dialog")
-                        .clicked()
-                    {
-                        try_again = true;
-                    }
-                    if ui
-                        .button("Create Cue")
-                        .on_hover_text("Create a cue for Claude to resolve the problem")
-                        .clicked()
-                    {
-                        create_cue = true;
-                    }
-                    if ui.button("Dismiss").clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-
-        if try_again {
-            self.git.show_move_to_branch_error = false;
-            self.git.move_to_branch_error_message.clear();
+        if actions.try_again {
+            self.close_move_to_branch_error_dialog();
             self.open_move_to_branch_dialog();
-        } else if create_cue {
+        } else if actions.create_cue {
             let cue_text = format!(
                 "Moving commits to a new branch failed. Resolve the underlying problem so the \
                  commits can be moved.\n\nError:\n{}",
                 self.git.move_to_branch_error_message
             );
-            match self.db.insert_global_cue(&cue_text) {
-                Ok(_id) => {
-                    self.reload_cues();
-                    self.set_status_message("Created move-to-branch cue in Inbox".to_string());
-                }
-                Err(e) => {
-                    self.set_status_message(format!("Failed to create cue: {}", e));
-                }
-            }
-            self.git.show_move_to_branch_error = false;
-            self.git.move_to_branch_error_message.clear();
-        } else if dismiss {
-            self.git.show_move_to_branch_error = false;
-            self.git.move_to_branch_error_message.clear();
+            create_global_error_cue(self, &cue_text, "Created move-to-branch cue in Inbox");
+            self.close_move_to_branch_error_dialog();
+        } else if actions.dismiss {
+            self.close_move_to_branch_error_dialog();
         }
+    }
+
+    fn close_move_to_branch_error_dialog(&mut self) {
+        self.git.show_move_to_branch_error = false;
+        self.git.move_to_branch_error_message.clear();
     }
 }
 
