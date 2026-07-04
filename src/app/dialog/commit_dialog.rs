@@ -270,28 +270,8 @@ impl DirigentApp {
             }
             // Staging applies to a scoped set of files (a selection or a
             // queued group) and only with Git, which has a staging area.
-            // A group that owns only some hunks of a file can't use `git add`:
-            // it would stage the hunks assigned to later groups too.
-            let partial_group = self
-                .git
-                .commit_queue
-                .get(self.git.commit_queue_pos)
-                .map(|g| !g.hunk_selection.is_empty())
-                .unwrap_or(false);
             if is_git && !self.git.commit_files.is_empty() {
-                let stage_btn = ui
-                    .add_enabled(
-                        !partial_group,
-                        egui::Button::new(icon("\u{2295} Stage", fs)),
-                    )
-                    .on_hover_text("Stage these files (git add) without committing")
-                    .on_disabled_hover_text(
-                        "This change set owns only some hunks of its files — \
-                         staging would include the other groups' hunks. Commit it instead.",
-                    );
-                if stage_btn.clicked() {
-                    actions.do_stage = true;
-                }
+                self.render_commit_stage_button(ui, actions);
             }
             if ui.button("Cancel").clicked() {
                 actions.dismiss = true;
@@ -308,6 +288,31 @@ impl DirigentApp {
                 actions.background = true;
             }
         });
+    }
+
+    /// Stage button for the current file selection or queued group.
+    /// A group that owns only some hunks of a file can't use `git add`:
+    /// it would stage the hunks assigned to later groups too.
+    fn render_commit_stage_button(&self, ui: &mut egui::Ui, actions: &mut CommitDialogActions) {
+        let partial_group = self
+            .git
+            .commit_queue
+            .get(self.git.commit_queue_pos)
+            .map(|g| !g.hunk_selection.is_empty())
+            .unwrap_or(false);
+        let stage_btn = ui
+            .add_enabled(
+                !partial_group,
+                egui::Button::new(icon("\u{2295} Stage", self.settings.font_size)),
+            )
+            .on_hover_text("Stage these files (git add) without committing")
+            .on_disabled_hover_text(
+                "This change set owns only some hunks of its files — \
+                 staging would include the other groups' hunks. Commit it instead.",
+            );
+        if stage_btn.clicked() {
+            actions.do_stage = true;
+        }
     }
 
     fn apply_commit_dialog_actions(&mut self, actions: &CommitDialogActions) {
