@@ -63,13 +63,23 @@ fn commit_staged(
 
 fn reset_index_to_head(repo_path: &Path) -> crate::error::Result<()> {
     let repo = Repository::discover(repo_path)?;
-    let head_commit = repo
-        .head()?
-        .peel_to_commit()
-        .map_err(|e| DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}")))?;
-    let head_tree = head_commit.tree()?;
     let mut idx = repo.index()?;
-    idx.read_tree(&head_tree)?;
+    match repo.head() {
+        Ok(head) => {
+            let head_commit = head.peel_to_commit().map_err(|e| {
+                DirigentError::GitCommand(format!("cannot peel HEAD to commit: {e}"))
+            })?;
+            let head_tree = head_commit.tree()?;
+            idx.read_tree(&head_tree)?;
+        }
+        // Fresh repository with no commits yet (unborn branch): HEAD points at a
+        // ref that doesn't exist, so there is no tree to reset to. Starting from
+        // an empty index lets the first commit be created normally.
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+            idx.clear()?;
+        }
+        Err(e) => return Err(e.into()),
+    }
     idx.write()?;
     Ok(())
 }
