@@ -335,10 +335,11 @@ impl DirigentApp {
         });
     }
 
-    /// Open a diff review for a dirty file.
+    /// Open a diff review for a dirty file. Diffs against HEAD so the file's
+    /// changes stay visible even when they are already (fully) staged.
     pub(super) fn open_file_diff(&mut self, rel_path: &str) {
         let files = vec![rel_path.to_string()];
-        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+        if let Some(diff_text) = vcs_dispatch::get_uncommitted_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,

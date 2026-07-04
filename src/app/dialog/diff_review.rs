@@ -110,9 +110,9 @@ fn render_empty_staging_message(
     secondary_text: egui::Color32,
 ) {
     let msg = if staged_view {
-        "Nothing staged."
+        "Nothing staged — switch to \"Unstaged \u{2192} to stage\" to stage hunks."
     } else {
-        "Nothing left to stage."
+        "Nothing left to stage — switch to \"Staged \u{2192} to commit\" to review or unstage."
     };
     ui.label(
         egui::RichText::new(msg)

@@ -305,43 +305,55 @@ impl DirigentApp {
     }
 
     fn open_all_changes_diff(&mut self) {
-        if let Some(diff_text) = vcs_dispatch::get_working_diff(
+        let is_git = self.settings.vcs_backend == VcsBackend::Git;
+        let working = vcs_dispatch::get_working_diff(
             &self.settings.vcs_backend,
             &self.settings.jj_cli_path,
             &self.project_root,
             &[],
-        ) {
-            let parsed = diff_view::parse_unified_diff(&diff_text);
-            // Hunk-level staging is a Git-only feature (jj has no index).
-            let staging = if self.settings.vcs_backend == VcsBackend::Git {
-                Some(super::super::StagingState {
-                    files: Vec::new(),
-                    staged_view: false,
-                    partial: self.compute_partial_staged(&parsed),
-                })
-            } else {
-                None
-            };
-            self.dismiss_central_overlays();
-            self.diff_review = Some(super::super::DiffReview {
-                cue_id: 0,
-                diff: diff_text,
-                cue_text: "All uncommitted changes".to_string(),
-                commit_hash: None,
-                commit_author: None,
-                parsed,
-                view_mode: DiffViewMode::Inline,
-                read_only: true,
-                collapsed_files: HashSet::new(),
-                prompt_expanded: false,
-                reply_text: String::new(),
-                search_active: false,
-                search_query: String::new(),
-                search_matches: Vec::new(),
-                search_current: None,
-                staging,
-            });
-        }
+        );
+        // With Git, everything may already be staged (e.g. via the commit
+        // dialog's Stage button), leaving the working-vs-index diff empty. Open
+        // directly in the staged view so the changes stay visible and can be
+        // unstaged, instead of silently doing nothing.
+        let (diff_text, staged_view) = match working {
+            Some(d) => (d, false),
+            None if is_git => match crate::git::get_staged_diff(&self.project_root, &[]) {
+                Some(d) => (d, true),
+                None => return,
+            },
+            None => return,
+        };
+        let parsed = diff_view::parse_unified_diff(&diff_text);
+        // Hunk-level staging is a Git-only feature (jj has no index).
+        let staging = if is_git {
+            Some(super::super::StagingState {
+                files: Vec::new(),
+                staged_view,
+                partial: self.compute_partial_staged(&parsed),
+            })
+        } else {
+            None
+        };
+        self.dismiss_central_overlays();
+        self.diff_review = Some(super::super::DiffReview {
+            cue_id: 0,
+            diff: diff_text,
+            cue_text: "All uncommitted changes".to_string(),
+            commit_hash: None,
+            commit_author: None,
+            parsed,
+            view_mode: DiffViewMode::Inline,
+            read_only: true,
+            collapsed_files: HashSet::new(),
+            prompt_expanded: false,
+            reply_text: String::new(),
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+            staging,
+        });
     }
 
     pub(super) fn expand_git_view_dirs(&mut self) {
