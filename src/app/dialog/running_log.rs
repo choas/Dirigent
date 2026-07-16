@@ -18,6 +18,28 @@ const HEARTBEAT_REPAINT_MS: u64 = 40;
 use crate::db::{CueStatus, Execution};
 use crate::settings::{CliProvider, HeartbeatStyle};
 
+/// Grouped inputs for rendering the conversation scroll body: the past
+/// executions plus the state describing the in-flight run, if any.
+struct ConversationScrollContent<'a> {
+    past_execs: &'a [Execution],
+    current_running_log: &'a str,
+    is_running: bool,
+    current_exec_id: Option<i64>,
+    current_provider: &'a CliProvider,
+    demoted_exec_id: Option<i64>,
+    pending_prompt: &'a str,
+}
+
+/// Grouped inputs for rendering a single conversation run entry.
+struct ConversationEntry<'a> {
+    exec: &'a Execution,
+    idx: usize,
+    is_last: bool,
+    is_current_running: bool,
+    current_running_log: &'a str,
+    force_collapse: bool,
+}
+
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_running_log_central(&mut self, ui: &mut egui::Ui) {
@@ -47,6 +69,15 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
+        // Full (untruncated) cue text, used as the pending run's prompt so a
+        // just-started run shows its "You" message like persisted runs do.
+        let cue_prompt = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+
         // Collect conversation data: past executions + current running log
         let past_execs = self.claude.conversation_history.clone();
         let fallback_provider = past_execs
@@ -60,6 +91,26 @@ impl DirigentApp {
             .cloned()
             .unwrap_or((String::new(), fallback_provider));
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
+
+        // Detect when the latest run changes so a run that just stopped being
+        // the latest can be collapsed once. egui persists collapsing state by
+        // id, so lowering `default_open` after the fact is otherwise ignored and
+        // every once-latest run would stay expanded.
+        let latest_exec_id = past_execs.last().map(|e| e.id);
+        let prev_latest = self.claude.conversation_last_latest.get(&cue_id).copied();
+        let demoted_exec_id = if prev_latest != latest_exec_id {
+            prev_latest
+        } else {
+            None
+        };
+        match latest_exec_id {
+            Some(id) => {
+                self.claude.conversation_last_latest.insert(cue_id, id);
+            }
+            None => {
+                self.claude.conversation_last_latest.remove(&cue_id);
+            }
+        }
 
         let mut close = false;
         let mut reply_send: Option<String> = None;
@@ -92,11 +143,15 @@ impl DirigentApp {
                 .show(ui, |ui| {
                     self.render_conversation_scroll_content(
                         ui,
-                        &past_execs,
-                        &current_running_log,
-                        is_running,
-                        current_exec_id,
-                        &current_provider,
+                        ConversationScrollContent {
+                            past_execs: &past_execs,
+                            current_running_log: &current_running_log,
+                            is_running,
+                            current_exec_id,
+                            current_provider: &current_provider,
+                            demoted_exec_id,
+                            pending_prompt: &cue_prompt,
+                        },
                     );
                 });
 
@@ -124,15 +179,16 @@ impl DirigentApp {
     }
 
     /// Render the scroll area content with conversation history and running entry.
-    fn render_conversation_scroll_content(
-        &self,
-        ui: &mut egui::Ui,
-        past_execs: &[Execution],
-        current_running_log: &str,
-        is_running: bool,
-        current_exec_id: Option<i64>,
-        current_provider: &CliProvider,
-    ) {
+    fn render_conversation_scroll_content(&self, ui: &mut egui::Ui, c: ConversationScrollContent) {
+        let ConversationScrollContent {
+            past_execs,
+            current_running_log,
+            is_running,
+            current_exec_id,
+            current_provider,
+            demoted_exec_id,
+            pending_prompt,
+        } = c;
         if past_execs.is_empty() && current_running_log.is_empty() {
             let msg = if is_running {
                 "Waiting for output..."
@@ -146,13 +202,22 @@ impl DirigentApp {
             );
         }
 
+        let total = past_execs.len();
         for (idx, exec) in past_execs.iter().enumerate() {
             let is_current_running = current_exec_id == Some(exec.id);
-            self.render_conversation_entry(ui, exec, idx, is_current_running, current_running_log);
-
-            if idx < past_execs.len() - 1 {
-                ui.separator();
-            }
+            let is_last = idx + 1 == total;
+            let force_collapse = demoted_exec_id == Some(exec.id);
+            self.render_conversation_entry(
+                ui,
+                ConversationEntry {
+                    exec,
+                    idx,
+                    is_last,
+                    is_current_running,
+                    current_running_log,
+                    force_collapse,
+                },
+            );
         }
 
         // If currently running but not yet in past_execs (just started)
@@ -165,6 +230,7 @@ impl DirigentApp {
                 past_execs,
                 current_provider,
                 current_running_log,
+                pending_prompt,
             );
         }
     }
@@ -462,21 +528,124 @@ impl DirigentApp {
         close
     }
 
-    /// Render a single past conversation entry (user message + provider response).
-    fn render_conversation_entry(
+    /// Render a single past conversation entry (user message + provider
+    /// response) grouped under a foldable header, one group per CLI run.
+    ///
+    /// The most recent run — and any run that is currently in flight — starts
+    /// expanded; earlier runs collapse by default so a long conversation stays
+    /// scannable, and the user can fold or unfold any run at will.
+    fn render_conversation_entry(&self, ui: &mut egui::Ui, entry: ConversationEntry) {
+        let ConversationEntry {
+            exec,
+            idx,
+            is_last,
+            is_current_running,
+            current_running_log,
+            force_collapse,
+        } = entry;
+        let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
+        let default_open = is_last || is_current_running;
+
+        let id = ui.make_persistent_id(("conversation_run", exec.id));
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            id,
+            default_open,
+        );
+        // This run just stopped being the latest: collapse it once. Persisted
+        // egui state means `default_open` alone can't re-close it, but the user
+        // can still manually re-expand afterwards.
+        if force_collapse {
+            state.set_open(false);
+        }
+        state
+            .show_header(ui, |ui| {
+                self.render_run_group_header(ui, exec, idx, is_current_running, &user_text);
+            })
+            .body(|ui| {
+                self.render_conversation_entry_body(
+                    ui,
+                    exec,
+                    idx,
+                    is_current_running,
+                    current_running_log,
+                    &user_text,
+                );
+            });
+    }
+
+    /// Render the one-line summary shown on a run's foldable header: the run
+    /// number, provider, a short preview of the prompt, and either a live
+    /// "running" marker or the finished run's duration/cost.
+    fn render_run_group_header(
+        &self,
+        ui: &mut egui::Ui,
+        exec: &Execution,
+        idx: usize,
+        is_current_running: bool,
+        user_text: &str,
+    ) {
+        ui.label(
+            egui::RichText::new(format!("Run {}", idx + 1))
+                .strong()
+                .color(self.semantic.provider_color(&exec.provider)),
+        );
+        ui.label(
+            egui::RichText::new(exec.provider.display_name())
+                .small()
+                .color(self.semantic.tertiary_text),
+        );
+        if is_current_running {
+            ui.label(
+                egui::RichText::new("\u{25CF} running")
+                    .small()
+                    .color(self.semantic.accent),
+            );
+        } else {
+            let mut meta = exec
+                .duration_ms
+                .map(crate::app::util::format_duration_ms)
+                .unwrap_or_default();
+            if let Some(cost) = exec.cost_usd {
+                if !meta.is_empty() {
+                    meta.push_str(" \u{00B7} ");
+                }
+                meta.push_str(&format!("${cost:.2}"));
+            }
+            if !meta.is_empty() {
+                ui.label(
+                    egui::RichText::new(meta)
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+            }
+        }
+        let preview = conversation_run_preview(user_text);
+        if !preview.is_empty() {
+            ui.label(
+                egui::RichText::new(preview)
+                    .small()
+                    .color(self.semantic.secondary_text),
+            );
+        }
+    }
+
+    /// Render the expanded contents of a run group: the user message followed
+    /// by the provider response.
+    fn render_conversation_entry_body(
         &self,
         ui: &mut egui::Ui,
         exec: &Execution,
         idx: usize,
         is_current_running: bool,
         current_running_log: &str,
+        user_text: &str,
     ) {
         let user_color = self.semantic.accent;
         let exec_provider_name = exec.provider.display_name();
         let exec_provider_color = self.semantic.provider_color(&exec.provider);
 
         // -- User message --
-        let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("You").strong().color(user_color));
             if idx > 0 {
@@ -488,7 +657,7 @@ impl DirigentApp {
             }
         });
         Self::render_indented_frame(ui, |ui| {
-            ui.label(&user_text);
+            ui.label(user_text);
         });
 
         // -- Provider response --
@@ -518,29 +687,85 @@ impl DirigentApp {
         });
     }
 
-    /// Render the currently running execution that hasn't been saved to history yet.
+    /// Render the currently running execution that hasn't been saved to history
+    /// yet, grouped under its own foldable header (expanded by default) so it
+    /// matches the run groups above it.
     fn render_current_running_entry(
         &self,
         ui: &mut egui::Ui,
         past_execs: &[Execution],
         current_provider: &CliProvider,
         current_running_log: &str,
+        user_text: &str,
     ) {
-        if !past_execs.is_empty() {
-            ui.separator();
-        }
         let current_provider_name = current_provider.display_name();
         let current_provider_color = self.semantic.provider_color(current_provider);
-        // Show the user's prompt from running_logs context
-        // (the execution hasn't been saved to history yet)
-        ui.label(
-            egui::RichText::new(current_provider_name)
-                .strong()
-                .color(current_provider_color),
-        );
-        Self::render_indented_frame(ui, |ui| {
-            self.render_response_content(ui, true, current_running_log, &None, None);
-        });
+        let run_no = past_execs.len() + 1;
+        let idx = past_execs.len();
+
+        // The pending run has no persisted execution id yet, so key its fold
+        // state on the cue instead. It always starts open.
+        let id = ui.make_persistent_id(("conversation_run_pending", self.claude.show_log));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Run {run_no}"))
+                        .strong()
+                        .color(current_provider_color),
+                );
+                ui.label(
+                    egui::RichText::new(current_provider_name)
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+                ui.label(
+                    egui::RichText::new("\u{25CF} running")
+                        .small()
+                        .color(self.semantic.accent),
+                );
+                let preview = conversation_run_preview(user_text);
+                if !preview.is_empty() {
+                    ui.label(
+                        egui::RichText::new(preview)
+                            .small()
+                            .color(self.semantic.secondary_text),
+                    );
+                }
+            })
+            .body(|ui| {
+                // -- User message -- (matches render_conversation_entry_body)
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("You")
+                            .strong()
+                            .color(self.semantic.accent),
+                    );
+                    if idx > 0 {
+                        ui.label(
+                            egui::RichText::new(format!("(reply #{})", idx))
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        );
+                    }
+                });
+                if !user_text.is_empty() {
+                    Self::render_indented_frame(ui, |ui| {
+                        ui.label(user_text);
+                    });
+                }
+
+                // -- Provider response --
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(current_provider_name)
+                            .strong()
+                            .color(current_provider_color),
+                    );
+                });
+                Self::render_indented_frame(ui, |ui| {
+                    self.render_response_content(ui, true, current_running_log, &None, None);
+                });
+            });
     }
 
     /// Render response content for an execution, handling running/completed/empty states.
@@ -727,6 +952,24 @@ impl DirigentApp {
                 add_contents(ui);
             });
     }
+}
+
+/// Build the short, single-line prompt preview shown on a collapsed run
+/// group's header. Uses the first non-blank line of the user's prompt and
+/// truncates it (on a char boundary) with an ellipsis so long prompts don't
+/// blow out the header row.
+fn conversation_run_preview(user_text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let Some(first_line) = user_text.lines().map(str::trim).find(|l| !l.is_empty()) else {
+        return String::new();
+    };
+    if first_line.chars().count() <= MAX_CHARS {
+        return first_line.to_string();
+    }
+    // Reserve one slot for the ellipsis so the whole preview stays within
+    // MAX_CHARS characters.
+    let truncated: String = first_line.chars().take(MAX_CHARS - 1).collect();
+    format!("{}\u{2026}", truncated.trim_end())
 }
 
 /// Split `text` into byte ranges of at most ~`max_bytes`, cutting only at
@@ -973,7 +1216,23 @@ fn spawn_terminal_with_command(dir: &Path, command: &str) -> std::io::Result<std
 
 #[cfg(test)]
 mod tests {
-    use super::ansi_log_chunk_ranges;
+    use super::{ansi_log_chunk_ranges, conversation_run_preview};
+
+    #[test]
+    fn run_preview_uses_first_non_blank_line() {
+        assert_eq!(conversation_run_preview("\n\n  hello  \nworld"), "hello");
+        assert_eq!(conversation_run_preview(""), "");
+        assert_eq!(conversation_run_preview("   \n\t"), "");
+    }
+
+    #[test]
+    fn run_preview_truncates_long_lines_on_char_boundary() {
+        let long = "ä".repeat(200);
+        let preview = conversation_run_preview(&long);
+        // 79 kept chars plus the ellipsis.
+        assert_eq!(preview.chars().count(), 80);
+        assert!(preview.ends_with('\u{2026}'));
+    }
 
     /// Re-join chunk ranges the way the renderer stacks them: each non-final
     /// chunk is followed by the boundary newline that was dropped at the cut.

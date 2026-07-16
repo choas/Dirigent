@@ -2,6 +2,11 @@
 
 All notable changes to Dirigent are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Conversation view groups each CLI run under a foldable header (run number, provider, prompt preview, and duration/cost) — the latest and in-flight runs stay expanded while earlier runs collapse for easier scanning of long conversations
+
 ## [0.6.1] - 2026-05-28
 
 ### Changed
