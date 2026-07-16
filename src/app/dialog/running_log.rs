@@ -18,6 +18,28 @@ const HEARTBEAT_REPAINT_MS: u64 = 40;
 use crate::db::{CueStatus, Execution};
 use crate::settings::{CliProvider, HeartbeatStyle};
 
+/// Grouped inputs for rendering the conversation scroll body: the past
+/// executions plus the state describing the in-flight run, if any.
+struct ConversationScrollContent<'a> {
+    past_execs: &'a [Execution],
+    current_running_log: &'a str,
+    is_running: bool,
+    current_exec_id: Option<i64>,
+    current_provider: &'a CliProvider,
+    demoted_exec_id: Option<i64>,
+    pending_prompt: &'a str,
+}
+
+/// Grouped inputs for rendering a single conversation run entry.
+struct ConversationEntry<'a> {
+    exec: &'a Execution,
+    idx: usize,
+    is_last: bool,
+    is_current_running: bool,
+    current_running_log: &'a str,
+    force_collapse: bool,
+}
+
 impl DirigentApp {
     // AI provider conversation rendered in the central panel (replaces code viewer)
     pub(in crate::app) fn render_running_log_central(&mut self, ui: &mut egui::Ui) {
@@ -113,13 +135,15 @@ impl DirigentApp {
                 .show(ui, |ui| {
                     self.render_conversation_scroll_content(
                         ui,
-                        &past_execs,
-                        &current_running_log,
-                        is_running,
-                        current_exec_id,
-                        &current_provider,
-                        demoted_exec_id,
-                        &cue_prompt,
+                        ConversationScrollContent {
+                            past_execs: &past_execs,
+                            current_running_log: &current_running_log,
+                            is_running,
+                            current_exec_id,
+                            current_provider: &current_provider,
+                            demoted_exec_id,
+                            pending_prompt: &cue_prompt,
+                        },
                     );
                 });
 
@@ -147,17 +171,16 @@ impl DirigentApp {
     }
 
     /// Render the scroll area content with conversation history and running entry.
-    fn render_conversation_scroll_content(
-        &self,
-        ui: &mut egui::Ui,
-        past_execs: &[Execution],
-        current_running_log: &str,
-        is_running: bool,
-        current_exec_id: Option<i64>,
-        current_provider: &CliProvider,
-        demoted_exec_id: Option<i64>,
-        pending_prompt: &str,
-    ) {
+    fn render_conversation_scroll_content(&self, ui: &mut egui::Ui, c: ConversationScrollContent) {
+        let ConversationScrollContent {
+            past_execs,
+            current_running_log,
+            is_running,
+            current_exec_id,
+            current_provider,
+            demoted_exec_id,
+            pending_prompt,
+        } = c;
         if past_execs.is_empty() && current_running_log.is_empty() {
             let msg = if is_running {
                 "Waiting for output..."
@@ -178,12 +201,14 @@ impl DirigentApp {
             let force_collapse = demoted_exec_id == Some(exec.id);
             self.render_conversation_entry(
                 ui,
-                exec,
-                idx,
-                is_last,
-                is_current_running,
-                current_running_log,
-                force_collapse,
+                ConversationEntry {
+                    exec,
+                    idx,
+                    is_last,
+                    is_current_running,
+                    current_running_log,
+                    force_collapse,
+                },
             );
         }
 
@@ -501,16 +526,15 @@ impl DirigentApp {
     /// The most recent run — and any run that is currently in flight — starts
     /// expanded; earlier runs collapse by default so a long conversation stays
     /// scannable, and the user can fold or unfold any run at will.
-    fn render_conversation_entry(
-        &self,
-        ui: &mut egui::Ui,
-        exec: &Execution,
-        idx: usize,
-        is_last: bool,
-        is_current_running: bool,
-        current_running_log: &str,
-        force_collapse: bool,
-    ) {
+    fn render_conversation_entry(&self, ui: &mut egui::Ui, entry: ConversationEntry) {
+        let ConversationEntry {
+            exec,
+            idx,
+            is_last,
+            is_current_running,
+            current_running_log,
+            force_collapse,
+        } = entry;
         let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
         let default_open = is_last || is_current_running;
 
