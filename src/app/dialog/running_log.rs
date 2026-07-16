@@ -47,6 +47,15 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
+        // Full (untruncated) cue text, used as the pending run's prompt so a
+        // just-started run shows its "You" message like persisted runs do.
+        let cue_prompt = self
+            .cues
+            .iter()
+            .find(|c| c.id == cue_id)
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+
         // Collect conversation data: past executions + current running log
         let past_execs = self.claude.conversation_history.clone();
         let fallback_provider = past_execs
@@ -110,6 +119,7 @@ impl DirigentApp {
                         current_exec_id,
                         &current_provider,
                         demoted_exec_id,
+                        &cue_prompt,
                     );
                 });
 
@@ -146,6 +156,7 @@ impl DirigentApp {
         current_exec_id: Option<i64>,
         current_provider: &CliProvider,
         demoted_exec_id: Option<i64>,
+        pending_prompt: &str,
     ) {
         if past_execs.is_empty() && current_running_log.is_empty() {
             let msg = if is_running {
@@ -186,6 +197,7 @@ impl DirigentApp {
                 past_execs,
                 current_provider,
                 current_running_log,
+                pending_prompt,
             );
         }
     }
@@ -652,10 +664,12 @@ impl DirigentApp {
         past_execs: &[Execution],
         current_provider: &CliProvider,
         current_running_log: &str,
+        user_text: &str,
     ) {
         let current_provider_name = current_provider.display_name();
         let current_provider_color = self.semantic.provider_color(current_provider);
         let run_no = past_execs.len() + 1;
+        let idx = past_execs.len();
 
         // The pending run has no persisted execution id yet, so key its fold
         // state on the cue instead. It always starts open.
@@ -677,8 +691,45 @@ impl DirigentApp {
                         .small()
                         .color(self.semantic.accent),
                 );
+                let preview = conversation_run_preview(user_text);
+                if !preview.is_empty() {
+                    ui.label(
+                        egui::RichText::new(preview)
+                            .small()
+                            .color(self.semantic.secondary_text),
+                    );
+                }
             })
             .body(|ui| {
+                // -- User message -- (matches render_conversation_entry_body)
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("You")
+                            .strong()
+                            .color(self.semantic.accent),
+                    );
+                    if idx > 0 {
+                        ui.label(
+                            egui::RichText::new(format!("(reply #{})", idx))
+                                .small()
+                                .color(self.semantic.tertiary_text),
+                        );
+                    }
+                });
+                if !user_text.is_empty() {
+                    Self::render_indented_frame(ui, |ui| {
+                        ui.label(user_text);
+                    });
+                }
+
+                // -- Provider response --
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(current_provider_name)
+                            .strong()
+                            .color(current_provider_color),
+                    );
+                });
                 Self::render_indented_frame(ui, |ui| {
                     self.render_response_content(ui, true, current_running_log, &None, None);
                 });
