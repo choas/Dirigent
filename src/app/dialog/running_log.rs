@@ -533,16 +533,24 @@ impl DirigentApp {
                     .small()
                     .color(self.semantic.accent),
             );
-        } else if let Some(ms) = exec.duration_ms {
-            let mut meta = crate::app::util::format_duration_ms(ms);
+        } else {
+            let mut meta = exec
+                .duration_ms
+                .map(crate::app::util::format_duration_ms)
+                .unwrap_or_default();
             if let Some(cost) = exec.cost_usd {
-                meta.push_str(&format!(" \u{00B7} ${:.2}", cost));
+                if !meta.is_empty() {
+                    meta.push_str(" \u{00B7} ");
+                }
+                meta.push_str(&format!("${cost:.2}"));
             }
-            ui.label(
-                egui::RichText::new(meta)
-                    .small()
-                    .color(self.semantic.tertiary_text),
-            );
+            if !meta.is_empty() {
+                ui.label(
+                    egui::RichText::new(meta)
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+            }
         }
         let preview = conversation_run_preview(user_text);
         if !preview.is_empty() {
