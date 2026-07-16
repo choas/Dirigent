@@ -486,20 +486,24 @@ impl DirigentApp {
         let default_open = is_last || is_current_running;
 
         let id = ui.make_persistent_id(("conversation_run", exec.id));
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open)
-            .show_header(ui, |ui| {
-                self.render_run_group_header(ui, exec, idx, is_current_running, &user_text);
-            })
-            .body(|ui| {
-                self.render_conversation_entry_body(
-                    ui,
-                    exec,
-                    idx,
-                    is_current_running,
-                    current_running_log,
-                    &user_text,
-                );
-            });
+        egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            id,
+            default_open,
+        )
+        .show_header(ui, |ui| {
+            self.render_run_group_header(ui, exec, idx, is_current_running, &user_text);
+        })
+        .body(|ui| {
+            self.render_conversation_entry_body(
+                ui,
+                exec,
+                idx,
+                is_current_running,
+                current_running_log,
+                &user_text,
+            );
+        });
     }
 
     /// Render the one-line summary shown on a run's foldable header: the run
@@ -1112,7 +1116,6 @@ mod tests {
         assert_eq!(preview.chars().count(), 81);
         assert!(preview.ends_with('\u{2026}'));
     }
-
 
     /// Re-join chunk ranges the way the renderer stacks them: each non-final
     /// chunk is followed by the boundary newline that was dropped at the cut.
