@@ -15,6 +15,12 @@ egui_extras = { version = "=0.34.1", features = ["syntect"] }
 # yaml-rust 0.4.5 — verify via `cargo audit`. Feature trimming is ineffective
 # because egui_extras forces "default-fancy". Upgrade syntect when it drops
 # these deps. Track: https://github.com/trishume/syntect/issues
+# NOTE: quick-xml 0.39.4 remains in Cargo.lock via wayland-scanner (Linux-only,
+# caps quick-xml at ^0.39); RUSTSEC-2026-0194/0195 are ignored with
+# justification in .cargo/audit.toml — remove the ignores once wayland-scanner
+# releases with quick-xml >=0.41. All other paths use the fixed 0.41.0.
+# Dependency cooldown: before adopting new versions, verify they are >24h old
+# via `python3 scripts/check_crate_age.py`.
 syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
 rusqlite = { version = "=0.39.0", features = ["bundled"] }
 git2 = "=0.20.4"

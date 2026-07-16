@@ -1,0 +1,20 @@
+# cargo-audit configuration — https://docs.rs/cargo-audit
+#
+# Each ignored advisory MUST have a justification and a re-check condition.
+# Remove an ignore as soon as the fix becomes adoptable (and passes the 24h
+# dependency cooldown, see scripts/check_crate_age.py).
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0194 + RUSTSEC-2026-0195: quick-xml < 0.41 DoS (quadratic
+    # attribute check / unbounded namespace allocation) on attacker-supplied
+    # XML. Our only remaining quick-xml < 0.41 dependent is wayland-scanner
+    # (Linux-only build dependency) which parses just the trusted Wayland
+    # protocol XML bundled with the wayland-protocols-* crates at compile
+    # time — never runtime or untrusted input. wayland-scanner 0.31.10 caps
+    # quick-xml at ^0.39; no fixed release exists yet.
+    # Re-check: remove once wayland-scanner > 0.31.10 requires quick-xml
+    # >= 0.41, then `cargo update wayland-scanner quick-xml@0.39.4`.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
