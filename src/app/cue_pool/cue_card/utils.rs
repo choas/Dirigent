@@ -60,17 +60,51 @@ pub(in crate::app) fn toggle_reply_input(
     }
 }
 
-/// Detect if an activity event is an agent event and return its kind label.
-pub(in crate::app) fn detect_agent_kind(event: &str) -> Option<String> {
-    let is_agent_event =
-        event.contains("passed") || event.contains("failed") || event.contains("error");
-    if !is_agent_event {
-        return None;
+/// Detect if an activity event was logged by one of the given agents and
+/// return that agent's db key. `agents` maps display name -> db key; longer
+/// names are tried first so a custom agent named "Test Coverage" wins over
+/// the builtin "Test" label.
+pub(in crate::app) fn detect_agent_event(
+    event: &str,
+    agents: &[(String, String)],
+) -> Option<String> {
+    let mut candidates: Vec<&(String, String)> = agents.iter().collect();
+    candidates.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    for (name, db_key) in candidates {
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(rest) = event.strip_prefix(name.as_str()) {
+            let is_outcome = ["passed", "failed", "error", "completed"]
+                .iter()
+                .any(|s| rest.strip_prefix(' ').is_some_and(|r| r.starts_with(s)));
+            if is_outcome {
+                return Some(db_key.clone());
+            }
+        }
     }
-    ["Format", "Lint", "Build", "Test"]
-        .iter()
-        .find(|k| event.starts_with(*k))
-        .map(|k| k.to_string())
+    None
+}
+
+/// Find the run of the given kind whose `started_at` is closest in time to
+/// the activity entry's timestamp. The activity log entry and the agent run
+/// row are written back-to-back, but their second-resolution timestamps can
+/// differ, so an exact match is not guaranteed.
+pub(in crate::app) fn nearest_agent_run<'a>(
+    runs: &'a [crate::db::AgentRunEntry],
+    db_key: &str,
+    timestamp: &str,
+) -> Option<&'a crate::db::AgentRunEntry> {
+    const FMT: &str = "%Y-%m-%d %H:%M:%S";
+    let target = chrono::NaiveDateTime::parse_from_str(timestamp, FMT).ok()?;
+    runs.iter()
+        .filter(|r| r.agent_kind == db_key)
+        .filter_map(|r| {
+            let t = chrono::NaiveDateTime::parse_from_str(&r.started_at, FMT).ok()?;
+            Some(((t - target).num_seconds().abs(), r))
+        })
+        .min_by_key(|(delta, _)| *delta)
+        .map(|(_, r)| r)
 }
 
 /// Format agent output, truncating if necessary.
@@ -123,4 +157,77 @@ pub(in crate::app) fn source_label_color(label: &str) -> egui::Color32 {
         egui::Color32::from_rgb(108, 72, 190), // violet
     ];
     colors[(hash as usize) % colors.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::AgentRunEntry;
+
+    fn agents() -> Vec<(String, String)> {
+        vec![
+            ("Cargo Check".to_string(), "custom_3".to_string()),
+            ("Test Coverage".to_string(), "custom_7".to_string()),
+            ("Test".to_string(), "test".to_string()),
+            ("Lint".to_string(), "lint".to_string()),
+        ]
+    }
+
+    #[test]
+    fn detect_agent_event_matches_custom_names_and_db_keys() {
+        let agents = agents();
+        assert_eq!(
+            detect_agent_event("Cargo Check passed (1.2s)", &agents),
+            Some("custom_3".to_string())
+        );
+        assert_eq!(
+            detect_agent_event("Test failed (300ms) \u{2014} error[E0308]", &agents),
+            Some("test".to_string())
+        );
+        // Longest name wins: "Test Coverage" must not resolve to builtin "Test".
+        assert_eq!(
+            detect_agent_event("Test Coverage error (2.0s)", &agents),
+            Some("custom_7".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_agent_event_rejects_non_agent_events() {
+        let agents = agents();
+        assert_eq!(detect_agent_event("Moved to Review", &agents), None);
+        assert_eq!(detect_agent_event("Tests are failing badly", &agents), None);
+        // Outcome word must directly follow the agent name.
+        assert_eq!(detect_agent_event("Lint run has passed", &agents), None);
+    }
+
+    fn run(kind: &str, started_at: &str, output: &str) -> AgentRunEntry {
+        AgentRunEntry {
+            agent_kind: kind.to_string(),
+            status: "failed".to_string(),
+            output: output.to_string(),
+            duration_ms: 100,
+            started_at: started_at.to_string(),
+            command: String::new(),
+            cue_id: Some(1),
+        }
+    }
+
+    #[test]
+    fn nearest_agent_run_prefers_closest_timestamp() {
+        let runs = vec![
+            run("test", "2026-07-16 10:00:05", "new"),
+            run("lint", "2026-07-16 09:00:01", "other kind"),
+            run("test", "2026-07-16 09:00:01", "old"),
+        ];
+        // Entry logged one second after the old run started.
+        let found = nearest_agent_run(&runs, "test", "2026-07-16 09:00:02").unwrap();
+        assert_eq!(found.output, "old");
+    }
+
+    #[test]
+    fn nearest_agent_run_handles_unparsable_timestamps() {
+        let runs = vec![run("test", "garbage", "a")];
+        assert!(nearest_agent_run(&runs, "test", "2026-07-16 09:00:02").is_none());
+        assert!(nearest_agent_run(&runs, "test", "garbage").is_none());
+    }
 }

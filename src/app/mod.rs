@@ -337,7 +337,8 @@ pub struct DirigentApp {
     // Cached activity logbook data (avoids DB queries every frame for expanded cues)
     activity_cache: HashMap<i64, (Vec<crate::db::ActivityEntry>, Vec<crate::db::AgentRunEntry>)>,
 
-    // Expanded agent output entries in activity logbook (agent_run IDs)
+    // Expanded agent output entries in activity logbook, keyed by
+    // (cue ID, timestamp + event text)
     agent_output_expanded: HashSet<(i64, String)>,
 
     // Per-cue agent runs viewer (cue ID whose agent runs to show in central panel)

@@ -1,8 +1,15 @@
 use eframe::egui;
 
 use super::super::super::DirigentApp;
-use super::utils::{detect_agent_kind, format_agent_output};
+use super::utils::{detect_agent_event, format_agent_output, nearest_agent_run};
+use crate::agents::AgentKind;
 use crate::db::Cue;
+
+/// Key identifying one activity entry in the expanded-output set. Includes
+/// the event text so two entries logged in the same second stay independent.
+fn entry_key(cue: &Cue, entry: &crate::db::ActivityEntry) -> (i64, String) {
+    (cue.id, format!("{}\u{1F}{}", entry.timestamp, entry.event))
+}
 
 impl DirigentApp {
     pub(in crate::app) fn render_activity_logbook(&mut self, ui: &mut egui::Ui, cue: &Cue) {
@@ -34,25 +41,50 @@ impl DirigentApp {
             );
             return;
         }
+        let agent_names = self.agent_event_names();
         for entry in &entries {
-            let agent_kind = detect_agent_kind(&entry.event);
+            let agent_key = detect_agent_event(&entry.event, &agent_names);
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(&entry.timestamp)
                         .small()
                         .color(self.semantic.muted_text()),
                 );
-                if agent_kind.is_some() {
+                if agent_key.is_some() {
                     self.render_agent_event_toggle(ui, cue, entry);
                 } else {
                     ui.label(egui::RichText::new(&entry.event).small());
                 }
             });
 
-            if let Some(ref kind_label) = agent_kind {
-                self.render_agent_output_block(ui, cue, entry, kind_label, &agent_runs);
+            if let Some(ref db_key) = agent_key {
+                self.render_agent_output_block(ui, cue, entry, db_key, &agent_runs);
             }
         }
+    }
+
+    /// Display name -> db key pairs used to recognize agent events in the
+    /// activity log. Configured agents come first (they may have custom
+    /// names); builtin kind labels are kept as fallback for historical
+    /// entries logged before a rename or after an agent was removed.
+    fn agent_event_names(&self) -> Vec<(String, String)> {
+        let mut names: Vec<(String, String)> = self
+            .settings
+            .agents
+            .iter()
+            .map(|a| (a.display_name().to_string(), a.kind.db_key()))
+            .collect();
+        for kind in [
+            AgentKind::Format,
+            AgentKind::Lint,
+            AgentKind::Build,
+            AgentKind::Test,
+            AgentKind::Outdated,
+            AgentKind::Audit,
+        ] {
+            names.push((kind.label().to_string(), kind.db_key()));
+        }
+        names
     }
 
     pub(in crate::app) fn render_agent_event_toggle(
@@ -61,7 +93,7 @@ impl DirigentApp {
         cue: &Cue,
         entry: &crate::db::ActivityEntry,
     ) {
-        let key = (cue.id, entry.timestamp.clone());
+        let key = entry_key(cue, entry);
         let is_expanded = self.agent_output_expanded.contains(&key);
         let arrow = if is_expanded { "\u{25BE}" } else { "\u{25B8}" };
         let clicked = ui
@@ -86,18 +118,18 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         cue: &Cue,
         entry: &crate::db::ActivityEntry,
-        kind_label: &str,
+        agent_db_key: &str,
         agent_runs: &[crate::db::AgentRunEntry],
     ) {
-        let key = (cue.id, entry.timestamp.clone());
+        let key = entry_key(cue, entry);
         if !self.agent_output_expanded.contains(&key) {
             return;
         }
-        let kind_str = kind_label.to_lowercase();
         let run = agent_runs
             .iter()
-            .find(|r| r.agent_kind == kind_str && r.started_at == entry.timestamp)
-            .or_else(|| agent_runs.iter().find(|r| r.agent_kind == kind_str));
+            .find(|r| r.agent_kind == agent_db_key && r.started_at == entry.timestamp)
+            .or_else(|| nearest_agent_run(agent_runs, agent_db_key, &entry.timestamp))
+            .or_else(|| agent_runs.iter().find(|r| r.agent_kind == agent_db_key));
         let Some(run) = run else { return };
         let output = format_agent_output(&run.output);
         egui::Frame::NONE
