@@ -140,7 +140,23 @@ impl LspClient {
                     continue;
                 }
                 if let Some((k, v)) = line.split_once('=') {
-                    cmd.env(k.trim(), v.trim());
+                    let k = k.trim();
+                    // The `command` field is validated by `is_safe_command_name`
+                    // because settings.json may be attacker-controlled (a malicious
+                    // `.Dirigent/settings.json` in a repo). The `env` field is the
+                    // same trust boundary: without this check it silently bypasses
+                    // that protection, since a dynamic-linker variable injects a
+                    // shared library into the (otherwise trusted) server process —
+                    // arbitrary code execution the moment the server spawns.
+                    if !is_safe_env_name(k) {
+                        log::warn!(
+                            "[lsp] refusing to set unsafe environment variable {:?} for server '{}'",
+                            k,
+                            name
+                        );
+                        continue;
+                    }
+                    cmd.env(k, v.trim());
                 }
             }
         }
@@ -567,6 +583,20 @@ fn is_safe_command_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
 }
 
+/// Returns `true` if `name` is a safe environment variable to set for a spawned
+/// language server.
+///
+/// Rejects the dynamic-linker variables (`DYLD_*` on macOS, `LD_*` on Linux —
+/// e.g. `DYLD_INSERT_LIBRARIES`, `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`)
+/// that let an attacker-controlled `.Dirigent/settings.json` load a shared
+/// library into the server process, which is remote code execution. The
+/// `command` field is already guarded by [`is_safe_command_name`]; this closes
+/// the equivalent hole in the `env` field.
+fn is_safe_env_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    !(upper.starts_with("DYLD_") || upper.starts_with("LD_"))
+}
+
 /// Resolve a command name using the login shell (handles macOS GUI PATH issues).
 fn resolve_command(command: &str, shell_init: &str) -> Option<String> {
     // Reject command names with shell metacharacters to prevent command injection.
@@ -660,4 +690,39 @@ fn language_id_from_path(path: &Path) -> String {
         _ => ext,
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_safe_command_name, is_safe_env_name};
+
+    #[test]
+    fn rejects_command_names_with_shell_metacharacters() {
+        assert!(is_safe_command_name("rust-analyzer"));
+        assert!(is_safe_command_name("/usr/local/bin/pyright-langserver"));
+        assert!(!is_safe_command_name("sh -c evil"));
+        assert!(!is_safe_command_name("evil;rm -rf /"));
+        assert!(!is_safe_command_name("$(payload)"));
+        assert!(!is_safe_command_name(""));
+    }
+
+    #[test]
+    fn rejects_dynamic_linker_env_vars() {
+        // These would inject a shared library into the spawned server process,
+        // giving a malicious `.Dirigent/settings.json` remote code execution.
+        assert!(!is_safe_env_name("DYLD_INSERT_LIBRARIES"));
+        assert!(!is_safe_env_name("dyld_insert_libraries"));
+        assert!(!is_safe_env_name("LD_PRELOAD"));
+        assert!(!is_safe_env_name("LD_AUDIT"));
+        assert!(!is_safe_env_name("LD_LIBRARY_PATH"));
+        assert!(!is_safe_env_name("DYLD_LIBRARY_PATH"));
+    }
+
+    #[test]
+    fn allows_ordinary_env_vars() {
+        assert!(is_safe_env_name("RUST_LOG"));
+        assert!(is_safe_env_name("GOPATH"));
+        assert!(is_safe_env_name("PYTHONPATH"));
+        assert!(is_safe_env_name("PATH"));
+    }
 }
