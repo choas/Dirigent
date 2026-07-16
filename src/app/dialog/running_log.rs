@@ -61,6 +61,18 @@ impl DirigentApp {
             .unwrap_or((String::new(), fallback_provider));
         let current_exec_id = self.claude.exec_ids.get(&cue_id).copied();
 
+        // Detect when the latest run changes so a run that just stopped being
+        // the latest can be collapsed once. egui persists collapsing state by
+        // id, so lowering `default_open` after the fact is otherwise ignored and
+        // every once-latest run would stay expanded.
+        let latest_exec_id = past_execs.last().map(|e| e.id);
+        let demoted_exec_id = if self.claude.conversation_last_latest != latest_exec_id {
+            self.claude.conversation_last_latest
+        } else {
+            None
+        };
+        self.claude.conversation_last_latest = latest_exec_id;
+
         let mut close = false;
         let mut reply_send: Option<String> = None;
 
@@ -97,6 +109,7 @@ impl DirigentApp {
                         is_running,
                         current_exec_id,
                         &current_provider,
+                        demoted_exec_id,
                     );
                 });
 
@@ -132,6 +145,7 @@ impl DirigentApp {
         is_running: bool,
         current_exec_id: Option<i64>,
         current_provider: &CliProvider,
+        demoted_exec_id: Option<i64>,
     ) {
         if past_execs.is_empty() && current_running_log.is_empty() {
             let msg = if is_running {
@@ -150,6 +164,7 @@ impl DirigentApp {
         for (idx, exec) in past_execs.iter().enumerate() {
             let is_current_running = current_exec_id == Some(exec.id);
             let is_last = idx + 1 == total;
+            let force_collapse = demoted_exec_id == Some(exec.id);
             self.render_conversation_entry(
                 ui,
                 exec,
@@ -157,6 +172,7 @@ impl DirigentApp {
                 is_last,
                 is_current_running,
                 current_running_log,
+                force_collapse,
             );
         }
 
@@ -481,29 +497,37 @@ impl DirigentApp {
         is_last: bool,
         is_current_running: bool,
         current_running_log: &str,
+        force_collapse: bool,
     ) {
         let user_text = crate::claude::extract_user_text_from_prompt(&exec.prompt);
         let default_open = is_last || is_current_running;
 
         let id = ui.make_persistent_id(("conversation_run", exec.id));
-        egui::collapsing_header::CollapsingState::load_with_default_open(
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
             id,
             default_open,
-        )
-        .show_header(ui, |ui| {
-            self.render_run_group_header(ui, exec, idx, is_current_running, &user_text);
-        })
-        .body(|ui| {
-            self.render_conversation_entry_body(
-                ui,
-                exec,
-                idx,
-                is_current_running,
-                current_running_log,
-                &user_text,
-            );
-        });
+        );
+        // This run just stopped being the latest: collapse it once. Persisted
+        // egui state means `default_open` alone can't re-close it, but the user
+        // can still manually re-expand afterwards.
+        if force_collapse {
+            state.set_open(false);
+        }
+        state
+            .show_header(ui, |ui| {
+                self.render_run_group_header(ui, exec, idx, is_current_running, &user_text);
+            })
+            .body(|ui| {
+                self.render_conversation_entry_body(
+                    ui,
+                    exec,
+                    idx,
+                    is_current_running,
+                    current_running_log,
+                    &user_text,
+                );
+            });
     }
 
     /// Render the one-line summary shown on a run's foldable header: the run
