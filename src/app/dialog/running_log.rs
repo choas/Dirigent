@@ -859,7 +859,9 @@ fn conversation_run_preview(user_text: &str) -> String {
     if first_line.chars().count() <= MAX_CHARS {
         return first_line.to_string();
     }
-    let truncated: String = first_line.chars().take(MAX_CHARS).collect();
+    // Reserve one slot for the ellipsis so the whole preview stays within
+    // MAX_CHARS characters.
+    let truncated: String = first_line.chars().take(MAX_CHARS - 1).collect();
     format!("{}\u{2026}", truncated.trim_end())
 }
 
@@ -1120,8 +1122,8 @@ mod tests {
     fn run_preview_truncates_long_lines_on_char_boundary() {
         let long = "ä".repeat(200);
         let preview = conversation_run_preview(&long);
-        // 80 kept chars plus the ellipsis.
-        assert_eq!(preview.chars().count(), 81);
+        // 79 kept chars plus the ellipsis.
+        assert_eq!(preview.chars().count(), 80);
         assert!(preview.ends_with('\u{2026}'));
     }
 
