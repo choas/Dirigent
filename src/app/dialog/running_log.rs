@@ -97,12 +97,20 @@ impl DirigentApp {
         // id, so lowering `default_open` after the fact is otherwise ignored and
         // every once-latest run would stay expanded.
         let latest_exec_id = past_execs.last().map(|e| e.id);
-        let demoted_exec_id = if self.claude.conversation_last_latest != latest_exec_id {
-            self.claude.conversation_last_latest
+        let prev_latest = self.claude.conversation_last_latest.get(&cue_id).copied();
+        let demoted_exec_id = if prev_latest != latest_exec_id {
+            prev_latest
         } else {
             None
         };
-        self.claude.conversation_last_latest = latest_exec_id;
+        match latest_exec_id {
+            Some(id) => {
+                self.claude.conversation_last_latest.insert(cue_id, id);
+            }
+            None => {
+                self.claude.conversation_last_latest.remove(&cue_id);
+            }
+        }
 
         let mut close = false;
         let mut reply_send: Option<String> = None;

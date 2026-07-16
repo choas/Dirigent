@@ -51,11 +51,13 @@ pub(crate) struct ClaudeRunState {
     pub(super) expand_running: bool,
     /// Cached past executions for the conversation view (loaded on open).
     pub(super) conversation_history: Vec<Execution>,
-    /// Id of the execution that was the latest run the last time the
-    /// conversation view rendered. When a newer run is appended the previously
-    /// latest run must be force-collapsed once, because egui's persisted
-    /// collapsing state ignores a later change to `default_open`.
-    pub(super) conversation_last_latest: Option<i64>,
+    /// Per-cue id of the execution that was the latest run the last time that
+    /// cue's conversation view rendered. When a newer run is appended the
+    /// previously latest run must be force-collapsed once, because egui's
+    /// persisted collapsing state ignores a later change to `default_open`.
+    /// Keyed by `cue_id` so switching between conversations doesn't clobber one
+    /// cue's demotion state with another's.
+    pub(super) conversation_last_latest: HashMap<i64, i64>,
     /// Per-cue timeline of recent log-arrival instants, used to draw the
     /// heartbeat strip beneath the running conversation view.
     pub(super) log_heartbeats: HashMap<i64, VecDeque<Instant>>,
@@ -88,7 +90,7 @@ impl ClaudeRunState {
             last_log_flush: Instant::now(),
             expand_running: false,
             conversation_history: Vec::new(),
-            conversation_last_latest: None,
+            conversation_last_latest: HashMap::new(),
             log_heartbeats: HashMap::new(),
             last_message_times: HashMap::new(),
             auto_continue_count: HashMap::new(),
