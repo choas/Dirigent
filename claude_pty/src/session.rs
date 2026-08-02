@@ -644,6 +644,21 @@ fn chat_region_bounds(lines: &[String]) -> (usize, usize) {
 
 fn is_divider(line: &str) -> bool {
     let t = line.trim();
+    // A wide box-drawing table border (e.g. `┌────┬────┐`) is also ~80% `─`,
+    // but it must NOT be treated as the horizontal rule that separates the
+    // chat region from the input box — otherwise the table's top border ends
+    // the chat region and the whole table is truncated out of the transcript.
+    // The genuine divider is a plain rule of `─` (optionally with a
+    // `· /command` suffix); it never contains box corners, junctions, or
+    // vertical bars.
+    if t.chars().any(|c| {
+        matches!(
+            c,
+            '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '│'
+        )
+    }) {
+        return false;
+    }
     let dash_count = t.chars().filter(|c| *c == '─').count();
     let total = t.chars().count();
     dash_count >= 30 && dash_count * 5 >= total * 4
@@ -1599,6 +1614,53 @@ mod tests {
             "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt".to_string(),
         ];
         assert_eq!(trim_to_chat_region(lines), vec!["  some chat".to_string()]);
+    }
+
+    #[test]
+    fn is_divider_ignores_wide_table_borders() {
+        // A wide table border is mostly `─` but is not the input-box rule.
+        let top = format!("┌{}┬{}┐", "─".repeat(9), "─".repeat(73));
+        let bottom = format!("└{}┴{}┘", "─".repeat(9), "─".repeat(73));
+        let mid = format!("├{}┼{}┤", "─".repeat(9), "─".repeat(73));
+        assert!(!is_divider(&top), "table top border must not be a divider");
+        assert!(
+            !is_divider(&bottom),
+            "table bottom border must not be a divider"
+        );
+        assert!(!is_divider(&mid), "table mid rule must not be a divider");
+        // The genuine input-box divider is still recognized.
+        assert!(is_divider(&"─".repeat(48)));
+    }
+
+    #[test]
+    fn trim_to_chat_region_keeps_wide_table() {
+        // Regression: a wide table's top border is ~80% `─` and previously
+        // matched `is_divider`, which truncated the whole table out of the
+        // chat region so it never reached the app.
+        let lines = vec![
+            "  Here are the commits:".to_string(),
+            format!("┌{}┬{}┐", "─".repeat(9), "─".repeat(73)),
+            "│ Commit  │ Message                                          │".to_string(),
+            format!("├{}┼{}┤", "─".repeat(9), "─".repeat(73)),
+            "│ 639bf7a │ docs: note herdr backend drops output            │".to_string(),
+            format!("└{}┴{}┘", "─".repeat(9), "─".repeat(73)),
+            "".to_string(),
+            "─".repeat(48),
+            "❯ ".to_string(),
+        ];
+        let trimmed = trim_to_chat_region(lines);
+        assert!(
+            trimmed.iter().any(|l| l.contains("639bf7a")),
+            "table body row must survive; saw {trimmed:?}"
+        );
+        assert!(
+            trimmed.iter().any(|l| l.contains("Commit")),
+            "table header row must survive; saw {trimmed:?}"
+        );
+        assert!(
+            trimmed.iter().any(|l| l.trim_start().starts_with('└')),
+            "table bottom border must survive; saw {trimmed:?}"
+        );
     }
 
     #[test]
