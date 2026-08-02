@@ -8,13 +8,11 @@ use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
 use super::DirigentApp;
 use crate::agents::AgentTrigger;
+use crate::ai_backend::{self, ProviderRunOutcome};
 use crate::claude;
-use crate::codex;
 use crate::db::{Cue, CueStatus, Execution};
-use crate::gemini;
 use crate::git;
 use crate::jj;
-use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand, VcsBackend};
 use crate::telemetry;
 
@@ -175,7 +173,7 @@ fn write_dirigent_mcp_config(
         r#"{{"mcpServers":{{"dirigent":{{"type":"stdio","command":"{}","args":["{}"]}}}}}}"#,
         escaped_bin, escaped_db,
     );
-    std::fs::write(&config_path, config)?;
+    crate::util::fs::atomic_write(&config_path, config.as_bytes())?;
     Ok(config_path)
 }
 
@@ -338,29 +336,37 @@ fn vcs_get_dirty_files(req: &RunRequest) -> HashMap<String, char> {
 }
 
 /// Run the CLI provider on a background thread and produce a `ClaudeResult`.
+///
+/// All four providers go through the [`ai_backend::AiBackend`] trait, which
+/// owns the canonical hook/cancel ordering and the single metrics mapping;
+/// only the pre-run dirty-file baseline and the result mapping live here.
 fn run_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send + 'static,
     cancel: Arc<AtomicBool>,
 ) -> ClaudeResult {
-    match req.provider {
-        CliProvider::Claude => run_claude_provider(req, on_log, cancel),
-        CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
-        CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
-        CliProvider::Codex => run_codex_provider(req, on_log, cancel),
-    }
-}
+    // Snapshot dirty files before the run (and before the pre-run hook, which
+    // may itself modify files) so the fallback diff can detect which files
+    // were actually modified — including ones that were already dirty at
+    // baseline — by comparing post-run content to pre-run hashes.
+    let baseline = snapshot_dirty_state(req);
 
-/// Normalized outcome from any CLI provider's streaming invocation. Each
-/// provider adapts its specific response into this common shape so the
-/// post-run diff resolution and `ClaudeResult` mapping can be shared via
-/// `finalize_run` — keeping provider-specific drift out of the result path.
-struct ProviderRunOutcome {
-    stdout: String,
-    edited_files: Vec<String>,
-    metrics: claude::RunMetrics,
-    metadata: Option<claude::ClaudeRunMetadata>,
-    parse_diff: fn(&str) -> Option<String>,
+    let backend = ai_backend::backend_for(&req.provider);
+    let invocation = ai_backend::BackendRequest {
+        prompt: req.prompt,
+        project_root: req.project_root,
+        model: &req.config.model,
+        cli_path: &req.config.cli_path,
+        extra_args: &req.config.extra_args,
+        extra_args_vec: &req.config.extra_args_vec,
+        env_vars: &req.config.env_vars,
+        pre_run_script: &req.config.pre_run_script,
+        post_run_script: &req.config.post_run_script,
+        skip_permissions: req.config.skip_permissions,
+        use_pty: req.config.use_pty,
+    };
+    let res = backend.invoke(&invocation, Box::new(on_log), cancel);
+    finalize_run(req, &baseline, res)
 }
 
 /// Resolve the run diff using a single canonical source order shared by all
@@ -422,38 +428,6 @@ fn finalize_run<E: std::fmt::Display>(
             metadata: None,
         },
     }
-}
-
-fn run_claude_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let res = claude::invoke_claude_streaming(
-        req.prompt,
-        req.project_root,
-        &req.config.model,
-        &req.config.cli_path,
-        &req.config.extra_args,
-        &req.config.extra_args_vec,
-        &req.config.env_vars,
-        &req.config.pre_run_script,
-        &req.config.post_run_script,
-        req.config.skip_permissions,
-        req.config.use_pty,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: Vec::new(),
-        metrics: response.metrics,
-        metadata: response.metadata,
-        parse_diff: claude::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
 }
 
 /// Fingerprint a file for change detection. Returns `None` when the file
@@ -521,117 +495,6 @@ fn scoped_working_diff(
         return None;
     }
     vcs_get_working_diff(req, &changed)
-}
-
-fn run_gemini_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let gemini_config = gemini::GeminiRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        post_run_script: &req.config.post_run_script,
-    };
-    let res = gemini::invoke_gemini_streaming(
-        req.prompt,
-        req.project_root,
-        &gemini_config,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: response.edited_files,
-        metrics: claude::RunMetrics {
-            cost_usd: response.cost_usd.unwrap_or(0.0),
-            duration_ms: response.duration_ms.unwrap_or(0),
-            num_turns: response.num_turns.unwrap_or(0),
-            ..claude::RunMetrics::default()
-        },
-        metadata: None,
-        parse_diff: gemini::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
-}
-
-fn run_codex_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let codex_config = codex::CodexRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        pre_run_script_trust: codex::HookScriptTrust::ProjectLocal,
-        post_run_script: &req.config.post_run_script,
-        post_run_script_trust: codex::HookScriptTrust::ProjectLocal,
-        skip_permissions: req.config.skip_permissions,
-    };
-    let res =
-        codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
-            .map(|response| ProviderRunOutcome {
-                stdout: response.stdout,
-                edited_files: response.edited_files,
-                metrics: claude::RunMetrics {
-                    cost_usd: response.cost_usd.unwrap_or(0.0),
-                    duration_ms: response.duration_ms.unwrap_or(0),
-                    num_turns: response.num_turns.unwrap_or(0),
-                    ..claude::RunMetrics::default()
-                },
-                metadata: None,
-                parse_diff: codex::parse_diff_from_response,
-            });
-    finalize_run(req, &baseline, res)
-}
-fn run_opencode_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    // Snapshot dirty files before the run so the fallback diff can detect
-    // which files were actually modified — including ones that were already
-    // dirty at baseline — by comparing post-run content to pre-run hashes.
-    let baseline = snapshot_dirty_state(req);
-
-    let opencode_config = opencode::OpenCodeRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        post_run_script: &req.config.post_run_script,
-    };
-    let res = opencode::invoke_opencode_streaming(
-        req.prompt,
-        req.project_root,
-        &opencode_config,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: response.edited_files,
-        metrics: claude::RunMetrics {
-            cost_usd: response.cost_usd.unwrap_or(0.0),
-            duration_ms: response.duration_ms.unwrap_or(0),
-            num_turns: response.num_turns.unwrap_or(0),
-            ..claude::RunMetrics::default()
-        },
-        metadata: None,
-        parse_diff: opencode::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
 }
 
 impl DirigentApp {

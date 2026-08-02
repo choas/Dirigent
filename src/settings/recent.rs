@@ -41,7 +41,7 @@ pub(crate) fn save_global_recent_projects(projects: &[String]) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(projects) {
-        let _ = std::fs::write(path, json);
+        let _ = crate::util::fs::atomic_write(&path, json.as_bytes());
     }
 }
 

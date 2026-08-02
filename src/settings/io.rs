@@ -3,6 +3,7 @@ use std::path::Path;
 use super::app_settings::Settings;
 use super::commands::default_commands;
 use super::playbook::default_playbook;
+use super::trust;
 
 /// Resolve the full path for a CLI tool.
 ///
@@ -115,25 +116,91 @@ fn validate_shell_init(init: &str) -> bool {
     true
 }
 
-pub(crate) fn load_settings(project_root: &Path) -> Settings {
-    let path = project_root.join(".Dirigent").join("settings.json");
-    let mut settings = load_settings_file(&path);
-    sanitize_shell_init(&mut settings);
-    detect_cli_paths(&mut settings);
-    detect_vcs_backend(project_root, &mut settings);
-    merge_default_playbook(&mut settings);
-    merge_default_commands(&mut settings);
-    if normalize_lsp_env_vars(&mut settings) {
-        save_settings_after_env_migration(project_root, &settings);
-    }
-    settings
+/// Result of [`load_settings`]: the settings to apply now, plus — when the
+/// repository's file carries execution-capable fields the user has not yet
+/// approved — a pending trust request for the approval dialog.
+pub(crate) struct SettingsLoad {
+    pub settings: Settings,
+    pub pending_trust: Option<PendingTrust>,
 }
 
-fn load_settings_file(path: &Path) -> Settings {
-    std::fs::read_to_string(path)
+/// An unapproved execution-capable field set from `.Dirigent/settings.json`.
+pub(crate) struct PendingTrust {
+    /// Content hash of the execution-capable fields awaiting approval.
+    pub hash: String,
+    /// (field name, pretty-printed JSON value) pairs shown in the approval dialog.
+    pub fields: Vec<(String, String)>,
+    /// The settings as they would apply once the user trusts the repository.
+    pub trusted_settings: Settings,
+}
+
+pub(crate) fn load_settings(project_root: &Path) -> SettingsLoad {
+    let path = project_root.join(".Dirigent").join("settings.json");
+    let file_value: Option<serde_json::Value> = std::fs::read_to_string(&path)
         .ok()
-        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .and_then(|contents| serde_json::from_str(&contents).ok());
+    let check = trust::evaluate(project_root, file_value.as_ref());
+
+    if check.trusted {
+        let mut settings = settings_from_value(file_value);
+        finalize_settings(project_root, &mut settings);
+        if normalize_lsp_env_vars(&mut settings) {
+            save_settings_after_env_migration(project_root, &settings);
+        }
+        return SettingsLoad {
+            settings,
+            pending_trust: None,
+        };
+    }
+
+    // Untrusted repository: honor only the repo-scoped safe fields (theme,
+    // fonts, layout, ...). Every execution-capable field falls back to its
+    // default until the user approves it, and `--dangerously-skip-permissions`
+    // is forced off. The untrusted file is never written back to disk.
+    let safe_value = file_value.as_ref().map(strip_gated_fields);
+    let mut settings = settings_from_value(safe_value);
+    finalize_settings(project_root, &mut settings);
+    normalize_lsp_env_vars(&mut settings);
+    settings.allow_dangerous_skip_permissions = false;
+
+    let mut trusted_settings = settings_from_value(file_value);
+    finalize_settings(project_root, &mut trusted_settings);
+    normalize_lsp_env_vars(&mut trusted_settings);
+
+    SettingsLoad {
+        settings,
+        pending_trust: Some(PendingTrust {
+            hash: check.hash,
+            fields: check.fields,
+            trusted_settings,
+        }),
+    }
+}
+
+fn settings_from_value(value: Option<serde_json::Value>) -> Settings {
+    value
+        .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default()
+}
+
+fn strip_gated_fields(value: &serde_json::Value) -> serde_json::Value {
+    match value.as_object() {
+        Some(obj) => serde_json::Value::Object(
+            obj.iter()
+                .filter(|(k, _)| trust::is_repo_safe_field(k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
+        None => serde_json::Value::Object(Default::default()),
+    }
+}
+
+fn finalize_settings(project_root: &Path, settings: &mut Settings) {
+    sanitize_shell_init(settings);
+    detect_cli_paths(settings);
+    detect_vcs_backend(project_root, settings);
+    merge_default_playbook(settings);
+    merge_default_commands(settings);
 }
 
 fn sanitize_shell_init(settings: &mut Settings) {
@@ -214,6 +281,13 @@ pub(crate) fn save_settings(project_root: &Path, settings: &Settings) -> Result<
     let path = dir.join("settings.json");
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Cannot serialize settings: {}", e))?;
-    std::fs::write(path, json).map_err(|e| format!("Cannot write settings: {}", e))?;
+    crate::util::fs::atomic_write(&path, json.as_bytes())
+        .map_err(|e| format!("Cannot write settings: {}", e))?;
+    // Everything the app saves has already passed the trust gate (or was
+    // edited by the user in the UI), so record its execution-capable field
+    // hash — otherwise the app's own writes would re-trigger the trust prompt.
+    if let Ok(value) = serde_json::to_value(settings) {
+        trust::record_settings_state(project_root, &value);
+    }
     Ok(())
 }
