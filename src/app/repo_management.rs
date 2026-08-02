@@ -67,7 +67,10 @@ impl DirigentApp {
         // Load project-specific settings before any VCS calls so the correct
         // backend (git vs jj) is used from the start.
         let recent_repos = self.settings.recent_repos.clone();
-        self.settings = settings::load_settings(&self.project_root);
+        let settings_load = settings::load_settings(&self.project_root);
+        self.settings = settings_load.settings;
+        self.pending_trust = settings_load.pending_trust;
+        self.declined_trust_hash = None;
         self.settings.recent_repos = recent_repos;
         self.ensure_jj_colocated();
 
@@ -100,8 +103,12 @@ impl DirigentApp {
         self.reload_cues();
         let path_str = new_root.to_string_lossy().to_string();
         settings::add_recent_repo(&mut self.settings, &path_str);
-        if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
-            self.set_status_message(format!("Failed to save settings: {e}"));
+        // While the repo's settings await trust approval, skip the write-back
+        // so the unapproved settings.json is not clobbered with defaults.
+        if self.pending_trust.is_none() {
+            if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
+                self.set_status_message(format!("Failed to save settings: {e}"));
+            }
         }
         // Persist to global list so every app launch remembers this project.
         settings::add_global_recent_project(&path_str);

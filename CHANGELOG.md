@@ -4,8 +4,28 @@ All notable changes to Dirigent are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Trust gate for `.Dirigent/settings.json`: execution-capable fields (LSP server commands, source commands, pre/post-run scripts, agent commands, extra CLI args, program paths, LLM endpoints, …) from a repository's settings file are disabled — and `--dangerously-skip-permissions` is forced off — until the user explicitly approves exactly those fields in a first-open dialog. Approvals are remembered per repository by content hash in the user profile (`~/Library/Application Support/Dirigent/trusted_repos.json`); only cosmetic fields (theme, fonts, layout, notifications) apply without approval, and any future settings field is gated by default
+- Git graph view with branch/commit visualization and incremental history loading
+- "Tidy my working tree" — the coding-agent CLI groups the working diff into logical change sets, which become a reviewable, reorderable commit queue
+- Hunk-level staging: stage, unstage, and discard individual hunks from the diff review
+- "Analyze changes over…" — cross-branch/range review that imports findings as cues
+- Folder comparison, with support for an external diff tool (`external_diff_tool`)
+- Pull request creation on Codeberg via the Forgejo REST API, alongside GitHub
+- In-app log viewer and a Mermaid diagram view
+
 ### Changed
+- All four AI CLI backends (Claude, Gemini, OpenCode, Codex) now run through a single `AiBackend` trait with one canonical sequence — pre-run hook, CLI invocation, post-run hook (always executed, even on error or cancel), cancellation winning over the CLI result — and one shared metrics mapping, error type, and request/response shape; each backend's hook-trust decision is declared on its impl
 - Conversation view groups each CLI run under a foldable header (run number, provider, prompt preview, and duration/cost) — the latest and in-flight runs stay expanded while earlier runs collapse for easier scanning of long conversations
+- Commit flows include staged changes, and staged queue groups stay queued until they are committed
+
+### Fixed
+- Claude and Codex runs recorded a zero duration; the run duration is now measured at the backend seam when the CLI stream doesn't report one
+- Gemini and OpenCode runs panicked instead of erroring when the child's stdout/stderr pipes were missing, and Gemini could block indefinitely on a stream read error (the child is now killed first, as OpenCode already did)
+- Cancelling a Gemini/OpenCode run skipped the post-run hook, and a cancel racing run completion could leave the child process unkilled
+- Remote code execution via LSP environment variables in an attacker-controlled `.Dirigent/settings.json`
+- Orphaned PTY processes are cleaned up, and stale Stop-hook entries are pruned on install
+- File renames made outside Dirigent are followed instead of closing the tab as deleted
 
 ## [0.6.1] - 2026-05-28
 

@@ -4,65 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::ai_backend::{BackendError, BackendRequest, BackendResponse, HookScriptTrust};
 use crate::claude;
 
 const WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
-
-#[derive(Debug)]
-pub(crate) enum CodexError {
-    NotFound,
-    SpawnFailed(std::io::Error),
-    StreamReadError(std::io::Error),
-    Cancelled,
-    NonZeroExit(std::process::ExitStatus),
-    InvalidExtraArgs(String),
-    HookRejected(String),
-}
-
-impl std::fmt::Display for CodexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CodexError::NotFound => write!(f, "codex CLI not found on PATH"),
-            CodexError::SpawnFailed(e) => write!(f, "failed to spawn codex: {e}"),
-            CodexError::StreamReadError(e) => write!(f, "failed to read codex stdout: {e}"),
-            CodexError::Cancelled => write!(f, "cancelled"),
-            CodexError::InvalidExtraArgs(args) => {
-                write!(f, "failed to parse extra_args (unmatched quote?): {args}")
-            }
-            CodexError::HookRejected(msg) => write!(f, "hook script rejected: {msg}"),
-            CodexError::NonZeroExit(status) => write!(f, "codex exited with {status}"),
-        }
-    }
-}
-
-impl std::error::Error for CodexError {}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CodexResponse {
-    pub stdout: String,
-    pub edited_files: Vec<String>,
-    pub cost_usd: Option<f64>,
-    pub duration_ms: Option<u64>,
-    pub num_turns: Option<u64>,
-}
-
-pub(crate) struct CodexRunConfig<'a> {
-    pub model: &'a str,
-    pub cli_path: &'a str,
-    pub extra_args: &'a str,
-    pub env_vars: &'a str,
-    pub pre_run_script: &'a str,
-    pub pre_run_script_trust: HookScriptTrust,
-    pub post_run_script: &'a str,
-    pub post_run_script_trust: HookScriptTrust,
-    pub skip_permissions: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HookScriptTrust {
-    ProjectLocal,
-    Trusted,
-}
 
 #[derive(Default)]
 struct StreamMetrics {
@@ -130,14 +75,18 @@ fn validate_hook_command(script: &str, trust: HookScriptTrust) -> Result<HookCom
     })
 }
 
-fn run_hook_script(
+/// Codex's validating, no-shell hook runner. Unlike the default `sh -c`
+/// runner in `ai_process`, scripts are refused when project-local and
+/// validated against shell metacharacters when trusted. Called by
+/// `CodexBackend::run_hook` in `ai_backend`.
+pub(crate) fn run_hook_script(
     label: &str,
     script: &str,
     trust: HookScriptTrust,
     project_root: &Path,
-    on_log: &mut impl FnMut(&str),
+    on_log: &mut dyn FnMut(&str),
     fail_on_error: bool,
-) -> Result<(), CodexError> {
+) -> Result<(), BackendError> {
     let trimmed = script.trim();
     if trimmed.is_empty() {
         return Ok(());
@@ -149,7 +98,7 @@ fn run_hook_script(
             log::warn!("[codex] {}: {:?}", msg, trimmed);
             on_log(&format!("⚠ {msg}\n"));
             if fail_on_error {
-                return Err(CodexError::HookRejected(msg));
+                return Err(BackendError::HookRejected(msg));
             }
             return Ok(());
         }
@@ -170,29 +119,35 @@ fn run_hook_script(
                 on_log(&String::from_utf8_lossy(&output.stderr));
             }
             if !output.status.success() && fail_on_error {
-                return Err(CodexError::SpawnFailed(std::io::Error::other(format!(
-                    "{} script failed (exit {})",
-                    label, output.status
-                ))));
+                return Err(BackendError::SpawnFailed {
+                    backend: "codex",
+                    source: std::io::Error::other(format!(
+                        "{} script failed (exit {})",
+                        label, output.status
+                    )),
+                });
             }
         }
         Err(e) => {
             on_log(&format!("⚠ {} script error: {}\n", label, e));
             if fail_on_error {
-                return Err(CodexError::SpawnFailed(e));
+                return Err(BackendError::SpawnFailed {
+                    backend: "codex",
+                    source: e,
+                });
             }
         }
     }
     Ok(())
 }
 
-fn resolve_codex_bin(cli_path: &str) -> Result<PathBuf, CodexError> {
+fn resolve_codex_bin(cli_path: &str) -> Result<PathBuf, BackendError> {
     let bin = if cli_path.is_empty() {
         "codex"
     } else {
         cli_path
     };
-    which::which(bin).map_err(|_| CodexError::NotFound)
+    which::which(bin).map_err(|_| BackendError::NotFound { backend: "codex" })
 }
 
 fn spawn_child_waiter(
@@ -549,90 +504,69 @@ fn stream_stderr(
     Ok(all)
 }
 
-pub(crate) fn invoke_codex_streaming(
-    prompt: &str,
-    project_root: &Path,
-    config: &CodexRunConfig<'_>,
-    mut on_log: impl FnMut(&str),
-    cancel: Arc<AtomicBool>,
-) -> Result<CodexResponse, CodexError> {
-    let codex_bin = resolve_codex_bin(config.cli_path)?;
-    run_hook_script(
-        "Pre-run script",
-        config.pre_run_script,
-        config.pre_run_script_trust,
-        project_root,
-        &mut on_log,
-        true,
-    )?;
+/// Spawn the codex CLI, stream its JSON event output, and wait for exit.
+/// Pre/post-run hooks (through the trust-validating [`run_hook_script`]) and
+/// the final cancel mapping are owned by the `AiBackend` driver.
+pub(crate) fn run_codex_cli(
+    req: &BackendRequest<'_>,
+    on_log: &mut dyn FnMut(&str),
+    cancel: &Arc<AtomicBool>,
+) -> Result<BackendResponse, BackendError> {
+    let codex_bin = resolve_codex_bin(req.cli_path)?;
 
     let mut cmd = Command::new(codex_bin);
     cmd.arg("exec").arg("--json");
-    if config.skip_permissions {
+    if req.skip_permissions {
         cmd.arg("--yolo");
     }
-    if !config.model.is_empty() {
-        cmd.arg("--model").arg(config.model);
+    if !req.model.is_empty() {
+        cmd.arg("--model").arg(req.model);
     }
-    if !config.extra_args.trim().is_empty() {
-        let args = shlex::split(config.extra_args)
-            .ok_or_else(|| CodexError::InvalidExtraArgs(config.extra_args.to_string()))?;
+    if !req.extra_args.trim().is_empty() {
+        let args = shlex::split(req.extra_args).ok_or_else(|| BackendError::InvalidExtraArgs {
+            backend: "codex",
+            args: req.extra_args.to_string(),
+        })?;
         for arg in args {
             cmd.arg(arg);
         }
     }
-    cmd.arg(prompt)
-        .current_dir(project_root)
+    cmd.arg(req.prompt)
+        .current_dir(req.project_root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let yolo_note = if config.skip_permissions {
-        "--yolo "
-    } else {
-        ""
-    };
-    let model_note = if config.model.is_empty() {
+    let yolo_note = if req.skip_permissions { "--yolo " } else { "" };
+    let model_note = if req.model.is_empty() {
         String::new()
     } else {
-        format!("--model {} ", config.model)
+        format!("--model {} ", req.model)
     };
     on_log(&format!(
         "▶ codex exec --json {}{}<prompt>\n",
         yolo_note, model_note
     ));
 
-    claude::apply_env_vars(&mut cmd, config.env_vars, &mut on_log);
-    claude::apply_dirigent_env(&mut cmd, project_root, &mut on_log);
+    claude::apply_env_vars(&mut cmd, req.env_vars, on_log);
+    claude::apply_dirigent_env(&mut cmd, req.project_root, on_log);
 
-    let mut child = cmd.spawn().map_err(CodexError::SpawnFailed)?;
-    let stdout_handle = match child.stdout.take() {
-        Some(stdout) => stdout,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CodexError::SpawnFailed(std::io::Error::other(
-                "missing stdout",
-            )));
-        }
-    };
-    let stderr_handle = match child.stderr.take() {
-        Some(stderr) => stderr,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CodexError::SpawnFailed(std::io::Error::other(
-                "missing stderr",
-            )));
-        }
-    };
+    let mut child = cmd.spawn().map_err(|source| BackendError::SpawnFailed {
+        backend: "codex",
+        source,
+    })?;
+    let (stdout_handle, stderr_handle) = crate::ai_process::take_child_streams(&mut child)
+        .map_err(|source| BackendError::SpawnFailed {
+            backend: "codex",
+            source,
+        })?;
     let terminate_child = Arc::new(AtomicBool::new(false));
-    let child_waiter = spawn_child_waiter(child, Arc::clone(&cancel), Arc::clone(&terminate_child));
+    let child_waiter = spawn_child_waiter(child, Arc::clone(cancel), Arc::clone(&terminate_child));
 
-    let cancel_for_stderr = Arc::clone(&cancel);
+    let cancel_for_stderr = Arc::clone(cancel);
     let stderr_thread = std::thread::spawn(move || stream_stderr(stderr_handle, cancel_for_stderr));
 
-    let stream_result = process_event_stream(stdout_handle, &cancel, &mut on_log);
+    let stream_result = process_event_stream(stdout_handle, cancel, &mut |s: &str| on_log(s));
     if stream_result.is_err() {
         terminate_child.store(true, Ordering::Relaxed);
     }
@@ -645,41 +579,40 @@ pub(crate) fn invoke_codex_streaming(
     let status = child_waiter
         .join()
         .unwrap_or_else(|_| Err(std::io::Error::other("codex waiter thread panicked")))
-        .map_err(CodexError::SpawnFailed)?;
+        .map_err(|source| BackendError::SpawnFailed {
+            backend: "codex",
+            source,
+        })?;
     let (final_result, edited_files, metrics) =
-        stream_result.map_err(CodexError::StreamReadError)?;
+        stream_result.map_err(|source| BackendError::StreamReadError {
+            backend: "codex",
+            source,
+        })?;
 
     if !stderr.is_empty() {
         on_log(&stderr);
     }
 
-    run_hook_script(
-        "Post-run script",
-        config.post_run_script,
-        config.post_run_script_trust,
-        project_root,
-        &mut on_log,
-        false,
-    )?;
-
+    // A cancelled run's child was killed by the waiter; report the cancel
+    // rather than a noisy non-zero exit. The driver double-checks anyway.
     if cancel.load(Ordering::Relaxed) {
-        return Err(CodexError::Cancelled);
+        return Err(BackendError::Cancelled);
     }
     if !status.success() {
-        return Err(CodexError::NonZeroExit(status));
+        return Err(BackendError::NonZeroExit {
+            backend: "codex",
+            status,
+        });
     }
 
-    Ok(CodexResponse {
+    Ok(BackendResponse {
         stdout: final_result,
         edited_files,
         cost_usd: metrics.cost_usd,
         duration_ms: metrics.duration_ms,
         num_turns: metrics.num_turns,
+        metadata: None,
     })
-}
-
-pub(crate) fn parse_diff_from_response(_response: &str) -> Option<String> {
-    None
 }
 
 #[cfg(test)]
@@ -829,7 +762,7 @@ mod tests {
             true,
         );
 
-        assert!(matches!(result, Err(CodexError::HookRejected(_))));
+        assert!(matches!(result, Err(BackendError::HookRejected(_))));
         assert!(log.contains("Pre-run script skipped"));
     }
 

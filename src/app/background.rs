@@ -46,7 +46,13 @@ impl DirigentApp {
     /// Only applies the new settings (and triggers a theme re-apply) if they actually differ
     /// from the current in-memory state, to avoid unnecessary theme resets on unrelated FS changes.
     pub(super) fn reload_settings_from_disk(&mut self) {
-        let new_settings = settings::load_settings(&self.project_root);
+        let settings_load = settings::load_settings(&self.project_root);
+        // Surface (or clear) the trust prompt before the equality short-circuit
+        // below: when unapproved execution-capable fields appear in the file,
+        // the *stripped* settings can equal the current in-memory state even
+        // though the user still has to see the approval dialog.
+        self.update_pending_trust(settings_load.pending_trust);
+        let new_settings = settings_load.settings;
 
         // Compare ignoring in-memory-only fields (recent_repos may differ from disk)
         let mut current_cmp = self.settings.clone();
@@ -73,6 +79,23 @@ impl DirigentApp {
             self.reload_git_info();
             self.reload_commit_history();
             self.reload_worktrees();
+        }
+    }
+
+    /// Update the settings-trust prompt state after a reload from disk.
+    fn update_pending_trust(&mut self, pending: Option<crate::settings::PendingTrust>) {
+        match pending {
+            Some(p) => {
+                // Don't re-prompt for a field set the user already declined
+                // this session; a changed file produces a new hash and prompts.
+                if self.declined_trust_hash.as_deref() != Some(p.hash.as_str()) {
+                    self.pending_trust = Some(p);
+                }
+            }
+            None => {
+                self.pending_trust = None;
+                self.declined_trust_hash = None;
+            }
         }
     }
 

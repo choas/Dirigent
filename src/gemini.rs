@@ -1,63 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::Arc;
 
+use crate::ai_backend::{BackendError, BackendRequest, BackendResponse, SharedLog};
 use crate::ai_process;
 use crate::claude;
-
-#[derive(Debug)]
-pub(crate) enum GeminiError {
-    NotFound,
-    SpawnFailed(std::io::Error),
-    StreamReadError(std::io::Error),
-    Cancelled,
-    NonZeroExit(std::process::ExitStatus),
-    InvalidExtraArgs(String),
-}
-
-impl std::error::Error for GeminiError {}
-
-impl std::fmt::Display for GeminiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GeminiError::NotFound => write!(f, "gemini CLI not found on PATH"),
-            GeminiError::SpawnFailed(e) => write!(f, "failed to spawn gemini: {e}"),
-            GeminiError::StreamReadError(e) => write!(f, "failed to read gemini stdout: {e}"),
-            GeminiError::Cancelled => write!(f, "cancelled"),
-            GeminiError::InvalidExtraArgs(args) => {
-                write!(f, "failed to parse extra_args (unmatched quote?): {args}")
-            }
-            GeminiError::NonZeroExit(status) => {
-                write!(f, "gemini exited with {status}")
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct GeminiResponse {
-    pub stdout: String,
-    pub edited_files: Vec<String>,
-    pub cost_usd: Option<f64>,
-    pub duration_ms: Option<u64>,
-    pub num_turns: Option<u64>,
-}
 
 #[derive(Default)]
 struct StreamMetrics {
     cost_usd: f64,
     num_turns: u64,
-}
-
-pub(crate) struct GeminiRunConfig<'a> {
-    pub model: &'a str,
-    pub cli_path: &'a str,
-    pub extra_args: &'a str,
-    pub env_vars: &'a str,
-    pub pre_run_script: &'a str,
-    pub post_run_script: &'a str,
 }
 
 pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
@@ -90,45 +43,45 @@ pub(crate) fn get_available_models(cli_path: &str) -> Vec<String> {
     }
 }
 
-fn resolve_gemini_bin(cli_path: &str) -> Result<PathBuf, GeminiError> {
+fn resolve_gemini_bin(cli_path: &str) -> Result<PathBuf, BackendError> {
     let bin = if cli_path.is_empty() {
         "gemini"
     } else {
         cli_path
     };
-    which::which(bin).map_err(|_| GeminiError::NotFound)
+    which::which(bin).map_err(|_| BackendError::NotFound { backend: "gemini" })
 }
 
 fn build_gemini_command(
     gemini_bin: &Path,
-    prompt: &str,
-    project_root: &Path,
-    config: &GeminiRunConfig<'_>,
+    req: &BackendRequest<'_>,
     on_log: &mut dyn FnMut(&str),
-) -> Result<Command, GeminiError> {
+) -> Result<Command, BackendError> {
     use std::process::Stdio;
 
     let mut cmd = Command::new(gemini_bin);
     cmd.arg("-y").arg("--output-format").arg("json");
 
-    if !config.model.is_empty() {
-        cmd.arg("--model").arg(config.model);
+    if !req.model.is_empty() {
+        cmd.arg("--model").arg(req.model);
     }
 
-    if !config.extra_args.trim().is_empty() {
-        let args = shlex::split(config.extra_args)
-            .ok_or_else(|| GeminiError::InvalidExtraArgs(config.extra_args.to_string()))?;
+    if !req.extra_args.trim().is_empty() {
+        let args = shlex::split(req.extra_args).ok_or_else(|| BackendError::InvalidExtraArgs {
+            backend: "gemini",
+            args: req.extra_args.to_string(),
+        })?;
         for arg in args {
             cmd.arg(arg);
         }
     }
 
-    cmd.arg(prompt);
+    cmd.arg(req.prompt);
 
-    claude::apply_env_vars(&mut cmd, config.env_vars, on_log);
-    crate::claude::apply_dirigent_env(&mut cmd, project_root, on_log);
+    claude::apply_env_vars(&mut cmd, req.env_vars, on_log);
+    crate::claude::apply_dirigent_env(&mut cmd, req.project_root, on_log);
 
-    cmd.current_dir(project_root)
+    cmd.current_dir(req.project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -370,11 +323,11 @@ fn friendly_error_from_stderr(stderr: &str) -> Option<String> {
     None
 }
 
-fn check_exit_status<F: FnMut(&str)>(
+fn check_exit_status(
     exit_status: Option<std::process::ExitStatus>,
     stderr: &str,
-    on_log: &Arc<Mutex<F>>,
-) -> Result<(), GeminiError> {
+    on_log: &SharedLog,
+) -> Result<(), BackendError> {
     let Some(status) = exit_status.filter(|s| !s.success()) else {
         return Ok(());
     };
@@ -384,45 +337,43 @@ fn check_exit_status<F: FnMut(&str)>(
             log(&format!("\nError: {}\n", display_msg));
         });
     }
-    Err(GeminiError::NonZeroExit(status))
+    Err(BackendError::NonZeroExit {
+        backend: "gemini",
+        status,
+    })
 }
 
-pub(crate) fn invoke_gemini_streaming(
-    prompt: &str,
-    project_root: &Path,
-    config: &GeminiRunConfig<'_>,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> Result<GeminiResponse, GeminiError> {
-    let on_log = Arc::new(Mutex::new(on_log));
+/// Spawn the gemini CLI, stream its JSON event output, and wait for exit.
+/// Pre/post-run hooks and the final cancel mapping are owned by the
+/// `AiBackend` driver.
+pub(crate) fn run_gemini_cli(
+    req: &BackendRequest<'_>,
+    on_log: &SharedLog,
+    cancel: &Arc<AtomicBool>,
+) -> Result<BackendResponse, BackendError> {
+    let gemini_bin = resolve_gemini_bin(req.cli_path)?;
 
-    let gemini_bin = resolve_gemini_bin(config.cli_path)?;
-
-    ai_process::run_hook_with_locked_log(
-        &on_log,
-        "pre-run",
-        config.pre_run_script,
-        project_root,
-        true,
-    )
-    .map_err(GeminiError::SpawnFailed)?;
-
-    let run_start = Instant::now();
-    let mut child = ai_process::with_locked_log(&on_log, "command build", |log| {
-        build_gemini_command(&gemini_bin, prompt, project_root, config, &mut *log)?
+    let mut child = ai_process::with_locked_log(on_log, "command build", |log| {
+        build_gemini_command(&gemini_bin, req, &mut *log)?
             .spawn()
-            .map_err(GeminiError::SpawnFailed)
+            .map_err(|source| BackendError::SpawnFailed {
+                backend: "gemini",
+                source,
+            })
     })?;
 
-    let stderr_handle = child.stderr.take().expect("stderr must be piped");
-    let stdout_handle = child.stdout.take().expect("stdout must be piped");
+    let (stdout_handle, stderr_handle) =
+        ai_process::take_child_streams(&mut child).map_err(|source| BackendError::SpawnFailed {
+            backend: "gemini",
+            source,
+        })?;
 
-    let child = Arc::new(Mutex::new(child));
+    let child = Arc::new(std::sync::Mutex::new(child));
     let done = Arc::new(AtomicBool::new(false));
-    let watchdog = ai_process::spawn_cancel_watchdog(&child, &cancel, &done);
+    let watchdog = ai_process::spawn_cancel_watchdog(&child, cancel, &done);
 
     let stderr_thread =
-        ai_process::spawn_stderr_collector(stderr_handle, Arc::clone(&on_log), |line, log| {
+        ai_process::spawn_stderr_collector(stderr_handle, Arc::clone(on_log), |line, log| {
             if is_stderr_noise(line) {
                 return;
             }
@@ -431,46 +382,49 @@ pub(crate) fn invoke_gemini_streaming(
             log("\n");
         });
 
-    let stream_result = process_event_stream(stdout_handle, &cancel, &mut |text: &str| {
-        ai_process::with_locked_log(&on_log, "stdout", |log| log(text));
+    let stream_result = process_event_stream(stdout_handle, cancel, &mut |text: &str| {
+        ai_process::with_locked_log(on_log, "stdout", |log| log(text));
     });
 
     done.store(true, Ordering::Relaxed);
+
+    // If the stdout stream errored, the child may still be running. Kill it
+    // first so the subsequent `wait` cannot block indefinitely, then drain the
+    // helper threads before surfacing the read error.
+    let (final_result, edited_files, stream_metrics) = match stream_result {
+        Ok(result) => result,
+        Err(source) => {
+            ai_process::kill_child(&child);
+            let _ = watchdog.join();
+            let _ = ai_process::wait_for_child(&child);
+            let _ = stderr_thread.join();
+            return Err(BackendError::StreamReadError {
+                backend: "gemini",
+                source,
+            });
+        }
+    };
+
     let _ = watchdog.join();
     let exit_status = ai_process::wait_for_child(&child).ok();
-
-    let (final_result, edited_files, stream_metrics) =
-        stream_result.map_err(GeminiError::StreamReadError)?;
     let stderr = stderr_thread.join().unwrap_or_default();
 
+    // A cancelled run's child was killed by the watchdog; report the cancel
+    // rather than a noisy non-zero exit. The driver double-checks anyway.
     if cancel.load(Ordering::Relaxed) {
-        return Err(GeminiError::Cancelled);
+        return Err(BackendError::Cancelled);
     }
 
-    check_exit_status(exit_status, &stderr, &on_log)?;
+    check_exit_status(exit_status, &stderr, on_log)?;
 
-    ai_process::log_empty_result_stderr(&on_log, &final_result, &stderr);
+    ai_process::log_empty_result_stderr(on_log, &final_result, &stderr);
 
-    ai_process::run_hook_with_locked_log(
-        &on_log,
-        "post-run",
-        config.post_run_script,
-        project_root,
-        false,
-    )
-    .map_err(GeminiError::SpawnFailed)?;
-
-    let elapsed_ms = run_start.elapsed().as_millis() as u64;
-
-    Ok(GeminiResponse {
+    Ok(BackendResponse {
         stdout: final_result,
         edited_files,
         cost_usd: (stream_metrics.cost_usd > 0.0).then_some(stream_metrics.cost_usd),
-        duration_ms: Some(elapsed_ms),
+        duration_ms: None,
         num_turns: (stream_metrics.num_turns > 0).then_some(stream_metrics.num_turns),
+        metadata: None,
     })
-}
-
-pub(crate) fn parse_diff_from_response(response: &str) -> Option<String> {
-    claude::parse_diff_from_response(response)
 }

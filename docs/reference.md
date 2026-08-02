@@ -74,6 +74,10 @@ Right-click a tab for additional actions: Close All, Close Others, Close to Righ
 
 Settings are stored per-project in `.Dirigent/settings.json` and edited via the Settings dialog in the app.
 
+### Repository trust
+
+Because `.Dirigent/settings.json` arrives with a checkout, many of its fields are execution-capable input (LSP server commands, source commands, pre/post-run scripts, agent commands, extra CLI args, program paths, LLM endpoints, …). On the first open of a repository — or whenever those fields change on disk outside the app — Dirigent shows exactly the execution-capable fields and asks for approval. Until you trust the repository, those fields stay at their defaults and `--dangerously-skip-permissions` is off, so agents run restricted. Only cosmetic fields (theme, fonts, layout, notifications) apply without approval; any settings field not on that safe list — including fields added in future versions — is gated by default. Approvals are remembered per repository by a content hash of the execution-capable fields in `~/Library/Application Support/Dirigent/trusted_repos.json`.
+
 ### General
 
 | Setting | Type | Default | Description |
@@ -83,7 +87,7 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 | Font size | float | 13.0 | Font size in points |
 | Notify sound | bool | true | Play sound when a cue finishes |
 | Notify popup | bool | true | Show macOS notification popup |
-| Lava lamp | bool | true | Show lava lamp animation during runs |
+| Running animation | enum | LavaLamp | Overlay during runs: `Off`, `LavaLamp`, `ClaudeCodeName`, `Dino`, `Jujutsu`, `Thunderdome` |
 | Prompt suggestions | bool | false | Show heuristic refinement hints below prompt |
 | Auto-context: file | bool | false | Include surrounding lines around cue location in prompt |
 | Auto-context: git diff | bool | false | Include current git diff in prompt |
@@ -92,8 +96,8 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| CLI provider | enum | Claude | `Claude` or `OpenCode` |
-| Claude model | string | claude-opus-4-6 | Model to use with Claude Code |
+| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, or `Codex` |
+| Claude model | string | claude-opus-4-8 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
 | Claude CLI path | string | (auto-detect) | Path to `claude` binary; auto-detected via `which` |
 | Claude extra args | string | empty | Additional CLI arguments appended to every invocation |
@@ -174,7 +178,7 @@ Predefined prompts available from the Playbook menu. Plays with template variabl
 |------|-------------|-----------|
 | Documentation (Diataxis) | Update docs following Diataxis framework; sync README | -- |
 | Verify architecture | Check for structural issues, circular dependencies | -- |
-| Verify last 5 commits | Review recent commits for bugs or inconsistencies | -- |
+| Git Pull | Pull the latest changes and resolve any conflicts | -- |
 | Create release | Prepare release: version numbers, CHANGELOG, tests, tag | `{VERSION}`, `{LICENSE}` (dropdown) |
 | Security audit | Check for secrets, insecure deps, injection vulnerabilities | -- |
 | Check dead code | Find unused functions, imports, unreachable branches | -- |
@@ -202,7 +206,7 @@ Backlog -> Inbox -> Ready -> (Running) -> Review -> Done -> Archived
 | **Running** | Claude/OpenCode is executing (transient) |
 | **Review** | Execution complete; diff awaiting review |
 | **Done** | Changes accepted; ready to commit |
-| **Archived** | Completed and archived (paginated, 50 per page) |
+| **Archived** | Completed and archived (paginated, 10 per page) |
 
 Bulk actions are available on the Review and Done columns.
 
@@ -283,7 +287,6 @@ When `DIRIGENT_OTEL_ENDPOINT` is set, Dirigent emits these structured log events
 | `execution.completed` | `project`, `cue_id`, `provider`, `cost_usd`, `duration_ms`, `num_turns`, `input_tokens`, `output_tokens`, `has_diff` |
 | `execution.failed` | `project`, `cue_id`, `provider`, `error` |
 | `execution.rate_limited` | `project`, `cue_id`, `message` |
-| `cue.status_changed` | `project`, `cue_id`, `from_status`, `to_status` |
 | `agent.completed` | `project`, `agent_kind`, `status`, `duration_ms`, `cue_id` |
 | `git.commit` | `project`, `files_changed` |
 

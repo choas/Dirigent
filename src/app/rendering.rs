@@ -62,6 +62,7 @@ impl DirigentApp {
             || self.pending_file_delete.is_some()
             || self.rename_target.is_some()
             || self.git_init_confirm.is_some()
+            || self.pending_trust.is_some()
             || self.git.show_push_error
             || self.git.show_pr_error
             || self.git.show_pull_diverged
@@ -188,6 +189,12 @@ impl DirigentApp {
 
     /// Dismiss the topmost app-level (non-git) modal dialog.
     fn dismiss_app_modal(&mut self) {
+        if self.pending_trust.is_some() {
+            // Dismissing the trust prompt is a decline: the repository's
+            // execution-capable settings stay disabled.
+            self.decline_pending_trust();
+            return;
+        }
         if let Some(edit) = &self.custom_theme_edit {
             edit.ai_cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -232,6 +239,7 @@ impl DirigentApp {
         self.render_about_dialog(ctx);
         self.render_play_variables_dialog(ctx);
         self.render_git_init_dialog(ctx);
+        self.render_trust_prompt_dialog(ctx);
         self.render_create_pr_dialog(ctx);
         self.render_move_to_branch_error_dialog(ctx);
         self.render_push_error_dialog(ctx);

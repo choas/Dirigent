@@ -14,14 +14,19 @@ pub(crate) fn spawn_cancel_watchdog(
     let child = Arc::clone(child);
     let cancel = Arc::clone(cancel);
     let done = Arc::clone(done);
-    std::thread::spawn(move || {
-        while !done.load(Ordering::Relaxed) {
-            if cancel.load(Ordering::Relaxed) {
-                kill_child(&child);
-                return;
-            }
-            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
+    // Check `cancel` before `done`: if cancellation stopped the stdout reader
+    // and the main thread set `done` before this watchdog woke from sleep,
+    // checking `done` first would let it exit without killing, leaving
+    // `wait_for_child` to block on a still-running process.
+    std::thread::spawn(move || loop {
+        if cancel.load(Ordering::Relaxed) {
+            kill_child(&child);
+            return;
         }
+        if done.load(Ordering::Relaxed) {
+            return;
+        }
+        std::thread::sleep(WATCHDOG_POLL_INTERVAL);
     })
 }
 
@@ -29,6 +34,24 @@ pub(crate) fn wait_for_child(child: &Arc<Mutex<Child>>) -> std::io::Result<ExitS
     match child.lock() {
         Ok(mut child) => child.wait(),
         Err(poisoned) => poisoned.into_inner().wait(),
+    }
+}
+
+/// Take the piped stdout/stderr handles from a freshly spawned child.
+/// When a pipe is missing (it shouldn't be — both were requested as
+/// `Stdio::piped()`), the child is killed and reaped and an error is
+/// returned instead of panicking.
+pub(crate) fn take_child_streams(
+    child: &mut Child,
+) -> std::io::Result<(std::process::ChildStdout, std::process::ChildStderr)> {
+    match (child.stdout.take(), child.stderr.take()) {
+        (Some(stdout), Some(stderr)) => Ok((stdout, stderr)),
+        (stdout, _) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let missing = if stdout.is_none() { "stdout" } else { "stderr" };
+            Err(std::io::Error::other(format!("{missing} was not piped")))
+        }
     }
 }
 
@@ -104,6 +127,22 @@ where
             }
         }
         full_stderr
+    })
+}
+
+/// Spawn a thread that silently drains stderr into a string, so the child's
+/// pipe buffer cannot fill and stall the process. Used by backends that log
+/// stderr only after the run completes (Claude headless).
+pub(crate) fn spawn_stderr_to_string<R>(stderr_handle: R) -> std::thread::JoinHandle<String>
+where
+    R: std::io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = String::new();
+        let mut reader = std::io::BufReader::new(stderr_handle);
+        let _ = reader.read_to_string(&mut buf);
+        buf
     })
 }
 

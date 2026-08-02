@@ -397,6 +397,13 @@ pub struct DirigentApp {
     // "git init" confirmation: path that is a directory but not a git repo
     git_init_confirm: Option<PathBuf>,
 
+    // Execution-capable .Dirigent/settings.json fields awaiting user approval
+    pending_trust: Option<crate::settings::PendingTrust>,
+
+    // Trust hash the user declined this session (suppresses re-prompting
+    // until the settings file changes again or the repo is switched)
+    declined_trust_hash: Option<String>,
+
     // Go-to-definition background search
     goto_def_tx: mpsc::Sender<(u64, PathBuf, usize, String)>,
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
@@ -739,14 +746,20 @@ fn initial_worktrees(project_root: &Path, settings: &Settings) -> Vec<git::Workt
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
         let db = Database::open(&project_root).expect("failed to open database");
-        let mut settings = settings::load_settings(&project_root);
+        let settings_load = settings::load_settings(&project_root);
+        let pending_trust = settings_load.pending_trust;
+        let mut settings = settings_load.settings;
         // Apply one-time settings migrations (e.g. updated default plays).
         if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
             log::warn!("settings migration error: {e:#}");
             false
         }) {
-            if let Err(e) = settings::save_settings(&project_root, &settings) {
-                log::warn!("Failed to save migrated settings: {e}");
+            // While the repo's settings await trust approval, skip the
+            // write-back so the unapproved file is not clobbered.
+            if pending_trust.is_none() {
+                if let Err(e) = settings::save_settings(&project_root, &settings) {
+                    log::warn!("Failed to save migrated settings: {e}");
+                }
             }
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -1065,6 +1078,8 @@ impl DirigentApp {
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
+            pending_trust,
+            declined_trust_hash: None,
             goto_def_tx,
             goto_def_rx,
             goto_def_gen: 0,

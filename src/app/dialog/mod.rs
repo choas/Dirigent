@@ -28,3 +28,4 @@ mod push_error;
 mod repo;
 mod running_log;
 mod settings;
+mod trust_prompt;

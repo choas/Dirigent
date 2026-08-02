@@ -298,88 +298,24 @@ pub(super) fn run_cli_prompt(
     settings: &crate::settings::Settings,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<String, String> {
-    use crate::settings::CliProvider;
-
     let pf = settings.provider_fields(provider);
-
-    let response_text = match provider {
-        CliProvider::Claude => {
-            // Force headless: PTY line-deduplication corrupts multi-line JSON.
-            let result = crate::claude::invoke_claude_streaming(
-                prompt,
-                project_root,
-                pf.model,
-                pf.cli_path,
-                pf.extra_args,
-                &[],
-                pf.env_vars,
-                pf.pre_run_script,
-                pf.post_run_script,
-                settings.allow_dangerous_skip_permissions,
-                false,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("Claude invocation failed: {}", e))?;
-            result.stdout
-        }
-        CliProvider::OpenCode => {
-            let config = crate::opencode::OpenCodeRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                post_run_script: pf.post_run_script,
-            };
-            let result = crate::opencode::invoke_opencode_streaming(
-                prompt,
-                project_root,
-                &config,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("OpenCode invocation failed: {}", e))?;
-            result.stdout
-        }
-        CliProvider::Gemini => {
-            let config = crate::gemini::GeminiRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                post_run_script: pf.post_run_script,
-            };
-            let result = crate::gemini::invoke_gemini_streaming(
-                prompt,
-                project_root,
-                &config,
-                |_| {},
-                cancel.clone(),
-            )
-            .map_err(|e| format!("Gemini invocation failed: {}", e))?;
-            result.stdout
-        }
-
-        CliProvider::Codex => {
-            let config = crate::codex::CodexRunConfig {
-                model: pf.model,
-                cli_path: pf.cli_path,
-                extra_args: pf.extra_args,
-                env_vars: pf.env_vars,
-                pre_run_script: pf.pre_run_script,
-                pre_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
-                post_run_script: pf.post_run_script,
-                post_run_script_trust: crate::codex::HookScriptTrust::ProjectLocal,
-                skip_permissions: settings.allow_dangerous_skip_permissions,
-            };
-            let result =
-                crate::codex::invoke_codex_streaming(prompt, project_root, &config, |_| {}, cancel)
-                    .map_err(|e| format!("Codex invocation failed: {e}"))?;
-            result.stdout
-        }
+    let backend = crate::ai_backend::backend_for(provider);
+    let req = crate::ai_backend::BackendRequest {
+        prompt,
+        project_root,
+        model: pf.model,
+        cli_path: pf.cli_path,
+        extra_args: pf.extra_args,
+        extra_args_vec: &[],
+        env_vars: pf.env_vars,
+        pre_run_script: pf.pre_run_script,
+        post_run_script: pf.post_run_script,
+        skip_permissions: settings.allow_dangerous_skip_permissions,
+        // Force headless: PTY line-deduplication corrupts multi-line JSON.
+        use_pty: false,
     };
-
-    Ok(response_text)
+    backend
+        .invoke(&req, Box::new(|_| {}), cancel)
+        .map(|outcome| outcome.stdout)
+        .map_err(|e| format!("{} invocation failed: {}", backend.name(), e))
 }

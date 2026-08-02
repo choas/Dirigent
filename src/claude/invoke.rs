@@ -3,84 +3,35 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 use claude_pty::ClaudeCode;
 
-use super::cli::{
-    apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs,
-    run_lifecycle_script,
-};
+use super::cli::{apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs};
 use super::done_hook::DoneHook;
 use super::stream::consume_pty_events;
-use super::types::{ClaudeError, ClaudeResponse};
+use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
+use crate::ai_process;
 
-/// Invoke the Claude Code CLI, send `prompt`, and stream live progress to
-/// `on_log`. When `use_pty` is true (default), the interactive TUI is launched
-/// under a PTY via `claude_pty`; the trust-folder dialog is auto-accepted and
-/// the prompt is sent on the first `❯` indicator. When `use_pty` is false,
-/// Claude is invoked in headless `-p <prompt>` mode with piped stdout/stderr.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn invoke_claude_streaming(
-    prompt: &str,
-    project_root: &Path,
-    model: &str,
-    cli_path: &str,
-    extra_args: &str,
-    extra_args_vec: &[String],
-    env_vars: &str,
-    pre_run_script: &str,
-    post_run_script: &str,
-    skip_permissions: bool,
-    use_pty: bool,
-    mut on_log: impl FnMut(&str),
+/// Invoke the Claude Code CLI, send the prompt, and stream live progress to
+/// `on_log`. When `req.use_pty` is true (default), the interactive TUI is
+/// launched under a PTY via `claude_pty`; the trust-folder dialog is
+/// auto-accepted and the prompt is sent on the first `❯` indicator. When
+/// false, Claude is invoked in headless `-p <prompt>` mode with piped
+/// stdout/stderr.
+///
+/// Pre/post-run hooks and the final cancel mapping are owned by the
+/// `AiBackend` driver — the pre-run hook runs before this function, so it can
+/// still rewrite `.Dirigent/.env` before we read it.
+pub(crate) fn run_claude_cli(
+    req: &BackendRequest<'_>,
+    on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
-) -> Result<ClaudeResponse, ClaudeError> {
-    // Run pre-run script first so it can modify .Dirigent/.env before we read it.
-    run_lifecycle_script(pre_run_script, "pre-run", project_root, &mut on_log, true)?;
-
-    let result = if use_pty {
-        invoke_pty(
-            prompt,
-            project_root,
-            model,
-            cli_path,
-            extra_args,
-            extra_args_vec,
-            env_vars,
-            skip_permissions,
-            &mut on_log,
-            cancel.clone(),
-        )
+) -> Result<BackendResponse, BackendError> {
+    if req.use_pty {
+        invoke_pty(req, on_log, cancel)
     } else {
-        invoke_headless(
-            prompt,
-            project_root,
-            model,
-            cli_path,
-            extra_args,
-            extra_args_vec,
-            env_vars,
-            skip_permissions,
-            &mut on_log,
-            cancel.clone(),
-        )
-    };
-
-    run_lifecycle_script(
-        post_run_script,
-        "post-run",
-        project_root,
-        &mut on_log,
-        false,
-    )?;
-
-    if cancel.load(Ordering::Relaxed) {
-        return Err(ClaudeError::Cancelled);
+        invoke_headless(req, on_log, cancel)
     }
-
-    result
 }
 
 /// Draft a commit message from `diff` by invoking the Claude CLI headlessly.
@@ -110,23 +61,25 @@ pub(crate) fn summarize_commit_message_via_cli(
          else.\n\n{trimmed}"
     );
 
-    let response = invoke_claude_streaming(
-        &prompt,
+    let req = BackendRequest {
+        prompt: &prompt,
         project_root,
         model,
         cli_path,
         extra_args,
-        &[],
+        extra_args_vec: &[],
         env_vars,
-        "",
-        "",
-        false,
-        false,
-        |_| {},
-        cancel,
-    )
-    .map_err(|e| e.to_string())?
-    .stdout;
+        pre_run_script: "",
+        post_run_script: "",
+        skip_permissions: false,
+        use_pty: false,
+    };
+    let response = run_claude_cli(&req, &mut |_| {}, cancel.clone())
+        .map_err(|e| e.to_string())?
+        .stdout;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("cancelled".to_string());
+    }
 
     // Prefer the tagged block; fall back to the first non-empty output line so a
     // model that ignores the tag instruction still yields something usable.
@@ -144,19 +97,11 @@ pub(crate) fn summarize_commit_message_via_cli(
 }
 
 /// PTY path: launch Claude's interactive TUI via `claude_pty` and drive it.
-#[allow(clippy::too_many_arguments)]
 fn invoke_pty(
-    prompt: &str,
-    project_root: &Path,
-    model: &str,
-    cli_path: &str,
-    extra_args: &str,
-    extra_args_vec: &[String],
-    env_vars: &str,
-    skip_permissions: bool,
+    req: &BackendRequest<'_>,
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
-) -> Result<ClaudeResponse, ClaudeError> {
+) -> Result<BackendResponse, BackendError> {
     // Give the PTY a wide, tall terminal. Claude's TUI lays its output out to
     // the terminal width: at the library's default 120 cols a wide multi-column
     // table no longer fits, so the renderer collapses every column to its header
@@ -168,18 +113,22 @@ fn invoke_pty(
     const PTY_ROWS: u16 = 50;
     const PTY_COLS: u16 = 220;
     let mut builder = ClaudeCode::builder()
-        .cwd(project_root)
+        .cwd(req.project_root)
         .pty_size(PTY_ROWS, PTY_COLS);
-    builder = builder.binary(resolve_claude_binary(cli_path)?);
-    if !model.is_empty() {
-        builder = builder.model(model);
+    builder = builder.binary(resolve_claude_binary(req.cli_path)?);
+    if !req.model.is_empty() {
+        builder = builder.model(req.model);
     }
     let mut all_args: Vec<String> = Vec::new();
-    if !extra_args.is_empty() {
-        all_args = shlex::split(extra_args)
-            .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
+    if !req.extra_args.is_empty() {
+        all_args = shlex::split(req.extra_args).unwrap_or_else(|| {
+            req.extra_args
+                .split_whitespace()
+                .map(String::from)
+                .collect()
+        });
     }
-    all_args.extend_from_slice(extra_args_vec);
+    all_args.extend_from_slice(req.extra_args_vec);
     // Read the session id from the *full* argv: `--session-id`/`--resume` may
     // arrive via the parsed `extra_args` string, not just `extra_args_vec`. If
     // we missed it here, Claude would run session-scoped while the hook fell
@@ -188,7 +137,7 @@ fn invoke_pty(
     if !all_args.is_empty() {
         builder = builder.extra_args(all_args);
     }
-    if skip_permissions {
+    if req.skip_permissions {
         builder = builder.permission_mode(claude_pty::PermissionMode::BypassPermissions);
     }
     // Compose envs in precedence order — see `compose_pty_envs` for the full
@@ -197,34 +146,37 @@ fn invoke_pty(
     // into a BTreeMap keyed by name, so later entries OVERWRITE earlier ones.
     // The headless path achieves the same precedence via `cmd.env(...)` on
     // `std::process::Command`, which also overwrites — see `invoke_headless`.
-    builder = builder.envs(compose_pty_envs(env_vars, project_root, on_log));
+    builder = builder.envs(compose_pty_envs(req.env_vars, req.project_root, on_log));
 
-    let done_hook = DoneHook::install(project_root, session_id.as_deref());
+    let done_hook = DoneHook::install(req.project_root, session_id.as_deref());
     if done_hook.is_some() {
         on_log("⏎ Stop hook installed\n");
     }
 
     let mut session = builder.open().map_err(|e| match e {
-        claude_pty::Error::BinaryNotFound => ClaudeError::NotFound,
-        claude_pty::Error::Spawn(msg) | claude_pty::Error::Io(msg) => {
-            ClaudeError::SpawnFailed(std::io::Error::other(msg))
-        }
+        claude_pty::Error::BinaryNotFound => BackendError::NotFound { backend: "claude" },
+        claude_pty::Error::Spawn(msg) | claude_pty::Error::Io(msg) => BackendError::SpawnFailed {
+            backend: "claude",
+            source: std::io::Error::other(msg),
+        },
     })?;
     let state = consume_pty_events(
         &mut session,
-        prompt,
+        req.prompt,
         &cancel,
         on_log,
         done_hook.as_ref(),
         session_id.as_deref(),
-        skip_permissions,
+        req.skip_permissions,
     );
     drop(done_hook);
 
-    Ok(ClaudeResponse {
+    // The PTY stream reports no cost/turn metrics; the `AiBackend` driver
+    // stamps the measured run duration so Claude runs no longer record zeros.
+    Ok(BackendResponse {
         stdout: state.response,
-        metrics: Default::default(),
         metadata: Some(state.metadata),
+        ..BackendResponse::default()
     })
 }
 
@@ -249,52 +201,48 @@ fn extract_session_id(args: &[String]) -> Option<String> {
 /// A configured `cli_path` is tried first, but if it is stale (e.g. the binary
 /// was moved or removed since it was auto-detected) we fall back to resolving
 /// `claude` from PATH so the run still works. Only when nothing resolves do we
-/// return [`ClaudeError::NotFound`], which surfaces a clear "configure path in
-/// Settings" message instead of a cryptic spawn ENOENT.
-fn resolve_claude_binary(cli_path: &str) -> Result<String, ClaudeError> {
+/// return [`BackendError::NotFound`], which surfaces a clear "configure path
+/// in Settings" message instead of a cryptic spawn ENOENT.
+fn resolve_claude_binary(cli_path: &str) -> Result<String, BackendError> {
     if !cli_path.is_empty() {
         if let Some(path) = crate::settings::resolve_in_path(cli_path) {
             return Ok(path);
         }
     }
-    crate::settings::resolve_in_path("claude").ok_or(ClaudeError::NotFound)
+    crate::settings::resolve_in_path("claude").ok_or(BackendError::NotFound { backend: "claude" })
 }
 
 /// Headless path: spawn `claude -p <prompt>` with piped stdout/stderr,
 /// forward both streams to `on_log`, and accumulate stdout as the response.
-#[allow(clippy::too_many_arguments)]
 fn invoke_headless(
-    prompt: &str,
-    project_root: &Path,
-    model: &str,
-    cli_path: &str,
-    extra_args: &str,
-    extra_args_vec: &[String],
-    env_vars: &str,
-    skip_permissions: bool,
+    req: &BackendRequest<'_>,
     on_log: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
-) -> Result<ClaudeResponse, ClaudeError> {
-    let claude_bin = resolve_claude_binary(cli_path)?;
+) -> Result<BackendResponse, BackendError> {
+    let claude_bin = resolve_claude_binary(req.cli_path)?;
 
     let mut cmd = Command::new(&claude_bin);
-    cmd.arg("-p").arg(prompt);
-    if skip_permissions {
+    cmd.arg("-p").arg(req.prompt);
+    if req.skip_permissions {
         cmd.arg("--dangerously-skip-permissions");
     }
-    if !model.is_empty() {
-        cmd.arg("--model").arg(model);
+    if !req.model.is_empty() {
+        cmd.arg("--model").arg(req.model);
     }
-    if !extra_args.is_empty() {
-        let args = shlex::split(extra_args)
-            .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect());
+    if !req.extra_args.is_empty() {
+        let args = shlex::split(req.extra_args).unwrap_or_else(|| {
+            req.extra_args
+                .split_whitespace()
+                .map(String::from)
+                .collect()
+        });
         for arg in args {
             if !arg.is_empty() {
                 cmd.arg(arg);
             }
         }
     }
-    for arg in extra_args_vec {
+    for arg in req.extra_args_vec {
         if !arg.is_empty() {
             cmd.arg(arg);
         }
@@ -303,44 +251,43 @@ fn invoke_headless(
     // secret rotated in `.Dirigent/.env` cannot silently behave differently
     // between modes): Settings `env_vars` first, then `.Dirigent/.env`.
     // `Command::env` overwrites on duplicate keys, so `.Dirigent/.env` wins.
-    apply_env_vars(&mut cmd, env_vars, on_log);
-    apply_dirigent_env(&mut cmd, project_root, on_log);
+    apply_env_vars(&mut cmd, req.env_vars, on_log);
+    apply_dirigent_env(&mut cmd, req.project_root, on_log);
 
     let mut child = cmd
-        .current_dir(project_root)
+        .current_dir(req.project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(ClaudeError::SpawnFailed)?;
+        .map_err(|source| BackendError::SpawnFailed {
+            backend: "claude",
+            source,
+        })?;
 
-    let stdout_handle = child
-        .stdout
-        .take()
-        .ok_or_else(|| ClaudeError::SpawnFailed(std::io::Error::other("stdout was not piped")))?;
-    let stderr_handle = child
-        .stderr
-        .take()
-        .ok_or_else(|| ClaudeError::SpawnFailed(std::io::Error::other("stderr was not piped")))?;
+    let (stdout_handle, stderr_handle) =
+        ai_process::take_child_streams(&mut child).map_err(|source| BackendError::SpawnFailed {
+            backend: "claude",
+            source,
+        })?;
     let child = Arc::new(Mutex::new(child));
 
     let done = Arc::new(AtomicBool::new(false));
-    let watchdog = spawn_cancel_watchdog(child.clone(), cancel.clone(), done.clone());
-    let stderr_thread = spawn_stderr_collector(stderr_handle);
+    let watchdog = ai_process::spawn_cancel_watchdog(&child, &cancel, &done);
+    let stderr_thread = ai_process::spawn_stderr_to_string(stderr_handle);
 
     let response = read_stdout_to_log(stdout_handle, &cancel, on_log);
 
     done.store(true, Ordering::Relaxed);
     let _ = watchdog.join();
-    reap_child(&child);
+    let _ = ai_process::wait_for_child(&child);
     let stderr = stderr_thread.join().unwrap_or_default();
     if !stderr.is_empty() {
         on_log(&stderr);
     }
 
-    Ok(ClaudeResponse {
+    Ok(BackendResponse {
         stdout: response,
-        metrics: Default::default(),
-        metadata: None,
+        ..BackendResponse::default()
     })
 }
 
@@ -367,53 +314,6 @@ fn read_stdout_to_log(
         }
     }
     response
-}
-
-/// Spawn a thread that drains stderr into a string, so the child's pipe
-/// buffer cannot fill and stall the process.
-fn spawn_stderr_collector(stderr: impl Read + Send + 'static) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut buf = String::new();
-        let mut reader = BufReader::new(stderr);
-        let _ = reader.read_to_string(&mut buf);
-        buf
-    })
-}
-
-/// Spawn a watchdog that kills the child when `cancel` flips, and exits
-/// when `done` is set so the foreground reader can finish naturally.
-fn spawn_cancel_watchdog(
-    child: Arc<Mutex<std::process::Child>>,
-    cancel: Arc<AtomicBool>,
-    done: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
-    // Check `cancel` before `done`: if cancellation stopped the stdout reader
-    // and the main thread set `done` before this watchdog woke from sleep,
-    // checking `done` first would let it exit without killing, leaving
-    // `reap_child` to wait on a still-running process.
-    thread::spawn(move || loop {
-        if cancel.load(Ordering::Relaxed) {
-            if let Ok(mut c) = child.lock() {
-                let _ = c.kill();
-            }
-            return;
-        }
-        if done.load(Ordering::Relaxed) {
-            return;
-        }
-        thread::sleep(Duration::from_millis(100));
-    })
-}
-
-fn reap_child(child: &Arc<Mutex<std::process::Child>>) {
-    match child.lock() {
-        Ok(mut c) => {
-            let _ = c.wait();
-        }
-        Err(poisoned) => {
-            let _ = poisoned.into_inner().wait();
-        }
-    }
 }
 
 /// Build the env list passed to the PTY-launched Claude TUI.
