@@ -484,9 +484,7 @@ impl DirigentApp {
                 finding.line_number,
             )?;
             self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
-            let _ = self
-                .db
-                .log_activity(existing_id, "PR comment updated, reset to Inbox");
+            self.log_cue_activity(existing_id, "PR comment updated, reset to Inbox");
             Ok(Some("updated"))
         } else {
             Ok(None)
@@ -676,7 +674,7 @@ impl DirigentApp {
     fn log_activity_for_ids(&mut self, ids_csv: &str) {
         for id_str in ids_csv.split(',') {
             if let Ok(cue_id) = id_str.parse::<i64>() {
-                let _ = self.db.log_activity(cue_id, "Notified PR");
+                self.log_cue_activity(cue_id, "Notified PR");
             }
         }
     }
@@ -1232,14 +1230,20 @@ impl DirigentApp {
 
     fn handle_commit_channel_disconnect(&mut self) {
         if let Some(id) = self.git.commit_pending_cue_id.take() {
-            let _ = self.db.log_activity(id, "Commit failed");
+            self.log_cue_activity(id, "Commit failed");
         }
         self.set_status_message("Commit failed unexpectedly".into());
     }
 
     fn finish_commit_success(&mut self, pending_cue: Option<i64>, in_queue: bool, msg: String) {
+        // Collected rather than reported inline: the commit message set at the
+        // end of this function would otherwise immediately clobber the error.
+        let mut status_saved = true;
         if let Some(id) = pending_cue {
-            let _ = self.db.update_cue_status(id, CueStatus::Done);
+            status_saved = self.db_log(
+                "move cue to Done",
+                self.db.update_cue_status(id, CueStatus::Done),
+            );
             // The worker reports success as "Committed: <hash>"; record it
             // as "Committed (<hash>)" so cue_commit_hash can recover the
             // hash and offer "Save as Play" on the cue.
@@ -1247,7 +1251,7 @@ impl DirigentApp {
                 Some(hash) => format!("Committed ({})", hash),
                 None => "Committed".to_string(),
             };
-            let _ = self.db.log_activity(id, &activity);
+            self.log_cue_activity(id, &activity);
             self.clear_review_question_and_recheck_workflow(id);
             // Run configured AfterCommit agents (format/lint/build/test)
             // for changes committed via the diff-review dialog, matching
@@ -1264,7 +1268,14 @@ impl DirigentApp {
                 &cue_prompt,
             );
         }
-        self.set_status_message(msg);
+        if status_saved {
+            self.set_status_message(msg);
+        } else {
+            self.set_status_message(format!(
+                "{} — but the cue could not be marked Done (database error)",
+                msg
+            ));
+        }
         if in_queue {
             self.advance_commit_queue();
         }
@@ -1272,7 +1283,7 @@ impl DirigentApp {
 
     fn finish_commit_failure(&mut self, pending_cue: Option<i64>, in_queue: bool, error: String) {
         if let Some(id) = pending_cue {
-            let _ = self.db.log_activity(id, "Commit failed");
+            self.log_cue_activity(id, "Commit failed");
         }
         if in_queue {
             self.restore_current_commit_group();

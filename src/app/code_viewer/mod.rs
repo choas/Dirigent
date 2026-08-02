@@ -508,6 +508,9 @@ impl DirigentApp {
                 }
                 Err(e) => {
                     log::error!("Failed to insert cue: {e}");
+                    self.set_status_message(format!(
+                        "Database error: could not create cue — not saved ({e})"
+                    ));
                 }
             }
         }
@@ -530,6 +533,9 @@ impl DirigentApp {
             }
             Err(e) => {
                 log::error!("Failed to insert cue: {e}");
+                self.set_status_message(format!(
+                    "Database error: could not create cue — not saved ({e})"
+                ));
             }
         }
     }

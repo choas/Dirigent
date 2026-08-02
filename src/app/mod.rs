@@ -1185,6 +1185,46 @@ impl DirigentApp {
         self.status_message = Some((msg, Instant::now()));
     }
 
+    /// Record the outcome of a database write whose failure would otherwise be
+    /// invisible. `what` names the operation in past tense ("log activity",
+    /// "update execution log"). Returns `true` when the write succeeded.
+    ///
+    /// Use this for bookkeeping writes (activity log entries, execution
+    /// telemetry) where a failure is worth a log line but does not leave the UI
+    /// showing state that was never persisted. For writes the user *can* see
+    /// the effect of — status transitions, cue creation, execution records —
+    /// use [`Self::db_report`] instead so the failure also reaches the status
+    /// bar.
+    fn db_log<T>(&self, what: &str, result: anyhow::Result<T>) -> bool {
+        match result {
+            Ok(_) => true,
+            Err(e) => {
+                log::error!("[db] {} failed: {:#}", what, e);
+                false
+            }
+        }
+    }
+
+    /// Append an entry to a cue's activity log (the per-cue logbook).
+    ///
+    /// A failure is logged but not surfaced: the logbook records what happened,
+    /// it is not state the rest of the UI reads back.
+    fn log_cue_activity(&self, cue_id: i64, event: &str) {
+        self.db_log("log activity", self.db.log_activity(cue_id, event));
+    }
+
+    /// Like [`Self::db_log`], but also surfaces the failure as a status
+    /// message. Use for writes backing something the user just saw happen, so
+    /// a DB hiccup cannot leave the cue pool showing a state that was never
+    /// persisted. Returns `true` when the write succeeded.
+    fn db_report<T>(&mut self, what: &str, result: anyhow::Result<T>) -> bool {
+        if self.db_log(what, result) {
+            return true;
+        }
+        self.set_status_message(format!("Database error: could not {} — not saved", what));
+        false
+    }
+
     fn format_elapsed(&self, cue_id: i64) -> String {
         if let Some(start) = self.claude.start_times.get(&cue_id) {
             let secs = start.elapsed().as_secs();
@@ -1293,8 +1333,15 @@ impl DirigentApp {
             .iter()
             .any(|c| c.id == id && c.status == CueStatus::Inbox)
         {
-            let _ = self.db.update_cue_status(id, CueStatus::Ready);
-            let _ = self.db.log_activity(id, activity);
+            // If the cue cannot be moved to Ready it stays Inbox in the DB;
+            // bail out rather than start a run the pool will never show.
+            if !self.db_report(
+                "move cue to Ready",
+                self.db.update_cue_status(id, CueStatus::Ready),
+            ) {
+                return false;
+            }
+            self.db_log("log activity", self.db.log_activity(id, activity));
             self.cue_move_flash.insert(id, Instant::now());
             self.claude.expand_running = true;
             self.reload_cues();
@@ -1302,7 +1349,10 @@ impl DirigentApp {
             // Verify the run actually started — trigger_claude may bail out
             // (e.g. home guard sync failure) leaving the cue stuck in Ready.
             if !self.claude.running_logs.contains_key(&id) {
-                let _ = self.db.update_cue_status(id, CueStatus::Inbox);
+                self.db_report(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(id, CueStatus::Inbox),
+                );
                 self.reload_cues();
                 return false;
             }

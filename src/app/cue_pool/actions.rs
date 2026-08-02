@@ -29,7 +29,7 @@ impl DirigentApp {
                 if let Err(e) = self.db.update_cue_text(id, &new_text) {
                     self.set_status_message(format!("Failed to save edit: {}", e));
                 } else {
-                    let _ = self.db.log_activity(id, "Edited");
+                    self.log_cue_activity(id, "Edited");
                 }
                 self.editing_cue = None;
             }
@@ -76,8 +76,11 @@ impl DirigentApp {
             }
             CueAction::ReplyReview(cue_id, reply_text) => {
                 self.reply_inputs.remove(&cue_id);
-                let _ = self.db.update_cue_has_question(cue_id, false);
-                let _ = self.db.log_activity(cue_id, "Reply sent");
+                self.db_report(
+                    "clear pending-question flag",
+                    self.db.update_cue_has_question(cue_id, false),
+                );
+                self.log_cue_activity(cue_id, "Reply sent");
                 self.trigger_claude_reply(cue_id, &reply_text, &[]);
             }
             CueAction::ShowRunningLog(cue_id) => {
@@ -100,15 +103,15 @@ impl DirigentApp {
                 self.run_queue.retain(|&cid| cid != id);
                 self.scheduled_runs.remove(&id);
                 self.schedule_inputs.remove(&id);
-                let _ = self.db.log_activity(id, "Queue/schedule cancelled");
+                self.log_cue_activity(id, "Queue/schedule cancelled");
             }
             CueAction::SetTag(tag) => {
-                let _ = self.db.update_cue_tag(id, tag.as_deref());
+                self.db_report("save tag", self.db.update_cue_tag(id, tag.as_deref()));
                 self.tag_inputs.remove(&id);
                 if let Some(ref t) = tag {
-                    let _ = self.db.log_activity(id, &format!("Tagged: {}", t));
+                    self.log_cue_activity(id, &format!("Tagged: {}", t));
                 } else {
-                    let _ = self.db.log_activity(id, "Tag removed");
+                    self.log_cue_activity(id, "Tag removed");
                 }
             }
             CueAction::Push => {
@@ -137,9 +140,7 @@ impl DirigentApp {
                     .get(&cue_id)
                     .map(|v| v.len())
                     .unwrap_or(0);
-                let _ = self
-                    .db
-                    .log_activity(cue_id, &format!("Follow-up queued ({} pending)", count));
+                self.log_cue_activity(cue_id, &format!("Follow-up queued ({} pending)", count));
             }
             CueAction::ViewPlan(cue_id) => {
                 self.process_view_plan(cue_id);
@@ -246,7 +247,7 @@ impl DirigentApp {
             self.set_status_message(format!("Failed to save Play: {}", e));
             return;
         }
-        let _ = self.db.log_activity(id, "Saved as Play");
+        self.log_cue_activity(id, "Saved as Play");
         self.set_status_message(format!("Added \"{}\" to Playbook", name));
     }
 
@@ -259,15 +260,18 @@ impl DirigentApp {
         self.scheduled_runs.remove(&id);
         self.schedule_inputs.remove(&id);
         if let Err(e) = self.db.update_cue_status(id, new_status) {
-            let _ = self.db.log_activity(
+            log::error!("[db] move cue to {} failed: {:#}", new_status.label(), e);
+            self.log_cue_activity(
                 id,
                 &format!("Failed to move to {}: {}", new_status.label(), e),
             );
+            self.set_status_message(format!(
+                "Database error: could not move cue to {} — not saved",
+                new_status.label()
+            ));
             return;
         }
-        let _ = self
-            .db
-            .log_activity(id, &format!("Moved to {}", new_status.label()));
+        self.log_cue_activity(id, &format!("Moved to {}", new_status.label()));
         self.cue_move_flash.insert(id, Instant::now());
         if new_status == CueStatus::Archived {
             self.conversation_replies.remove(&id);
@@ -275,7 +279,7 @@ impl DirigentApp {
         }
         if new_status == CueStatus::Ready {
             // Clear any previous plan when starting a new run.
-            let _ = self.db.update_cue_plan_path(id, None);
+            self.db_log("clear plan path", self.db.update_cue_plan_path(id, None));
             self.claude.expand_running = true;
             self.reload_cues();
             self.trigger_claude(id);
@@ -405,8 +409,11 @@ impl DirigentApp {
             && !self.claude.workspace_commit_failed.contains(&cue_id)
         {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
             self.clear_review_question_and_recheck_workflow(cue_id);
             self.reload_git_info();
@@ -482,10 +489,11 @@ impl DirigentApp {
             Ok(hash) => {
                 let short = &hash[..7.min(hash.len())];
                 self.set_status_message(format!("Committed: {}", short));
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                let _ = self
-                    .db
-                    .log_activity(cue_id, &format!("Committed ({})", short));
+                self.db_report(
+                    "move cue to Done",
+                    self.db.update_cue_status(cue_id, CueStatus::Done),
+                );
+                self.log_cue_activity(cue_id, &format!("Committed ({})", short));
                 self.clear_review_question_and_recheck_workflow(cue_id);
                 let dirty_count = vcs_dispatch::get_dirty_files(
                     &self.settings.vcs_backend,
@@ -503,10 +511,11 @@ impl DirigentApp {
                     // the AI itself).  Moving to Done is correct — do not leave
                     // the cue stuck in Review.
                     self.set_status_message("Nothing to commit \u{2014} moved to Done".into());
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                    let _ = self
-                        .db
-                        .log_activity(cue_id, "Moved to Done (already committed)");
+                    self.db_report(
+                        "move cue to Done",
+                        self.db.update_cue_status(cue_id, CueStatus::Done),
+                    );
+                    self.log_cue_activity(cue_id, "Moved to Done (already committed)");
                     self.clear_review_question_and_recheck_workflow(cue_id);
                 } else {
                     self.set_status_message(format!("Commit failed: {}", e));
@@ -557,8 +566,11 @@ impl DirigentApp {
         }
 
         if self.revert_latest_execution(cue_id) {
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            let _ = self.db.log_activity(cue_id, "Reverted");
+            self.db_report(
+                "move cue back to Inbox",
+                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+            );
+            self.log_cue_activity(cue_id, "Reverted");
             self.reload_open_tabs();
             self.reload_git_info();
         }
@@ -593,7 +605,7 @@ impl DirigentApp {
                 "Reverted — bookmark already gone, workspace removed",
             ),
             Err(e) => {
-                let _ = self.db.log_activity(
+                self.log_cue_activity(
                     cue_id,
                     &format!("Revert failed: jj bookmark delete error: {e}"),
                 );
@@ -605,9 +617,19 @@ impl DirigentApp {
 
     fn finish_revert_workspace_review(&mut self, cue_id: i64, activity: &str, message: &str) {
         self.cleanup_jj_workspace(cue_id);
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(cue_id, activity);
-        self.set_status_message(message.to_string());
+        let moved = self.db_log(
+            "move cue back to Inbox",
+            self.db.update_cue_status(cue_id, CueStatus::Inbox),
+        );
+        self.log_cue_activity(cue_id, activity);
+        if moved {
+            self.set_status_message(message.to_string());
+        } else {
+            self.set_status_message(format!(
+                "{} — but the cue could not be moved back to Inbox (database error)",
+                message
+            ));
+        }
         self.reload_git_info();
     }
 
@@ -680,7 +702,7 @@ impl DirigentApp {
         }
         let review_ids: Vec<i64> = review_cues.iter().map(|c| c.id).collect();
 
-        let (workspace_accepted, non_workspace_ids) =
+        let (workspace_accepted, workspace_failed, non_workspace_ids) =
             self.accept_workspace_review_cues(&review_ids);
 
         // Commit remaining non-workspace cues in bulk.
@@ -693,25 +715,41 @@ impl DirigentApp {
                 workspace_accepted, plural,
             ));
         }
+        if workspace_failed > 0 {
+            self.set_status_message(format!(
+                "Database error: {} workspace cue(s) could not be marked Done — not saved",
+                workspace_failed
+            ));
+        }
 
         self.reload_git_info();
         self.reload_commit_history();
     }
 
-    fn accept_workspace_review_cues(&mut self, review_ids: &[i64]) -> (usize, Vec<i64>) {
+    /// Returns `(accepted, failed, non_workspace_ids)`. A cue whose status
+    /// write fails is neither counted nor cleaned up: it stays in Review so the
+    /// user can retry, rather than vanishing from the pool without being saved.
+    fn accept_workspace_review_cues(&mut self, review_ids: &[i64]) -> (usize, usize, Vec<i64>) {
         let mut workspace_accepted = 0usize;
+        let mut failed = 0usize;
         let mut non_workspace_ids: Vec<i64> = Vec::new();
         for &cue_id in review_ids {
             if self.can_accept_workspace_cue(cue_id) {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-                let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
+                if !self.db_log(
+                    "move cue to Done",
+                    self.db.update_cue_status(cue_id, CueStatus::Done),
+                ) {
+                    failed += 1;
+                    continue;
+                }
+                self.log_cue_activity(cue_id, "Accepted (workspace commit)");
                 self.cleanup_jj_workspace(cue_id);
                 workspace_accepted += 1;
             } else {
                 non_workspace_ids.push(cue_id);
             }
         }
-        (workspace_accepted, non_workspace_ids)
+        (workspace_accepted, failed, non_workspace_ids)
     }
 
     fn can_accept_workspace_cue(&self, cue_id: i64) -> bool {
@@ -755,11 +793,14 @@ impl DirigentApp {
             "Committed all: {} ({} cue{})",
             short, total, plural
         ));
+        // Reported after the message above, so a DB failure — which would leave
+        // committed cues sitting in Review — replaces the success text.
         for cue_id in non_workspace_ids {
-            let _ = self.db.update_cue_status(*cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(*cue_id, &format!("Committed ({})", short));
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(*cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(*cue_id, &format!("Committed ({})", short));
         }
     }
 
@@ -769,7 +810,7 @@ impl DirigentApp {
             return;
         }
         self.run_queue.push(id);
-        let _ = self.db.log_activity(id, "Queued (run next)");
+        self.log_cue_activity(id, "Queued (run next)");
         let preview = self.cue_preview(id);
         self.set_status_message(format!(
             "\"{}\" queued \u{2014} will run after current runs finish",
@@ -782,7 +823,7 @@ impl DirigentApp {
             let when = std::time::SystemTime::now() + duration;
             self.scheduled_runs.insert(id, when);
             self.schedule_inputs.remove(&id);
-            let _ = self.db.log_activity(id, &format!("Scheduled ({})", input));
+            self.log_cue_activity(id, &format!("Scheduled ({})", input));
             let preview = self.cue_preview(id);
             self.set_status_message(format!("\"{}\" scheduled to run in {}", preview, input));
         } else {
@@ -855,7 +896,7 @@ impl DirigentApp {
                 "Execute the following plan:\n\n{}\n\nPlan file: {}",
                 plan_content, path
             );
-            let _ = self.db.log_activity(cue_id, "Running plan");
+            self.log_cue_activity(cue_id, "Running plan");
             self.trigger_claude_reply(cue_id, &reply, &[]);
         } else {
             self.set_status_message("No plan available for this cue".into());
@@ -869,18 +910,29 @@ impl DirigentApp {
             .filter(|c| c.status == CueStatus::Review)
             .map(|c| c.id)
             .collect();
+        let mut tagged = 0usize;
         for cue_id in &review_ids {
-            let _ = self.db.update_cue_tag(*cue_id, Some(tag));
-            let _ = self.db.log_activity(*cue_id, &format!("Tagged: {}", tag));
+            if !self.db_log("save tag", self.db.update_cue_tag(*cue_id, Some(tag))) {
+                continue;
+            }
+            tagged += 1;
+            self.log_cue_activity(*cue_id, &format!("Tagged: {}", tag));
         }
         self.tag_all_review_input = None;
-        let plural = if review_ids.len() == 1 { "" } else { "s" };
-        self.set_status_message(format!(
-            "Tagged {} Review cue{} with \"{}\"",
-            review_ids.len(),
-            plural,
-            tag
-        ));
+        let plural = if tagged == 1 { "" } else { "s" };
+        if tagged < review_ids.len() {
+            self.set_status_message(format!(
+                "Tagged {} of {} Review cues with \"{}\" — the rest failed to save",
+                tagged,
+                review_ids.len(),
+                tag
+            ));
+        } else {
+            self.set_status_message(format!(
+                "Tagged {} Review cue{} with \"{}\"",
+                tagged, plural, tag
+            ));
+        }
     }
 
     fn process_archive_all_done(&mut self) {
@@ -966,7 +1018,7 @@ impl DirigentApp {
                     "Squashed {} commit{} on \"{}\" into one",
                     n, plural, bookmark
                 ));
-                let _ = self.db.log_activity(
+                self.log_cue_activity(
                     cue_id,
                     &format!("Squashed {} commit{} on {}", n, plural, bookmark),
                 );
@@ -1061,7 +1113,7 @@ impl DirigentApp {
         match result {
             Ok(cue_id) => {
                 self.set_status_message("Marked done in Notion".into());
-                let _ = self.db.log_activity(cue_id, "Marked done in Notion");
+                self.log_cue_activity(cue_id, "Marked done in Notion");
                 self.notion_done_cache.insert(cue_id);
             }
             Err(e) => {

@@ -186,7 +186,7 @@ impl DirigentApp {
             AgentStatus::Error => format!("{} error ({})", label, dur),
             AgentStatus::Idle | AgentStatus::Running => format!("{} completed ({})", label, dur),
         };
-        let _ = self.db.log_activity(cue_id, &event);
+        self.log_cue_activity(cue_id, &event);
     }
 
     /// Get the first non-empty line of the latest output for an agent, truncated to 80 chars.

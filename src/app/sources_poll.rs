@@ -157,12 +157,13 @@ impl DirigentApp {
         // load-time trust gate).
         let repo_trusted = crate::settings::repo_settings_trusted(&self.project_root);
         let mut new_count = 0;
+        let mut failed_count = 0;
         let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
             let Some((text, runnable)) = self.prepare_source_item(&item, repo_trusted) else {
                 continue;
             };
-            if let Ok(cue_id) = self.db.insert_cue_from_source(
+            match self.db.insert_cue_from_source(
                 &text,
                 &item.source_label,
                 &item.source_id,
@@ -170,13 +171,19 @@ impl DirigentApp {
                 &item.file_path,
                 item.line_number,
             ) {
-                new_count += 1;
-                if runnable {
-                    auto_run_ids.push(cue_id);
+                Ok(cue_id) => {
+                    new_count += 1;
+                    if runnable {
+                        auto_run_ids.push(cue_id);
+                    }
+                }
+                Err(e) => {
+                    log::error!("[db] create cue from source failed: {:#}", e);
+                    failed_count += 1;
                 }
             }
         }
-        self.finish_source_import(new_count, auto_run_ids, total_received);
+        self.finish_source_import(new_count, failed_count, auto_run_ids, total_received);
     }
 
     fn process_source_errors(&mut self) {
@@ -197,7 +204,10 @@ impl DirigentApp {
                 return None;
             }
             Ok(false) => {}
-            Err(_) => return None,
+            Err(e) => {
+                log::error!("[db] check for existing source cue failed: {:#}", e);
+                return None;
+            }
         }
         let runnable =
             repo_trusted && self.source_allows_runnable(item) && has_runnable_marker(&item.text);
@@ -210,13 +220,17 @@ impl DirigentApp {
     }
 
     fn refresh_existing_source_cue(&self, item: &SourceItem) {
-        let _ = self
-            .db
-            .update_cue_text_by_source_ref(&item.external_id, &item.text);
+        self.db_log(
+            "refresh source cue text",
+            self.db
+                .update_cue_text_by_source_ref(&item.external_id, &item.text),
+        );
         if !item.source_id.is_empty() {
-            let _ =
+            self.db_log(
+                "backfill source id",
                 self.db
-                    .backfill_source_id(&item.external_id, &item.source_id, &item.source_label);
+                    .backfill_source_id(&item.external_id, &item.source_id, &item.source_label),
+            );
         }
     }
 
@@ -231,13 +245,21 @@ impl DirigentApp {
     fn finish_source_import(
         &mut self,
         new_count: usize,
+        failed_count: usize,
         auto_run_ids: Vec<i64>,
         total_received: usize,
     ) {
+        // A failed insert means an item was fetched but never persisted, so the
+        // user would otherwise just see it missing from the Inbox.
+        let failed_suffix = if failed_count > 0 {
+            format!(" — {} could not be saved (database error)", failed_count)
+        } else {
+            String::new()
+        };
         if new_count == 0 {
             self.set_status_message(format!(
-                "Source fetch complete: {} item(s) received, no new items",
-                total_received
+                "Source fetch complete: {} item(s) received, no new items{}",
+                total_received, failed_suffix
             ));
             return;
         }
@@ -248,11 +270,14 @@ impl DirigentApp {
         }
         if auto_count > 0 {
             self.set_status_message(format!(
-                "{} new cue(s) from sources ({} auto-running)",
-                new_count, auto_count
+                "{} new cue(s) from sources ({} auto-running){}",
+                new_count, auto_count, failed_suffix
             ));
         } else {
-            self.set_status_message(format!("{} new cue(s) from sources", new_count));
+            self.set_status_message(format!(
+                "{} new cue(s) from sources{}",
+                new_count, failed_suffix
+            ));
         }
     }
 }

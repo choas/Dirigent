@@ -638,7 +638,12 @@ impl DirigentApp {
                 config.extra_args_vec.push(id.clone());
                 id
             };
-            let _ = self.db.update_execution_session_id(exec_id, &session_id);
+            // Losing this breaks --resume for the run, but the run itself is
+            // fine, so log rather than interrupt the user with a status message.
+            self.db_log(
+                "store session id",
+                self.db.update_execution_session_id(exec_id, &session_id),
+            );
         }
 
         telemetry::emit_execution_started(
@@ -680,7 +685,10 @@ impl DirigentApp {
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
                 self.claude.last_message_times.remove(&cue_id);
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.db_log(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                );
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
                 return;
@@ -692,7 +700,10 @@ impl DirigentApp {
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
         if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command, None) {
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.db_report(
+                "move cue back to Inbox",
+                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+            );
             self.cleanup_jj_workspace(cue_id);
             self.reload_cues();
         }
@@ -766,7 +777,10 @@ impl DirigentApp {
             )
         };
 
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.db_report(
+            "move cue to Ready",
+            self.db.update_cue_status(cue_id, CueStatus::Ready),
+        );
         self.claude.expand_running = true;
         self.reload_cues();
 
@@ -789,7 +803,10 @@ impl DirigentApp {
             }
         } else {
             // Restore the cue to Review (its state before we attempted the reply).
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
+            self.db_report(
+                "restore cue to Review",
+                self.db.update_cue_status(cue_id, CueStatus::Review),
+            );
             self.reload_cues();
         }
     }
@@ -847,7 +864,10 @@ impl DirigentApp {
             )
         };
 
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.db_report(
+            "move cue to Ready",
+            self.db.update_cue_status(cue_id, CueStatus::Ready),
+        );
         self.claude.expand_running = true;
         self.reload_cues();
 
@@ -887,7 +907,11 @@ impl DirigentApp {
         } else {
             self.pending_auto_continues.push(cue_id);
         }
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+        // A failure here leaves the cue stuck in Ready with nothing running.
+        self.db_report(
+            "restore cue to Done",
+            self.db.update_cue_status(cue_id, CueStatus::Done),
+        );
         self.reload_cues();
     }
 
@@ -925,13 +949,16 @@ impl DirigentApp {
             .get(&result.cue_id)
             .is_some_and(|&current| current != result.exec_id);
 
-        let _ = self.db.update_execution_metrics(
-            result.exec_id,
-            result.metrics.cost_usd,
-            result.metrics.duration_ms,
-            result.metrics.num_turns,
-            result.metrics.input_tokens,
-            result.metrics.output_tokens,
+        self.db_log(
+            "store execution metrics",
+            self.db.update_execution_metrics(
+                result.exec_id,
+                result.metrics.cost_usd,
+                result.metrics.duration_ms,
+                result.metrics.num_turns,
+                result.metrics.input_tokens,
+                result.metrics.output_tokens,
+            ),
         );
         self.persist_execution_metadata(&result);
 
@@ -988,29 +1015,40 @@ impl DirigentApp {
             return;
         };
         if let Ok(payload) = serde_json::to_value(metadata) {
-            let _ = self
-                .db
-                .insert_execution_event(result.exec_id, "pty_metadata", &payload);
+            self.db_log(
+                "store pty metadata event",
+                self.db
+                    .insert_execution_event(result.exec_id, "pty_metadata", &payload),
+            );
         }
         for summary in &metadata.permission_summaries {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "permission",
-                &serde_json::json!({ "summary": summary }),
+            self.db_log(
+                "store permission event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "permission",
+                    &serde_json::json!({ "summary": summary }),
+                ),
             );
         }
         for warning in &metadata.parser_warnings {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "parser_warning",
-                &serde_json::json!({ "message": warning }),
+            self.db_log(
+                "store parser warning event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "parser_warning",
+                    &serde_json::json!({ "message": warning }),
+                ),
             );
         }
         if let Some(reason) = metadata.completion_reason.as_ref() {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "completion",
-                &serde_json::json!({ "reason": reason }),
+            self.db_log(
+                "store completion event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "completion",
+                    &serde_json::json!({ "reason": reason }),
+                ),
             );
         }
     }
@@ -1018,7 +1056,10 @@ impl DirigentApp {
     /// Flush the running log to DB and remove tracking state for a completed result.
     fn flush_and_clear_tracking(&mut self, result: &ClaudeResult) {
         if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
-            let _ = self.db.update_execution_log(result.exec_id, log_text);
+            self.db_log(
+                "flush execution log",
+                self.db.update_execution_log(result.exec_id, log_text),
+            );
         }
         self.claude.running_logs.remove(&result.cue_id);
         self.claude.exec_ids.remove(&result.cue_id);
@@ -1080,9 +1121,11 @@ impl DirigentApp {
             .running_logs
             .get(&result.cue_id)
             .and_then(|(log, _)| claude::extract_plan_path(log));
-        let _ = self
-            .db
-            .update_cue_plan_path(result.cue_id, plan_path.as_deref());
+        self.db_log(
+            "store plan path",
+            self.db
+                .update_cue_plan_path(result.cue_id, plan_path.as_deref()),
+        );
 
         let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
@@ -1092,15 +1135,21 @@ impl DirigentApp {
     /// Finalize a stale execution in the DB without touching live state.
     fn complete_stale_execution(&self, result: &ClaudeResult) {
         if let Some(ref error) = result.error {
-            let _ = self.db.fail_execution(result.exec_id, error);
+            self.db_log(
+                "record stale execution failure",
+                self.db.fail_execution(result.exec_id, error),
+            );
         } else {
-            let _ = self.db.complete_execution(
-                result.exec_id,
-                &result.response,
-                result.diff.as_deref(),
-                Some(result.metrics.cost_usd),
-                Some(result.metrics.duration_ms),
-                Some(result.metrics.num_turns),
+            self.db_log(
+                "record stale execution result",
+                self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    result.diff.as_deref(),
+                    Some(result.metrics.cost_usd),
+                    Some(result.metrics.duration_ms),
+                    Some(result.metrics.num_turns),
+                ),
             );
         }
     }
@@ -1177,7 +1226,7 @@ impl DirigentApp {
             } else {
                 "Auto-sending follow-up".to_string()
             };
-            let _ = self.db.log_activity(cue_id, &msg);
+            self.log_cue_activity(cue_id, &msg);
             self.trigger_claude_reply(cue_id, &follow_up_text, &[]);
         }
     }
@@ -1191,9 +1240,18 @@ impl DirigentApp {
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         self.set_status_message(format!("{provider_name} error for \"{preview}\": {error}"));
-        let _ = self.db.fail_execution(result.exec_id, error);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(result.cue_id, "Run failed");
+        // Reported after the run error above: if the DB is also failing, that
+        // is the more actionable message — the cue would otherwise be shown as
+        // running forever.
+        self.db_report(
+            "record execution failure",
+            self.db.fail_execution(result.exec_id, error),
+        );
+        self.db_report(
+            "move cue back to Inbox",
+            self.db.update_cue_status(result.cue_id, CueStatus::Inbox),
+        );
+        self.log_cue_activity(result.cue_id, "Run failed");
         telemetry::emit_execution_failed(
             &self.project_name(),
             result.cue_id,
@@ -1205,10 +1263,16 @@ impl DirigentApp {
     fn handle_rate_limit(&mut self, result: &ClaudeResult, limit_line: &str) {
         let preview = self.cue_preview(result.cue_id);
         self.set_status_message(format!("Rate limited: \"{}\" — {}", preview, limit_line));
-        let _ = self.db.fail_execution(result.exec_id, limit_line);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+        self.db_report(
+            "record execution failure",
+            self.db.fail_execution(result.exec_id, limit_line),
+        );
+        self.db_report(
+            "move cue back to Inbox",
+            self.db.update_cue_status(result.cue_id, CueStatus::Inbox),
+        );
         let activity = format!("Rate limited — {}", limit_line);
-        let _ = self.db.log_activity(result.cue_id, &activity);
+        self.log_cue_activity(result.cue_id, &activity);
         self.cue_warnings
             .insert(result.cue_id, limit_line.to_string());
         telemetry::emit_execution_rate_limited(&self.project_name(), result.cue_id, limit_line);
@@ -1224,18 +1288,22 @@ impl DirigentApp {
             Some(result.metrics.duration_ms),
             Some(result.metrics.num_turns),
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            Some(diff),
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                Some(diff),
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
-        let _ = self
-            .db
-            .log_activity(result.cue_id, "Run completed — review ready");
+        self.db_report(
+            "move cue to Review",
+            self.db.update_cue_status(result.cue_id, CueStatus::Review),
+        );
+        self.log_cue_activity(result.cue_id, "Run completed — review ready");
 
         // Claude can make changes AND still end by asking the user something
         // (e.g. "I updated X — should I also do Y?"). Surface that so the user
@@ -1248,7 +1316,10 @@ impl DirigentApp {
             self.flag_pending_question(result.cue_id);
             return;
         }
-        let _ = self.db.update_cue_has_question(result.cue_id, false);
+        self.db_log(
+            "clear pending-question flag",
+            self.db.update_cue_has_question(result.cue_id, false),
+        );
         self.notify_review_ready(result.cue_id);
 
         let cue_prompt = self
@@ -1310,6 +1381,7 @@ impl DirigentApp {
         let source_label = claude::extract_pr_label(&cue_text);
 
         let mut count = 0;
+        let mut failed = 0;
         for item in imported {
             if item.text.trim().is_empty() {
                 continue;
@@ -1322,19 +1394,20 @@ impl DirigentApp {
             {
                 continue;
             }
-            if self
-                .db
-                .insert_cue_from_source(
+            if self.db_log(
+                "create imported cue",
+                self.db.insert_cue_from_source(
                     &item.text,
                     &source_label,
                     "",
                     &source_ref,
                     &item.file_path,
                     item.line_number,
-                )
-                .is_ok()
-            {
+                ),
+            ) {
                 count += 1;
+            } else {
+                failed += 1;
             }
         }
 
@@ -1343,18 +1416,31 @@ impl DirigentApp {
             Some(result.metrics.duration_ms),
             Some(result.metrics.num_turns),
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            None,
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                None,
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+        let moved = self.db_report(
+            "move cue to Done",
+            self.db.update_cue_status(result.cue_id, CueStatus::Done),
+        );
         let activity = format!("Imported {} cue(s)", count);
-        let _ = self.db.log_activity(result.cue_id, &activity);
-        self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
+        self.log_cue_activity(result.cue_id, &activity);
+        if failed > 0 {
+            self.set_status_message(format!(
+                "Imported {} cue(s) from {} — {} could not be saved",
+                count, source_label, failed
+            ));
+        } else if moved {
+            self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
+        }
     }
 
     /// Detect whether a completed run ended with a question for the user.
@@ -1383,10 +1469,13 @@ impl DirigentApp {
         self.set_status_message(format!(
             "Claude is waiting for your answer about \"{preview}\""
         ));
-        let _ = self.db.update_cue_has_question(cue_id, true);
-        let _ = self
-            .db
-            .log_activity(cue_id, "Run completed — question pending");
+        // If this flag is lost the cue looks finished while Claude is actually
+        // blocked waiting, and a workflow would start dependent steps early.
+        self.db_report(
+            "flag pending question",
+            self.db.update_cue_has_question(cue_id, true),
+        );
+        self.log_cue_activity(cue_id, "Run completed — question pending");
         self.reply_inputs.entry(cue_id).or_default();
         self.notify_run_complete(cue_id, true);
     }
@@ -1397,18 +1486,24 @@ impl DirigentApp {
             Some(result.metrics.duration_ms),
             Some(result.metrics.num_turns),
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            None,
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                None,
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
         let has_question = self.run_has_question(result);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
-            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(result.cue_id, CueStatus::Done),
+            );
             self.flag_pending_question(result.cue_id);
         } else if self.should_auto_continue(result.cue_id) {
             let count = self
@@ -1420,8 +1515,11 @@ impl DirigentApp {
             let n = *count;
             let max = self.settings.auto_continue_max;
             self.set_status_message(format!("Auto-continuing \"{}\" ({}/{})", preview, n, max,));
-            let _ = self.db.update_cue_has_question(result.cue_id, false);
-            let _ = self.db.log_activity(
+            self.db_log(
+                "clear pending-question flag",
+                self.db.update_cue_has_question(result.cue_id, false),
+            );
+            self.log_cue_activity(
                 result.cue_id,
                 &format!("Stopped early — auto-continue {}/{}", n, max),
             );
@@ -1432,11 +1530,15 @@ impl DirigentApp {
                 "Claude completed but no file changes detected for \"{}\"",
                 preview
             ));
-            let _ = self.db.update_cue_has_question(result.cue_id, false);
-            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(result.cue_id, "Run completed — no changes");
+            self.db_log(
+                "clear pending-question flag",
+                self.db.update_cue_has_question(result.cue_id, false),
+            );
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(result.cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(result.cue_id, "Run completed — no changes");
         }
     }
 
@@ -1533,10 +1635,19 @@ impl DirigentApp {
 
     /// Flush all local running logs to the database.
     fn flush_local_logs_to_db(&self) {
+        // This runs on a timer for every live run, so failures are counted and
+        // logged once per sweep rather than once per cue — a broken DB would
+        // otherwise flood the log every interval.
+        let mut failed = 0;
         for (&cue_id, (log_text, _)) in &self.claude.running_logs {
             if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id) {
-                let _ = self.db.update_execution_log(exec_id, log_text);
+                if self.db.update_execution_log(exec_id, log_text).is_err() {
+                    failed += 1;
+                }
             }
+        }
+        if failed > 0 {
+            log::error!("[db] flush execution log failed for {} run(s)", failed);
         }
     }
 

@@ -434,7 +434,10 @@ impl DirigentApp {
         }
         if self.last_agent_cleanup.elapsed() >= Duration::from_secs(3600) {
             self.last_agent_cleanup = std::time::Instant::now();
-            let _ = self.db.cleanup_agent_runs(200, 65536);
+            self.db_log(
+                "clean up agent run history",
+                self.db.cleanup_agent_runs(200, 65536),
+            );
         }
     }
 

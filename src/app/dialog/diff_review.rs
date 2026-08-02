@@ -744,8 +744,11 @@ impl DirigentApp {
             && !self.claude.workspace_commit_failed.contains(&cue_id)
         {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
             let cue_prompt = self
                 .cues
@@ -803,9 +806,12 @@ impl DirigentApp {
                 return;
             }
             self.cleanup_jj_workspace(cue_id);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
             self.set_status_message("Reverted — bookmark deleted, workspace removed".to_string());
+            self.db_report(
+                "move cue back to Inbox",
+                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+            );
+            self.log_cue_activity(cue_id, "Reverted (bookmark deleted)");
             self.reload_cues();
             self.reload_git_info();
             self.diff_review = None;
@@ -820,7 +826,10 @@ impl DirigentApp {
             &file_paths,
         ) {
             Ok(()) => {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.db_report(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                );
                 let result = self.reload_open_tabs_and_notify_lsp();
                 let problems = Self::collect_reload_problems(&self.viewer.tabs, &result);
                 if !problems.is_empty() {

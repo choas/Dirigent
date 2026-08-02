@@ -31,10 +31,16 @@ impl DirigentApp {
                     Err(_panic) => {
                         // Thread panicked — mark orphaned execution as failed.
                         if let Some(exec_id) = handle.exec_id {
-                            let _ = self.db.fail_execution(exec_id, "worker thread panicked");
+                            self.db_log(
+                                "record execution failure",
+                                self.db.fail_execution(exec_id, "worker thread panicked"),
+                            );
                         }
                         if let Some(cue_id) = handle.cue_id {
-                            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                            self.db_log(
+                                "move cue back to Inbox",
+                                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                            );
                             self.claude.running_logs.remove(&cue_id);
                             self.claude.start_times.remove(&cue_id);
                             self.claude.exec_ids.remove(&cue_id);

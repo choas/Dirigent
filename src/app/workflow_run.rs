@@ -191,11 +191,20 @@ impl DirigentApp {
             if !is_inbox {
                 continue;
             }
-            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
-            let _ = self
-                .db
-                .log_activity(cue_id, &format!("Workflow: started (step {})", step_idx));
+            self.db_report(
+                "set workflow flags",
+                self.db.update_cue_workflow_flags(cue_id, true, auto_commit),
+            );
+            // If the status write fails the cue is still Inbox in the DB. The
+            // reload below reflects that, and trigger_ready_workflow_cues skips
+            // it, so the UI never claims a cue is running when it is not.
+            if !self.db_report(
+                "move cue to Ready",
+                self.db.update_cue_status(cue_id, CueStatus::Ready),
+            ) {
+                continue;
+            }
+            self.log_cue_activity(cue_id, &format!("Workflow: started (step {})", step_idx));
             self.cue_move_flash
                 .insert(cue_id, std::time::Instant::now());
         }
@@ -215,10 +224,14 @@ impl DirigentApp {
                 // Verify the run actually started — trigger_claude may bail out
                 // (e.g. home guard sync failure) leaving the cue stuck in Ready.
                 if !self.claude.running_logs.contains_key(&cue_id) {
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                    let _ = self
-                        .db
-                        .log_activity(cue_id, "Workflow: run failed to start, moved back to Inbox");
+                    self.db_report(
+                        "move cue back to Inbox",
+                        self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                    );
+                    self.log_cue_activity(
+                        cue_id,
+                        "Workflow: run failed to start, moved back to Inbox",
+                    );
                     reverted = true;
                 }
             }
@@ -268,6 +281,9 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
+        // Collected rather than reported per-cue: the "Workflow cancelled"
+        // message below would otherwise immediately clobber the error.
+        let mut failed = 0usize;
         for cue_id in cue_ids_to_cancel {
             // Only demote cues still in Ready (running). Don't touch cues that
             // already moved to Review/Done — that would discard completed work.
@@ -276,21 +292,39 @@ impl DirigentApp {
                 .iter()
                 .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
             self.cancel_cue_task(cue_id);
-            if is_ready {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            if is_ready
+                && !self.db_log(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                )
+            {
+                failed += 1;
             }
             // Clear the persisted workflow/auto-commit flags so a later manual
             // run of this cue is not treated as part of a (now-cancelled)
-            // workflow and silently auto-committed.
-            let _ = self.db.update_cue_workflow_flags(cue_id, false, false);
-            let _ = self.db.log_activity(cue_id, "Workflow cancelled");
+            // workflow and silently auto-committed. A failure here matters: the
+            // stale auto-commit flag would survive the cancellation.
+            if !self.db_log(
+                "clear workflow flags",
+                self.db.update_cue_workflow_flags(cue_id, false, false),
+            ) {
+                failed += 1;
+            }
+            self.log_cue_activity(cue_id, "Workflow cancelled");
         }
         self.workflow_plan = None;
         self.workflow_warning = None;
         self.show_workflow_graph = false;
         self.workflow_inbox_snapshot.clear();
         self.reload_cues();
-        self.set_status_message("Workflow cancelled".into());
+        if failed > 0 {
+            self.set_status_message(format!(
+                "Workflow cancelled — {} database write(s) failed, some cues may keep workflow state",
+                failed
+            ));
+        } else {
+            self.set_status_message("Workflow cancelled".into());
+        }
     }
 
     /// Toggle pause_after on a specific step.
