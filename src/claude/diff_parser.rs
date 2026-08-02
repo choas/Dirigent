@@ -193,6 +193,29 @@ pub(crate) fn parse_hunk_header(header: &str) -> (usize, usize, &str) {
     (old_start, new_start, tail)
 }
 
+/// Parse the old/new line counts from a hunk header (`@@ -s[,c] +s[,c] @@`).
+/// A missing count means 1, per the unified-diff format; an unparseable range
+/// yields 0 so callers treat the hunk as empty rather than mis-consuming lines.
+pub(crate) fn parse_hunk_header_counts(header: &str) -> (usize, usize) {
+    let inner = header.strip_prefix("@@ ").unwrap_or(header);
+    let range_part = match inner.find(" @@") {
+        Some(pos) => &inner[..pos],
+        None => inner,
+    };
+
+    let parts: Vec<&str> = range_part.split_whitespace().collect();
+    let count_of = |part: Option<&&str>, sign: char| {
+        part.and_then(|p| p.strip_prefix(sign))
+            .map(|p| match p.split_once(',') {
+                Some((_, count)) => count.parse::<usize>().unwrap_or(0),
+                None => 1,
+            })
+            .unwrap_or(0)
+    };
+
+    (count_of(parts.first(), '-'), count_of(parts.get(1), '+'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

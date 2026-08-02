@@ -223,6 +223,15 @@ pub(super) fn parse_diff_paths(repo_path: &Path, diff_text: &str) -> Vec<String>
     parse_diff_paths_with_repo_prefix(repo_path, diff_text)
 }
 
+/// Stateful scan for `--- a/` / `+++ b/` file headers.
+///
+/// The scan tracks each hunk's line counts from its `@@` header so hunk
+/// *content* is never mistaken for a file header: a deleted source line whose
+/// content begins with `-- ` renders as `--- ...` in the diff, and a stateless
+/// prefix match parsed it as a path — commit flows then staged and committed
+/// an unrelated file. While a hunk's budget remains, every line is consumed as
+/// content; headers are only recognised between hunks, and a `diff --git`
+/// line always ends the current hunk.
 fn parse_diff_paths_with_repo_prefix(repo_path: &Path, diff_text: &str) -> Vec<String> {
     let dir_name = repo_path
         .file_name()
@@ -230,7 +239,27 @@ fn parse_diff_paths_with_repo_prefix(repo_path: &Path, diff_text: &str) -> Vec<S
         .unwrap_or_default();
     let dir_prefix = repo_dir_prefix(&dir_name);
     let mut file_paths = Vec::new();
+    // Remaining (old, new) lines of the hunk currently being scanned.
+    let mut budget: Option<(usize, usize)> = None;
     for line in diff_text.lines() {
+        if line.starts_with("diff --git ") {
+            budget = None;
+            continue;
+        }
+        if let Some((old_left, new_left)) = budget {
+            if let Some(rest) = consume_hunk_line(line, old_left, new_left) {
+                budget = (rest != (0, 0)).then_some(rest);
+                continue;
+            }
+            // Not valid hunk content — the header's counts were short.
+            // Fall through and scan the line normally.
+            budget = None;
+        }
+        if line.starts_with("@@ ") {
+            let counts = crate::claude::parse_hunk_header_counts(line);
+            budget = (counts != (0, 0)).then_some(counts);
+            continue;
+        }
         let Some(path) = diff_line_path(repo_path, &dir_prefix, line) else {
             continue;
         };
@@ -239,6 +268,19 @@ fn parse_diff_paths_with_repo_prefix(repo_path: &Path, diff_text: &str) -> Vec<S
         }
     }
     file_paths
+}
+
+/// Consume one hunk-body line against the remaining `(old, new)` budget.
+/// Returns the budget left afterwards, or `None` when the line cannot be hunk
+/// content given that budget.
+fn consume_hunk_line(line: &str, old_left: usize, new_left: usize) -> Option<(usize, usize)> {
+    match line.as_bytes().first() {
+        Some(b'\\') => Some((old_left, new_left)), // "\ No newline at end of file"
+        Some(b'+') if new_left > 0 => Some((old_left, new_left - 1)),
+        Some(b'-') if old_left > 0 => Some((old_left - 1, new_left)),
+        Some(b' ') | None if old_left > 0 && new_left > 0 => Some((old_left - 1, new_left - 1)),
+        _ => None,
+    }
 }
 
 fn repo_dir_prefix(dir_name: &str) -> String {
@@ -346,7 +388,7 @@ mod tests {
         let diff = "\
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -1,3 +1,3 @@
+@@ -1,1 +1,1 @@
  fn main() {}
 --- a/src/lib.rs
 +++ b/src/lib.rs
@@ -393,5 +435,78 @@ mod tests {
     fn parse_diff_file_paths_empty_diff() {
         let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), "");
         assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn parse_diff_file_paths_ignores_header_lookalikes_inside_hunks() {
+        // Deleting a SQL/Lua-style `-- ` comment renders as `--- ...` in the
+        // diff body. A stateless prefix match parsed it as a file header, and
+        // commit_diff then staged and committed the unrelated path.
+        let diff = "\
+diff --git a/src/query.sql b/src/query.sql
+--- a/src/query.sql
++++ b/src/query.sql
+@@ -1,3 +1,3 @@
+ SELECT 1;
+--- a/unrelated_file.rs
++-- new comment
+ SELECT 2;
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), diff);
+        assert_eq!(paths, vec!["src/query.sql"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_ignores_plus_plus_content_lines() {
+        // An added line whose content starts with `++ ` renders as `+++ ...`.
+        let diff = "\
+diff --git a/inc.cc b/inc.cc
+--- a/inc.cc
++++ b/inc.cc
+@@ -1,2 +1,3 @@
+ int i = 0;
++++ b/evil.rs
+ int j = 1;
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), diff);
+        assert_eq!(paths, vec!["inc.cc"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_header_pair_lookalike_in_hunk() {
+        // A deleted `-- a/x` plus an added `++ b/y` reproduce an exact
+        // `--- a/` / `+++ b/` header pair inside the hunk body.
+        let diff = "\
+diff --git a/notes.md b/notes.md
+--- a/notes.md
++++ b/notes.md
+@@ -1,2 +1,2 @@
+--- a/phantom.rs
++++ b/phantom.rs
+ tail
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), diff);
+        assert_eq!(paths, vec!["notes.md"]);
+    }
+
+    #[test]
+    fn parse_diff_file_paths_second_file_after_lookalike_hunk() {
+        // Once the hunk's line budget is exhausted, a genuine header for the
+        // next file must still be recognised — even without `diff --git`
+        // anchors (Claude-produced diffs lack them).
+        let diff = "\
+--- a/first.sql
++++ b/first.sql
+@@ -1,2 +1,1 @@
+--- old comment
+ SELECT 1;
+--- a/second.rs
++++ b/second.rs
+@@ -1,1 +1,1 @@
+-x
++y
+";
+        let paths = parse_diff_file_paths_for_repo(Path::new("/tmp/proj"), diff);
+        assert_eq!(paths, vec!["first.sql", "second.rs"]);
     }
 }
