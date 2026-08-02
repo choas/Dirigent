@@ -32,18 +32,20 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Tabs & navigation** — Open multiple files in tabs; breadcrumb path bar; back/forward navigation history
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items; bulk actions on Review and Done columns
-- **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
-- **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
+- **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.8 default; Opus, Sonnet, and Haiku 4.x selectable), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
+- **Multiple AI backends** — Besides Claude Code: **OpenCode** (OpenAI o1/o3/o4-mini/GPT-4.1 and Anthropic models), **Gemini CLI** (Gemini 3 and 2.5 families), and **Codex** (GPT-5-Codex); plus an optional OpenAI-compatible "fast LLM" helper for lightweight tasks like commit-message suggestions
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
 - **Prompt quality hints** — Heuristic analysis flags vague, too-short, or missing-context prompts before sending to AI
 - **Cue commands** — Prefix cues with `[plan]`, `[test]`, `[refactor]`, `[review]`, or `[fix]` to apply specialized prompt templates with optional pre/post scripts; customizable in Settings
 - **Image attachments** — Attach images to cues for Claude to reference during execution; drag and drop files onto the window to attach
 - **Diff view** — Review AI-generated changes inline or side-by-side before accepting; collapsible per-file diffs with +/- statistics and in-diff search
-- **Git integration** — View commit history (last 50 commits), create commits, manage worktrees, see dirty-file indicators in the file tree; merge conflict resolution dialog, diverged-branch handling, and `git init` for non-repo directories
-- **Pull requests** — Create GitHub PRs directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues with a filter dialog for selective import
+- **Git integration** — View commit history (loaded incrementally), create commits, manage worktrees, see dirty-file indicators in the file tree; merge conflict resolution dialog, diverged-branch handling, and `git init` for non-repo directories
+- **Git graph & staging** — Branch/commit graph view, hunk-level staging, commit queue with AI-grouped change sets ("Tidy my working tree"), cross-branch "Analyze changes over…" review, and folder compare with an optional external diff tool
+- **Jujutsu (jj) support** — Optional jj VCS backend: bookmarks (create, delete, merge, switch), squash, undo, and jj workspaces alongside the git backend
+- **Pull requests** — Create PRs on GitHub (via `gh`) or Codeberg (via the Forgejo REST API) directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues with a filter dialog for selective import
 - **Search** — In-file search (Cmd+F) with match navigation; project-wide search (Cmd+Shift+F) with clickable results
-- **Source integration** — Import cues from GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, or custom shell commands with automatic deduplication and configurable polling
+- **Source integration** — Import cues from GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, Sentry, MCP, or custom shell commands with automatic deduplication and configurable polling
 - **Markdown import** — Import cues from a Markdown document (headings become cue titles); supports upsert to avoid duplicates
 - **Playbook** — Predefined prompts (e.g. "Update README", "Security audit", "Add tests", "Commit changes") that can be run as global cues; supports template variables with free-text and dropdown inputs
 - **Themes** — 20 themes: 10 dark (Nord, Dracula, Solarized, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Dark) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night, Light)
@@ -51,7 +53,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
 - **File operations** — Rename files directly from the code viewer
 - **Notifications** — macOS notifications with three-tier fallback (UNUserNotificationCenter → NSUserNotificationCenter → osascript) and configurable sound/popup
-- **Lava lamp** — Retro pixelated lava lamp animation while a cue is running
+- **Running animations** — Selectable overlay while a cue is running: retro pixelated lava lamp (default), Claude Code name, dino, jujutsu, thunderdome, or off
 - **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history, dedicated log viewer, and cargo diagnostic parsing
 - **Workflow planning** — LLM-analyzed execution plans for multiple Inbox cues; automatically groups independent cues for parallel execution and orders dependent steps sequentially; visual workflow graph overlay with step-by-step progress
 - **Task management** — Background task lifecycle with cancellation support; running Claude tasks can be stopped mid-execution
@@ -63,7 +65,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 ## Prerequisites
 
-- **Rust** (1.75+ recommended) — [rustup.rs](https://rustup.rs)
+- **Rust** (1.92+ required by the pinned egui/eframe 0.34) — [rustup.rs](https://rustup.rs)
 - **Claude Code CLI** — Must be installed and available on your `PATH` (or configured via Settings). See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code).
 - **`merman-cli`** _(optional)_ — Enables rendering of `mermaid` code blocks as diagrams in the Markdown viewer. Install with `cargo install merman-cli`; without it, Mermaid blocks fall back to showing their source.
 - **System dependencies** for your platform:
@@ -342,7 +344,7 @@ src/
 
 ## Status
 
-Dirigent is in active development (v0.5.0, 900+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.6.1, 1,500+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 
