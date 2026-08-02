@@ -149,10 +149,17 @@ impl DirigentApp {
         }
 
         let total_received = items.len();
+        // Runnable cues execute through the AI CLI without further
+        // confirmation, and `allow_runnable` comes from the same untrusted
+        // `.Dirigent/settings.json` as the sources themselves. Honor the
+        // `{runnable}` marker only when the repository's settings are covered
+        // by an explicit user approval (defense in depth alongside the
+        // load-time trust gate).
+        let repo_trusted = crate::settings::repo_settings_trusted(&self.project_root);
         let mut new_count = 0;
         let mut auto_run_ids: Vec<i64> = Vec::new();
         for item in items {
-            let Some((text, runnable)) = self.prepare_source_item(&item) else {
+            let Some((text, runnable)) = self.prepare_source_item(&item, repo_trusted) else {
                 continue;
             };
             if let Ok(cue_id) = self.db.insert_cue_from_source(
@@ -179,7 +186,11 @@ impl DirigentApp {
         }
     }
 
-    fn prepare_source_item(&mut self, item: &SourceItem) -> Option<(String, bool)> {
+    fn prepare_source_item(
+        &mut self,
+        item: &SourceItem,
+        repo_trusted: bool,
+    ) -> Option<(String, bool)> {
         match self.db.cue_exists_by_source_ref(&item.external_id) {
             Ok(true) => {
                 self.refresh_existing_source_cue(item);
@@ -188,7 +199,8 @@ impl DirigentApp {
             Ok(false) => {}
             Err(_) => return None,
         }
-        let runnable = self.source_allows_runnable(item) && has_runnable_marker(&item.text);
+        let runnable =
+            repo_trusted && self.source_allows_runnable(item) && has_runnable_marker(&item.text);
         let text = if runnable {
             strip_runnable_marker(&item.text)
         } else {

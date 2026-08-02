@@ -260,7 +260,9 @@ pub(crate) struct SourceConfig {
     /// When true, cues whose text starts with `{runnable}` are automatically
     /// moved to Ready and executed.  Disabled by default — enable only for
     /// trusted sources, as it grants the source the ability to trigger
-    /// arbitrary AI runs.
+    /// arbitrary AI runs.  Only honored when the repository's settings have
+    /// passed the trust gate (see `settings::trust`); for unapproved
+    /// repositories the marker is left in the cue text and nothing auto-runs.
     #[serde(default)]
     pub allow_runnable: bool,
 }

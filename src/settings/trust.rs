@@ -201,6 +201,21 @@ fn evaluate_with_store(
     }
 }
 
+/// Defense-in-depth check for execution sites (custom source commands,
+/// runnable-cue auto-execution): whether the repository's on-disk
+/// `.Dirigent/settings.json` is currently covered by a recorded user approval
+/// in the user-profile trust store. [`load_settings`](super::io::load_settings)
+/// already strips unapproved execution-capable fields at load time, but code
+/// that spawns processes must not have to trust that every caller (and every
+/// future caller) went through it — re-check here immediately before acting.
+pub(crate) fn repo_settings_trusted(repo_root: &Path) -> bool {
+    let path = repo_root.join(".Dirigent").join("settings.json");
+    let file_value: Option<serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok());
+    evaluate(repo_root, file_value.as_ref()).trusted
+}
+
 /// Record the user's approval of an execution-capable field set for a repo.
 pub(crate) fn record_approval(repo_root: &Path, hash: &str) {
     let Some(path) = store_path() else { return };
@@ -336,6 +351,24 @@ mod tests {
         assert_eq!(check.fields.len(), 1);
         assert_eq!(check.fields[0].0, "claude_extra_args");
         assert!(check.fields[0].1.contains("--mcp-config"));
+    }
+
+    #[test]
+    fn repo_settings_trusted_is_false_for_unapproved_repo() {
+        // A fresh directory can never be in the user-profile trust store, so
+        // the execution-site check must deny — with and without a settings
+        // file carrying execution-capable fields.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!repo_settings_trusted(dir.path()));
+
+        let dot = dir.path().join(".Dirigent");
+        std::fs::create_dir_all(&dot).unwrap();
+        std::fs::write(
+            dot.join("settings.json"),
+            r#"{"sources": [{"command": "sh .Dirigent/x.sh", "allow_runnable": true}]}"#,
+        )
+        .unwrap();
+        assert!(!repo_settings_trusted(dir.path()));
     }
 
     #[test]

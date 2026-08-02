@@ -24,4 +24,4 @@ pub(crate) use providers::{
 pub(crate) use recent::{add_global_recent_project, add_recent_repo, load_global_recent_projects};
 pub(crate) use semantic_colors::SemanticColors;
 pub(crate) use theme::{CustomTheme, ThemeChoice};
-pub(crate) use trust::record_approval as record_trust_approval;
+pub(crate) use trust::{record_approval as record_trust_approval, repo_settings_trusted};

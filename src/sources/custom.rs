@@ -199,6 +199,20 @@ pub(crate) fn fetch_custom_command(
         )));
     }
 
+    // Defense in depth: the command string originates from
+    // `.Dirigent/settings.json`, which ships with the checkout and is
+    // attacker-controlled until the user approves it. `load_settings` strips
+    // unapproved execution-capable fields, but never spawn a shell here unless
+    // the repository's settings are covered by an explicit user approval in
+    // the user-profile trust store.
+    if !crate::settings::repo_settings_trusted(project_root) {
+        return Err(DirigentError::Source(
+            "refusing to run custom source command: this repository's settings \
+             have not been approved (accept the trust prompt first)"
+                .to_string(),
+        ));
+    }
+
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(command).current_dir(project_root);
     let output = output_piped_command(cmd)?;
@@ -338,6 +352,20 @@ mod tests {
     fn validate_command_allows_non_ascii_paths() {
         assert!(validate_command("cat données.txt").is_ok());
         assert!(validate_command("ls 日本語ファイル").is_ok());
+    }
+
+    // -- fetch_custom_command --
+
+    #[test]
+    fn fetch_custom_command_refuses_untrusted_repo() {
+        // A fresh directory is never in the user-profile trust store, so even
+        // a command that passes character validation must not be executed.
+        let dir = tempfile::tempdir().unwrap();
+        let err = fetch_custom_command(dir.path(), "echo hello", "lbl", "sid").unwrap_err();
+        assert!(
+            err.to_string().contains("not been approved"),
+            "unexpected error: {err}"
+        );
     }
 
     // -- parse_source_json --
