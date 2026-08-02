@@ -131,6 +131,8 @@ Each agent has: name, command, trigger, and optional language.
 | LSP enabled | bool | false | Master toggle for Language Server Protocol |
 | LSP servers | list | 13 presets | Server configurations per language |
 
+A server's command must be the language server binary itself. Shells, exec wrappers and language interpreters (`sh`, `env`, `xargs`, `node`, `python3`, `java`, …) are refused as the command, and eval-style arguments (`-c`, `-e`, `--eval`, `-exec`, …) are refused in the args list — otherwise a repository's `.Dirigent/settings.json` could run arbitrary code through a server definition. Wrap such an invocation in a small executable script on your PATH and point the command at that. Servers also do not start until the repository is trusted (see [Repository trust](#repository-trust)).
+
 ### Sources
 
 | Setting | Type | Default | Description |

