@@ -55,7 +55,7 @@ A **cue** is the central unit of work. It contains:
 - **Text** -- a natural-language instruction describing what should change
 - **File path** (optional) -- the file the cue targets
 - **Line range** (optional) -- specific lines the cue references
-- **Status** -- where the cue is in its lifecycle (Inbox, Ready, Review, Done, Archived)
+- **Status** -- where the cue is in its lifecycle (Backlog, Inbox, Ready, Review, Done, Archived)
 - **Attachments** (optional) -- images for the AI to reference
 - **Tags** (optional) -- for organization
 

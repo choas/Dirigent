@@ -48,7 +48,7 @@ Playbook prompts are predefined tasks you can run without writing a prompt from 
 4. If the play has template variables (e.g. version number), fill them in the dialog
 5. The play creates a global cue and optionally runs it immediately
 
-Built-in plays include: Documentation (Diataxis), Verify architecture, Verify last 5 commits, Create release, Security audit, Check dead code, Add tests, Fix all warnings, Commit changes, Pin dependency versions.
+Built-in plays include: Documentation (Diataxis), Verify architecture, Git Pull, Create release, Security audit, Check dead code, Add tests, Fix all warnings, Commit changes, Zero day test, Pin dependency versions.
 
 ## Send follow-up feedback (reply workflow)
 
