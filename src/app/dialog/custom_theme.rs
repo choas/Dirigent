@@ -1,9 +1,8 @@
 use std::fmt;
-use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::{CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{AsyncPoll, CustomThemeEdit, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::settings::{CliProvider, CustomTheme};
 
 #[derive(Default)]
@@ -94,13 +93,16 @@ impl DirigentApp {
     }
 
     fn poll_custom_theme_ai_result(&mut self) {
-        let ai_result = self
-            .custom_theme_edit
-            .as_mut()
-            .and_then(|edit| edit.ai_rx.as_ref())
-            .and_then(|rx| rx.try_recv().ok());
-        if let (Some(edit), Some(result)) = (self.custom_theme_edit.as_mut(), ai_result) {
-            apply_custom_theme_ai_result(edit, result);
+        let edit = match self.custom_theme_edit.as_mut() {
+            Some(e) => e,
+            None => return,
+        };
+        match edit.ai_op.poll() {
+            AsyncPoll::Ready(result) => apply_custom_theme_ai_result(edit, result),
+            AsyncPoll::Failed => {
+                edit.ai_error = Some("Theme generation ended unexpectedly".to_string());
+            }
+            AsyncPoll::Idle | AsyncPoll::Pending => {}
         }
     }
 
@@ -220,12 +222,12 @@ impl DirigentApp {
             return;
         }
 
-        edit.ai_generating = true;
+        let tx = match edit.ai_op.arm() {
+            Some(tx) => tx,
+            None => return,
+        };
         edit.ai_error = None;
         edit.ai_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        let (tx, rx) = mpsc::channel();
-        edit.ai_rx = Some(rx);
 
         let is_dark = edit.theme.is_dark;
         let current_theme = edit.theme.clone();
@@ -254,8 +256,6 @@ impl DirigentApp {
 }
 
 fn apply_custom_theme_ai_result(edit: &mut CustomThemeEdit, result: Result<CustomTheme, String>) {
-    edit.ai_generating = false;
-    edit.ai_rx = None;
     match result {
         Ok(generated) => {
             let name = edit.theme.name.clone();
@@ -388,8 +388,8 @@ fn render_custom_theme_ai(
                 .hint_text("e.g. ocean sunset, warm earth tones, cyberpunk neon..."),
         );
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let can_generate = !edit.ai_generating && !edit.ai_prompt.trim().is_empty();
-        if edit.ai_generating {
+        let can_generate = !edit.ai_op.in_flight() && !edit.ai_prompt.trim().is_empty();
+        if edit.ai_op.in_flight() {
             ui.spinner();
         } else if ui
             .add_enabled(can_generate, egui::Button::new("Generate"))

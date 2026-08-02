@@ -1257,7 +1257,7 @@ impl DirigentApp {
             .find(|c| c.id == result.cue_id)
             .map(|c| c.text.clone())
             .unwrap_or_default();
-        if !self.show_settings {
+        if !self.dialogs.is_open(super::DialogId::Settings) {
             self.reload_settings_from_disk();
         }
         let agents_started =

@@ -92,7 +92,7 @@ impl DirigentApp {
     }
 
     fn render_ssh_blocking_state(&self, ui: &mut egui::Ui) -> bool {
-        if self.ssh_connecting {
+        if self.ssh_connect_op.in_flight() {
             render_ssh_spinner(ui, "Connecting...");
             return true;
         }

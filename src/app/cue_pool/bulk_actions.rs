@@ -12,7 +12,9 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         if status == CueStatus::Inbox
-            && (section_cues.len() >= 2 || self.workflow_plan.is_some() || self.workflow_generating)
+            && (section_cues.len() >= 2
+                || self.workflow_plan.is_some()
+                || self.workflow_op.in_flight())
         {
             self.render_inbox_bulk_actions(ui, section_cues, actions);
         }
@@ -34,7 +36,7 @@ impl DirigentApp {
         actions: &mut Vec<(i64, CueAction)>,
     ) {
         ui.horizontal(|ui| {
-            if self.workflow_generating {
+            if self.workflow_op.in_flight() {
                 ui.spinner();
                 ui.label(
                     egui::RichText::new("Analyzing\u{2026}")
@@ -204,7 +206,7 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         actions: &mut Vec<(i64, CueAction)>,
     ) {
-        if !self.git.notifying_pr && !self.git.pushing {
+        if !self.git.pr_notify_op.in_flight() && !self.git.push_op.in_flight() {
             let btn = egui::Button::new(
                 icon("\u{2191} Push & Notify PR", self.settings.font_size)
                     .color(self.semantic.badge_text),
@@ -217,7 +219,7 @@ impl DirigentApp {
             {
                 actions.push((0, CueAction::PushAndNotifyPR));
             }
-        } else if self.git.notifying_pr {
+        } else if self.git.pr_notify_op.in_flight() {
             ui.label(
                 egui::RichText::new("Notifying PR...")
                     .small()
@@ -274,7 +276,7 @@ impl DirigentApp {
     }
 
     fn render_refresh_pr_button(&self, ui: &mut egui::Ui, actions: &mut Vec<(i64, CueAction)>) {
-        if self.git.importing_pr {
+        if self.git.import_pr_op.in_flight() {
             ui.label(
                 egui::RichText::new("Refreshing PR\u{2026}")
                     .small()

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use super::super::{CueAction, DirigentApp};
+use super::super::{AsyncPoll, CueAction, DialogId, DirigentApp};
 use crate::claude;
 use crate::db::{Cue, CueStatus};
 use crate::diff_view::{self, DiffViewMode};
@@ -448,7 +448,7 @@ impl DirigentApp {
                         self.git.commit_queue.clear();
                         self.git.commit_queue_pos = 0;
                         self.git.commit_needs_focus = true;
-                        self.git.show_commit_dialog = true;
+                        self.dialogs.open(DialogId::Commit);
                     } else {
                         self.apply_commit_result(
                             cue_id,
@@ -980,7 +980,7 @@ impl DirigentApp {
     }
 
     fn process_notion_done(&mut self, cue_id: i64) {
-        if self.notion_done_in_progress {
+        if self.notion_done_op.in_flight() {
             self.set_status_message("Notion update already in progress".into());
             return;
         }
@@ -1034,12 +1034,8 @@ impl DirigentApp {
         let done_value = source.notion_done_value.clone();
         let status_property = source.notion_status_property.clone();
 
-        self.notion_done_in_progress = true;
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.notion_done_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result = crate::sources::mark_notion_done(
+        self.notion_done_op.spawn(move || {
+            crate::sources::mark_notion_done(
                 &token,
                 &page_ref,
                 &page_type,
@@ -1047,30 +1043,21 @@ impl DirigentApp {
                 &status_property,
             )
             .map(|()| cue_id)
-            .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+            .map_err(|e| e.to_string())
         });
 
         self.set_status_message("Updating Notion...".into());
     }
 
     pub(in crate::app) fn process_notion_done_result(&mut self) {
-        let rx = match self.notion_done_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.notion_done_in_progress = false;
-                self.notion_done_rx = None;
+        let result = match self.notion_done_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Notion update failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.notion_done_in_progress = false;
-        self.notion_done_rx = None;
         match result {
             Ok(cue_id) => {
                 self.set_status_message("Marked done in Notion".into());

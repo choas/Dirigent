@@ -33,7 +33,7 @@ impl DirigentApp {
 
     /// Dispatch to any full-screen central overlay. Returns true if one was rendered.
     fn should_render_central_overlay(&mut self, ui: &mut egui::Ui) -> bool {
-        if self.show_settings {
+        if self.dialogs.is_open(super::DialogId::Settings) {
             self.render_settings_panel(ui);
             return true;
         }
@@ -55,7 +55,9 @@ impl DirigentApp {
             self.render_cue_agent_runs_central(ui);
             return true;
         }
-        if (self.workflow_plan.is_some() && self.show_workflow_graph) || self.workflow_generating {
+        if (self.workflow_plan.is_some() && self.show_workflow_graph)
+            || self.workflow_op.in_flight()
+        {
             self.render_workflow_graph_central(ui);
             return true;
         }

@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_create_bookmark_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_create_bookmark {
+        if !self.dialogs.is_open(DialogId::CreateBookmark) {
             return;
         }
 
@@ -78,7 +78,7 @@ impl DirigentApp {
         if do_create {
             self.start_create_bookmark();
         } else if dismiss {
-            self.git.show_create_bookmark = false;
+            self.close_dialog(DialogId::CreateBookmark);
         }
     }
 }

@@ -119,16 +119,13 @@ impl DirigentApp {
         }
 
         // Poll for async PR detection result
-        if let Some(ref rx) = self.git.pr_detect_rx {
-            if let Ok(result) = rx.try_recv() {
-                if let Some((number, url)) = result {
-                    self.git.pr_number = Some(number);
-                    self.git.pr_url = Some(url);
-                } else {
-                    self.git.pr_number = None;
-                    self.git.pr_url = None;
-                }
-                self.git.pr_detect_rx = None;
+        if let super::AsyncPoll::Ready(result) = self.git.pr_detect_op.poll() {
+            if let Some((number, url)) = result {
+                self.git.pr_number = Some(number);
+                self.git.pr_url = Some(url);
+            } else {
+                self.git.pr_number = None;
+                self.git.pr_url = None;
             }
         }
 
@@ -155,7 +152,7 @@ impl DirigentApp {
             &self.settings.jj_cli_path,
             &self.project_root,
         );
-        if !self.show_settings {
+        if !self.dialogs.is_open(super::DialogId::Settings) {
             self.reload_settings_from_disk();
         }
         self.remap_renamed_tabs();
@@ -459,11 +456,11 @@ impl DirigentApp {
         if !self.scheduled_runs.is_empty() {
             ctx.request_repaint_after(ELAPSED_REPAINT);
         }
-        let has_async_git = self.git.importing_pr
-            || self.git.pushing
-            || self.git.pulling
-            || self.git.creating_pr
-            || self.git.notifying_pr;
+        let has_async_git = self.git.import_pr_op.in_flight()
+            || self.git.push_op.in_flight()
+            || self.git.pull_op.in_flight()
+            || self.git.pr_create_op.in_flight()
+            || self.git.pr_notify_op.in_flight();
         if has_async_git {
             ctx.request_repaint_after(REPAINT_SLOW);
         }

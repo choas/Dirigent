@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_move_to_branch_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_move_to_branch {
+        if !self.dialogs.is_open(DialogId::MoveToBranch) {
             return;
         }
 
@@ -73,7 +73,7 @@ impl DirigentApp {
 
                 ui.horizontal(|ui| {
                     let can_move = !self.git.move_to_branch_name.trim().is_empty()
-                        && !self.git.moving_to_branch;
+                        && !self.git.move_to_branch_op.in_flight();
                     let move_btn = egui::Button::new(
                         icon("\u{2192} Move Commits", fs).color(self.semantic.badge_text),
                     )
@@ -98,7 +98,7 @@ impl DirigentApp {
         if do_move {
             self.start_move_to_branch();
         } else if dismiss {
-            self.git.show_move_to_branch = false;
+            self.close_dialog(DialogId::MoveToBranch);
         }
     }
 }

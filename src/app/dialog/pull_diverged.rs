@@ -2,11 +2,11 @@ use eframe::egui;
 
 use crate::git::PullStrategy;
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 
 impl DirigentApp {
     pub(in crate::app) fn render_pull_diverged_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_pull_diverged {
+        if !self.dialogs.is_open(DialogId::PullDiverged) {
             return;
         }
 
@@ -35,12 +35,12 @@ impl DirigentApp {
     ) {
         if create_cue {
             self.create_pull_diverged_cue();
-            self.git.show_pull_diverged = false;
+            self.close_dialog(DialogId::PullDiverged);
         } else if let Some(strategy) = chosen_strategy {
-            self.git.show_pull_diverged = false;
+            self.close_dialog(DialogId::PullDiverged);
             self.start_git_pull_with_strategy(strategy);
         } else if dismiss {
-            self.git.show_pull_diverged = false;
+            self.close_dialog(DialogId::PullDiverged);
         }
     }
 

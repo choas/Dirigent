@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use super::super::{DialogId, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::agents::{AgentKind, AgentStatus};
 use crate::settings::{SemanticColors, SshServer, VcsBackend};
 
@@ -67,7 +67,7 @@ impl DirigentApp {
     fn render_dirigent_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Dirigent", |ui| {
             if ui.button("About Dirigent").clicked() {
-                self.show_about = true;
+                self.dialogs.open(DialogId::About);
                 ui.close();
             }
             ui.separator();
@@ -81,12 +81,15 @@ impl DirigentApp {
             if ui.button("Settings...").clicked() {
                 self.dismiss_central_overlays();
                 self.reload_settings_from_disk();
-                self.show_settings = true;
+                self.dialogs.open(DialogId::Settings);
                 ui.close();
             }
             ui.separator();
             if ui.button("Logs").clicked() {
-                self.show_log_viewer = !self.show_log_viewer;
+                self.dialogs.set_open(
+                    DialogId::LogViewer,
+                    !self.dialogs.is_open(DialogId::LogViewer),
+                );
                 ui.close();
             }
         });
@@ -142,10 +145,10 @@ impl DirigentApp {
 
     fn render_git_menu_tidy(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let dirty = self.git.dirty_files.len();
-        let tidy_label = tidy_working_tree_label(dirty, self.change_set_generating);
+        let tidy_label = tidy_working_tree_label(dirty, self.change_set_op.in_flight());
         if ui
             .add_enabled(
-                dirty > 0 && !self.change_set_generating,
+                dirty > 0 && !self.change_set_op.in_flight(),
                 egui::Button::new(tidy_label),
             )
             .on_hover_text(
@@ -208,7 +211,7 @@ impl DirigentApp {
 
     fn render_git_menu_pull_push(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
-        let pull_label = if self.git.pulling {
+        let pull_label = if self.git.pull_op.in_flight() {
             if is_jj {
                 "Fetching..."
             } else {
@@ -220,23 +223,23 @@ impl DirigentApp {
             "Pull"
         };
         if ui
-            .add_enabled(!self.git.pulling, egui::Button::new(pull_label))
+            .add_enabled(!self.git.pull_op.in_flight(), egui::Button::new(pull_label))
             .clicked()
         {
             actions.pull_clicked = true;
             ui.close();
         }
 
-        if self.git.ahead_of_remote == 0 && !self.git.pushing {
+        if self.git.ahead_of_remote == 0 && !self.git.push_op.in_flight() {
             ui.add_enabled(false, egui::Button::new("  Nothing to push  "));
         } else {
-            let push_label = if self.git.pushing {
+            let push_label = if self.git.push_op.in_flight() {
                 "Pushing..."
             } else {
                 "Push"
             };
             if ui
-                .add_enabled(!self.git.pushing, egui::Button::new(push_label))
+                .add_enabled(!self.git.push_op.in_flight(), egui::Button::new(push_label))
                 .clicked()
             {
                 actions.push_clicked = true;
@@ -252,12 +255,12 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch == "main" || i.branch == "master")
             .unwrap_or(true);
-        let pr_label = if self.git.creating_pr {
+        let pr_label = if self.git.pr_create_op.in_flight() {
             "Creating PR..."
         } else {
             "Create Pull Request"
         };
-        let pr_enabled = !self.git.creating_pr && !is_default_branch;
+        let pr_enabled = !self.git.pr_create_op.in_flight() && !is_default_branch;
         if ui
             .add_enabled(pr_enabled, egui::Button::new(pr_label))
             .clicked()
@@ -266,13 +269,16 @@ impl DirigentApp {
             ui.close();
         }
 
-        let import_label = if self.git.importing_pr {
+        let import_label = if self.git.import_pr_op.in_flight() {
             "Importing PR..."
         } else {
             "Import PR Findings"
         };
         if ui
-            .add_enabled(!self.git.importing_pr, egui::Button::new(import_label))
+            .add_enabled(
+                !self.git.import_pr_op.in_flight(),
+                egui::Button::new(import_label),
+            )
             .clicked()
         {
             actions.import_pr_clicked = true;
@@ -290,14 +296,14 @@ impl DirigentApp {
     }
 
     fn render_jj_commit_action(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
-        let commit_label = if self.git.committing {
+        let commit_label = if self.git.commit_op.in_flight() {
             "Committing..."
         } else {
             "Commit"
         };
         if ui
             .add_enabled(
-                self.has_working_copy_changes() && !self.git.committing,
+                self.has_working_copy_changes() && !self.git.commit_op.in_flight(),
                 egui::Button::new(commit_label),
             )
             .on_hover_text("Describe the working copy and create a new change")
@@ -314,13 +320,16 @@ impl DirigentApp {
             ui.close();
         }
 
-        let merge_label = if self.git.merging_bookmark {
+        let merge_label = if self.git.merge_bookmark_op.in_flight() {
             "Merging..."
         } else {
             "Merge Bookmark"
         };
         if ui
-            .add_enabled(!self.git.merging_bookmark, egui::Button::new(merge_label))
+            .add_enabled(
+                !self.git.merge_bookmark_op.in_flight(),
+                egui::Button::new(merge_label),
+            )
             .on_hover_text("Merge another bookmark into the current one")
             .clicked()
         {
@@ -328,13 +337,16 @@ impl DirigentApp {
             ui.close();
         }
 
-        let delete_label = if self.git.deleting_bookmark {
+        let delete_label = if self.git.delete_bookmark_op.in_flight() {
             "Deleting..."
         } else {
             "Delete Bookmark"
         };
         if ui
-            .add_enabled(!self.git.deleting_bookmark, egui::Button::new(delete_label))
+            .add_enabled(
+                !self.git.delete_bookmark_op.in_flight(),
+                egui::Button::new(delete_label),
+            )
             .on_hover_text("Delete a bookmark")
             .clicked()
         {
@@ -353,13 +365,16 @@ impl DirigentApp {
     }
 
     fn render_jj_history_actions(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
-        let squash_label = if self.git.squashing {
+        let squash_label = if self.git.squash_op.in_flight() {
             "Squashing..."
         } else {
             "Squash Commits"
         };
         if ui
-            .add_enabled(!self.git.squashing, egui::Button::new(squash_label))
+            .add_enabled(
+                !self.git.squash_op.in_flight(),
+                egui::Button::new(squash_label),
+            )
             .on_hover_text("Squash all commits on the current bookmark into one")
             .clicked()
         {
@@ -367,13 +382,13 @@ impl DirigentApp {
             ui.close();
         }
 
-        let undo_label = if self.git.undoing {
+        let undo_label = if self.git.undo_op.in_flight() {
             "Undoing..."
         } else {
             "Undo Last Operation"
         };
         if ui
-            .add_enabled(!self.git.undoing, egui::Button::new(undo_label))
+            .add_enabled(!self.git.undo_op.in_flight(), egui::Button::new(undo_label))
             .on_hover_text("Undo the last jj operation (jj op restore)")
             .clicked()
         {
@@ -383,13 +398,16 @@ impl DirigentApp {
     }
 
     fn render_jj_abandon_action(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
-        let abandon_label = if self.git.abandoning_empty {
+        let abandon_label = if self.git.abandon_empty_op.in_flight() {
             "Abandoning..."
         } else {
             "Abandon Empty Heads"
         };
         if ui
-            .add_enabled(!self.git.abandoning_empty, egui::Button::new(abandon_label))
+            .add_enabled(
+                !self.git.abandon_empty_op.in_flight(),
+                egui::Button::new(abandon_label),
+            )
             .on_hover_text("Find and abandon empty head commits (no diff)")
             .clicked()
         {
@@ -442,7 +460,7 @@ impl DirigentApp {
             if ui.button("Settings...").clicked() {
                 self.dismiss_central_overlays();
                 self.reload_settings_from_disk();
-                self.show_settings = true;
+                self.dialogs.open(DialogId::Settings);
                 self.agents_expanded = true;
                 ui.close();
             }
@@ -459,7 +477,7 @@ impl DirigentApp {
         if ui.button("Open Settings...").clicked() {
             self.dismiss_central_overlays();
             self.reload_settings_from_disk();
-            self.show_settings = true;
+            self.dialogs.open(DialogId::Settings);
             self.agents_expanded = true;
             ui.close();
         }
@@ -521,7 +539,7 @@ impl DirigentApp {
         ui.menu_button("SSH", |ui| {
             if self.ssh_worker.is_some() {
                 self.render_ssh_connected_menu(ui, actions);
-            } else if self.ssh_connecting {
+            } else if self.ssh_connect_op.in_flight() {
                 self.render_ssh_connecting_menu(ui);
             } else if self.settings.ssh_servers.is_empty() {
                 self.render_ssh_empty_menu(ui);
@@ -588,7 +606,7 @@ impl DirigentApp {
     fn open_ssh_settings_from_menu(&mut self, ui: &mut egui::Ui) {
         self.dismiss_central_overlays();
         self.reload_settings_from_disk();
-        self.show_settings = true;
+        self.dialogs.open(DialogId::Settings);
         self.ssh_expanded = true;
         ui.close();
     }
@@ -691,13 +709,13 @@ impl DirigentApp {
     }
 
     pub(in super::super) fn render_about_dialog(&mut self, ctx: &egui::Context) {
-        if !self.show_about {
+        if !self.dialogs.is_open(DialogId::About) {
             return;
         }
 
         self.ensure_logo_texture(ctx);
 
-        let mut open = self.show_about;
+        let mut open = true;
         egui::Window::new("About Dirigent")
             .open(&mut open)
             .collapsible(false)
@@ -725,6 +743,6 @@ impl DirigentApp {
                     ui.add_space(24.0);
                 });
             });
-        self.show_about = open;
+        self.dialogs.set_open(DialogId::About, open);
     }
 }

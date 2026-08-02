@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use eframe::egui;
 
-use super::super::{DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
+use super::super::{DialogId, DirigentApp, FONT_SCALE_SUBHEADING, SPACE_SM};
 use super::file_tree::{allocate_tree_row, paint_git_status_badge, paint_hover_highlight};
 use crate::diff_view::{self, DiffViewMode};
 use crate::settings::{SemanticColors, VcsBackend};
@@ -84,7 +84,7 @@ impl DirigentApp {
             // Cross-branch change-set review (Git only; jj has no such range diff here).
             if self.settings.vcs_backend == VcsBackend::Git {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let analyzing = self.analyze_over_generating;
+                    let analyzing = self.analyze_over_op.in_flight();
                     let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
                     if ui
                         .add_enabled(!analyzing, egui::Button::new(label).small())
@@ -227,7 +227,7 @@ impl DirigentApp {
             return;
         }
         let has_selection = !self.git.selected_files.is_empty();
-        let analyzing = self.change_set_generating;
+        let analyzing = self.change_set_op.in_flight();
         egui::Panel::bottom("git_view_footer").show_inside(ui, |ui| {
             ui.add_space(SPACE_SM);
             self.render_git_view_commit_button(ui, has_selection, analyzing);
@@ -385,7 +385,7 @@ impl DirigentApp {
         self.git.commit_in_background = false;
         self.git.commit_message_input.clear();
         self.git.commit_needs_focus = true;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.spawn_commit_message_suggestion();
     }
 }

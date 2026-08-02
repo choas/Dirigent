@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{DirigentApp, SPACE_XS};
+use super::super::{DialogId, DirigentApp, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_delete_bookmark_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_delete_bookmark {
+        if !self.dialogs.is_open(DialogId::DeleteBookmark) {
             return;
         }
 
@@ -38,7 +38,7 @@ impl DirigentApp {
             });
 
         if !open {
-            self.git.show_delete_bookmark = false;
+            self.close_dialog(DialogId::DeleteBookmark);
         }
 
         if delete_merged {
@@ -81,7 +81,7 @@ impl DirigentApp {
         merged_count: usize,
         delete_merged: &mut bool,
     ) {
-        let enabled = !self.git.deleting_bookmark && merged_count > 0;
+        let enabled = !self.git.delete_bookmark_op.in_flight() && merged_count > 0;
         let label = if merged_count > 0 {
             format!("Delete {} merged bookmark(s)", merged_count)
         } else {
@@ -136,7 +136,7 @@ impl DirigentApp {
             render_bookmark_state_label(ui, "protected", self.semantic.tertiary_text);
             return;
         }
-        let enabled = !self.git.deleting_bookmark;
+        let enabled = !self.git.delete_bookmark_op.in_flight();
         if ui
             .add_enabled(enabled, egui::Button::new("Delete"))
             .clicked()

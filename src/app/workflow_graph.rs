@@ -123,7 +123,7 @@ impl DirigentApp {
             .show(ui, |ui| {
                 if let Some(ref plan) = self.workflow_plan.clone() {
                     self.render_plan_steps(ui, &plan.steps, actions);
-                } else if self.workflow_generating {
+                } else if self.workflow_op.in_flight() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(40.0);
                         ui.spinner();

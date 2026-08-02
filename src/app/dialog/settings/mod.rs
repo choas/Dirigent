@@ -10,7 +10,7 @@ use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DialogId, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::gemini;
 use crate::opencode;
 use crate::settings;
@@ -323,7 +323,7 @@ impl DirigentApp {
         fetch_idx: Option<usize>,
     ) {
         if close {
-            self.show_settings = false;
+            self.close_dialog(DialogId::Settings);
         }
         if save {
             let mut errors = Vec::new();

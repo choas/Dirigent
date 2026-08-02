@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 use crate::diff_view::{self, DiffViewMode};
 
 impl DirigentApp {
@@ -17,7 +17,7 @@ impl DirigentApp {
                 self.analyze_over_head = info.branch.clone();
             }
         }
-        self.analyze_over_show_picker = true;
+        self.dialogs.open(DialogId::AnalyzeOverPicker);
     }
 
     /// Render the ref picker and the read-only results panel.
@@ -27,7 +27,7 @@ impl DirigentApp {
     }
 
     fn render_analyze_over_picker(&mut self, ctx: &egui::Context) {
-        if !self.analyze_over_show_picker {
+        if !self.dialogs.is_open(DialogId::AnalyzeOverPicker) {
             return;
         }
         let branches = self.git.available_branches.clone();
@@ -56,7 +56,7 @@ impl DirigentApp {
         self.analyze_over_base = base.clone();
         self.analyze_over_head = head.clone();
         if cancel {
-            self.analyze_over_show_picker = false;
+            self.close_dialog(DialogId::AnalyzeOverPicker);
         } else if do_analyze {
             self.start_analyze_over(base, head);
         }

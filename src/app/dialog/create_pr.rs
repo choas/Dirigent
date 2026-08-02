@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_create_pr_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_create_pr {
+        if !self.dialogs.is_open(DialogId::CreatePr) {
             return;
         }
 
@@ -35,7 +35,7 @@ impl DirigentApp {
         if do_create {
             self.start_create_pr();
         } else if dismiss {
-            self.git.show_create_pr = false;
+            self.close_dialog(DialogId::CreatePr);
         }
     }
 
@@ -65,8 +65,8 @@ impl DirigentApp {
 
         ui.horizontal(|ui| {
             let can_create = !self.git.pr_title.trim().is_empty()
-                && !self.git.creating_pr
-                && !self.git.pr_prefill_loading;
+                && !self.git.pr_create_op.in_flight()
+                && !self.git.pr_prefill_op.in_flight();
             let create_btn = egui::Button::new(
                 icon("\u{2191} Push & Create PR", fs).color(self.semantic.badge_text),
             )
@@ -79,7 +79,10 @@ impl DirigentApp {
                 *do_create = true;
             }
             if ui
-                .add_enabled(!self.git.creating_pr, egui::Button::new("Cancel"))
+                .add_enabled(
+                    !self.git.pr_create_op.in_flight(),
+                    egui::Button::new("Cancel"),
+                )
                 .clicked()
             {
                 *dismiss = true;
@@ -99,7 +102,7 @@ impl DirigentApp {
                 .monospace()
                 .color(self.semantic.accent),
         );
-        if self.git.pr_prefill_loading {
+        if self.git.pr_prefill_op.in_flight() {
             ui.label(
                 egui::RichText::new("Detecting base branch and commits\u{2026}")
                     .color(self.semantic.secondary_text),

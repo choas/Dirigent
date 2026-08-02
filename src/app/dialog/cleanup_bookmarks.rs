@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_cleanup_bookmarks_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_cleanup_bookmarks {
+        if !self.dialogs.is_open(DialogId::CleanupBookmarks) {
             return;
         }
 
@@ -24,7 +24,7 @@ impl DirigentApp {
             });
 
         if !open {
-            self.git.show_cleanup_bookmarks = false;
+            self.close_dialog(DialogId::CleanupBookmarks);
         }
 
         if let Some(name) = delete_name {
@@ -89,7 +89,7 @@ impl DirigentApp {
                         .color(self.semantic.danger),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let enabled = !self.git.cleaning_bookmark;
+                    let enabled = !self.git.cleanup_bookmark_op.in_flight();
                     if ui
                         .add_enabled(enabled, egui::Button::new("Delete"))
                         .clicked()

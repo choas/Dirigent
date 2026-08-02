@@ -1,13 +1,12 @@
 use std::path::Path;
-use std::sync::mpsc;
 
 use crate::db::Cue;
 
-use super::{DirigentApp, SplitCueItem};
+use super::{AsyncPoll, DirigentApp, SplitCueItem};
 
 impl DirigentApp {
     pub(super) fn start_split_cue(&mut self, cue_id: i64) {
-        if self.split_cue_generating {
+        if self.split_cue_op.in_flight() {
             self.set_status_message("Split already in progress".into());
             return;
         }
@@ -20,7 +19,6 @@ impl DirigentApp {
         let ref_file = write_reference_file(&self.project_root, &cue);
         let prompt = build_split_prompt(&cue, ref_file.as_deref());
 
-        self.split_cue_generating = true;
         self.split_cue_source_id = Some(cue_id);
         self.split_cue_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -28,40 +26,30 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let settings = self.settings.clone();
         let cancel = std::sync::Arc::clone(&self.split_cue_cancel);
-
-        let (tx, rx) = mpsc::channel();
-        self.split_cue_rx = Some(rx);
         let ctx = self.egui_ctx.clone();
 
-        std::thread::spawn(move || {
-            let result = run_split_analysis(&prompt, &provider, &project_root, &settings, cancel);
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        self.split_cue_op.spawn_then(
+            move || run_split_analysis(&prompt, &provider, &project_root, &settings, cancel),
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
 
         self.set_status_message("Splitting cue...".into());
     }
 
     pub(super) fn process_split_cue_result(&mut self) {
-        let rx = match self.split_cue_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.split_cue_generating = false;
-                self.split_cue_rx = None;
+        let result = match self.split_cue_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.split_cue_source_id = None;
                 self.set_status_message("Split cue failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.split_cue_generating = false;
-        self.split_cue_rx = None;
         let source_id = self.split_cue_source_id.take();
 
         match result {

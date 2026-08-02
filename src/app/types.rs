@@ -23,6 +23,7 @@ pub(crate) enum DiffLineKind {
     Deleted,
 }
 
+use super::async_op::AsyncOp;
 use super::markdown_parser;
 use super::search;
 use super::symbols;
@@ -625,70 +626,44 @@ pub(crate) struct GitState {
     pub(super) history_cache_key: (String, usize),
     pub(super) worktrees: Vec<git::WorktreeInfo>,
     pub(super) new_worktree_name: String,
-    pub(super) show_worktree_panel: bool,
     /// Branches available for worktree creation (local + remote, excluding checked-out).
     pub(super) available_branches: Vec<String>,
     /// Branch names whose tip commit was authored by the current git user.
     pub(super) own_branches: HashSet<String>,
     /// Per-bookmark push status (jj only): synced vs not-pushed for each bookmark name.
     pub(super) bookmark_push_statuses: HashMap<String, crate::jj::BookmarkPushStatus>,
-    /// Whether a git push is currently in progress.
-    pub(super) pushing: bool,
-    pub(super) push_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Show dialog when push fails with an error.
-    pub(super) show_push_error: bool,
+    /// In-flight git push (git push or jj git push).
+    pub(super) push_op: AsyncOp<Result<String, String>>,
     /// The error message from a failed push.
     pub(super) push_error_message: String,
-    /// Show dialog when PR creation fails.
-    pub(super) show_pr_error: bool,
     /// The error message from a failed PR creation.
     pub(super) pr_error_message: String,
-    /// Whether a git pull is currently in progress.
-    pub(super) pulling: bool,
-    pub(super) pull_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Show dialog when pull fails due to diverged branches.
-    pub(super) show_pull_diverged: bool,
-    /// Show dialog when pull fails due to unmerged files.
-    pub(super) show_pull_unmerged: bool,
-    /// Show the merge conflict resolution dialog.
-    pub(super) show_merge_conflicts: bool,
+    /// In-flight git pull/fetch.
+    pub(super) pull_op: AsyncOp<Result<String, String>>,
     /// The type of operation that caused conflicts (merge or rebase).
     pub(super) merge_operation: Option<git::MergeOperation>,
     /// List of files with conflicts (relative paths).
     pub(super) conflict_files: Vec<String>,
-    /// Whether the Create PR dialog is open.
-    pub(super) show_create_pr: bool,
     /// PR dialog fields.
     pub(super) pr_title: String,
     pub(super) pr_body: String,
     pub(super) pr_base: String,
     pub(super) pr_draft: bool,
-    /// Whether a PR creation is in progress.
-    pub(super) creating_pr: bool,
-    pub(super) pr_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the Create PR dialog is still waiting for its async prefill
-    /// (default branch + body) to arrive.
-    pub(super) pr_prefill_loading: bool,
-    pub(super) pr_prefill_rx: Option<mpsc::Receiver<(String, String)>>,
-    /// Whether the Import PR Findings dialog is open.
-    pub(super) show_import_pr: bool,
+    /// In-flight PR creation (push + create).
+    pub(super) pr_create_op: AsyncOp<Result<String, String>>,
+    /// In-flight async prefill of the Create PR dialog (default branch + body).
+    pub(super) pr_prefill_op: AsyncOp<(String, String)>,
     /// PR number input for importing findings.
     pub(super) import_pr_number: String,
-    /// Whether a PR findings import is in progress.
-    pub(super) importing_pr: bool,
+    /// In-flight PR findings import.
+    pub(super) import_pr_op: AsyncOp<Result<Vec<crate::sources::PrFinding>, String>>,
     pub(super) importing_pr_start: Option<Instant>,
-    pub(super) import_pr_rx: Option<mpsc::Receiver<Result<Vec<crate::sources::PrFinding>, String>>>,
     /// Fetched PR findings awaiting user filtering before import.
     pub(super) pr_findings_pending: Vec<crate::sources::PrFinding>,
     /// Indices of findings the user has excluded from import.
     pub(super) pr_findings_excluded: std::collections::HashSet<usize>,
-    /// Whether the PR findings filter dialog is open.
-    pub(super) show_pr_filter: bool,
-    /// Whether a PR notification (reply to PR comments) is in progress.
-    pub(super) notifying_pr: bool,
-    pub(super) pr_notify_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the "Switch Branch" dialog is open.
-    pub(super) show_switch_branch: bool,
+    /// In-flight PR notification (reply to PR comments).
+    pub(super) pr_notify_op: AsyncOp<Result<String, String>>,
     /// Input field for creating a new branch from the Switch Branch dialog.
     pub(super) new_branch_name: String,
     /// Archived worktree DBs (cached list).
@@ -715,49 +690,32 @@ pub(crate) struct GitState {
     pub(super) hovered_graph_row: Option<usize>,
     /// Files selected for the next commit (relative paths).
     pub(super) selected_files: HashSet<String>,
-    /// Whether the Move to Branch dialog is open.
-    pub(super) show_move_to_branch: bool,
     /// Whether the text field should receive initial focus on the next frame.
     pub(super) move_to_branch_needs_focus: bool,
     /// Branch name input for the Move to Branch dialog.
     pub(super) move_to_branch_name: String,
-    /// Whether a move-to-branch operation is in progress.
-    pub(super) moving_to_branch: bool,
-    pub(super) move_to_branch_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the Move to Branch error dialog is open.
-    pub(super) show_move_to_branch_error: bool,
+    /// In-flight move-to-branch operation.
+    pub(super) move_to_branch_op: AsyncOp<Result<String, String>>,
     /// The error message from the last failed move-to-branch operation.
     pub(super) move_to_branch_error_message: String,
-    /// Whether the Create Bookmark dialog is open (jj only).
-    pub(super) show_create_bookmark: bool,
     /// Bookmark name input for the Create Bookmark dialog.
     pub(super) create_bookmark_name: String,
     /// Whether the text field should receive initial focus on the next frame.
     pub(super) create_bookmark_needs_focus: bool,
-    /// Whether a bookmark creation is in progress (jj only).
-    pub(super) creating_bookmark: bool,
-    pub(super) create_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the Clean Up Bookmarks dialog is open (jj only).
-    pub(super) show_cleanup_bookmarks: bool,
+    /// In-flight bookmark creation (jj only).
+    pub(super) create_bookmark_op: AsyncOp<Result<String, String>>,
     /// Suspicious bookmarks found during scan.
     pub(super) suspicious_bookmarks: Vec<crate::jj::SuspiciousBookmark>,
-    /// Whether a cleanup-bookmark deletion is in progress.
-    pub(super) cleaning_bookmark: bool,
-    pub(super) cleanup_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether a squash operation is in progress (jj only).
-    pub(super) squashing: bool,
-    pub(super) squash_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether an undo operation is in progress (jj only).
-    pub(super) undoing: bool,
-    pub(super) undo_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether an abandon-empty-heads operation is in progress (jj only).
-    pub(super) abandoning_empty: bool,
-    pub(super) abandon_empty_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the Delete Bookmark dialog is open (jj only).
-    pub(super) show_delete_bookmark: bool,
-    /// Whether a delete-bookmark operation is in progress (jj only).
-    pub(super) deleting_bookmark: bool,
-    pub(super) delete_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// In-flight cleanup-bookmark deletion.
+    pub(super) cleanup_bookmark_op: AsyncOp<Result<String, String>>,
+    /// In-flight squash operation (jj only).
+    pub(super) squash_op: AsyncOp<Result<String, String>>,
+    /// In-flight undo operation (jj only).
+    pub(super) undo_op: AsyncOp<Result<String, String>>,
+    /// In-flight abandon-empty-heads operation (jj only).
+    pub(super) abandon_empty_op: AsyncOp<Result<String, String>>,
+    /// In-flight delete-bookmark operation (jj only).
+    pub(super) delete_bookmark_op: AsyncOp<Result<String, String>>,
     /// Names of bookmarks fully merged into trunk, shown in the Delete Bookmark
     /// dialog so they can be flagged and bulk-deleted (jj only).
     pub(super) merged_bookmarks: Vec<String>,
@@ -765,13 +723,8 @@ pub(crate) struct GitState {
     /// `trunk()` revset. Protected from deletion so a repo whose trunk is not
     /// literally `main`/`master` (e.g. `develop`) cannot lose it (jj only).
     pub(super) trunk_bookmarks: Vec<String>,
-    /// Whether the Merge Bookmark dialog is open (jj only).
-    pub(super) show_merge_bookmark: bool,
-    /// Whether a merge-bookmark operation is in progress (jj only).
-    pub(super) merging_bookmark: bool,
-    pub(super) merge_bookmark_rx: Option<mpsc::Receiver<Result<String, String>>>,
-    /// Whether the Commit dialog is open (jj only).
-    pub(super) show_commit_dialog: bool,
+    /// In-flight merge-bookmark operation (jj only).
+    pub(super) merge_bookmark_op: AsyncOp<Result<String, String>>,
     /// Commit message input for the Commit dialog.
     pub(super) commit_message_input: String,
     /// Whether the text field should receive initial focus on the next frame.
@@ -785,14 +738,11 @@ pub(crate) struct GitState {
     pub(super) commit_queue: Vec<CommitGroup>,
     /// Index of the group in [`commit_queue`](Self::commit_queue) currently shown.
     pub(super) commit_queue_pos: usize,
-    /// Whether a commit operation is in progress (jj only).
-    pub(super) committing: bool,
-    pub(super) commit_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// In-flight commit operation.
+    pub(super) commit_op: AsyncOp<Result<String, String>>,
     pub(super) commit_pending_cue_id: Option<i64>,
-    /// Whether a Fast-LLM commit-message suggestion is currently being generated.
-    pub(super) commit_suggesting: bool,
-    /// Receiver for an async Fast-LLM commit-message suggestion.
-    pub(super) commit_suggest_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// In-flight Fast-LLM commit-message suggestion.
+    pub(super) commit_suggest_op: AsyncOp<Result<String, String>>,
     /// Files to commit when the dialog was opened from the Git view with a
     /// selection; empty means commit the whole working copy.
     pub(super) commit_files: Vec<String>,
@@ -811,8 +761,8 @@ pub(crate) struct GitState {
     pub(super) pr_number: Option<u32>,
     /// PR URL for the current branch (for opening in browser).
     pub(super) pr_url: Option<String>,
-    /// Receiver for async PR detection results.
-    pub(super) pr_detect_rx: Option<mpsc::Receiver<Option<(u32, String)>>>,
+    /// In-flight async PR detection.
+    pub(super) pr_detect_op: AsyncOp<Option<(u32, String)>>,
     /// Branch name when PR was last detected (to avoid re-detecting on every refresh).
     pub(super) pr_detect_branch: String,
     /// Whether the full-project graph view is shown in the central panel.
@@ -846,123 +796,18 @@ impl GitState {
         }
     }
 
-    /// Dismiss the topmost git-related modal dialog (priority order).
-    /// Returns `true` if a modal was dismissed.
-    pub(super) fn dismiss_topmost_modal(&mut self) -> bool {
-        self.dismiss_pending_modal()
-            || self.dismiss_error_modal()
-            || self.dismiss_review_modal()
-            || self.dismiss_branch_modal()
-    }
-
-    fn dismiss_pending_modal(&mut self) -> bool {
-        if self.pending_force_remove.is_some() {
-            self.pending_force_remove = None;
-            return true;
-        }
-        if self.pending_delete_archive.is_some() {
-            self.pending_delete_archive = None;
-            return true;
-        }
-        if self.show_merge_conflicts {
-            self.show_merge_conflicts = false;
-            return true;
-        }
-        false
-    }
-
-    fn dismiss_error_modal(&mut self) -> bool {
-        if self.show_push_error {
-            self.show_push_error = false;
-            self.push_error_message.clear();
-            return true;
-        }
-        if self.show_pr_error {
-            self.show_pr_error = false;
-            self.pr_error_message.clear();
-            return true;
-        }
-        if self.show_pull_diverged {
-            self.show_pull_diverged = false;
-            return true;
-        }
-        if self.show_pull_unmerged {
-            self.show_pull_unmerged = false;
-            return true;
-        }
-        false
-    }
-
-    fn dismiss_review_modal(&mut self) -> bool {
-        if self.show_pr_filter {
-            self.show_pr_filter = false;
-            self.pr_findings_pending.clear();
-            self.pr_findings_excluded.clear();
-            return true;
-        }
-        if self.show_import_pr {
-            self.show_import_pr = false;
-            return true;
-        }
-        if self.show_commit_dialog {
-            self.dismiss_commit_dialog();
-            return true;
-        }
-        if self.show_cleanup_bookmarks {
-            self.show_cleanup_bookmarks = false;
-            return true;
-        }
-        if self.show_delete_bookmark {
-            self.show_delete_bookmark = false;
-            return true;
-        }
-        if self.show_merge_bookmark {
-            self.show_merge_bookmark = false;
-            return true;
-        }
-        if self.show_create_bookmark {
-            self.show_create_bookmark = false;
-            return true;
-        }
-        false
-    }
-
-    fn dismiss_commit_dialog(&mut self) {
+    /// Reset commit-dialog state on dismissal: cancel any in-flight
+    /// suggestion and clear queued work. The dialog's open/closed state
+    /// itself lives in the [`DialogRegistry`](super::dialog_registry).
+    pub(super) fn reset_commit_dialog_state(&mut self) {
         self.commit_suggest_cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.commit_suggesting = false;
-        self.commit_suggest_rx = None;
+        self.commit_suggest_op.cancel();
         self.commit_in_background = false;
         self.commit_files.clear();
         self.commit_queue.clear();
         self.commit_queue_pos = 0;
-        self.show_commit_dialog = false;
         self.commit_review_cue_id = None;
-    }
-
-    fn dismiss_branch_modal(&mut self) -> bool {
-        if self.show_move_to_branch_error {
-            self.show_move_to_branch_error = false;
-            self.move_to_branch_error_message.clear();
-            return true;
-        }
-        if self.show_move_to_branch {
-            self.show_move_to_branch = false;
-            return true;
-        }
-        if self.show_create_pr {
-            self.show_create_pr = false;
-            return true;
-        }
-        if self.show_switch_branch {
-            self.show_switch_branch = false;
-            return true;
-        }
-        if self.show_worktree_panel {
-            self.show_worktree_panel = false;
-            return true;
-        }
-        false
     }
 }
 #[cfg(test)]

@@ -17,14 +17,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 use crate::fast_llm::ChangeSetGroupRaw;
 use crate::git::FileRawDiff;
 use crate::settings::{CliProvider, Settings, VcsBackend};
 
 use super::types::CommitGroup;
-use super::DirigentApp;
+use super::{AsyncPoll, DialogId, DirigentApp};
 
 /// Diffs larger than this (in characters) skip the model and collapse to a
 /// single "All changes" group, guarding against poor or expensive groupings.
@@ -246,7 +246,7 @@ impl DirigentApp {
     /// yet shown — [`process_change_set_result`](Self::process_change_set_result)
     /// opens it once the groups land.
     pub(super) fn start_split_commit(&mut self) {
-        if self.change_set_generating {
+        if self.change_set_op.in_flight() {
             self.set_status_message("Already analyzing changes…".into());
             return;
         }
@@ -255,10 +255,7 @@ impl DirigentApp {
             return;
         }
 
-        self.change_set_generating = true;
         self.change_set_cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        self.change_set_rx = Some(rx);
 
         let settings = self.settings.clone();
         let backend = self.settings.vcs_backend.clone();
@@ -268,20 +265,23 @@ impl DirigentApp {
         let cancel = Arc::clone(&self.change_set_cancel);
         let ctx = self.egui_ctx.clone();
 
-        std::thread::spawn(move || {
-            let result = run_change_set_analysis(
-                &settings,
-                &backend,
-                &jj_path,
-                &project_root,
-                &provider,
-                cancel,
-            );
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        self.change_set_op.spawn_then(
+            move || {
+                run_change_set_analysis(
+                    &settings,
+                    &backend,
+                    &jj_path,
+                    &project_root,
+                    &provider,
+                    cancel,
+                )
+            },
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
 
         self.set_status_message("Analyzing changes with the selected CLI…".into());
     }
@@ -291,22 +291,14 @@ impl DirigentApp {
     /// gets the same review-then-commit flow); a clean/empty result just reports
     /// status without opening the dialog.
     pub(super) fn process_change_set_result(&mut self) {
-        let rx = match self.change_set_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.change_set_generating = false;
-                self.change_set_rx = None;
+        let result = match self.change_set_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Change analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.change_set_generating = false;
-        self.change_set_rx = None;
 
         match result {
             Ok(ChangeSetOutcome::Nothing) => {
@@ -340,7 +332,7 @@ impl DirigentApp {
         self.git.commit_review_cue_id = None;
         self.git.commit_in_background = false;
         self.git.commit_queue_pos = 0;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.load_commit_group(0);
         let n = self.git.commit_queue.len();
         self.set_status_message(format!(
@@ -364,8 +356,7 @@ impl DirigentApp {
         self.git
             .commit_suggest_cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.git.commit_suggesting = false;
-        self.git.commit_suggest_rx = None;
+        self.git.commit_suggest_op.cancel();
         self.git.commit_queue_pos = pos;
         self.git.commit_files = files;
         self.git.commit_message_input = message;
@@ -450,15 +441,12 @@ impl DirigentApp {
             self.set_status_message("Pick two different refs to compare".into());
             return;
         }
-        if self.analyze_over_generating {
+        if self.analyze_over_op.in_flight() {
             return;
         }
-        self.analyze_over_generating = true;
-        self.analyze_over_show_picker = false;
+        self.close_dialog(DialogId::AnalyzeOverPicker);
         self.analyze_over_result = None;
         self.analyze_over_cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        self.analyze_over_rx = Some(rx);
 
         let settings = self.settings.clone();
         let provider = self.settings.cli_provider.clone();
@@ -467,34 +455,27 @@ impl DirigentApp {
         let ctx = self.egui_ctx.clone();
         let (b, h) = (base.clone(), head.clone());
 
-        std::thread::spawn(move || {
-            let result = run_analyze_over(&settings, &project_root, &provider, b, h, cancel);
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        self.analyze_over_op.spawn_then(
+            move || run_analyze_over(&settings, &project_root, &provider, b, h, cancel),
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
         self.set_status_message(format!("Analyzing {base}\u{2026}{head}\u{2026}"));
     }
 
     /// Poll for a completed range analysis and open the read-only results.
     pub(in crate::app) fn process_analyze_over_result(&mut self) {
-        let rx = match self.analyze_over_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.analyze_over_generating = false;
-                self.analyze_over_rx = None;
+        let result = match self.analyze_over_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Range analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.analyze_over_generating = false;
-        self.analyze_over_rx = None;
         match result {
             Ok(None) => self.set_status_message("Nothing to analyze between those refs".into()),
             Ok(Some(a)) => {
@@ -583,14 +564,14 @@ impl DirigentApp {
             // already hides it in `start_commit`, but the partial-commit path
             // relies on us here, so without this the dialog would linger open
             // (empty) after the last group is committed.
-            self.git.show_commit_dialog = false;
+            self.dialogs.close(DialogId::Commit);
             self.git.commit_files.clear();
             self.set_status_message("All change sets committed".into());
             return;
         }
         // `pos` now points at the next group (indices shifted down by the removal).
         let next = pos.min(self.git.commit_queue.len() - 1);
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.load_commit_group(next);
     }
 }

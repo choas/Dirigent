@@ -317,7 +317,7 @@ impl DirigentApp {
         if self.agent_state.return_to_settings {
             self.agent_state.return_to_settings = false;
             self.reload_settings_from_disk();
-            self.show_settings = true;
+            self.dialogs.open(super::super::DialogId::Settings);
         }
     }
 }

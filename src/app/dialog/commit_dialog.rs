@@ -1,9 +1,9 @@
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, AsyncPoll, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 /// Actions requested from within the Commit dialog UI, applied after the
 /// window closure has returned so `self` can be mutated freely.
@@ -22,7 +22,7 @@ struct CommitDialogActions {
 
 impl DirigentApp {
     pub(in crate::app) fn render_commit_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_commit_dialog {
+        if !self.dialogs.is_open(DialogId::Commit) {
             return;
         }
 
@@ -221,7 +221,7 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         actions: &mut CommitDialogActions,
     ) {
-        if self.git.commit_suggesting {
+        if self.git.commit_suggest_op.in_flight() {
             ui.spinner();
             ui.label(
                 egui::RichText::new("Generating\u{2026}")
@@ -404,10 +404,10 @@ impl DirigentApp {
     /// automatically once the message is ready (see
     /// [`process_commit_suggestion`](Self::process_commit_suggestion)).
     fn background_commit(&mut self) {
-        self.git.show_commit_dialog = false;
+        self.dialogs.close(DialogId::Commit);
         if !self.git.commit_message_input.trim().is_empty() {
             self.start_commit();
-        } else if self.git.commit_suggesting || self.git.commit_suggest_rx.is_some() {
+        } else if self.git.commit_suggest_op.in_flight() {
             self.git.commit_in_background = true;
             self.set_status_message("Analyzing changes; will commit in background\u{2026}".into());
         } else {
@@ -420,38 +420,23 @@ impl DirigentApp {
 
     /// Cancel the Commit dialog, aborting any in-flight message analysis.
     fn cancel_commit_dialog(&mut self) {
-        self.git
-            .commit_suggest_cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.git.commit_suggesting = false;
-        self.git.commit_suggest_rx = None;
-        self.git.commit_in_background = false;
-        self.git.commit_files.clear();
-        self.git.commit_queue.clear();
-        self.git.commit_queue_pos = 0;
-        self.git.show_commit_dialog = false;
-        self.git.commit_review_cue_id = None;
+        // close_dialog runs the full commit-dialog cleanup
+        // (GitState::reset_commit_dialog_state).
+        self.close_dialog(DialogId::Commit);
     }
 
     /// Drain a completed commit-message suggestion. Runs every frame (not only
     /// while the dialog is open) so a backgrounded commit completes after the
     /// dialog has been closed.
     pub(in crate::app) fn process_commit_suggestion(&mut self) {
-        let result = match &self.git.commit_suggest_rx {
-            Some(rx) => match rx.try_recv() {
-                Ok(r) => r,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.git.commit_suggesting = false;
-                    self.git.commit_suggest_rx = None;
-                    self.git.commit_in_background = false;
-                    return;
-                }
-            },
-            None => return,
+        let result = match self.git.commit_suggest_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
+                self.git.commit_in_background = false;
+                return;
+            }
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.commit_suggesting = false;
-        self.git.commit_suggest_rx = None;
         match result {
             Ok(msg) => {
                 self.git.commit_message_input = msg;
@@ -472,7 +457,7 @@ impl DirigentApp {
     /// working-copy diff. When the Fast LLM is configured it is used; otherwise
     /// the coding-agent CLI is invoked headlessly with a summarization prompt.
     /// The result is delivered via
-    /// [`GitState::commit_suggest_rx`](super::super::types::GitState) and applied
+    /// [`GitState::commit_suggest_op`](super::super::types::GitState) and applied
     /// to the message field on the next frame.
     pub(in crate::app) fn spawn_commit_message_suggestion(&mut self) {
         let files: Vec<String> = if self.git.commit_files.is_empty() {
@@ -493,9 +478,13 @@ impl DirigentApp {
             return;
         };
 
-        let (tx, rx) = mpsc::channel();
-        self.git.commit_suggest_rx = Some(rx);
-        self.git.commit_suggesting = true;
+        // A fresh run supersedes any suggestion still in flight; its late
+        // result is discarded by the cancel below.
+        self.git.commit_suggest_op.cancel();
+        let tx = match self.git.commit_suggest_op.arm() {
+            Some(tx) => tx,
+            None => return,
+        };
         // Fresh cancellation flag so a prior Cancel doesn't abort this run.
         let cancel = Arc::new(AtomicBool::new(false));
         self.git.commit_suggest_cancel = cancel.clone();

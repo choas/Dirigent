@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 
 impl DirigentApp {
     pub(in crate::app) fn render_pull_unmerged_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_pull_unmerged {
+        if !self.dialogs.is_open(DialogId::PullUnmerged) {
             return;
         }
 
@@ -60,9 +60,9 @@ impl DirigentApp {
                     self.set_status_message(format!("Failed to create cue: {}", e));
                 }
             }
-            self.git.show_pull_unmerged = false;
+            self.close_dialog(DialogId::PullUnmerged);
         } else if dismiss {
-            self.git.show_pull_unmerged = false;
+            self.close_dialog(DialogId::PullUnmerged);
         }
     }
 }

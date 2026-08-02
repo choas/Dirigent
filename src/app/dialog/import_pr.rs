@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 impl DirigentApp {
     pub(in crate::app) fn render_import_pr_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_import_pr {
+        if !self.dialogs.is_open(DialogId::ImportPr) {
             return;
         }
 
@@ -34,7 +34,7 @@ impl DirigentApp {
         if do_import {
             self.start_import_pr_findings();
         } else if dismiss {
-            self.git.show_import_pr = false;
+            self.close_dialog(DialogId::ImportPr);
         }
     }
 
@@ -107,7 +107,7 @@ impl DirigentApp {
                 .parse::<u32>()
                 .map(|n| n > 0)
                 .unwrap_or(false);
-            let can_import = valid_number && !self.git.importing_pr;
+            let can_import = valid_number && !self.git.import_pr_op.in_flight();
             let btn_label = if is_refresh {
                 "\u{21BB} Refresh Findings"
             } else {

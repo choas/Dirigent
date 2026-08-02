@@ -1,14 +1,12 @@
-use std::sync::mpsc;
-
 use crate::db::{Cue, CueStatus};
 use crate::workflow::{self, WorkflowPlan, WorkflowStepStatus};
 
-use super::DirigentApp;
+use super::{AsyncPoll, DirigentApp};
 
 impl DirigentApp {
     /// Trigger LLM analysis of Inbox cues to create a workflow plan.
     pub(super) fn create_workflow(&mut self) {
-        if self.workflow_generating {
+        if self.workflow_op.in_flight() {
             return;
         }
 
@@ -18,7 +16,6 @@ impl DirigentApp {
             return;
         }
 
-        self.workflow_generating = true;
         self.show_workflow_graph = true;
         let prompt = workflow::build_workflow_prompt(&inbox_cues);
         let expected_ids: Vec<i64> = inbox_cues.iter().map(|c| c.id).collect();
@@ -28,13 +25,8 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let settings = self.settings.clone();
 
-        let (tx, rx) = mpsc::channel();
-        self.workflow_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result =
-                run_workflow_analysis(&prompt, &expected_ids, &provider, &project_root, &settings);
-            let _ = tx.send(result);
+        self.workflow_op.spawn(move || {
+            run_workflow_analysis(&prompt, &expected_ids, &provider, &project_root, &settings)
         });
 
         self.set_status_message("Analyzing cues for workflow plan...".into());
@@ -42,22 +34,14 @@ impl DirigentApp {
 
     /// Poll for workflow analysis results.
     pub(super) fn process_workflow_result(&mut self) {
-        let rx = match self.workflow_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.workflow_generating = false;
-                self.workflow_rx = None;
+        let result = match self.workflow_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Workflow analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.workflow_generating = false;
-        self.workflow_rx = None;
         match result {
             Ok((plan, warning)) => {
                 let step_count = plan.steps.len();
@@ -269,8 +253,7 @@ impl DirigentApp {
     /// Cancel the current workflow.
     pub(super) fn cancel_workflow(&mut self) {
         // Invalidate any in-flight analysis so a late result cannot repopulate.
-        self.workflow_generating = false;
-        self.workflow_rx = None;
+        self.workflow_op.cancel();
 
         // Collect cue IDs to cancel before mutating self.
         let cue_ids_to_cancel: Vec<i64> = self

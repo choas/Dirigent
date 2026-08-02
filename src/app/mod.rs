@@ -1,5 +1,6 @@
 mod agents_poll;
 mod ansi;
+mod async_op;
 mod background;
 mod change_set_analysis;
 mod claude_code_name;
@@ -7,6 +8,7 @@ mod claude_run;
 mod code_viewer;
 mod cue_pool;
 mod dialog;
+mod dialog_registry;
 mod dino;
 mod file_navigation;
 mod folder_compare;
@@ -106,7 +108,10 @@ use crate::settings::{self, CustomTheme, SemanticColors, Settings, VcsBackend};
 use crate::ssh;
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
+use async_op::{AsyncOp, AsyncPoll};
 use claude_run::ClaudeRunState;
+pub(crate) use dialog_registry::DialogId;
+use dialog_registry::DialogRegistry;
 use sources_poll::SourceState;
 use tasks::TaskHandle;
 use theme::{icon, icon_small};
@@ -252,10 +257,13 @@ pub struct DirigentApp {
     git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
     _git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
+    /// Single source of truth for open dialogs: rendering, modal detection
+    /// and Esc/backdrop dismissal all derive from this one registry.
+    pub dialogs: DialogRegistry,
+
     // Settings & theme
     settings: Settings,
     pub(super) semantic: SemanticColors,
-    show_settings: bool,
     needs_theme_apply: bool,
     playbook_expanded: bool,
     sources_expanded: bool,
@@ -273,7 +281,6 @@ pub struct DirigentApp {
     global_prompt_images: Vec<PathBuf>,
 
     // Repo picker
-    pub show_repo_picker: bool,
     repo_path_input: String,
     cached_existing_repos: Vec<String>,
 
@@ -287,11 +294,7 @@ pub struct DirigentApp {
     pub(super) conversation_replies: HashMap<i64, String>,
     pub(super) conversation_reply_images: HashMap<i64, Vec<PathBuf>>,
 
-    // About dialog
-    show_about: bool,
-
     // Log viewer
-    show_log_viewer: bool,
     log_viewer_filter: log::LevelFilter,
     log_viewer_auto_scroll: bool,
     logo_texture: Option<egui::TextureHandle>,
@@ -447,13 +450,14 @@ pub struct DirigentApp {
     rename_focus_requested: bool,
 
     // Notion "mark done" async state
-    notion_done_in_progress: bool,
-    notion_done_rx: Option<mpsc::Receiver<Result<i64, String>>>,
+    notion_done_op: AsyncOp<Result<i64, String>>,
 
     // Cache of cue IDs that have been marked done in Notion (avoids DB reads during repaint)
     notion_done_cache: HashSet<i64>,
 
-    // Notion object listing for settings dropdown (source index → objects)
+    // Notion object listing for settings dropdown (source index → objects).
+    // Raw receivers rather than AsyncOps: the source index travels alongside
+    // the channel so a result can be attributed even if the worker dies.
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
@@ -466,8 +470,7 @@ pub struct DirigentApp {
 
     // Workflow plan state
     workflow_plan: Option<crate::workflow::WorkflowPlan>,
-    workflow_generating: bool,
-    workflow_rx: Option<mpsc::Receiver<WorkflowResult>>,
+    workflow_op: AsyncOp<WorkflowResult>,
     /// Warning from workflow plan parsing (e.g. missing cues, fallback).
     workflow_warning: Option<String>,
     /// Whether the workflow graph overlay is visible (separate from plan existence).
@@ -476,29 +479,26 @@ pub struct DirigentApp {
     workflow_inbox_snapshot: Vec<i64>,
 
     // Split cue async state
-    split_cue_generating: bool,
     split_cue_source_id: Option<i64>,
-    split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
+    split_cue_op: AsyncOp<SplitCueResult>,
     split_cue_cancel: Arc<AtomicBool>,
 
     // Split-commit grouping async state: the "Commit Changes" button groups the
     // working tree into logical change sets via the CLI, then feeds them to the
     // commit dialog's queue.
-    change_set_generating: bool,
-    change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    change_set_op: AsyncOp<change_set_analysis::ChangeSetResult>,
     /// Cancellation flag for the in-flight change-set CLI run.
     change_set_cancel: Arc<AtomicBool>,
 
     // "Analyze Changes over" (read-only cross-branch range analysis)
-    analyze_over_show_picker: bool,
     analyze_over_base: String,
     analyze_over_head: String,
-    analyze_over_generating: bool,
-    analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
+    analyze_over_op: AsyncOp<change_set_analysis::AnalyzeOverResult>,
     analyze_over_cancel: Arc<AtomicBool>,
     analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
 
-    // Folder "Compare to…" async state
+    // Folder "Compare to…" async state. A raw receiver rather than an
+    // AsyncOp: the worker streams multiple progress messages per run.
     folder_compare_rx: Option<mpsc::Receiver<folder_compare::FolderCompareMsg>>,
 
     // Custom theme editor dialog
@@ -516,13 +516,12 @@ pub struct DirigentApp {
     ssh_worker: Option<ssh::SshWorkerHandle>,
     ssh_remote_entries: Vec<ssh::RemoteEntry>,
     ssh_remote_path: String,
-    ssh_connecting: bool,
-    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshWorkerHandle, String>>>,
+    ssh_connect_op: AsyncOp<Result<ssh::SshWorkerHandle, String>>,
     ssh_expanded_dirs: HashSet<String>,
     ssh_listing: bool,
     ssh_reading_file: Option<String>,
     show_ssh_panel: bool,
-    ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    ssh_test_op: AsyncOp<Result<String, String>>,
 
     // Frame timing for status bar display
     last_frame_time: Duration,
@@ -540,10 +539,8 @@ pub(super) struct CustomThemeEdit {
     pub editing_index: Option<usize>,
     /// AI prompt text for generating theme colors.
     pub ai_prompt: String,
-    /// Whether AI generation is in progress.
-    pub ai_generating: bool,
-    /// Channel to receive AI-generated theme data.
-    pub ai_rx: Option<mpsc::Receiver<Result<CustomTheme, String>>>,
+    /// In-flight AI theme generation.
+    pub ai_op: AsyncOp<Result<CustomTheme, String>>,
     /// Last error from AI generation.
     pub ai_error: Option<String>,
     /// Cancellation token for in-flight AI generation.
@@ -556,8 +553,7 @@ impl CustomThemeEdit {
             theme,
             editing_index,
             ai_prompt: String::new(),
-            ai_generating: false,
-            ai_rx: None,
+            ai_op: AsyncOp::default(),
             ai_error: None,
             ai_cancel: Default::default(),
         }
@@ -891,43 +887,27 @@ impl DirigentApp {
                 history_cache_key: (String::new(), 0),
                 worktrees,
                 new_worktree_name: String::new(),
-                show_worktree_panel: false,
                 available_branches: Vec::new(),
                 own_branches: HashSet::new(),
                 bookmark_push_statuses: HashMap::new(),
-                pushing: false,
-                push_rx: None,
-                show_push_error: false,
+                push_op: AsyncOp::default(),
                 push_error_message: String::new(),
-                show_pr_error: false,
                 pr_error_message: String::new(),
-                pulling: false,
-                pull_rx: None,
-                show_pull_diverged: false,
-                show_pull_unmerged: false,
-                show_merge_conflicts: false,
+                pull_op: AsyncOp::default(),
                 merge_operation: None,
                 conflict_files: Vec::new(),
-                show_create_pr: false,
                 pr_title: String::new(),
                 pr_body: String::new(),
                 pr_base: String::new(),
                 pr_draft: false,
-                creating_pr: false,
-                pr_rx: None,
-                pr_prefill_loading: false,
-                pr_prefill_rx: None,
-                show_import_pr: false,
+                pr_create_op: AsyncOp::default(),
+                pr_prefill_op: AsyncOp::default(),
                 import_pr_number: String::new(),
-                importing_pr: false,
+                import_pr_op: AsyncOp::default(),
                 importing_pr_start: None,
-                import_pr_rx: None,
                 pr_findings_pending: Vec::new(),
                 pr_findings_excluded: std::collections::HashSet::new(),
-                show_pr_filter: false,
-                notifying_pr: false,
-                pr_notify_rx: None,
-                show_switch_branch: false,
+                pr_notify_op: AsyncOp::default(),
                 new_branch_name: String::new(),
                 archived_dbs: Vec::new(),
                 show_archived_dbs: false,
@@ -941,47 +921,30 @@ impl DirigentApp {
                 editing_pattern: None,
                 hovered_graph_row: None,
                 selected_files: HashSet::new(),
-                show_move_to_branch: false,
                 move_to_branch_needs_focus: false,
                 move_to_branch_name: String::new(),
-                moving_to_branch: false,
-                move_to_branch_rx: None,
-                show_move_to_branch_error: false,
+                move_to_branch_op: AsyncOp::default(),
                 move_to_branch_error_message: String::new(),
-                show_create_bookmark: false,
                 create_bookmark_name: String::new(),
                 create_bookmark_needs_focus: false,
-                creating_bookmark: false,
-                create_bookmark_rx: None,
-                show_cleanup_bookmarks: false,
+                create_bookmark_op: AsyncOp::default(),
                 suspicious_bookmarks: Vec::new(),
-                cleaning_bookmark: false,
-                cleanup_bookmark_rx: None,
-                squashing: false,
-                squash_rx: None,
-                undoing: false,
-                undo_rx: None,
-                abandoning_empty: false,
-                abandon_empty_rx: None,
-                show_delete_bookmark: false,
-                deleting_bookmark: false,
-                delete_bookmark_rx: None,
+                cleanup_bookmark_op: AsyncOp::default(),
+                squash_op: AsyncOp::default(),
+                undo_op: AsyncOp::default(),
+                abandon_empty_op: AsyncOp::default(),
+                delete_bookmark_op: AsyncOp::default(),
                 merged_bookmarks: Vec::new(),
                 trunk_bookmarks: Vec::new(),
-                show_merge_bookmark: false,
-                merging_bookmark: false,
-                merge_bookmark_rx: None,
-                show_commit_dialog: false,
+                merge_bookmark_op: AsyncOp::default(),
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
                 commit_review_cue_id: None,
                 commit_queue: Vec::new(),
                 commit_queue_pos: 0,
-                committing: false,
-                commit_rx: None,
+                commit_op: AsyncOp::default(),
                 commit_pending_cue_id: None,
-                commit_suggesting: false,
-                commit_suggest_rx: None,
+                commit_suggest_op: AsyncOp::default(),
                 commit_files: Vec::new(),
                 commit_in_background: false,
                 commit_suggest_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
@@ -990,7 +953,7 @@ impl DirigentApp {
                 active_bookmark: None,
                 pr_number: None,
                 pr_url: None,
-                pr_detect_rx: None,
+                pr_detect_op: AsyncOp::default(),
                 pr_detect_branch: String::new(),
                 show_graph_view: false,
                 graph_view_commits: Vec::new(),
@@ -1001,7 +964,7 @@ impl DirigentApp {
             },
             settings,
             semantic,
-            show_settings: false,
+            dialogs: DialogRegistry::default(),
             needs_theme_apply: true,
             playbook_expanded: false,
             sources_expanded: false,
@@ -1014,15 +977,12 @@ impl DirigentApp {
             lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
-            show_repo_picker: false,
             repo_path_input: String::new(),
             cached_existing_repos: Vec::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
             conversation_replies: HashMap::new(),
             conversation_reply_images: HashMap::new(),
-            show_about: false,
-            show_log_viewer: false,
             log_viewer_filter: log::LevelFilter::Trace,
             log_viewer_auto_scroll: true,
             logo_texture: None,
@@ -1109,8 +1069,7 @@ impl DirigentApp {
             rename_target: None,
             rename_buffer: String::new(),
             rename_focus_requested: false,
-            notion_done_in_progress: false,
-            notion_done_rx: None,
+            notion_done_op: AsyncOp::default(),
             notion_done_cache: HashSet::new(),
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
@@ -1119,26 +1078,21 @@ impl DirigentApp {
             source_fetch_status: HashMap::new(),
 
             workflow_plan: None,
-            workflow_generating: false,
-            workflow_rx: None,
+            workflow_op: AsyncOp::default(),
             workflow_warning: None,
             show_workflow_graph: false,
             workflow_inbox_snapshot: Vec::new(),
 
-            split_cue_generating: false,
             split_cue_source_id: None,
-            split_cue_rx: None,
+            split_cue_op: AsyncOp::default(),
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
-            change_set_generating: false,
-            change_set_rx: None,
+            change_set_op: AsyncOp::default(),
             change_set_cancel: Arc::new(AtomicBool::new(false)),
 
-            analyze_over_show_picker: false,
             analyze_over_base: String::new(),
             analyze_over_head: String::new(),
-            analyze_over_generating: false,
-            analyze_over_rx: None,
+            analyze_over_op: AsyncOp::default(),
             analyze_over_cancel: Arc::new(AtomicBool::new(false)),
             analyze_over_result: None,
 
@@ -1153,13 +1107,12 @@ impl DirigentApp {
             ssh_worker: None,
             ssh_remote_entries: Vec::new(),
             ssh_remote_path: String::new(),
-            ssh_connecting: false,
-            ssh_connect_rx: None,
+            ssh_connect_op: AsyncOp::default(),
             ssh_expanded_dirs: HashSet::new(),
             ssh_listing: false,
             ssh_reading_file: None,
             show_ssh_panel: false,
-            ssh_test_rx: None,
+            ssh_test_op: AsyncOp::default(),
             last_frame_time: Duration::ZERO,
             last_poll_time: Duration::ZERO,
             last_render_time: Duration::ZERO,
@@ -1396,7 +1349,7 @@ impl DirigentApp {
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
     /// so the code viewer becomes visible.
     fn dismiss_central_overlays(&mut self) {
-        self.show_settings = false;
+        self.close_dialog(DialogId::Settings);
         self.diff_review = None;
         // Only clear conversation history when dismissing the log overlay, not
         // when opening it (process_show_running_log loads history first).

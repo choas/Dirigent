@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_LG};
+use super::super::{icon, DialogId, DirigentApp, SPACE_LG};
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::CueStatus;
@@ -780,7 +780,7 @@ impl DirigentApp {
         self.git.commit_message_input = commit_msg;
         self.git.commit_review_cue_id = Some(cue_id);
         self.git.commit_needs_focus = true;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.diff_review = None;
     }
 

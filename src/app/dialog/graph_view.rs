@@ -138,7 +138,7 @@ impl DirigentApp {
                 // Cross-branch change-set review, mirroring the Git View panel
                 // header. Git only; jj has no such range diff here.
                 if self.settings.vcs_backend == VcsBackend::Git {
-                    let analyzing = self.analyze_over_generating;
+                    let analyzing = self.analyze_over_op.in_flight();
                     let label = if analyzing { "\u{29D7}" } else { "\u{21C4}" };
                     if ui
                         .add_enabled(!analyzing, egui::Button::new(label).small())

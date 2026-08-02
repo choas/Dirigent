@@ -1,12 +1,10 @@
-use std::sync::mpsc;
-
-use super::DirigentApp;
+use super::{AsyncPoll, DirigentApp};
 use crate::settings::SshAuthKind;
 use crate::ssh::{SshAuthMethod, SshRequest, SshServerConfig};
 
 impl DirigentApp {
     pub(super) fn ssh_connect(&mut self, server_idx: usize) {
-        if self.ssh_connecting {
+        if self.ssh_connect_op.in_flight() {
             return;
         }
         let server = match self.settings.ssh_servers.get(server_idx) {
@@ -29,9 +27,8 @@ impl DirigentApp {
             },
             remote_path: server.remote_path.clone(),
         };
-        self.ssh_connecting = true;
         let rx = crate::ssh::spawn_ssh_worker(config, self.egui_ctx.clone());
-        self.ssh_connect_rx = Some(rx);
+        self.ssh_connect_op.adopt(rx);
     }
 
     pub(super) fn ssh_disconnect(&mut self) {
@@ -73,22 +70,14 @@ impl DirigentApp {
     }
 
     pub(super) fn process_ssh_connect_result(&mut self) {
-        let rx = match self.ssh_connect_rx.as_ref() {
-            Some(rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Ok(r) => r,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.ssh_connecting = false;
-                self.ssh_connect_rx = None;
+        let result = match self.ssh_connect_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("SSH connection thread died".into());
                 return;
             }
+            AsyncPoll::Ready(r) => r,
         };
-        self.ssh_connecting = false;
-        self.ssh_connect_rx = None;
         match result {
             Ok(handle) => {
                 let remote_path = handle.config.remote_path.clone();

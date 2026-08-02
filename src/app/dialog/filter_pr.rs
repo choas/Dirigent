@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
 
 /// Truncate `text` to `max` characters. If truncated and `ellipsis` is true, append "…".
 fn truncate(text: &str, max: usize, ellipsis: bool) -> String {
@@ -47,7 +47,7 @@ fn field_combo(ui: &mut egui::Ui, salt: &str, field: &mut String) {
 
 impl DirigentApp {
     pub(in crate::app) fn render_filter_pr_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_pr_filter {
+        if !self.dialogs.is_open(DialogId::PrFilter) {
             return;
         }
 
@@ -104,9 +104,7 @@ impl DirigentApp {
         if do_import {
             self.import_filtered_pr_findings();
         } else if dismiss {
-            self.git.show_pr_filter = false;
-            self.git.pr_findings_pending.clear();
-            self.git.pr_findings_excluded.clear();
+            self.close_dialog(DialogId::PrFilter);
         }
     }
 
@@ -578,10 +576,8 @@ impl DirigentApp {
             .collect();
 
         // Close dialogs and clear state
-        self.git.show_pr_filter = false;
-        self.git.show_import_pr = false;
-        self.git.pr_findings_pending.clear();
-        self.git.pr_findings_excluded.clear();
+        self.close_dialog(DialogId::PrFilter);
+        self.close_dialog(DialogId::ImportPr);
 
         // Clear source filter so newly imported cues are visible in the pool.
         // handle_pr_findings -> reload_cues refreshes both counts from DB,

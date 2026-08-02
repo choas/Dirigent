@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{
-    icon, DirigentApp, SemanticColors, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH,
+    icon, DialogId, DirigentApp, SemanticColors, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH,
 };
 
 impl DirigentApp {
@@ -49,33 +49,35 @@ impl DirigentApp {
         );
     }
 
-    /// Whether a modal dialog is currently open.
+    /// Whether a modal dialog is currently open. Registry dialogs are covered
+    /// automatically; only the `Option`-payload confirmations are listed here.
     pub(super) fn has_modal_open(&self) -> bool {
-        self.show_repo_picker
-            || self.git.show_worktree_panel
-            || self.show_about
+        self.dialogs.any_modal()
             || self.pending_play.is_some()
-            || self.git.show_commit_dialog
-            || self.git.show_create_pr
             || self.git.pending_force_remove.is_some()
             || self.git.pending_delete_archive.is_some()
             || self.pending_file_delete.is_some()
             || self.rename_target.is_some()
             || self.git_init_confirm.is_some()
             || self.pending_trust.is_some()
-            || self.git.show_push_error
-            || self.git.show_pr_error
-            || self.git.show_pull_diverged
-            || self.git.show_pull_unmerged
-            || self.git.show_merge_conflicts
-            || self.git.show_import_pr
-            || self.git.show_pr_filter
-            || self.git.show_move_to_branch
-            || self.git.show_move_to_branch_error
-            || self.git.show_switch_branch
-            || self.git.show_cleanup_bookmarks
             || self.custom_theme_edit.is_some()
-            || self.analyze_over_show_picker
+    }
+
+    /// Close a dialog and run its per-dialog cleanup.
+    pub(super) fn close_dialog(&mut self, id: DialogId) {
+        self.dialogs.close(id);
+        match id {
+            DialogId::PushError => self.git.push_error_message.clear(),
+            DialogId::PrError => self.git.pr_error_message.clear(),
+            DialogId::MoveToBranchError => self.git.move_to_branch_error_message.clear(),
+            DialogId::PrFilter => {
+                self.git.pr_findings_pending.clear();
+                self.git.pr_findings_excluded.clear();
+            }
+            DialogId::Commit => self.git.reset_commit_dialog_state(),
+            DialogId::RepoPicker => self.cached_existing_repos.clear(),
+            _ => {}
+        }
     }
 
     /// Handle global keyboard shortcuts (Cmd+N, Cmd+W, Cmd+P, Cmd+[, Cmd+]).
@@ -85,6 +87,16 @@ impl DirigentApp {
     /// search bar, prompt field, etc.
     pub(super) fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         self.handle_search_shortcuts(ctx);
+
+        // Esc dismisses the topmost registry dialog — derived from the one
+        // dialog list, so every dialog gets dismissal for free. Suppressed
+        // while a text edit has focus (Esc there releases focus instead).
+        // `Option`-payload confirmations keep their own dedicated handlers.
+        if !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if let Some(id) = self.dialogs.top_modal() {
+                self.close_dialog(id);
+            }
+        }
 
         let suppress = ctx.text_edit_focused() || self.has_modal_open();
 
@@ -172,8 +184,9 @@ impl DirigentApp {
             });
     }
 
-    /// Dismiss the topmost modal dialog (priority order).
-    /// When `keep_pending_play` is true, `pending_play` is left intact
+    /// Dismiss the topmost modal dialog: `Option`-payload confirmations take
+    /// priority (they render on top), then the most recently opened registry
+    /// dialog. When `keep_pending_play` is true, `pending_play` is left intact
     /// (used for backdrop/overlay clicks so selections are not lost).
     pub(super) fn dismiss_topmost_modal(&mut self, keep_pending_play: bool) {
         if self.pending_play.is_some() {
@@ -181,46 +194,51 @@ impl DirigentApp {
             self.pending_play = self.pending_play.take().filter(|_| keep_pending_play);
             return;
         }
-        if self.git.dismiss_topmost_modal() {
+        if self.dismiss_pending_confirmation() {
             return;
         }
-        self.dismiss_app_modal();
+        if let Some(id) = self.dialogs.top_modal() {
+            self.close_dialog(id);
+        }
     }
 
-    /// Dismiss the topmost app-level (non-git) modal dialog.
-    fn dismiss_app_modal(&mut self) {
+    /// Dismiss the topmost `Option`-payload confirmation dialog, if any.
+    /// These carry their state in the `Option` itself and are not registry
+    /// dialogs. Returns `true` if one was dismissed.
+    fn dismiss_pending_confirmation(&mut self) -> bool {
+        if self.git.pending_force_remove.is_some() {
+            self.git.pending_force_remove = None;
+            return true;
+        }
+        if self.git.pending_delete_archive.is_some() {
+            self.git.pending_delete_archive = None;
+            return true;
+        }
         if self.pending_trust.is_some() {
             // Dismissing the trust prompt is a decline: the repository's
             // execution-capable settings stay disabled.
             self.decline_pending_trust();
-            return;
+            return true;
         }
         if let Some(edit) = &self.custom_theme_edit {
             edit.ai_cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             self.custom_theme_edit = None;
-            return;
+            return true;
         }
         if self.pending_file_delete.is_some() {
             self.pending_file_delete = None;
-            return;
+            return true;
         }
         if self.rename_target.is_some() {
             self.rename_target = None;
-            return;
+            return true;
         }
         if self.git_init_confirm.is_some() {
             self.git_init_confirm = None;
-            return;
+            return true;
         }
-        if self.show_about {
-            self.show_about = false;
-            return;
-        }
-        if self.show_repo_picker {
-            self.show_repo_picker = false;
-            self.cached_existing_repos.clear();
-        }
+        false
     }
 
     /// Render all floating dialog windows.
