@@ -5,7 +5,14 @@
 //! It targets the OpenAI `/v1/chat/completions` interface, which is also spoken
 //! by Ollama (the default), LM Studio, vLLM, and most local/hosted gateways.
 //! Configure it under Settings → "Fast LLM".
+//!
+//! Security: calls send real source data (working diffs), so the base URL is an
+//! exfiltration-capable setting. It is honored only for trusted repositories
+//! (see [`settings::trust`](crate::settings)), must be `https` unless the host
+//! is local/private-network, and a stored API key is only ever sent to an
+//! origin the user approved for that key through the settings UI.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -24,10 +31,61 @@ pub struct FastLlmConfig {
     pub model: String,
 }
 
+/// Validate a Fast LLM base URL and return its origin (`scheme://host:port`).
+///
+/// Fast LLM calls carry real source data (working diffs), so the endpoint is
+/// exfiltration-capable. `https` is required; plain `http` is accepted only for
+/// loopback and private-network hosts (local Ollama, LM Studio, a LAN vLLM box),
+/// where the traffic cannot reach an external attacker.
+fn validate_base_url(base_url: &str) -> Result<String, String> {
+    let url = url::Url::parse(base_url).map_err(|e| format!("invalid base URL: {e}"))?;
+    let host = url.host().ok_or("base URL has no host")?;
+    match url.scheme() {
+        "https" => {}
+        "http" => {
+            let local = match &host {
+                url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_private(),
+                url::Host::Ipv6(ip) => ip.is_loopback(),
+            };
+            if !local {
+                return Err(
+                    "plain http is only allowed for localhost / private-network hosts; use https"
+                        .to_string(),
+                );
+            }
+        }
+        other => return Err(format!("unsupported scheme {other:?}; use https")),
+    }
+    let port = url.port_or_known_default().ok_or("base URL has no port")?;
+    Ok(format!("{}://{}:{}", url.scheme(), host, port))
+}
+
+/// Record the user's approval of the currently configured API-key → origin
+/// pair. Called when the user saves the settings dialog — editing the Fast LLM
+/// section there is the explicit approval that a repository-shipped
+/// `.Dirigent/settings.json` (even a trusted one) can never grant on its own.
+pub fn approve_configured_key_host(settings: &Settings) {
+    let api_key = settings.fast_llm_api_key.trim();
+    if api_key.is_empty() {
+        return;
+    }
+    let base_url = settings.fast_llm_base_url.trim().trim_end_matches('/');
+    if let Ok(origin) = validate_base_url(base_url) {
+        crate::settings::approve_fast_llm_key_host(api_key, &origin);
+    }
+}
+
 impl FastLlmConfig {
     /// Build a config from settings, or `None` when the Fast LLM is disabled or
     /// not configured enough to call.
-    pub fn from_settings(settings: &Settings) -> Option<FastLlmConfig> {
+    ///
+    /// The base URL is an execution-capable (exfiltration-capable) setting, so
+    /// this also re-checks the repository trust gate immediately before any
+    /// data leaves the machine (see [`settings::trust`](crate::settings)), and
+    /// refuses to pair a stored API key with an origin the user has not
+    /// explicitly approved for that key in the settings UI.
+    pub fn from_settings(settings: &Settings, project_root: &Path) -> Option<FastLlmConfig> {
         if !settings.fast_llm_enabled {
             return None;
         }
@@ -36,9 +94,38 @@ impl FastLlmConfig {
         if base_url.is_empty() || model.is_empty() {
             return None;
         }
+
+        // Defense-in-depth: load_settings already strips unapproved
+        // execution-capable fields, but code about to send data off the
+        // machine must not have to trust that every caller went through it.
+        if !crate::settings::repo_settings_trusted(project_root) {
+            log::warn!(
+                "[fast_llm] repository settings are not trusted; refusing to call the Fast LLM"
+            );
+            return None;
+        }
+
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let origin = match validate_base_url(&base_url) {
+            Ok(origin) => origin,
+            Err(e) => {
+                log::warn!("[fast_llm] rejecting base URL {base_url:?}: {e}");
+                return None;
+            }
+        };
+
+        let api_key = settings.fast_llm_api_key.trim().to_string();
+        if !crate::settings::fast_llm_key_host_approved(&api_key, &origin) {
+            log::warn!(
+                "[fast_llm] API key is not approved for {origin}; \
+                 re-save the Fast LLM section in Settings to approve it"
+            );
+            return None;
+        }
+
         Some(FastLlmConfig {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: settings.fast_llm_api_key.trim().to_string(),
+            base_url,
+            api_key,
             model: model.to_string(),
         })
     }
@@ -104,6 +191,16 @@ pub fn complete(
         stream: false,
         temperature: 0.2,
     };
+
+    // Final gate, independent of how `config` was built: the prompt can carry
+    // source data, so never send it over plain http to a non-local host, and
+    // never attach an API key to an origin the user has not approved for it.
+    let origin = validate_base_url(&config.base_url)?;
+    if !crate::settings::fast_llm_key_host_approved(&config.api_key, &origin) {
+        return Err(format!(
+            "API key is not approved for {origin} — re-save the Fast LLM section in Settings"
+        ));
+    }
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(FAST_LLM_TIMEOUT_SECS))
@@ -218,6 +315,30 @@ pub fn summarize_commit_message(config: &FastLlmConfig, diff: &str) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_url_requires_https_for_remote_hosts() {
+        // https anywhere is fine.
+        assert_eq!(
+            validate_base_url("https://api.openai.com/v1").unwrap(),
+            "https://api.openai.com:443"
+        );
+        // Plain http is fine for loopback and private-network hosts.
+        assert_eq!(
+            validate_base_url("http://localhost:11434/v1").unwrap(),
+            "http://localhost:11434"
+        );
+        assert!(validate_base_url("http://127.0.0.1:8080/v1").is_ok());
+        assert!(validate_base_url("http://[::1]:11434/v1").is_ok());
+        assert!(validate_base_url("http://192.168.1.5:11434/v1").is_ok());
+        // Plain http to a public host is silent exfiltration — rejected.
+        assert!(validate_base_url("http://evil.tld/v1").is_err());
+        assert!(validate_base_url("http://8.8.8.8/v1").is_err());
+        // Non-http(s) schemes and garbage are rejected.
+        assert!(validate_base_url("ftp://localhost/v1").is_err());
+        assert!(validate_base_url("file:///etc/passwd").is_err());
+        assert!(validate_base_url("not a url").is_err());
+    }
 
     #[test]
     fn parse_change_sets_well_formed() {

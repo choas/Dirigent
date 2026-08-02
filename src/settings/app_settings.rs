@@ -328,10 +328,13 @@ pub(crate) struct Settings {
     pub fast_llm_provider: String,
     /// OpenAI-compatible base URL for the Fast LLM. Defaults to the local
     /// Ollama endpoint. `/chat/completions` is appended at call time.
+    /// Execution-capable (calls send working diffs): gated behind repository
+    /// trust, and must be https unless the host is local/private-network.
     #[serde(default = "default_fast_llm_base_url")]
     pub fast_llm_base_url: String,
     /// API key sent as a Bearer token to the Fast LLM. Optional — local
-    /// providers such as Ollama ignore it.
+    /// providers such as Ollama ignore it. Only ever sent to an origin the
+    /// user approved for this key via the settings UI (see `settings::trust`).
     #[serde(default)]
     pub fast_llm_api_key: String,
     /// Model identifier passed to the Fast LLM (e.g. `gemma4:26b-mlx`).

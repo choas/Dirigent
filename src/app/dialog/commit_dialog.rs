@@ -501,7 +501,9 @@ impl DirigentApp {
         self.git.commit_suggest_cancel = cancel.clone();
         let ctx = self.egui_ctx.clone();
 
-        if let Some(config) = crate::fast_llm::FastLlmConfig::from_settings(&self.settings) {
+        if let Some(config) =
+            crate::fast_llm::FastLlmConfig::from_settings(&self.settings, &self.project_root)
+        {
             // Fast LLM path: a quick, local OpenAI-compatible completion.
             std::thread::spawn(move || {
                 let result = crate::fast_llm::summarize_commit_message(&config, &diff);

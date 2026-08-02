@@ -388,10 +388,11 @@ impl DirigentApp {
 
     /// Stage just the current commit target's files (`git add`), without
     /// committing. Git-only; jj has no separate staging area. In queue mode the
-    /// staged group stays queued until it is actually committed: committing any
-    /// other group resets the index to HEAD (see [`crate::git::commit_diff`]),
-    /// which silently unstages this one — dropping it here would lose the
-    /// reviewed split. The dialog just moves on to the next group.
+    /// staged group stays queued until it is actually committed: staging is
+    /// only a convenience, and the queue entry is what guarantees the reviewed
+    /// split survives (commit flows snapshot and restore staged entries for
+    /// untouched paths, see [`crate::git::commit_diff`], but a group shouldn't
+    /// depend on that). The dialog just moves on to the next group.
     /// Refused for a group that owns only some hunks of a file: `git add`
     /// stages the whole file, silently pulling in later groups' hunks.
     pub(in crate::app) fn stage_commit_files(&mut self) {

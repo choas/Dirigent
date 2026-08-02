@@ -552,6 +552,99 @@ mod tests {
     }
 
     #[test]
+    fn commit_partial_preserves_unrelated_staged_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        // Stage a change to b.txt through the hunk UI path, then regenerate
+        // the file on disk without it — the staged blob is the only copy left.
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        let files = split_into_file_diffs(&working_diff(p));
+        let b_diff = files.iter().find(|f| f.path.ends_with("b.txt")).unwrap();
+        let patch = build_hunk_patch(b_diff, 0).unwrap();
+        stage_hunk(p, &patch).expect("stage b.txt hunk");
+        std::fs::write(p.join("b.txt"), "regenerated\n").unwrap();
+
+        // Commit an unrelated change to a.txt.
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+        crate::git::commit_partial(p, &["a.txt".to_string()], &[], "fix: a only")
+            .expect("commit a.txt");
+
+        // The commit contains only a.txt; b.txt's staged content survived.
+        assert!(run(p, &["show", "HEAD:a.txt"]).contains('A'));
+        assert_eq!(run(p, &["show", "HEAD:b.txt"]), "b\n");
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+        assert!(!staged.contains("a.txt"), "a.txt must not stay staged");
+    }
+
+    #[test]
+    fn commit_diff_preserves_unrelated_staged_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        // Externally staged change to b.txt, then the file changes on disk.
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        run(p, &["add", "b.txt"]);
+        std::fs::write(p.join("b.txt"), "regenerated\n").unwrap();
+
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+        let diff =
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a\n+A\n";
+        crate::git::commit_diff(p, diff, "fix: a only").expect("commit diff");
+
+        assert!(run(p, &["show", "HEAD:a.txt"]).contains('A'));
+        assert_eq!(run(p, &["show", "HEAD:b.txt"]), "b\n");
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+    }
+
+    #[test]
+    fn failed_partial_commit_restores_prestaged_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        run(p, &["add", "b.txt"]);
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+
+        // The bogus hunk (nonexistent file) makes the commit fail after a.txt
+        // was staged.
+        let bogus =
+            "diff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1,1 +1,1 @@\n-zzz\n+yyy\n";
+        let err = crate::git::commit_partial(
+            p,
+            &["a.txt".to_string()],
+            &[bogus.to_string()],
+            "part: must fail",
+        );
+        assert!(err.is_err(), "rejected hunk must fail the commit");
+
+        // Rollback removed a.txt from the index but kept b.txt's staged state.
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+        assert!(
+            !staged.contains("a.txt"),
+            "a.txt staging must be rolled back"
+        );
+    }
+
+    #[test]
     fn rejected_patch_leaves_tree_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
