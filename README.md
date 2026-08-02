@@ -180,6 +180,11 @@ Detailed documentation is organized following the [Diataxis](https://diataxis.fr
 | Explanation | [Explanation](docs/explanation.md) | Architecture, design decisions, and core concepts |
 | How-To Guide | [Observability Setup](docs/observability-setup.md) | OpenTelemetry + Grafana local observability stack |
 | How-To Guide | [Git Workflows](docs/git-workflows.md) | AI-assisted commit splitting, hunk staging, cross-branch review, worktrees |
+| How-To Guide | [Jujutsu Walkthrough](docs/jj-demo-walkthrough.md) | Using the jj VCS backend (bookmarks, workspaces, squash, undo) |
+| How-To Guide | [Dirigent MCP Server](docs/How_to_Dirigent_MCP.md) | Exposing cues to AI agents over MCP |
+| How-To Guide | [OpenCode](docs/How_to_OpenCode.md) | Configuring and using the OpenCode backend |
+| How-To Guide | [SonarQube](docs/How_to_use_SonarQube.md) | Running a local SonarQube analysis of Dirigent |
+| Reference | [Claude PTY Recording](docs/claude-pty-recording.md) | Recording and replaying Claude Code PTY sessions |
 
 ## Architecture
 
@@ -191,7 +196,8 @@ claude_pty/                       — Standalone crate: PTY wrapper for interact
 │   ├── event.rs                  — Typed event enum (TuiScreen, TuiPrompt, TuiToolConfirmation, …)
 │   └── session.rs                — PTY spawning, vt100 parsing, screen-delta extraction, prompt detection
 └── examples/
-    └── diag.rs                   — Diagnostic example showing PTY event flow
+    ├── diag.rs                   — Diagnostic example showing PTY event flow
+    └── fixreadme.rs              — Example driving a full Claude Code session via PTY
 
 src/
 ├── main.rs                   — Entry point, window setup, macOS integration
@@ -205,10 +211,18 @@ src/
 ├── app/
 │   ├── mod.rs                — App state, update loop, panel orchestration
 │   ├── agents_poll.rs        — Agent result processing and state management
+│   ├── ansi.rs               — ANSI escape-sequence parsing for CLI output
 │   ├── background.rs         — Background task orchestration
-│   ├── claude_run.rs         — Claude/OpenCode execution, streaming, conversation history
+│   ├── change_set_analysis.rs — AI-grouped change sets and the commit queue
+│   ├── claude_code_name.rs   — Claude Code name running animation
+│   ├── claude_run.rs         — AI backend execution, streaming, conversation history
+│   ├── dino.rs               — Dino running animation overlay
 │   ├── file_navigation.rs    — File open, tab management, navigation history
+│   ├── folder_compare.rs     — Folder comparison via git diff / external diff tool
 │   ├── git_operations.rs     — Git operation handlers
+│   ├── graph_helpers.rs      — Shared commit-graph layout helpers
+│   ├── hunk_staging.rs       — Hunk-level stage / unstage / discard
+│   ├── jujutsu.rs            — Jujutsu running animation overlay
 │   ├── lava_lamp.rs          — Retro pixelated lava lamp animation overlay
 │   ├── markdown_parser.rs    — Markdown-to-block parsing (headings, code, tables, lists)
 │   ├── markdown_viewer.rs    — Rendered Markdown display with syntax-highlighted code
@@ -218,11 +232,15 @@ src/
 │   ├── repo_management.rs    — Repository switching and management
 │   ├── search.rs             — In-file and project-wide search
 │   ├── sources_poll.rs       — Background polling of external cue sources
+│   ├── split_cue.rs          — AI-assisted splitting of a cue into sub-cues
+│   ├── ssh_operations.rs     — Remote SSH server operations
 │   ├── symbols.rs            — Multi-language code symbol parsing and definition lookup
 │   ├── tasks.rs              — Background task lifecycle and cancellation
 │   ├── theme.rs              — Theme system, semantic colors, font loading
+│   ├── thunderdome.rs        — Thunderdome running animation overlay
 │   ├── types.rs              — Shared app-level types (PendingPlay, DiffReview, etc.)
 │   ├── util.rs               — Utility functions (ANSI stripping, duration formatting)
+│   ├── vcs_dispatch.rs       — Git / Jujutsu backend dispatch
 │   ├── workflow_graph.rs     — Workflow plan graph overlay rendering
 │   ├── workflow_run.rs       — Workflow creation, step execution, and progress
 │   ├── code_viewer/
@@ -243,7 +261,17 @@ src/
 │   │   └── cue_card/         — Cue card rendering (activity, buttons, inputs, etc.)
 │   ├── dialog/
 │   │   ├── agent_log.rs      — Agent execution log viewer
-│   │   ├── create_pr.rs      — GitHub pull request creation dialog
+│   │   ├── analyze_over.rs   — Cross-branch "Analyze changes over…" picker
+│   │   ├── cleanup_bookmarks.rs — jj bookmark cleanup
+│   │   ├── commit_dialog.rs  — Commit dialog and commit queue
+│   │   ├── create_bookmark.rs / delete_bookmark.rs / merge_bookmark.rs — jj bookmark dialogs
+│   │   ├── create_pr.rs      — Pull request creation dialog (GitHub / Forgejo)
+│   │   ├── custom_theme.rs   — Custom theme import, export, and editing
+│   │   ├── error_dialog.rs, pr_error.rs, push_error.rs, move_to_branch_error.rs — Error dialogs
+│   │   ├── graph_view.rs     — Commit / branch graph view
+│   │   ├── log_viewer.rs     — In-app application log viewer
+│   │   ├── mermaid_view.rs   — Rendered Mermaid diagram view
+│   │   ├── move_to_branch.rs — Move uncommitted work to another branch
 │   │   ├── cue_agent_runs.rs — Per-cue agent run history
 │   │   ├── diff_review.rs    — Diff review with reply, search, accept/reject
 │   │   ├── file_ops.rs       — File rename dialog
@@ -261,11 +289,15 @@ src/
 │       ├── menu_bar.rs       — Application menu bar
 │       ├── repo_bar.rs       — Repository and branch bar
 │       ├── file_tree.rs      — File tree panel
+│       ├── git_view.rs       — Git panel (status, staging, history)
 │       ├── prompt_field.rs   — Prompt input field
+│       ├── ssh_panel.rs      — Remote SSH server panel
 │       └── status_bar.rs     — Status bar
 ├── claude/                   — Claude Code CLI invocation via PTY
 │   ├── cli.rs                — Env-var resolution, lifecycle scripts, .Dirigent/.env loading
 │   ├── diff_parser.rs        — Diff extraction from Claude output
+│   ├── done_hook.rs          — Claude Code Stop-hook install and payload handling
+│   ├── import_cues.rs        — Cue import from Claude output
 │   ├── invoke.rs             — PTY session builder, prompt submission, response collection
 │   ├── prompt.rs             — Prompt construction
 │   ├── stream.rs             — PTY event loop, auto-accept, idle timeout, graceful shutdown
@@ -284,12 +316,20 @@ src/
 │   ├── archive.rs            — Worktree DB archival before removal
 │   ├── commit.rs             — Commit creation
 │   ├── diff.rs               — Diff generation
+│   ├── forgejo.rs            — Forgejo/Codeberg pull request REST API
 │   ├── graph.rs              — Branch/commit graph visualization
 │   ├── history.rs            — Commit history queries
 │   ├── merge.rs              — Merge and conflict resolution
 │   ├── pr.rs                 — GitHub pull request operations
+│   ├── staging.rs            — Index staging and hunk patch construction
 │   ├── status.rs             — Working tree status
 │   └── worktree.rs           — Worktree management
+├── jj/                       — Jujutsu (jj) VCS backend
+│   ├── commit.rs             — jj commit and squash
+│   ├── diff.rs               — jj diff generation
+│   ├── history.rs            — jj log / history queries
+│   ├── status.rs             — jj working copy status
+│   └── worktree.rs           — jj workspace management
 ├── lsp/                      — Language Server Protocol client
 │   ├── client.rs             — LSP JSON-RPC client
 │   ├── manager.rs            — Multi-server lifecycle and routing
@@ -313,8 +353,17 @@ src/
 │   ├── pr_feedback.rs        — PR review feedback processing
 │   ├── pr_findings.rs        — PR findings import via gh CLI
 │   └── types.rs              — Source data types
+├── util/                     — Shared helpers
+│   ├── fs.rs                 — Filesystem helpers (recursive copy)
+│   └── json_extract.rs       — Lenient JSON extraction from LLM responses
 ├── syntax.rs                 — Extended syntax highlighting (Kotlin, Dart)
+├── ai_process.rs             — Shared AI-CLI process helpers (watchdog, stderr, hooks, stream)
 ├── opencode.rs               — OpenCode CLI support (multi-provider backend)
+├── gemini.rs                 — Gemini CLI backend
+├── codex.rs                  — Codex CLI backend
+├── fast_llm.rs               — Optional OpenAI-compatible helper LLM (commit messages, analysis)
+├── ssh.rs                    — Remote SSH/SFTP server support (host-key verified, read-only)
+├── log_collector.rs          — In-memory log ring buffer for the log viewer
 ├── diff_view.rs              — Unified diff parsing, inline and side-by-side rendering
 ├── error.rs                  — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs              — Recursive directory scanning with ignore patterns
