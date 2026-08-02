@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -151,6 +152,12 @@ impl LspClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // `PATH` is Dirigent's, never the repository's — see `composed_path`.
+        // Set before the settings loop so nothing can be layered on top of it.
+        if let Some(path) = composed_path(&resolved_cmd) {
+            cmd.env("PATH", path);
+        }
+
         // Apply environment variables.
         // Split on newlines to handle legacy entries where multiple KEY=VALUE
         // pairs were collapsed into a single string (join/split mismatch bug).
@@ -166,12 +173,15 @@ impl LspClient {
                     // because settings.json may be attacker-controlled (a malicious
                     // `.Dirigent/settings.json` in a repo). The `env` field is the
                     // same trust boundary: without this check it silently bypasses
-                    // that protection, since a dynamic-linker variable injects a
-                    // shared library into the (otherwise trusted) server process —
-                    // arbitrary code execution the moment the server spawns.
+                    // that protection, since one interpreter hook (`NODE_OPTIONS`,
+                    // `PYTHONSTARTUP`, `RUBYOPT`, `LD_PRELOAD`, ...) is arbitrary
+                    // code execution the moment the server spawns. Only names on
+                    // the `SAFE_ENV_NAMES` allowlist get through.
                     if !is_safe_env_name(k) {
                         log::warn!(
-                            "[lsp] refusing to set unsafe environment variable {:?} for server '{}'",
+                            "[lsp] refusing to set environment variable {:?} for server '{}': \
+                             not on the allowlist of variables that cannot influence what \
+                             the server loads or executes",
                             k,
                             name
                         );
@@ -740,18 +750,92 @@ fn is_safe_arg(arg: &str) -> bool {
     !CODE_EXECUTING_FLAGS.contains(&flag)
 }
 
-/// Returns `true` if `name` is a safe environment variable to set for a spawned
-/// language server.
+/// Environment variables a language server may be given from settings.
 ///
-/// Rejects the dynamic-linker variables (`DYLD_*` on macOS, `LD_*` on Linux —
-/// e.g. `DYLD_INSERT_LIBRARIES`, `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`)
-/// that let an attacker-controlled `.Dirigent/settings.json` load a shared
-/// library into the server process, which is remote code execution. The
-/// `command` field is already guarded by [`is_safe_command_name`]; this closes
-/// the equivalent hole in the `env` field.
+/// This is an allowlist, and it must stay one. Blocking the names that are
+/// known to be dangerous does not work: far too many variables are an
+/// arbitrary-code hook for some runtime, and the servers Dirigent ships
+/// presets for are written in exactly the languages that have them —
+/// `NODE_OPTIONS=--require /repo/evil.js` (typescript-language-server),
+/// `PYTHONSTARTUP` / `PYTHONPATH` (pylsp, pyright), `RUBYOPT` (solargraph),
+/// `PERL5OPT`, `BASH_ENV` / `ENV` for anything that shells out,
+/// `GIT_SSH_COMMAND` for anything that runs `git`, and the dynamic-linker
+/// variables (`DYLD_*`, `LD_*`) for everything. `PATH` is worse still: it
+/// redirects every binary the server itself spawns, so it is composed by
+/// Dirigent (see [`composed_path`]) and never taken from settings.
+///
+/// Entries below are limited to locale, terminal presentation, log verbosity
+/// and pure data/cache directories. A name belongs here only if its value can
+/// never be interpreted as code, a library to load, or a program to run —
+/// which rules out toolchain selectors (`JAVA_HOME`, `RUSTUP_TOOLCHAIN`,
+/// `VIRTUAL_ENV`), wrapper hooks (`RUSTC_WRAPPER`, `GOFLAGS`) and anything
+/// that redirects a download (`GOPROXY`, `*_PROXY`).
+const SAFE_ENV_NAMES: &[&str] = &[
+    // Locale and terminal presentation.
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "TZ",
+    "TERM",
+    "COLUMNS",
+    "LINES",
+    // Colour toggles.
+    "NO_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    // Log verbosity knobs understood by various servers.
+    "LOG_LEVEL",
+    "LOGLEVEL",
+    "LSP_LOG_LEVEL",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "RA_LOG",
+    // Data and cache directories (contents are read, never executed).
+    "CARGO_TARGET_DIR",
+    "GOPATH",
+    "GOCACHE",
+    "GOMODCACHE",
+    "GO111MODULE",
+];
+
+/// Returns `true` if `name` may be set from settings for a spawned language
+/// server — that is, if it is on the [`SAFE_ENV_NAMES`] allowlist.
+///
+/// The match is exact. Case-insensitive matching would let `path` through on
+/// platforms where the environment is case-insensitive, and a lowercase
+/// spelling of an allowlisted name is not read by anything anyway.
 fn is_safe_env_name(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    !(upper.starts_with("DYLD_") || upper.starts_with("LD_"))
+    SAFE_ENV_NAMES.contains(&name)
+}
+
+/// Build the `PATH` for a spawned language server.
+///
+/// Composed by Dirigent rather than taken from settings: `PATH` decides which
+/// binary every process the server spawns resolves to (`gopls` runs `go`,
+/// solargraph runs `ruby`, jdtls runs `java`), so accepting it from a
+/// repository's `.Dirigent/settings.json` is arbitrary code execution with
+/// extra steps. Dirigent's own `PATH` is used, with the directory the server
+/// binary was resolved from in front so a toolchain-local server finds its
+/// siblings first.
+fn composed_path(resolved_cmd: &str) -> Option<OsString> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = Path::new(resolved_cmd).parent() {
+        if !parent.as_os_str().is_empty() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    for dir in std::env::split_paths(&inherited) {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).ok()
 }
 
 /// Resolve a command name using the login shell (handles macOS GUI PATH issues).
@@ -994,10 +1078,130 @@ mod tests {
     }
 
     #[test]
+    fn rejects_interpreter_hook_env_vars() {
+        // Every one of these makes a runtime execute a file named by the
+        // variable, and each targets a language Dirigent ships an LSP preset
+        // for. A blocklist of `DYLD_*` / `LD_*` let all of them through.
+        for evil in [
+            // Node — typescript-language-server, and any node-based server.
+            "NODE_OPTIONS",
+            "NODE_REPL_EXTERNAL_MODULE",
+            "NODE_EXTRA_CA_CERTS",
+            // Python — pylsp, pyright.
+            "PYTHONSTARTUP",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONEXECUTABLE",
+            // Ruby — solargraph.
+            "RUBYOPT",
+            "RUBYLIB",
+            // Perl.
+            "PERL5OPT",
+            "PERL5LIB",
+            // Shell hooks, for any server that shells out.
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "ZDOTDIR",
+            // Anything that runs `git`.
+            "GIT_SSH_COMMAND",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_PAGER",
+            // Toolchain selectors: point at a directory with a fake binary.
+            "JAVA_HOME",
+            "JAVA_TOOL_OPTIONS",
+            "RUSTUP_TOOLCHAIN",
+            "RUSTC_WRAPPER",
+            "VIRTUAL_ENV",
+            "GOFLAGS",
+            "GOPROXY",
+        ] {
+            assert!(!is_safe_env_name(evil), "{evil} must be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_path_from_settings() {
+        // PATH redirects every binary the server itself spawns (gopls -> go,
+        // solargraph -> ruby, jdtls -> java). Dirigent composes it instead.
+        assert!(!is_safe_env_name("PATH"));
+        assert!(!is_safe_env_name("path"));
+        assert!(!is_safe_env_name("Path"));
+    }
+
+    #[test]
     fn allows_ordinary_env_vars() {
         assert!(is_safe_env_name("RUST_LOG"));
+        assert!(is_safe_env_name("RUST_BACKTRACE"));
         assert!(is_safe_env_name("GOPATH"));
-        assert!(is_safe_env_name("PYTHONPATH"));
-        assert!(is_safe_env_name("PATH"));
+        assert!(is_safe_env_name("LANG"));
+        assert!(is_safe_env_name("NO_COLOR"));
+        assert!(is_safe_env_name("LOG_LEVEL"));
+    }
+
+    #[test]
+    fn allowlist_matches_exactly() {
+        // No prefix or substring matching: `RUST_LOG` being allowed must not
+        // admit `RUST_LOG_STYLE_EVIL`, and no casing trick may get PATH in.
+        assert!(!is_safe_env_name("RUST_LOG_EXTRA"));
+        assert!(!is_safe_env_name("MY_RUST_LOG"));
+        assert!(!is_safe_env_name("rust_log"));
+        assert!(!is_safe_env_name(""));
+    }
+
+    #[test]
+    fn composed_path_is_dirigents_own_with_the_server_dir_first() {
+        let path =
+            super::composed_path("/opt/toolchain/bin/rust-analyzer").expect("PATH should compose");
+        let dirs: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            dirs.first().map(|p| p.as_path()),
+            Some(std::path::Path::new("/opt/toolchain/bin")),
+            "the resolved server's directory must come first"
+        );
+        // The rest is the inherited PATH, not anything from settings.
+        for inherited in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+            assert!(
+                dirs.contains(&inherited),
+                "inherited PATH entry {inherited:?} must be preserved"
+            );
+        }
+        // And no duplicate entry for a directory already on PATH.
+        let mut sorted = dirs.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), dirs.len(), "PATH must not contain duplicates");
+    }
+
+    #[test]
+    fn spawn_ignores_interpreter_hooks_from_settings() {
+        // End-to-end: a repository's settings.json cannot hand a hook variable
+        // to a server. `rust-analyzer` is unlikely to exist in CI, so assert on
+        // the failure mode being "binary not found" — never a spawn that
+        // carried the payload.
+        let dir = tempfile::tempdir().unwrap();
+        let canary = dir.path().join("pwned");
+        let env = vec![
+            format!("NODE_OPTIONS=--require {}", canary.display()),
+            format!("PYTHONSTARTUP={}", canary.display()),
+            "PATH=/tmp/evil/bin".to_string(),
+            "RUST_LOG=debug".to_string(),
+        ];
+
+        let result = LspClient::spawn(
+            "typescript-language-server",
+            "typescript-language-server",
+            &["--stdio".to_string()],
+            &env,
+            dir.path(),
+            "",
+        );
+        if let Err(err) = result {
+            assert!(
+                !err.contains("unsafe command") && !err.contains("execute an argument"),
+                "unexpected rejection: {err}"
+            );
+        }
+        assert!(!canary.exists(), "payload ran");
     }
 }

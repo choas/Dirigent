@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use commitlint_rs::message::Message as LintMessage;
@@ -84,6 +85,145 @@ fn reset_index_to_head(repo_path: &Path) -> crate::error::Result<()> {
     Ok(())
 }
 
+/// Bits of `IndexEntry::flags` holding the merge stage; stage 0 is a normal entry.
+const INDEX_ENTRY_STAGE_MASK: u16 = 0x3000;
+
+/// Snapshot of the staged delta (HEAD vs index) taken before a commit flow
+/// resets the index. `entries` holds the full index entries of staged
+/// additions/modifications (their blobs already live in the object db, so the
+/// entries stay restorable even if the working-tree file changes meanwhile);
+/// `deletions` holds paths staged for deletion.
+struct StagedSnapshot {
+    entries: Vec<git2::IndexEntry>,
+    deletions: Vec<Vec<u8>>,
+}
+
+fn snapshot_staged(repo: &Repository) -> crate::error::Result<StagedSnapshot> {
+    let index = repo.index()?;
+    let head_tree = match repo.head() {
+        Ok(head) => Some(head.peel_to_commit()?.tree()?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(e.into()),
+    };
+    let diff = repo.diff_tree_to_index(head_tree.as_ref(), Some(&index), None)?;
+    let mut changed: HashSet<Vec<u8>> = HashSet::new();
+    let mut deletions = Vec::new();
+    for delta in diff.deltas() {
+        match delta.status() {
+            git2::Delta::Deleted => {
+                if let Some(p) = delta.old_file().path_bytes() {
+                    deletions.push(p.to_vec());
+                }
+            }
+            // Conflicted entries can't be restored via a stage-0 add; the
+            // commit itself would fail on a conflicted index anyway.
+            git2::Delta::Conflicted => {}
+            _ => {
+                if let Some(p) = delta.new_file().path_bytes() {
+                    changed.insert(p.to_vec());
+                }
+            }
+        }
+    }
+    let entries = index
+        .iter()
+        .filter(|e| e.flags & INDEX_ENTRY_STAGE_MASK == 0 && changed.contains(&e.path))
+        .collect();
+    Ok(StagedSnapshot { entries, deletions })
+}
+
+/// Re-apply a [`StagedSnapshot`] to the on-disk index, skipping paths in
+/// `skip` (the paths a just-created commit consumed — their staged state was
+/// either included in the commit or superseded by it).
+fn restore_staged(
+    repo: &Repository,
+    snapshot: &StagedSnapshot,
+    skip: &HashSet<Vec<u8>>,
+) -> crate::error::Result<()> {
+    if snapshot.entries.is_empty() && snapshot.deletions.is_empty() {
+        return Ok(());
+    }
+    let mut index = repo.index()?;
+    for entry in &snapshot.entries {
+        if skip.contains(&entry.path) {
+            continue;
+        }
+        index.add(entry)?;
+    }
+    for path in &snapshot.deletions {
+        if skip.contains(path) {
+            continue;
+        }
+        let Ok(path_str) = std::str::from_utf8(path) else {
+            continue;
+        };
+        match index.remove_path(Path::new(path_str)) {
+            Ok(()) => {}
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    index.write()?;
+    Ok(())
+}
+
+/// Paths touched by the given commit (diff against its first parent, or the
+/// empty tree for a root commit), as repo-relative byte paths.
+fn committed_path_set(repo: &Repository, oid_str: &str) -> crate::error::Result<HashSet<Vec<u8>>> {
+    let commit = repo.find_commit(git2::Oid::from_str(oid_str)?)?;
+    let new_tree = commit.tree()?;
+    let old_tree = match commit.parent(0) {
+        Ok(parent) => Some(parent.tree()?),
+        Err(_) => None,
+    };
+    let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)?;
+    let mut paths = HashSet::new();
+    for delta in diff.deltas() {
+        for file in [delta.old_file(), delta.new_file()] {
+            if let Some(p) = file.path_bytes() {
+                paths.insert(p.to_vec());
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// Finish a commit flow that reset the index: on success, restore snapshotted
+/// staged entries the commit didn't consume; on failure, roll the index back
+/// to HEAD and restore the snapshot in full. Restore problems are logged
+/// rather than propagated — they must not turn a created commit into an error
+/// or mask the original failure.
+fn finish_commit_restoring_staged(
+    repo_path: &Path,
+    snapshot: &StagedSnapshot,
+    result: crate::error::Result<String>,
+) -> crate::error::Result<String> {
+    match result {
+        Ok(oid) => {
+            let restore = (|| {
+                let repo = Repository::discover(repo_path)?;
+                let committed = committed_path_set(&repo, &oid)?;
+                restore_staged(&repo, snapshot, &committed)
+            })();
+            if let Err(e) = restore {
+                log::warn!("commit succeeded but restoring staged entries failed: {e}");
+            }
+            Ok(oid)
+        }
+        Err(e) => {
+            let rollback = (|| {
+                reset_index_to_head(repo_path)?;
+                let repo = Repository::discover(repo_path)?;
+                restore_staged(&repo, snapshot, &HashSet::new())
+            })();
+            if let Err(re) = rollback {
+                log::warn!("rollback after failed commit could not restore staged entries: {re}");
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Commit the working-tree state of files touched by `diff_text`.
 /// This stages the actual files the user sees (including any post-run formatting),
 /// so the committed state matches the working tree and files appear clean afterwards.
@@ -100,18 +240,25 @@ pub(crate) fn commit_diff(
         ));
     }
 
-    // Reset the index to HEAD so pre-existing staged changes aren't included.
+    // Snapshot pre-existing staged state, then reset the index to HEAD so it
+    // isn't included in this commit's tree. Entries for paths the commit
+    // doesn't touch are restored afterwards — a user-curated index (hunk
+    // staging UI, external `git add`) must survive committing an unrelated
+    // cue, and a staged blob may be the only remaining copy of that content.
+    let snapshot = snapshot_staged(&Repository::discover(repo_path)?)?;
     reset_index_to_head(repo_path)?;
 
-    // Stage the working-tree state of the affected files.
-    stage_files(repo_path, &file_paths)?;
+    // Stage the working-tree state of the affected files, then commit.
+    let result = stage_files(repo_path, &file_paths).and_then(|_| {
+        let repo = Repository::discover(repo_path)?;
+        commit_staged(
+            &repo,
+            commit_message,
+            "nothing to commit — diff already applied",
+        )
+    });
 
-    let repo = Repository::discover(repo_path)?;
-    commit_staged(
-        &repo,
-        commit_message,
-        "nothing to commit — diff already applied",
-    )
+    finish_commit_restoring_staged(repo_path, &snapshot, result)
 }
 
 /// Commit a partial selection: stage `whole_files` entirely and apply each
@@ -130,25 +277,29 @@ pub(crate) fn commit_partial(
         ));
     }
 
-    // Reset the index to HEAD so pre-existing staged changes aren't included and
-    // the hunk patches (built against HEAD) apply cleanly to the index.
+    // Snapshot pre-existing staged state, then reset the index to HEAD so it
+    // isn't included and the hunk patches (built against HEAD) apply cleanly.
+    // Entries for paths this commit doesn't touch are restored afterwards
+    // rather than discarded (see `commit_diff`).
+    let snapshot = snapshot_staged(&Repository::discover(repo_path)?)?;
     reset_index_to_head(repo_path)?;
 
-    // Stage whole files, then apply each owned hunk to the index. Any failure
-    // rolls the index back to HEAD — without this a rejected hunk would leave
-    // the earlier stagings behind, silently widening the next commit.
-    let staged = stage_files(repo_path, whole_files).and_then(|_| {
-        hunk_patches
-            .iter()
-            .try_for_each(|patch| super::staging::stage_hunk(repo_path, patch))
-    });
-    if let Err(e) = staged {
-        let _ = reset_index_to_head(repo_path);
-        return Err(e);
-    }
+    // Stage whole files, apply each owned hunk to the index, then commit. Any
+    // failure rolls the index back via `finish_commit_restoring_staged` —
+    // without this a rejected hunk would leave the earlier stagings behind,
+    // silently widening the next commit.
+    let result = stage_files(repo_path, whole_files)
+        .and_then(|_| {
+            hunk_patches
+                .iter()
+                .try_for_each(|patch| super::staging::stage_hunk(repo_path, patch))
+        })
+        .and_then(|_| {
+            let repo = Repository::discover(repo_path)?;
+            commit_staged(&repo, commit_message, "nothing to commit — selection empty")
+        });
 
-    let repo = Repository::discover(repo_path)?;
-    commit_staged(&repo, commit_message, "nothing to commit — selection empty")
+    finish_commit_restoring_staged(repo_path, &snapshot, result)
 }
 
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {

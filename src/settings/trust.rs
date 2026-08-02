@@ -245,6 +245,94 @@ fn record_approval_at(store_path: &Path, key: &str, hash: &str) {
     save_store(store_path, &store);
 }
 
+// ---------------------------------------------------------------------------
+// Fast LLM API-key → origin approvals (user profile)
+// ---------------------------------------------------------------------------
+//
+// A repository's settings.json carries both `fast_llm_api_key` and
+// `fast_llm_base_url`, so trusting a repository must not be enough to send a
+// stored API key to whatever origin the file happens to name — a pulled change
+// could redirect the key (and the diffs it authenticates) to an attacker's
+// host. The key→origin binding is therefore approved separately, only through
+// the settings UI, and remembered here in the user profile. Only a blake3
+// fingerprint of the key is stored, never the key itself.
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct KeyHostStore {
+    /// blake3 fingerprint of an API key → origins (`scheme://host:port`) the
+    /// user approved for that key.
+    #[serde(default)]
+    keys: BTreeMap<String, Vec<String>>,
+}
+
+/// `~/Library/Application Support/Dirigent/fast_llm_key_hosts.json`
+fn key_host_store_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join("Library/Application Support/Dirigent/fast_llm_key_hosts.json"))
+}
+
+fn key_fingerprint(api_key: &str) -> String {
+    blake3::hash(api_key.as_bytes()).to_hex().to_string()
+}
+
+fn load_key_host_store(path: &Path) -> KeyHostStore {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => KeyHostStore::default(),
+    }
+}
+
+/// Whether the user has approved sending this API key to this origin. An empty
+/// key needs no approval — there is no secret to protect.
+pub(crate) fn fast_llm_key_host_approved(api_key: &str, origin: &str) -> bool {
+    if api_key.is_empty() {
+        return true;
+    }
+    let Some(path) = key_host_store_path() else {
+        return false;
+    };
+    key_host_approved_at(&path, api_key, origin)
+}
+
+fn key_host_approved_at(store_path: &Path, api_key: &str, origin: &str) -> bool {
+    load_key_host_store(store_path)
+        .keys
+        .get(&key_fingerprint(api_key))
+        .is_some_and(|origins| origins.iter().any(|o| o == origin))
+}
+
+/// Record the user's approval — given through the settings UI, never through
+/// repository trust — of sending `api_key` to `origin`.
+pub(crate) fn approve_fast_llm_key_host(api_key: &str, origin: &str) {
+    if api_key.is_empty() {
+        return;
+    }
+    let Some(path) = key_host_store_path() else {
+        return;
+    };
+    approve_fast_llm_key_host_at(&path, api_key, origin);
+}
+
+fn approve_fast_llm_key_host_at(store_path: &Path, api_key: &str, origin: &str) {
+    let mut store = load_key_host_store(store_path);
+    let origins = store.keys.entry(key_fingerprint(api_key)).or_default();
+    if !origins.iter().any(|o| o == origin) {
+        origins.push(origin.to_string());
+        let len = origins.len();
+        if len > 16 {
+            origins.drain(..len - 16);
+        }
+    }
+    if let Some(parent) = store_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&store) {
+        if let Err(e) = std::fs::write(store_path, json) {
+            log::warn!("[trust] failed to write fast-llm key-host store: {e}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +457,40 @@ mod tests {
         )
         .unwrap();
         assert!(!repo_settings_trusted(dir.path()));
+    }
+
+    #[test]
+    fn key_host_approval_round_trips_and_is_origin_specific() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fast_llm_key_hosts.json");
+
+        assert!(!key_host_approved_at(
+            &path,
+            "sk-secret",
+            "https://api.openai.com:443"
+        ));
+
+        approve_fast_llm_key_host_at(&path, "sk-secret", "https://api.openai.com:443");
+        assert!(key_host_approved_at(
+            &path,
+            "sk-secret",
+            "https://api.openai.com:443"
+        ));
+        // A different origin for the same key is not covered.
+        assert!(!key_host_approved_at(
+            &path,
+            "sk-secret",
+            "https://evil.tld:443"
+        ));
+        // A different key for the approved origin is not covered.
+        assert!(!key_host_approved_at(
+            &path,
+            "sk-other",
+            "https://api.openai.com:443"
+        ));
+        // Only a fingerprint is stored, never the key itself.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("sk-secret"));
     }
 
     #[test]
