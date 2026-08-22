@@ -5,28 +5,40 @@ mod cue_ops;
 mod execution_ops;
 mod migrations;
 mod pattern_ops;
+mod pr_finding_ops;
 mod source_ops;
 mod types;
 
 pub(crate) use agent_runs::{AgentRunEntry, AgentRunRecord};
 pub(crate) use migrations::Database;
 pub(crate) use pattern_ops::PrFilterPattern;
+pub(crate) use pr_finding_ops::PrImportCounts;
 #[allow(unused_imports)]
 pub(crate) use types::{
     ActivityEntry, Cue, CueHistoryRow, CueStatus, Execution, ExecutionMetrics, ExecutionStatus,
 };
 
-#[cfg(test)]
 impl Database {
+    /// A throwaway database that lives only in RAM.
+    ///
+    /// Used by tests, and as the app's fallback when the on-disk database
+    /// cannot be opened — the UI stays usable (and can offer a recovery)
+    /// instead of the process panicking at startup.
     pub fn open_in_memory() -> anyhow::Result<Self> {
-        let conn =
-            rusqlite::Connection::open_in_memory().with_context(|| "opening in-memory database")?;
+        let conn = anyhow::Context::context(
+            rusqlite::Connection::open_in_memory(),
+            "opening in-memory database",
+        )?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         let db = Database { conn };
         db.create_tables()?;
+        db.stamp_schema_version()?;
         Ok(db)
     }
+}
 
+#[cfg(test)]
+impl Database {
     pub fn get_cue(&self, id: i64) -> anyhow::Result<Option<Cue>> {
         use rusqlite::params;
         let mut stmt = self.conn.prepare(&format!(
@@ -41,9 +53,6 @@ impl Database {
         }
     }
 }
-
-#[cfg(test)]
-use anyhow::Context;
 
 #[cfg(test)]
 mod tests {

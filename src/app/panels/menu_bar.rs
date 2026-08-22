@@ -146,9 +146,11 @@ impl DirigentApp {
     fn render_git_menu_tidy(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let dirty = self.git.dirty_files.len();
         let tidy_label = tidy_working_tree_label(dirty, self.change_set_op.in_flight());
+        // Also disabled while a commit is running: the queue that commit will
+        // advance must not be replaced underneath it (see `start_split_commit`).
         if ui
             .add_enabled(
-                dirty > 0 && !self.change_set_op.in_flight(),
+                dirty > 0 && !self.change_set_op.in_flight() && !self.git.commit_op.in_flight(),
                 egui::Button::new(tidy_label),
             )
             .on_hover_text(

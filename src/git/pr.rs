@@ -288,9 +288,7 @@ fn origin_head_default_branch(repo_path: &Path) -> Option<String> {
 
 /// Build a PR body from the commits on the current branch that are ahead of the base branch.
 pub(crate) fn build_pr_body(repo_path: &Path, base: &str) -> String {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["log", "--oneline", &format!("origin/{}..HEAD", base)])
         .current_dir(repo_path)
         .output();
@@ -316,9 +314,7 @@ pub(crate) fn build_pr_body(repo_path: &Path, base: &str) -> String {
 /// Returns the path to the main (non-linked) worktree / main repo.
 /// The first entry in `git worktree list` is always the main worktree.
 pub(crate) fn main_worktree_path(repo_path: &Path) -> crate::error::Result<PathBuf> {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_path)
         .output()?;

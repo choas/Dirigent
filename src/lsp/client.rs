@@ -72,7 +72,7 @@ pub(crate) struct LspClient {
 /// Read and log stderr lines from an LSP server process.
 fn drain_stderr(name: String, stderr: ChildStderr) {
     let reader = BufReader::new(stderr);
-    for line in reader.lines() {
+    for line in crate::ai_process::bounded_lines(reader) {
         match line {
             Ok(l) => log::debug!("[lsp:{}:stderr] {}", name, l),
             Err(_) => break,
@@ -108,7 +108,24 @@ fn drain_stdout(name: String, stdout: std::process::ChildStdout, tx: mpsc::Sende
     }
 }
 
-#[allow(dead_code)]
+/// Best-effort SIGKILL to a child's whole process group.
+///
+/// Language servers are spawned in their own group (see `spawn_server`), so a
+/// negative pid reaches the helpers they fork as well as the server itself.
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return;
+    };
+    // SAFETY: a plain signal syscall; an invalid pid just returns ESRCH.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: u32) {}
+
 impl LspClient {
     /// Spawn a language server process and start the reader thread.
     /// Does NOT send `initialize` yet — call `initialize()` after construction.
@@ -151,6 +168,16 @@ impl LspClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Own process group, so `kill` can take down the helpers a server
+        // forks (rust-analyzer's proc-macro server, tsserver workers) instead
+        // of orphaning them — and so the group-kill can never reach anything
+        // outside this server.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
 
         // `PATH` is Dirigent's, never the repository's — see `composed_path`.
         // Set before the settings loop so nothing can be layered on top of it.
@@ -464,10 +491,19 @@ impl LspClient {
     }
 
     /// Kill the server process.
+    /// Kill the language server and reap it.
+    ///
+    /// The `wait()` matters: `kill()` alone leaves a zombie in the process
+    /// table for the lifetime of the GUI, and nothing else collects it —
+    /// `is_alive`'s `try_wait` races the signal and usually reports `None`.
+    /// Language servers routinely spawn helpers (rust-analyzer's proc-macro
+    /// server, tsserver workers), so the whole process group is signalled.
     pub fn kill(&self) {
         if let Ok(mut guard) = self.process.lock() {
             if let Some(ref mut child) = *guard {
+                kill_process_group(child.id());
                 let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -539,11 +575,26 @@ impl Drop for LspClient {
     }
 }
 
+/// Largest LSP message body Dirigent will allocate for.
+///
+/// `Content-Length` is supplied by the language server, so allocating it
+/// directly hands a buggy or hostile server an arbitrary-allocation primitive
+/// (`Content-Length: 999999999999`). Real payloads are hover text, completion
+/// lists and diagnostics; 64 MiB is generous for all of them.
+const MAX_LSP_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Largest header block accepted before a message body.
+///
+/// Bounds the other half of the framing: a server that never emits the blank
+/// separator line would otherwise loop forever accumulating headers.
+const MAX_LSP_HEADER_BYTES: usize = 64 * 1024;
+
 /// Read a single LSP JSON-RPC message from the stream.
 /// Returns None on EOF.
 fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, String> {
     // Read headers
     let mut content_length: Option<usize> = None;
+    let mut header_bytes = 0usize;
     loop {
         let mut header_line = String::new();
         let bytes_read = reader
@@ -551,6 +602,12 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
             .map_err(|e| e.to_string())?;
         if bytes_read == 0 {
             return Ok(None); // EOF
+        }
+        header_bytes += bytes_read;
+        if header_bytes > MAX_LSP_HEADER_BYTES {
+            return Err(format!(
+                "LSP header block exceeds {MAX_LSP_HEADER_BYTES} bytes — dropping connection"
+            ));
         }
         let trimmed = header_line.trim();
         if trimmed.is_empty() {
@@ -562,6 +619,11 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     }
 
     let length = content_length.ok_or("Missing Content-Length header")?;
+    if length > MAX_LSP_BODY_BYTES {
+        return Err(format!(
+            "LSP message body of {length} bytes exceeds the {MAX_LSP_BODY_BYTES} byte limit"
+        ));
+    }
 
     // Read body
     let mut body = vec![0u8; length];

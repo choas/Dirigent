@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use crate::error::DirigentError;
@@ -257,12 +257,125 @@ pub(crate) fn jj_commit_all(
     Ok(change_id)
 }
 
+/// Directory name prefix, under `.Dirigent/`, for the crash-recovery snapshot
+/// taken by [`jj_commit_diff`].
+const SNAPSHOT_DIR_PREFIX: &str = "pending-restore-";
+
+/// Name of the manifest written alongside a snapshot.
+const SNAPSHOT_MANIFEST: &str = "MANIFEST.txt";
+
+/// On-disk snapshot of the working-copy files that a partial jj commit has to
+/// temporarily revert.
+struct WorkingCopySnapshot {
+    dir: PathBuf,
+    /// (repo-relative path, path inside `dir`) — absent path means the file was
+    /// already deleted in the working copy and must be deleted again on restore.
+    entries: Vec<(String, Option<PathBuf>)>,
+}
+
+impl WorkingCopySnapshot {
+    /// Copy every listed file into `.Dirigent/pending-restore-<stamp>/`.
+    ///
+    /// This happens **before** `jj restore` touches anything, so the snapshot
+    /// survives a crash, a kill, or a panic in the window between the restore
+    /// and the write-back. Previously the only copy lived in this process's
+    /// memory: dying in that window permanently discarded the user's uncommitted
+    /// edits to every file outside the commit.
+    fn capture(repo_path: &Path, files: &[String]) -> std::io::Result<Self> {
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%f");
+        let dir = repo_path
+            .join(".Dirigent")
+            .join(format!("{SNAPSHOT_DIR_PREFIX}{stamp}"));
+        std::fs::create_dir_all(&dir)?;
+
+        let mut entries = Vec::with_capacity(files.len());
+        let mut manifest = String::from(
+            "Dirigent snapshot of uncommitted working-copy files, taken before a\n\
+             partial `jj` commit reverted them.\n\n\
+             If Dirigent exited before restoring them, copy each file listed below\n\
+             back to the matching path in the repository, then delete this directory.\n\n",
+        );
+        for rel in files {
+            let source = repo_path.join(rel);
+            if source.exists() {
+                let stored = dir.join(rel);
+                if let Some(parent) = stored.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&source, &stored)?;
+                manifest.push_str(&format!("{rel}\n"));
+                entries.push((rel.clone(), Some(stored)));
+            } else {
+                manifest.push_str(&format!("{rel}  (deleted in working copy)\n"));
+                entries.push((rel.clone(), None));
+            }
+        }
+        crate::util::fs::atomic_write(&dir.join(SNAPSHOT_MANIFEST), manifest.as_bytes())?;
+        Ok(Self { dir, entries })
+    }
+
+    /// Put the snapshotted files back. Returns the paths that could not be
+    /// restored — the caller must surface those rather than swallow them.
+    fn restore(&self) -> Vec<String> {
+        let mut failed = Vec::new();
+        for (rel, stored) in &self.entries {
+            let target = self.repo_target(rel);
+            let outcome = match stored {
+                Some(stored) => target
+                    .parent()
+                    .map(std::fs::create_dir_all)
+                    .unwrap_or(Ok(()))
+                    .and_then(|()| std::fs::copy(stored, &target).map(|_| ())),
+                None => match std::fs::remove_file(&target) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    other => other,
+                },
+            };
+            if let Err(e) = outcome {
+                log::error!("[jj] failed to restore {rel} after partial commit: {e}");
+                failed.push(rel.clone());
+            }
+        }
+        failed
+    }
+
+    /// `<repo>/<rel>`, derived from the snapshot directory's location.
+    fn repo_target(&self, rel: &str) -> PathBuf {
+        self.repo_root().join(rel)
+    }
+
+    fn repo_root(&self) -> PathBuf {
+        // dir == <repo>/.Dirigent/pending-restore-<stamp>
+        self.dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// Remove the snapshot. Only called once every file was restored — a
+    /// surviving directory is the recovery trail.
+    fn discard(self) {
+        if let Err(e) = std::fs::remove_dir_all(&self.dir) {
+            log::warn!(
+                "[jj] could not remove snapshot dir {}: {e}",
+                self.dir.display()
+            );
+        }
+    }
+}
+
 /// Commit only the files referenced in `diff_text`.
 ///
 /// In jj every edit is already part of the working-copy commit (`@`).
 /// To commit a subset we temporarily revert the *other* dirty files to
 /// their parent state, commit, then write the originals back so they
 /// reappear in the new `@`.
+///
+/// Every step of that dance is now failure-visible: the snapshot is written to
+/// disk first (crash-recoverable), a failed `jj restore` aborts before anything
+/// is committed, and a failed write-back is reported with the snapshot
+/// directory left in place instead of being silently dropped.
 pub(crate) fn jj_commit_diff(
     repo_path: &Path,
     diff_text: &str,
@@ -295,25 +408,48 @@ pub(crate) fn jj_commit_diff(
         );
     }
 
-    // Snapshot each non-diff file so we can put it back after the commit.
-    // `None` means the file was deleted in the working copy (doesn't exist on disk).
-    let saved: Vec<(String, Option<Vec<u8>>)> = other_files
-        .iter()
-        .map(|f| {
-            let content = std::fs::read(repo_path.join(f)).ok();
-            (f.clone(), content)
-        })
-        .collect();
+    // Snapshot to disk BEFORE anything is reverted.
+    let snapshot = WorkingCopySnapshot::capture(repo_path, &other_files).map_err(|e| {
+        DirigentError::JjCommand(format!(
+            "could not snapshot uncommitted files before the partial commit: {e}. \
+             Nothing was changed."
+        ))
+    })?;
 
     // Revert non-diff files to parent state so they aren't part of the commit.
     let mut restore_args: Vec<&str> = vec!["restore", "--from", "@-", "--"];
     for f in &other_files {
         restore_args.push(f);
     }
-    let _ = super::jj_cmd(jj_path)
+    let revert = super::jj_cmd(jj_path)
         .args(&restore_args)
         .current_dir(repo_path)
         .output();
+    match revert {
+        Ok(output) if output.status.success() => {}
+        outcome => {
+            // Nothing has been committed yet. Put back whatever the partial
+            // restore may have touched, then abort.
+            let detail = match outcome {
+                Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                Err(e) => e.to_string(),
+            };
+            let failed = snapshot.restore();
+            if failed.is_empty() {
+                snapshot.discard();
+                return Err(DirigentError::JjCommand(format!(
+                    "could not set aside the other modified files, so nothing was \
+                     committed: {detail}"
+                )));
+            }
+            return Err(DirigentError::JjCommand(format!(
+                "could not set aside the other modified files ({detail}), and {} of them \
+                 could not be put back. Copies are in {}",
+                failed.len(),
+                snapshot.dir.display()
+            )));
+        }
+    }
 
     let result = jj_commit_all(
         repo_path,
@@ -324,20 +460,19 @@ pub(crate) fn jj_commit_diff(
     );
 
     // Put the non-diff files back so they remain as pending changes in the new @.
-    for (rel, content) in &saved {
-        let full = repo_path.join(rel);
-        match content {
-            Some(data) => {
-                if let Some(parent) = full.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&full, data);
-            }
-            None => {
-                let _ = std::fs::remove_file(&full);
-            }
-        }
+    let failed = snapshot.restore();
+    if !failed.is_empty() {
+        // The commit itself may have succeeded, but the user's other edits are
+        // only in the snapshot directory now — say so instead of returning Ok.
+        return Err(DirigentError::JjCommand(format!(
+            "committed, but {} uncommitted file(s) could not be restored: {}. \
+             Copies are preserved in {}",
+            failed.len(),
+            failed.join(", "),
+            snapshot.dir.display()
+        )));
     }
+    snapshot.discard();
 
     result
 }
@@ -720,4 +855,93 @@ pub(crate) fn jj_merge_bookmark(
         "Merged '{}' into '{}'",
         source_bookmark, current_bm
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, rel: &str, contents: &str) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir");
+        }
+        std::fs::write(path, contents).expect("write");
+    }
+
+    /// The snapshot must be on disk before anything is reverted — that is the
+    /// whole point: a crash in the revert/write-back window used to discard the
+    /// user's uncommitted edits permanently.
+    #[test]
+    fn snapshot_is_written_to_disk_before_restore() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        write(repo.path(), "src/keep.rs", "original contents");
+        write(repo.path(), "nested/dir/other.txt", "other");
+
+        let snapshot = WorkingCopySnapshot::capture(
+            repo.path(),
+            &[
+                "src/keep.rs".to_string(),
+                "nested/dir/other.txt".to_string(),
+            ],
+        )
+        .expect("capture");
+
+        assert!(snapshot.dir.starts_with(repo.path().join(".Dirigent")));
+        assert_eq!(
+            std::fs::read_to_string(snapshot.dir.join("src/keep.rs")).expect("stored copy"),
+            "original contents"
+        );
+        assert!(
+            snapshot.dir.join(SNAPSHOT_MANIFEST).exists(),
+            "a recovery manifest must explain what the directory is"
+        );
+    }
+
+    #[test]
+    fn restore_puts_back_contents_and_reports_no_failures() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        write(repo.path(), "a.txt", "mine");
+
+        let snapshot =
+            WorkingCopySnapshot::capture(repo.path(), &["a.txt".to_string()]).expect("capture");
+        // Simulate `jj restore` reverting the file to its parent state.
+        write(repo.path(), "a.txt", "parent version");
+
+        let failed = snapshot.restore();
+
+        assert!(failed.is_empty(), "unexpected failures: {failed:?}");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("a.txt")).expect("restored"),
+            "mine"
+        );
+    }
+
+    /// A file the user deleted in the working copy must stay deleted after the
+    /// partial commit, not reappear from the parent revision.
+    #[test]
+    fn restore_reapplies_working_copy_deletions() {
+        let repo = tempfile::tempdir().expect("tempdir");
+
+        let snapshot =
+            WorkingCopySnapshot::capture(repo.path(), &["gone.txt".to_string()]).expect("capture");
+        // `jj restore` brings the file back from the parent commit.
+        write(repo.path(), "gone.txt", "resurrected by jj restore");
+
+        let failed = snapshot.restore();
+
+        assert!(failed.is_empty(), "unexpected failures: {failed:?}");
+        assert!(!repo.path().join("gone.txt").exists());
+    }
+
+    #[test]
+    fn discard_removes_the_snapshot_directory() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        write(repo.path(), "a.txt", "x");
+        let snapshot =
+            WorkingCopySnapshot::capture(repo.path(), &["a.txt".to_string()]).expect("capture");
+        let dir = snapshot.dir.clone();
+        snapshot.discard();
+        assert!(!dir.exists());
+    }
 }

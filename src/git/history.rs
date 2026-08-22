@@ -208,8 +208,7 @@ pub(crate) fn count_commits(path: &Path) -> usize {
 }
 
 pub(crate) fn get_commit_diff(path: &Path, commit_hash: &str) -> Option<String> {
-    use std::process::Command;
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["diff-tree", "--root", "-p", commit_hash])
         .current_dir(path)
         .output()

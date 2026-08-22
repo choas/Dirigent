@@ -154,6 +154,16 @@ impl FontWeight {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
+    /// Runtime-only: whether this repository's execution-capable settings were
+    /// approved by the user (see `settings::trust`).
+    ///
+    /// Never serialized — a repository could otherwise declare itself trusted.
+    /// Set by `settings::load_settings`; consumed as
+    /// [`crate::ai_backend::HookScriptTrust`] when running pre/post-run hooks.
+    /// Defaults to trusted so settings built in code (tests, defaults) behave
+    /// as before; only the untrusted-repository load path clears it.
+    #[serde(skip, default = "default_true")]
+    pub hooks_trusted: bool,
     pub theme: ThemeChoice,
     /// User-defined custom themes.
     #[serde(default)]
@@ -353,6 +363,16 @@ pub(crate) struct ProviderFields<'a> {
 }
 
 impl Settings {
+    /// The trust level to apply to this configuration's pre/post-run hook
+    /// scripts. Single source for all four backends.
+    pub(crate) fn hook_trust(&self) -> crate::ai_backend::HookScriptTrust {
+        if self.hooks_trusted {
+            crate::ai_backend::HookScriptTrust::Trusted
+        } else {
+            crate::ai_backend::HookScriptTrust::ProjectLocal
+        }
+    }
+
     /// Return the provider-specific fields for the given CLI provider.
     pub(crate) fn provider_fields(&self, provider: &CliProvider) -> ProviderFields<'_> {
         match provider {
@@ -423,6 +443,7 @@ fn default_fast_llm_model() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            hooks_trusted: true,
             theme: ThemeChoice::Dark,
             custom_themes: Vec::new(),
             cli_provider: CliProvider::default(),

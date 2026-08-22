@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -71,6 +71,8 @@ pub(crate) fn summarize_commit_message_via_cli(
         env_vars,
         pre_run_script: "",
         post_run_script: "",
+        // No hook scripts to run, so the trust level is immaterial.
+        hook_trust: crate::ai_backend::HookScriptTrust::Trusted,
         skip_permissions: false,
         use_pty: false,
     };
@@ -165,16 +167,29 @@ fn invoke_pty(
         req.prompt,
         &cancel,
         on_log,
-        done_hook.as_ref(),
-        session_id.as_deref(),
-        req.skip_permissions,
+        super::stream::PtyConsumeOptions {
+            done_hook: done_hook.as_ref(),
+            session_id: session_id.as_deref(),
+            skip_permissions: req.skip_permissions,
+            // Auto-accepting Claude Code's trust-folder dialog activates the
+            // repository's own .claude/settings.json (hooks, MCP servers,
+            // permissions). Only do that for a repository the user explicitly
+            // trusted in Dirigent — checked here rather than inferred, because
+            // a freshly cloned repo with no .Dirigent/settings.json is *not*
+            // trusted.
+            repo_trusted: crate::settings::repo_settings_trusted(req.project_root),
+        },
     );
     drop(done_hook);
 
-    // The PTY stream reports no cost/turn metrics; the `AiBackend` driver
-    // stamps the measured run duration so Claude runs no longer record zeros.
+    // The TUI reports no cost or turn count, so those stay `None` — Dirigent
+    // records "unknown", never a fabricated $0.00. Duration comes from the last
+    // observed output rather than the driver's wall clock, which would also
+    // include the shutdown drain.
+    let duration_ms = state.metadata.last_output_ms;
     Ok(BackendResponse {
         stdout: state.response,
+        duration_ms,
         metadata: Some(state.metadata),
         ..BackendResponse::default()
     })
@@ -299,7 +314,7 @@ fn read_stdout_to_log(
 ) -> String {
     let mut response = String::new();
     let reader = BufReader::new(stdout);
-    for line in reader.lines() {
+    for line in crate::ai_process::bounded_lines(reader) {
         if cancel.load(Ordering::Relaxed) {
             break;
         }

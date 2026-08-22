@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(rows.len(), 3);
         // c2's row collapses the duplicate "root" lane.
         assert_eq!(rows[1].column, 1);
-        let has_merge_at_c2 = rows[1].lanes.iter().any(|s| *s == LaneSegment::MergeLeft);
+        let has_merge_at_c2 = rows[1].lanes.contains(&LaneSegment::MergeLeft);
         assert!(has_merge_at_c2, "duplicate lane should merge at c2's row");
         // root lands in lane 1 (after collapse).
         assert_eq!(rows[2].column, 1);

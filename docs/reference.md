@@ -91,6 +91,14 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 | Prompt suggestions | bool | false | Show heuristic refinement hints below prompt |
 | Auto-context: file | bool | false | Include surrounding lines around cue location in prompt |
 | Auto-context: git diff | bool | false | Include current git diff in prompt |
+| Font weight | enum | Regular | `Light`, `Regular`, `Medium`, `SemiBold`, `Bold` |
+| Custom themes | list | empty | User-defined themes (see [Themes](#themes)) |
+| Diff color scheme | enum | RedGreen | `RedGreen`, `RedBlue`, `YellowBlue` |
+| Heartbeat style | enum | Heartbeat | Status-bar activity indicator: `Heartbeat`, `Wave`, `GabbaPeak`, `MorseCode`, `Off` |
+| Claude Code display name | string | empty | Rename "Claude Code" in the UI |
+| Custom dock icon path | string | empty | PNG used as the macOS Dock icon; falls back to a project `logo.png` |
+| Show frame timing | bool | false | Overlay per-panel render times (debugging) |
+| External diff tool | string | empty | Command used to open a diff externally instead of the built-in viewer |
 
 ### CLI Provider
 
@@ -105,9 +113,63 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 | Claude pre-run script | string | empty | Shell script executed before each Claude run |
 | Claude post-run script | string | empty | Shell script executed after each Claude run |
 | Skip permissions | bool | true | Append `--dangerously-skip-permissions` to CLI |
+| Claude use PTY | bool | true | Drive `claude` through a pseudo-terminal (the interactive TUI). Off falls back to headless `claude -p`. |
 | OpenCode model | string | openai/o1 | Model for OpenCode provider |
 | OpenCode CLI path | string | (auto-detect) | Path to `opencode` binary |
 | OpenCode extra args | string | empty | Additional OpenCode CLI arguments |
+| OpenCode env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| Gemini model | string | gemini-2.5-flash | Model for the Gemini provider |
+| Gemini CLI path | string | (auto-detect) | Path to `gemini` binary |
+| Gemini extra args / env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| Codex model | string | gpt-5-codex | Model for the Codex provider |
+| Codex CLI path | string | (auto-detect) | Path to `codex` binary |
+| Codex extra args / env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| Auto-continue | bool | false | Re-prompt a run that stopped with unfinished work |
+| Auto-continue max | int | 3 | Cap on consecutive auto-continues per cue |
+
+Pre/post-run scripts only execute for a repository whose execution-capable
+settings you approved — see [Repository trust](#repository-trust). In an
+unapproved repository they are skipped with a warning; the run itself still
+proceeds.
+
+### Version control
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| VCS backend | enum | Git | `Git` or `Jj`. Auto-switches to `Jj` when the project has a `.jj` directory. |
+| jj CLI path | string | (auto-detect) | Path to the `jj` binary |
+| Auto commit | bool | false | Commit automatically when a run's changes are accepted |
+| Commit footer | bool | true | Append Dirigent's co-author footer to commit messages |
+
+### Fast LLM
+
+A small local model used for quick, non-agentic jobs (commit-message drafts,
+change-set grouping). When disabled, those jobs fall back to the configured CLI
+provider.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| Fast LLM enabled | bool | false | Use the Fast LLM for quick jobs |
+| Fast LLM provider | string | Ollama | Label for the OpenAI-compatible endpoint |
+| Fast LLM base URL | string | `http://localhost:11434/v1` | OpenAI-compatible endpoint. A non-local URL requires explicit approval before any repository content is sent to it. |
+| Fast LLM API key | string | empty | Bearer token for the endpoint |
+| Fast LLM model | string | gemma4:26b-mlx | Model identifier |
+
+### Dirigent MCP server
+
+Dirigent exposes its own cue database over MCP so an agent can read and move
+cues mid-run. Injected automatically when the prompt mentions "dirigent".
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| MCP server path | string | (auto-detect) | Path to the `dirigent-mcp-server` binary |
+| MCP database path | string | (project DB) | Override the database the MCP server reads |
+
+### SSH servers
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| SSH servers | list | empty | Remote hosts browsable from the SSH panel (name, host, username) |
 
 ### Security
 
@@ -261,6 +323,20 @@ Solarized Light, Gruvbox Light, GitHub Light, Catppuccin Latte, Everforest Light
 | `DIRIGENT_OTEL_ENDPOINT` | OTLP HTTP endpoint for telemetry (e.g. `http://localhost:4318`). Read once at startup. |
 | `SENTRY_DSN` | Sentry DSN for crash reporting. Optional. |
 
+Source integrations read their tokens from the process environment, then from
+`.Dirigent/.env` (preferred) or `.env`. Setting the token in the source's
+configuration overrides both.
+
+| Variable | Used by |
+|----------|---------|
+| `SLACK_BOT_TOKEN` | Slack source |
+| `SONAR_TOKEN` | SonarQube source |
+| `TRELLO_API_KEY` | Trello source (API key; paired with the token below) |
+| `TRELLO_TOKEN` | Trello source |
+| `ASANA_TOKEN` | Asana source |
+| `NOTION_TOKEN` | Notion source |
+| `SENTRY_AUTH_TOKEN` | Sentry source |
+
 Claude Code environment variables (for observability) are documented in the [Observability Setup](observability-setup.md) guide.
 
 ## Per-Project Data
@@ -286,7 +362,7 @@ When `DIRIGENT_OTEL_ENDPOINT` is set, Dirigent emits these structured log events
 |-------|---------------|
 | `app.started` | `project` |
 | `execution.started` | `project`, `cue_id`, `provider`, `model` |
-| `execution.completed` | `project`, `cue_id`, `provider`, `cost_usd`, `duration_ms`, `num_turns`, `input_tokens`, `output_tokens`, `has_diff` |
+| `execution.completed` | `project`, `cue_id`, `provider`, `duration_ms`, `has_diff`; plus `cost_usd`, `num_turns`, `input_tokens`, `output_tokens` when the backend reported them |
 | `execution.failed` | `project`, `cue_id`, `provider`, `error` |
 | `execution.rate_limited` | `project`, `cue_id`, `message` |
 | `agent.completed` | `project`, `agent_kind`, `status`, `duration_ms`, `cue_id` |

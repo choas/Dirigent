@@ -307,7 +307,7 @@ impl DirigentApp {
         } else if let Some((fi, hi)) = actions.stage_hunk {
             self.stage_review_hunk(fi, hi);
         } else if let Some((fi, hi)) = actions.discard_hunk {
-            self.discard_review_hunk(fi, hi);
+            self.request_discard_review_hunk(fi, hi);
         } else if let Some((fi, hi)) = actions.unstage_hunk {
             self.unstage_review_hunk(fi, hi);
         }

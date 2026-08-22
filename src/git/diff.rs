@@ -60,9 +60,7 @@ fn diff_with_untracked(repo_path: &Path, files: &[String], vs_head: bool) -> Opt
 /// Run `git diff` (optionally against HEAD) scoped to `rel_files`.
 /// Returns `None` when the command fails (e.g. `HEAD` on an unborn branch).
 fn tracked_diff(repo_path: &Path, rel_files: &[String], vs_head: bool) -> Option<String> {
-    use std::process::Command;
-
-    let mut cmd = Command::new("git");
+    let mut cmd = super::git_cmd();
     cmd.arg("diff").current_dir(repo_path);
     if vs_head {
         cmd.arg("HEAD");
@@ -86,24 +84,44 @@ fn tracked_diff(repo_path: &Path, rel_files: &[String], vs_head: bool) -> Option
 /// ancestor — the natural "what's new on this branch" view for review — rather
 /// than every difference between the two tips. Returns `None` when the refs are
 /// identical or produce no differences.
+#[cfg(test)]
 pub(crate) fn get_range_diff(repo_path: &Path, base: &str, head: &str) -> Option<String> {
-    use std::process::Command;
+    try_get_range_diff(repo_path, base, head).ok().flatten()
+}
 
+/// Like [`get_range_diff`], but distinguishes "no differences" (`Ok(None)`) from
+/// "git could not answer" (`Err`).
+///
+/// Collapsing both into `None` surfaced a bad ref, a missing remote branch or a
+/// corrupt repository to the user as the cheerful "Nothing to analyze between
+/// those refs" — which is exactly the wrong thing to tell someone who typo'd a
+/// branch name.
+pub(crate) fn try_get_range_diff(
+    repo_path: &Path,
+    base: &str,
+    head: &str,
+) -> Result<Option<String>, String> {
     let range = format!("{base}...{head}");
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .arg("diff")
         .arg(&range)
         .current_dir(repo_path)
         .output()
-        .ok()?;
+        .map_err(|e| format!("could not run git diff {range}: {e}"))?;
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("git diff {range} failed")
+        } else {
+            format!("git diff {range} failed: {detail}")
+        });
     }
     let diff = String::from_utf8_lossy(&output.stdout).to_string();
     if diff.trim().is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(diff)
+        Ok(Some(diff))
     }
 }
 
@@ -120,7 +138,6 @@ pub(crate) enum FolderCompare {
 /// >1 on error — so we map those to `Identical` / `Diff` / an error.
 pub(crate) fn compare_folders(left: &Path, right: &Path) -> crate::error::Result<FolderCompare> {
     use crate::error::DirigentError;
-    use std::process::Command;
 
     for p in [left, right] {
         if !p.exists() {
@@ -131,7 +148,7 @@ pub(crate) fn compare_folders(left: &Path, right: &Path) -> crate::error::Result
         }
     }
 
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .arg("diff")
         .arg("--no-index")
         .arg(left)
@@ -314,7 +331,7 @@ mod tests {
     use super::*;
 
     fn run(dir: &Path, args: &[&str]) {
-        let out = std::process::Command::new("git")
+        let out = crate::git::git_cmd()
             .current_dir(dir)
             .args(args)
             .output()

@@ -18,3 +18,6 @@ code_review_prompts.md
 desert_dino.png
 openspec
 .codex/skills/
+
+# Strata diff UI incremental cache (scripts/strata.sh --cache)
+.strata/

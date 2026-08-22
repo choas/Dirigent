@@ -6,6 +6,31 @@ use crate::jj;
 use crate::settings::VcsBackend;
 
 use super::{detect_pr_number_from_branch, AsyncPoll, DialogId, DirigentApp};
+use crate::db::PrImportCounts;
+
+/// Phrase the outcome of a PR-findings import for the status bar.
+///
+/// Partial failures are reported rather than hidden behind the success count:
+/// "3 new" is misleading when two other findings failed to write.
+fn pr_import_status(pr_number: &str, tag: &str, total: usize, counts: &PrImportCounts) -> String {
+    if counts.errors > 0 && !counts.has_changes() {
+        return format!(
+            "PR #{pr_number}: import failed ({} DB errors across {total} findings)",
+            counts.errors
+        );
+    }
+    if counts.errors > 0 {
+        return format!(
+            "PR #{pr_number}: {} (tag: {tag}) (partial failure: {} DB errors)",
+            counts.summary(),
+            counts.errors
+        );
+    }
+    if counts.has_changes() {
+        return format!("PR #{pr_number}: {} (tag: {tag})", counts.summary());
+    }
+    format!("PR #{pr_number}: all {total} findings already imported")
+}
 
 impl DirigentApp {
     /// Start an async push operation (git push or jj git push).
@@ -357,150 +382,9 @@ impl DirigentApp {
         }
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
-        let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
-        let has_changes = new_count > 0 || updated_count > 0;
+        let counts = self.db.import_pr_findings(&findings, &tag);
         self.reload_cues();
-        if error_count > 0 && !has_changes {
-            self.set_status_message(format!(
-                "PR #{}: import failed ({} DB errors across {} findings)",
-                pr_number,
-                error_count,
-                findings.len()
-            ));
-        } else if error_count > 0 {
-            let summary = Self::build_findings_summary(new_count, updated_count);
-            self.set_status_message(format!(
-                "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
-                pr_number, summary, tag, error_count
-            ));
-        } else if has_changes {
-            let summary = Self::build_findings_summary(new_count, updated_count);
-            self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
-        } else {
-            self.set_status_message(format!(
-                "PR #{}: all {} findings already imported",
-                pr_number,
-                findings.len()
-            ));
-        }
-    }
-
-    /// Upsert each PR finding: update existing cues or insert new ones.
-    /// Returns (new_count, updated_count, error_count).
-    fn upsert_pr_findings(
-        &mut self,
-        findings: &[crate::sources::PrFinding],
-        tag: &str,
-    ) -> (usize, usize, usize) {
-        let mut new_count = 0;
-        let mut updated_count = 0;
-        let mut error_count = 0;
-        for finding in findings {
-            match self.db.get_cue_by_source_ref(&finding.external_id) {
-                Ok(Some((
-                    existing_id,
-                    existing_text,
-                    _existing_status,
-                    existing_path,
-                    existing_line,
-                ))) => {
-                    match self.update_existing_finding(
-                        finding,
-                        existing_id,
-                        &existing_text,
-                        &existing_path,
-                        existing_line,
-                    ) {
-                        Ok(Some("updated")) => updated_count += 1,
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::error!("DB error updating finding {}: {e}", finding.external_id);
-                            error_count += 1;
-                        }
-                    }
-                    continue;
-                }
-                Ok(None) => {} // New finding — fall through to insert
-                Err(e) => {
-                    log::error!(
-                        "DB error looking up source ref {}: {e}",
-                        finding.external_id
-                    );
-                    error_count += 1;
-                    continue;
-                }
-            }
-            match self.db.insert_cue_from_source(
-                &finding.text,
-                "PR Review",
-                "",
-                &finding.external_id,
-                &finding.file_path,
-                finding.line_number,
-            ) {
-                Ok(id) => {
-                    if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
-                        log::error!("DB error tagging new cue {id}: {e}");
-                        error_count += 1;
-                    } else {
-                        new_count += 1;
-                    }
-                }
-                Err(e) => {
-                    log::error!("DB error inserting finding {}: {e}", finding.external_id);
-                    error_count += 1;
-                }
-            }
-        }
-        (new_count, updated_count, error_count)
-    }
-
-    /// Handle a single existing finding: update text/location if changed.
-    /// Returns `Ok(Some("updated"))` when the cue was updated and reset to Inbox,
-    /// `Ok(None)` when no change was needed, or `Err` if a DB write failed.
-    ///
-    /// Done/Archived cues are left alone when their text and location match —
-    /// only actual content changes from the PR reviewer warrant a re-open.
-    fn update_existing_finding(
-        &mut self,
-        finding: &crate::sources::PrFinding,
-        existing_id: i64,
-        existing_text: &str,
-        existing_path: &str,
-        existing_line: usize,
-    ) -> anyhow::Result<Option<&'static str>> {
-        let clean_existing = crate::sources::strip_html_tags(existing_text);
-        let clean_finding = crate::sources::strip_html_tags(&finding.text);
-        let text_changed = crate::sources::strip_pr_context_hint(&clean_existing)
-            != crate::sources::strip_pr_context_hint(&clean_finding);
-        let location_changed =
-            existing_path != finding.file_path || existing_line != finding.line_number;
-        if text_changed || location_changed {
-            // Text or location changed: update and reset to Inbox
-            self.db.update_cue_by_source_ref(
-                &finding.external_id,
-                &finding.text,
-                &finding.file_path,
-                finding.line_number,
-            )?;
-            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
-            self.log_cue_activity(existing_id, "PR comment updated, reset to Inbox");
-            Ok(Some("updated"))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Build a human-readable summary of finding counts.
-    fn build_findings_summary(new_count: usize, updated_count: usize) -> String {
-        let mut parts = Vec::new();
-        if new_count > 0 {
-            parts.push(format!("{} new", new_count));
-        }
-        if updated_count > 0 {
-            parts.push(format!("{} updated", updated_count));
-        }
-        format!("{} finding(s)", parts.join(", "))
+        self.set_status_message(pr_import_status(&pr_number, &tag, findings.len(), &counts));
     }
 
     /// Notify a single PR comment that a finding was fixed.
@@ -1115,10 +999,22 @@ impl DirigentApp {
     }
 
     /// Open the Commit dialog (jj only).
+    ///
+    /// Refuses to discard a change-set queue the user is still working through:
+    /// this used to clear it unconditionally, so picking "Commit" from the menu
+    /// mid-queue silently threw away every remaining group.
     pub(super) fn open_commit_dialog(&mut self) {
+        if !self.git.commit_queue.is_empty() {
+            // Reopen on the current group instead of resetting to a single commit.
+            self.dialogs.open(DialogId::Commit);
+            self.git.commit_needs_focus = true;
+            self.set_status_message(
+                "A split-commit queue is in progress — showing the current group".into(),
+            );
+            return;
+        }
         self.git.commit_message_input.clear();
         self.git.commit_review_cue_id = None;
-        self.git.commit_queue.clear();
         self.git.commit_queue_pos = 0;
         self.git.commit_needs_focus = true;
         self.dialogs.open(DialogId::Commit);
@@ -1146,33 +1042,20 @@ impl DirigentApp {
         // Resolve the diff to commit:
         // - a reviewed cue commits its stored execution diff;
         // - a Git-view selection or a queued change-set group commits only those
-        //   files (path-scoped diff);
+        //   files (path-scoped diff, computed on the worker thread below —
+        //   `git diff` over many paths is slow enough to stutter the UI);
         // - otherwise the whole working copy is committed (`commit_all`).
-        let diff_text = if let Some(id) = review_cue_id {
+        let stored_diff = review_cue_id.and_then(|id| {
             self.db
                 .get_latest_execution(id)
                 .ok()
                 .flatten()
                 .and_then(|e| e.diff)
-        } else if !selected_files.is_empty() {
-            // Staged-inclusive diff: files fully staged via the Stage button
-            // must stay committable, and `commit_diff` only needs the paths.
-            let diff = super::vcs_dispatch::get_uncommitted_diff(
-                &self.settings.vcs_backend,
-                &self.settings.jj_cli_path,
-                &self.project_root,
-                &selected_files,
-            )
-            .filter(|d| !d.trim().is_empty());
-            match diff {
-                Some(d) => Some(d),
-                None => {
-                    self.set_status_message("No changes to commit for the selected files".into());
-                    return;
-                }
-            }
+        });
+        let scope_files = if review_cue_id.is_none() {
+            selected_files.clone()
         } else {
-            None
+            Vec::new()
         };
 
         self.dialogs.close(DialogId::Commit);
@@ -1181,6 +1064,28 @@ impl DirigentApp {
         let jj_path = self.settings.jj_cli_path.clone();
         let active_bm = self.git.active_bookmark.clone();
         self.git.commit_op.spawn(move || {
+            let diff_text = match stored_diff {
+                Some(d) => Some(d),
+                None if !scope_files.is_empty() => {
+                    // Staged-inclusive diff: files fully staged via the Stage
+                    // button must stay committable, and `commit_diff` only
+                    // needs the paths.
+                    let diff = super::vcs_dispatch::get_uncommitted_diff(
+                        &backend,
+                        &jj_path,
+                        &root,
+                        &scope_files,
+                    )
+                    .filter(|d| !d.trim().is_empty());
+                    match diff {
+                        Some(d) => Some(d),
+                        None => {
+                            return Err("No changes to commit for the selected files".to_string())
+                        }
+                    }
+                }
+                None => None,
+            };
             let result = if let Some(ref diff) = diff_text {
                 super::vcs_dispatch::commit_diff(
                     &backend,

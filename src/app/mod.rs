@@ -217,9 +217,20 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
     }
 }
 
+/// The on-disk database could not be opened; the app is running on an
+/// in-memory fallback. See `app::dialog::db_error`.
+#[derive(Clone, Debug)]
+pub(crate) struct DbOpenError {
+    pub message: String,
+}
+
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
+    /// Set when the on-disk database could not be opened at startup and `db`
+    /// is a throwaway in-memory fallback. Drives the recovery dialog; nothing
+    /// is persisted while this is `Some`.
+    db_open_error: Option<DbOpenError>,
 
     // File tree
     file_tree: Option<FileTree>,
@@ -443,6 +454,8 @@ pub struct DirigentApp {
 
     // Pending file/directory delete confirmation (path, is_dir)
     pending_file_delete: Option<(PathBuf, bool)>,
+    /// A hunk discard awaiting confirmation (see `hunk_staging`).
+    pending_hunk_discard: Option<hunk_staging::PendingHunkDiscard>,
 
     // Inline rename in file tree
     rename_target: Option<PathBuf>,
@@ -487,6 +500,9 @@ pub struct DirigentApp {
     // working tree into logical change sets via the CLI, then feeds them to the
     // commit dialog's queue.
     change_set_op: AsyncOp<change_set_analysis::ChangeSetResult>,
+    /// A queued change-set group being committed. `Ok` carries the paths whose
+    /// hunk mapping failed and were committed whole.
+    partial_commit_op: AsyncOp<Result<Vec<String>, String>>,
     /// Cancellation flag for the in-flight change-set CLI run.
     change_set_cancel: Arc<AtomicBool>,
 
@@ -741,9 +757,24 @@ fn initial_worktrees(project_root: &Path, settings: &Settings) -> Vec<git::Workt
 
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
-        let db = Database::open(&project_root).expect("failed to open database");
+        // A locked, corrupt or permission-denied database used to panic here,
+        // killing the app before any UI existed to explain why. Fall back to an
+        // in-memory database so the window opens, and surface a recovery dialog
+        // (see `render_db_error_dialog`). If even that fails the process is
+        // unusable and panicking is the honest outcome.
+        let (db, db_open_error) = match Database::open(&project_root) {
+            Ok(db) => (db, None),
+            Err(e) => {
+                let message = format!("{e:#}");
+                log::error!("Failed to open database at {project_root:?}: {message}");
+                let db = Database::open_in_memory()
+                    .expect("in-memory database fallback must be constructible");
+                (db, Some(DbOpenError { message }))
+            }
+        };
         let settings_load = settings::load_settings(&project_root);
         let pending_trust = settings_load.pending_trust;
+        let settings_warning = settings_load.warning;
         let mut settings = settings_load.settings;
         // Apply one-time settings migrations (e.g. updated default plays).
         if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
@@ -840,6 +871,7 @@ impl DirigentApp {
         let mut app = DirigentApp {
             project_root,
             db,
+            db_open_error,
             file_tree,
             expanded_dirs: HashSet::new(),
             file_tree_tx,
@@ -960,6 +992,8 @@ impl DirigentApp {
                 graph_view_rows: Vec::new(),
                 graph_view_max_lanes: 0,
                 graph_view_limit: 100,
+                graph_view_exhausted: false,
+                graph_view_last_load: None,
                 graph_view_hovered_row: None,
             },
             settings,
@@ -1065,6 +1099,7 @@ impl DirigentApp {
             cue_warnings: HashMap::new(),
 
             pending_file_delete: None,
+            pending_hunk_discard: None,
 
             rename_target: None,
             rename_buffer: String::new(),
@@ -1088,6 +1123,7 @@ impl DirigentApp {
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
             change_set_op: AsyncOp::default(),
+            partial_commit_op: AsyncOp::default(),
             change_set_cancel: Arc::new(AtomicBool::new(false)),
 
             analyze_over_base: String::new(),
@@ -1123,6 +1159,9 @@ impl DirigentApp {
             mermaid_dialog: None,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        if let Some(warning) = settings_warning {
+            app.set_status_message(warning);
+        }
         if !skip_scan {
             app.maybe_detect_pr();
         }
@@ -1484,6 +1523,7 @@ impl eframe::App for DirigentApp {
 
         // Poll for change-set analysis results
         self.process_change_set_result();
+        self.process_partial_commit_result();
 
         // Poll for cross-branch range analysis results
         self.process_analyze_over_result();
@@ -1567,6 +1607,9 @@ impl Drop for DirigentApp {
         self.change_set_cancel.store(true, Ordering::SeqCst);
         self.analyze_over_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
+        // Agents run on their own threads with their own process groups; without
+        // this, quitting mid-run orphaned the whole tree.
+        self.agent_state.shutdown();
     }
 }
 

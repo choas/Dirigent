@@ -777,6 +777,13 @@ pub(crate) struct GitState {
     pub(super) graph_view_limit: usize,
     /// Row hovered in the full graph view (previous frame).
     pub(super) graph_view_hovered_row: Option<usize>,
+    /// True once a graph-view reload returned fewer commits than it asked for:
+    /// the whole history is loaded and there is nothing more to fetch.
+    pub(super) graph_view_exhausted: bool,
+    /// When the graph view last grew its window. Auto-load-more fires while the
+    /// viewport sits near the bottom, which is *every frame* — without this
+    /// debounce a large repo re-walks its entire history 60 times a second.
+    pub(super) graph_view_last_load: Option<std::time::Instant>,
 }
 
 impl GitState {

@@ -11,7 +11,11 @@ use super::types::{AgentConfig, AgentKind, AgentStatus, AgentTrigger};
 // Trigger agents matching a given trigger condition
 // ---------------------------------------------------------------------------
 
-/// Spawn agents that match the given trigger. Returns the number of agents started.
+/// Spawn agents that match the given trigger.
+///
+/// Returns the spawned threads' handles so the caller can track them; they must
+/// be joinable at shutdown, or quitting mid-run orphans the agents' process
+/// trees.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn trigger_agents(
     agents: &[AgentConfig],
@@ -23,8 +27,8 @@ pub(crate) fn trigger_agents(
     tx: &mpsc::Sender<AgentResult>,
     statuses: &mut HashMap<AgentKind, AgentStatus>,
     cancel_flags: &mut HashMap<AgentKind, Arc<AtomicBool>>,
-) -> usize {
-    let mut count = 0;
+) -> Vec<std::thread::JoinHandle<()>> {
+    let mut handles = Vec::new();
     for config in agents {
         if !config.enabled {
             continue;
@@ -50,11 +54,9 @@ pub(crate) fn trigger_agents(
         let prompt = prompt.to_string();
         let tx = tx.clone();
 
-        std::thread::spawn(move || {
+        handles.push(std::thread::spawn(move || {
             run_agent(&config, &root, &init, cue_id, &prompt, &tx, &cancel);
-        });
-
-        count += 1;
+        }));
     }
-    count
+    handles
 }

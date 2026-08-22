@@ -122,6 +122,11 @@ fn validate_shell_init(init: &str) -> bool {
 pub(crate) struct SettingsLoad {
     pub settings: Settings,
     pub pending_trust: Option<PendingTrust>,
+    /// Set when the settings file existed but could not be used, so every
+    /// preference silently fell back to its default. The caller surfaces this
+    /// in the status bar — the failure mode it describes (all configuration
+    /// gone, no explanation) is otherwise indistinguishable from a bug.
+    pub warning: Option<String>,
 }
 
 /// An unapproved execution-capable field set from `.Dirigent/settings.json`.
@@ -136,13 +141,12 @@ pub(crate) struct PendingTrust {
 
 pub(crate) fn load_settings(project_root: &Path) -> SettingsLoad {
     let path = project_root.join(".Dirigent").join("settings.json");
-    let file_value: Option<serde_json::Value> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|contents| serde_json::from_str(&contents).ok());
+    let (file_value, mut warning) = read_settings_file(&path);
     let check = trust::evaluate(project_root, file_value.as_ref());
 
     if check.trusted {
-        let mut settings = settings_from_value(file_value);
+        let (mut settings, deser_warning) = settings_from_value(file_value, &path);
+        warning = warning.or(deser_warning);
         finalize_settings(project_root, &mut settings);
         if normalize_lsp_env_vars(&mut settings) {
             save_settings_after_env_migration(project_root, &settings);
@@ -150,6 +154,7 @@ pub(crate) fn load_settings(project_root: &Path) -> SettingsLoad {
         return SettingsLoad {
             settings,
             pending_trust: None,
+            warning,
         };
     }
 
@@ -158,12 +163,19 @@ pub(crate) fn load_settings(project_root: &Path) -> SettingsLoad {
     // default until the user approves it, and `--dangerously-skip-permissions`
     // is forced off. The untrusted file is never written back to disk.
     let safe_value = file_value.as_ref().map(strip_gated_fields);
-    let mut settings = settings_from_value(safe_value);
+    let (mut settings, deser_warning) = settings_from_value(safe_value, &path);
+    warning = warning.or(deser_warning);
     finalize_settings(project_root, &mut settings);
     normalize_lsp_env_vars(&mut settings);
     settings.allow_dangerous_skip_permissions = false;
+    // Belt and braces: the hook-script fields are gated, so `strip_gated_fields`
+    // has already blanked them — but marking the whole configuration untrusted
+    // means the backends refuse to execute hooks even if a future field escapes
+    // the strip.
+    settings.hooks_trusted = false;
 
-    let mut trusted_settings = settings_from_value(file_value);
+    // Same file, same error — the warning was already recorded above.
+    let (mut trusted_settings, _) = settings_from_value(file_value, &path);
     finalize_settings(project_root, &mut trusted_settings);
     normalize_lsp_env_vars(&mut trusted_settings);
 
@@ -174,13 +186,93 @@ pub(crate) fn load_settings(project_root: &Path) -> SettingsLoad {
             fields: check.fields,
             trusted_settings,
         }),
+        warning,
     }
 }
 
-fn settings_from_value(value: Option<serde_json::Value>) -> Settings {
-    value
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
+/// Read and parse `settings.json`, returning the parsed value plus a warning
+/// when the file exists but is unusable.
+///
+/// An unparseable file is renamed to `settings.json.bak-<timestamp>` before
+/// defaults take over. Without that, the next `save_settings` overwrites the
+/// broken file with defaults and whatever the user had configured — possibly a
+/// hand-edited file with one stray comma — is gone for good.
+fn read_settings_file(path: &Path) -> (Option<serde_json::Value>, Option<String>) {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None),
+        Err(e) => {
+            let msg = format!(
+                "Could not read {}: {e}. Using default settings.",
+                filename(path)
+            );
+            log::warn!("[settings] {msg}");
+            return (None, Some(msg));
+        }
+    };
+    match serde_json::from_str(&contents) {
+        Ok(value) => (Some(value), None),
+        Err(e) => {
+            let backup = backup_broken_settings(path);
+            let msg = match backup {
+                Some(name) => format!(
+                    "{} is not valid JSON ({e}). It was saved as {name} and default settings are in use.",
+                    filename(path)
+                ),
+                None => format!(
+                    "{} is not valid JSON ({e}). Default settings are in use — fix or remove the file to keep your configuration.",
+                    filename(path)
+                ),
+            };
+            log::warn!("[settings] {msg}");
+            (None, Some(msg))
+        }
+    }
+}
+
+/// Rename the unusable settings file out of the way. Returns the backup file
+/// name on success.
+fn backup_broken_settings(path: &Path) -> Option<String> {
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let backup = path.with_file_name(format!("{}.bak-{stamp}", filename(path)));
+    match std::fs::rename(path, &backup) {
+        Ok(()) => Some(filename(&backup)),
+        Err(e) => {
+            log::warn!("[settings] could not back up {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+fn filename(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Deserialize `Settings` from an already-parsed JSON value.
+///
+/// Valid JSON that does not fit the schema (a string where a number belongs,
+/// say) fails the *whole* deserialize, so this reports rather than silently
+/// resetting. The file is left alone here — it is valid JSON the user can fix.
+fn settings_from_value(
+    value: Option<serde_json::Value>,
+    path: &Path,
+) -> (Settings, Option<String>) {
+    let Some(value) = value else {
+        return (Settings::default(), None);
+    };
+    match serde_json::from_value(value) {
+        Ok(settings) => (settings, None),
+        Err(e) => {
+            let msg = format!(
+                "{} could not be applied ({e}). Default settings are in use.",
+                filename(path)
+            );
+            log::warn!("[settings] {msg}");
+            (Settings::default(), Some(msg))
+        }
+    }
 }
 
 fn strip_gated_fields(value: &serde_json::Value) -> serde_json::Value {
@@ -290,4 +382,76 @@ pub(crate) fn save_settings(project_root: &Path, settings: &Settings) -> Result<
         trust::record_settings_state(project_root, &value);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_settings(dir: &Path, contents: &str) -> std::path::PathBuf {
+        let d = dir.join(".Dirigent");
+        std::fs::create_dir_all(&d).expect("create .Dirigent");
+        let path = d.join("settings.json");
+        std::fs::write(&path, contents).expect("write settings");
+        path
+    }
+
+    #[test]
+    fn missing_settings_file_is_not_a_warning() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (value, warning) = read_settings_file(&dir.path().join("settings.json"));
+        assert!(value.is_none());
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+    }
+
+    #[test]
+    fn corrupt_settings_file_is_backed_up_and_reported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_settings(dir.path(), "{ \"theme\": \"Dracula\", }}} not json");
+
+        let (value, warning) = read_settings_file(&path);
+
+        assert!(value.is_none());
+        let warning = warning.expect("corrupt settings must produce a warning");
+        assert!(warning.contains("not valid JSON"), "got: {warning}");
+        assert!(
+            !path.exists(),
+            "the corrupt file must be moved aside, not left to be overwritten"
+        );
+
+        let backups: Vec<_> = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("read dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("settings.json.bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "expected exactly one backup: {backups:?}");
+    }
+
+    #[test]
+    fn valid_settings_file_parses_without_warning() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_settings(dir.path(), r#"{"font_size": 15.0}"#);
+        let (value, warning) = read_settings_file(&path);
+        assert!(value.is_some());
+        assert!(warning.is_none(), "unexpected warning: {warning:?}");
+        assert!(path.exists(), "a valid file must be left alone");
+    }
+
+    /// Valid JSON that does not fit the schema is reported rather than
+    /// silently resetting every preference — but the file is left in place,
+    /// since the user can fix it by hand.
+    #[test]
+    fn schema_mismatch_is_reported_without_backup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_settings(dir.path(), r#"{"font_size": "not a number"}"#);
+        let (value, read_warning) = read_settings_file(&path);
+        assert!(read_warning.is_none(), "JSON itself is valid");
+
+        let (settings, warning) = settings_from_value(value, &path);
+        let warning = warning.expect("schema mismatch must produce a warning");
+        assert!(warning.contains("could not be applied"), "got: {warning}");
+        assert_eq!(settings.font_size, Settings::default().font_size);
+        assert!(path.exists(), "valid JSON must not be moved aside");
+    }
 }

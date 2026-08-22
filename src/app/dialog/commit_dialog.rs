@@ -465,19 +465,6 @@ impl DirigentApp {
         } else {
             self.git.commit_files.clone()
         };
-        // Staged-inclusive: the draft describes what the commit will contain,
-        // which for Git includes changes already moved to the index.
-        let diff = crate::app::vcs_dispatch::get_uncommitted_diff(
-            &self.settings.vcs_backend,
-            &self.settings.jj_cli_path,
-            &self.project_root,
-            &files,
-        );
-        let Some(diff) = diff.filter(|d| !d.trim().is_empty()) else {
-            self.set_status_message("No changes to summarize.".to_string());
-            return;
-        };
-
         // A fresh run supersedes any suggestion still in flight; its late
         // result is discarded by the cancel below.
         self.git.commit_suggest_op.cancel();
@@ -490,39 +477,51 @@ impl DirigentApp {
         self.git.commit_suggest_cancel = cancel.clone();
         let ctx = self.egui_ctx.clone();
 
-        if let Some(config) =
-            crate::fast_llm::FastLlmConfig::from_settings(&self.settings, &self.project_root)
-        {
-            // Fast LLM path: a quick, local OpenAI-compatible completion.
-            std::thread::spawn(move || {
-                let result = crate::fast_llm::summarize_commit_message(&config, &diff);
-                let _ = tx.send(result);
-                if let Some(c) = ctx.get() {
-                    c.request_repaint();
-                }
-            });
-        } else {
-            // CLI fallback: run the Claude CLI headlessly with a summary prompt.
-            let project_root = self.project_root.clone();
-            let model = self.settings.claude_model.clone();
-            let cli_path = self.settings.claude_cli_path.clone();
-            let extra_args = self.settings.claude_extra_args.clone();
-            let env_vars = self.settings.claude_env_vars.clone();
-            std::thread::spawn(move || {
-                let result = crate::claude::summarize_commit_message_via_cli(
-                    &diff,
-                    &project_root,
-                    &model,
-                    &cli_path,
-                    &extra_args,
-                    &env_vars,
-                    cancel,
-                );
-                let _ = tx.send(result);
-                if let Some(c) = ctx.get() {
-                    c.request_repaint();
-                }
-            });
-        }
+        let fast_config =
+            crate::fast_llm::FastLlmConfig::from_settings(&self.settings, &self.project_root);
+        let project_root = self.project_root.clone();
+        let vcs_backend = self.settings.vcs_backend.clone();
+        let jj_cli_path = self.settings.jj_cli_path.clone();
+        let model = self.settings.claude_model.clone();
+        let cli_path = self.settings.claude_cli_path.clone();
+        let extra_args = self.settings.claude_extra_args.clone();
+        let env_vars = self.settings.claude_env_vars.clone();
+
+        std::thread::spawn(move || {
+            // Computing the diff spawns git subprocesses over every changed
+            // file; doing it before the spawn froze the UI for the whole
+            // duration on large working trees.
+            //
+            // Staged-inclusive: the draft describes what the commit will
+            // contain, which for Git includes changes already in the index.
+            let diff = crate::app::vcs_dispatch::get_uncommitted_diff(
+                &vcs_backend,
+                &jj_cli_path,
+                &project_root,
+                &files,
+            )
+            .filter(|d| !d.trim().is_empty());
+            let result = match diff {
+                None => Err("No changes to summarize.".to_string()),
+                Some(diff) => match fast_config {
+                    // Fast LLM path: a quick, local OpenAI-compatible completion.
+                    Some(config) => crate::fast_llm::summarize_commit_message(&config, &diff),
+                    // CLI fallback: the Claude CLI headless with a summary prompt.
+                    None => crate::claude::summarize_commit_message_via_cli(
+                        &diff,
+                        &project_root,
+                        &model,
+                        &cli_path,
+                        &extra_args,
+                        &env_vars,
+                        cancel,
+                    ),
+                },
+            };
+            let _ = tx.send(result);
+            if let Some(c) = ctx.get() {
+                c.request_repaint();
+            }
+        });
     }
 }

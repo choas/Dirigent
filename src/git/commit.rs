@@ -303,13 +303,11 @@ pub(crate) fn commit_partial(
 }
 
 pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::error::Result<()> {
-    use std::process::Command;
-
     if file_paths.is_empty() {
         return Ok(());
     }
 
-    let mut cmd = Command::new("git");
+    let mut cmd = super::git_cmd();
     cmd.arg("checkout").arg("--");
     for f in file_paths {
         cmd.arg(f);
@@ -326,10 +324,8 @@ pub(crate) fn revert_files(repo_path: &Path, file_paths: &[String]) -> crate::er
 
 /// Stage all changes (tracked + untracked) and commit with the given message.
 pub(crate) fn commit_all(repo_path: &Path, commit_message: &str) -> crate::error::Result<String> {
-    use std::process::Command;
-
     // Stage all changes including untracked files
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["add", "-A"])
         .current_dir(repo_path)
         .output()?;
@@ -544,8 +540,6 @@ const CONVENTIONAL_TYPES: &[&str] = &[
 /// `-u origin <branch>` to set up tracking.
 /// Returns the remote name and branch that was pushed (e.g. "origin/main").
 pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
-    use std::process::Command;
-
     // Determine current branch
     let repo = Repository::discover(repo_path)?;
     let head = repo
@@ -564,7 +558,7 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
         .is_some();
 
     let output = if has_upstream {
-        Command::new("git")
+        super::git_cmd()
             .args(["push", "--porcelain", "--follow-tags"])
             .current_dir(repo_path)
             .output()?
@@ -574,7 +568,7 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
         let remote_name = remotes.iter().flatten().next().ok_or_else(|| {
             DirigentError::GitCommand("no remotes configured for repository".to_string())
         })?;
-        Command::new("git")
+        super::git_cmd()
             .args([
                 "push",
                 "-u",
@@ -613,8 +607,6 @@ pub(crate) fn git_push(repo_path: &Path) -> crate::error::Result<String> {
 /// Pull the current branch from its remote (typically `origin`).
 /// Returns a summary string describing the result.
 pub(crate) fn git_pull(repo_path: &Path, strategy: PullStrategy) -> crate::error::Result<String> {
-    use std::process::Command;
-
     // Determine current branch
     let repo = Repository::discover(repo_path)?;
     let head = repo
@@ -638,7 +630,7 @@ pub(crate) fn git_pull(repo_path: &Path, strategy: PullStrategy) -> crate::error
         PullStrategy::Rebase => vec!["-c", "pull.rebase=true", "pull", "--rebase"],
     };
 
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(&args)
         .current_dir(repo_path)
         .output()?;
@@ -675,8 +667,6 @@ pub(crate) fn move_to_new_branch(
     repo_path: &Path,
     new_branch_name: &str,
 ) -> crate::error::Result<String> {
-    use std::process::Command;
-
     let repo = Repository::discover(repo_path)?;
 
     // Determine the current branch name
@@ -720,7 +710,7 @@ pub(crate) fn move_to_new_branch(
     }
 
     // Create the new branch at current HEAD
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["branch", "--", new_branch_name])
         .current_dir(repo_path)
         .output()?;
@@ -731,7 +721,7 @@ pub(crate) fn move_to_new_branch(
     }
 
     // Reset current branch back to the remote
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["reset", "--hard", &remote_ref])
         .current_dir(repo_path)
         .output()?;

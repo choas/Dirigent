@@ -74,7 +74,7 @@ pub(crate) fn stage_files(repo_path: &Path, files: &[String]) -> crate::error::R
     if files.is_empty() {
         return Ok(());
     }
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = super::git_cmd();
     cmd.arg("add").arg("--");
     for f in files {
         cmd.arg(f);
@@ -87,7 +87,7 @@ pub(crate) fn stage_files(repo_path: &Path, files: &[String]) -> crate::error::R
 pub(crate) fn merge_abort(repo_path: &Path) -> crate::error::Result<()> {
     run_git(
         repo_path,
-        std::process::Command::new("git").args(["merge", "--abort"]),
+        super::git_cmd().args(["merge", "--abort"]),
         "git merge --abort",
     )?;
     Ok(())
@@ -97,7 +97,7 @@ pub(crate) fn merge_abort(repo_path: &Path) -> crate::error::Result<()> {
 pub(crate) fn rebase_abort(repo_path: &Path) -> crate::error::Result<()> {
     run_git(
         repo_path,
-        std::process::Command::new("git").args(["rebase", "--abort"]),
+        super::git_cmd().args(["rebase", "--abort"]),
         "git rebase --abort",
     )?;
     Ok(())
@@ -108,7 +108,7 @@ pub(crate) fn merge_continue(repo_path: &Path) -> crate::error::Result<String> {
     // git commit with no message flag — git will use the auto-generated merge message
     let stdout = run_git(
         repo_path,
-        std::process::Command::new("git").args(["commit", "--no-edit"]),
+        super::git_cmd().args(["commit", "--no-edit"]),
         "git commit",
     )?;
     Ok(stdout
@@ -123,7 +123,7 @@ pub(crate) fn merge_continue(repo_path: &Path) -> crate::error::Result<String> {
 pub(crate) fn rebase_continue(repo_path: &Path) -> crate::error::Result<String> {
     let stdout = run_git(
         repo_path,
-        std::process::Command::new("git")
+        super::git_cmd()
             .args(["rebase", "--continue"])
             .env("GIT_EDITOR", "true"), // skip editor for commit message
         "git rebase --continue",

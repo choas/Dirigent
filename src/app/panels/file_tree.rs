@@ -35,6 +35,11 @@ pub(super) enum FileTreeAction {
     RenameStart(PathBuf),
 }
 
+/// Minimum gap between automatic graph-view history loads. Long enough that a
+/// stationary viewport cannot trigger back-to-back revwalks, short enough that
+/// fast scrolling still feels continuous.
+const GRAPH_VIEW_LOAD_MORE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
+
 impl DirigentApp {
     pub(in super::super) fn render_file_tree_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("file_tree")
@@ -314,6 +319,8 @@ impl DirigentApp {
         self.dismiss_central_overlays();
         self.git.show_graph_view = true;
         self.git.graph_view_limit = 100;
+        self.git.graph_view_exhausted = false;
+        self.git.graph_view_last_load = None;
         self.reload_graph_view_history();
     }
 
@@ -330,9 +337,36 @@ impl DirigentApp {
                     crate::git::read_commit_history(&self.project_root, limit);
             }
         }
+        // Fewer commits than asked for means the walk hit the root: there is
+        // nothing left to load, so stop the auto-load-more from re-walking.
+        self.git.graph_view_exhausted = self.git.graph_view_commits.len() < limit;
+        self.git.graph_view_last_load = Some(std::time::Instant::now());
         let (rows, max_lanes) = crate::git::graph::compute_graph(&self.git.graph_view_commits);
         self.git.graph_view_rows = rows;
         self.git.graph_view_max_lanes = max_lanes;
+    }
+
+    /// Grow the graph view's window, at most once per
+    /// [`GRAPH_VIEW_LOAD_MORE_INTERVAL`].
+    ///
+    /// The auto-load-more trigger is "the viewport is near the bottom", which
+    /// stays true for every frame after a load completes. Unthrottled, that
+    /// meant a full libgit2 revwalk plus graph layout *per frame* — quadratic
+    /// work and visible stutter for anyone parked at the bottom of a large
+    /// repository.
+    pub(in crate::app) fn maybe_load_more_graph_view_history(&mut self) {
+        if self.git.graph_view_exhausted {
+            return;
+        }
+        let recent = self
+            .git
+            .graph_view_last_load
+            .is_some_and(|t| t.elapsed() < GRAPH_VIEW_LOAD_MORE_INTERVAL);
+        if recent {
+            return;
+        }
+        self.git.graph_view_limit += 100;
+        self.reload_graph_view_history();
     }
 
     /// Render individual commit entries inside the git log scroll area.

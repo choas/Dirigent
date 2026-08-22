@@ -6,6 +6,7 @@ mod create_bookmark;
 mod create_pr;
 mod cue_agent_runs;
 mod custom_theme;
+mod db_error;
 mod delete_bookmark;
 mod diff_review;
 mod error_dialog;

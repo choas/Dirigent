@@ -18,9 +18,16 @@
 //! Before this trait existed each backend hand-rolled its own ordering, which
 //! diverged four ways (Claude always ran the post-run hook, Gemini/OpenCode
 //! returned `Cancelled` before it, Codex ran it and then checked cancel) and
-//! left Claude runs with all-zero metrics. The per-backend decisions that
-//! remain — hook-script trust and response-diff parsing — are declared on the
-//! impls below so all four are visible side by side.
+//! left Claude runs with all-zero metrics.
+//!
+//! Hook-script trust used to be a per-backend decision too, and diverged the
+//! same way: Codex refused every script (breaking the backend outright when one
+//! was configured) while the other three handed identical config to `sh -c`
+//! unconditionally. It is now a property of the *configuration source*
+//! ([`BackendRequest::hook_trust`], set from `settings::trust`) and enforced in
+//! one place, [`ai_process::run_hook_script`]. Response-diff parsing is the only
+//! per-backend decision that remains, declared on the impls below so all four
+//! are visible side by side.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,13 +46,21 @@ use crate::settings::CliProvider;
 pub(crate) type LogFn = Box<dyn FnMut(&str) + Send + 'static>;
 pub(crate) type SharedLog = Arc<Mutex<LogFn>>;
 
-/// How much a backend trusts pre/post-run hook scripts, which typically come
-/// from project-local settings an attacker-controlled repository can supply.
+/// How much the *configuration source* is trusted for pre/post-run hook
+/// scripts, which come from a `.Dirigent/settings.json` an attacker-controlled
+/// repository can supply.
+///
+/// This is a property of where the settings came from, not of which backend is
+/// running — the same configuration must get the same treatment from all four.
+/// `settings::trust` makes the decision; [`BackendRequest::hook_trust`] carries
+/// it, and `ai_process::run_hook_script` is the single place it is enforced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HookScriptTrust {
-    /// Scripts originate from project-local configuration and are NOT trusted.
+    /// Scripts originate from project-local configuration the user has not
+    /// approved. They are skipped, never executed — and never fatal.
     ProjectLocal,
-    /// Scripts were vetted by the user and may be executed (after validation).
+    /// The user approved this repository's execution-capable settings, so the
+    /// scripts may run.
     Trusted,
 }
 
@@ -77,7 +92,6 @@ pub(crate) enum BackendError {
         backend: &'static str,
         args: String,
     },
-    HookRejected(String),
 }
 
 impl std::error::Error for BackendError {}
@@ -107,7 +121,6 @@ impl std::fmt::Display for BackendError {
                     "failed to parse {backend} extra_args (unmatched quote?): {args}"
                 )
             }
-            BackendError::HookRejected(msg) => write!(f, "hook script rejected: {msg}"),
         }
     }
 }
@@ -126,6 +139,9 @@ pub(crate) struct BackendRequest<'a> {
     pub env_vars: &'a str,
     pub pre_run_script: &'a str,
     pub post_run_script: &'a str,
+    /// Whether the settings the hook scripts came from were approved by the
+    /// user. See [`HookScriptTrust`].
+    pub hook_trust: HookScriptTrust,
     pub skip_permissions: bool,
     pub use_pty: bool,
 }
@@ -169,31 +185,35 @@ pub(crate) trait AiBackend: Sync {
     /// CLI name used in error messages ("claude", "gemini", …).
     fn cli_name(&self) -> &'static str;
 
-    /// The backend's trust decision for pre/post-run hook scripts.
-    ///
-    /// KNOWN ASYMMETRY: only Codex treats hooks as untrusted project-local
-    /// input (they are validated and, being project-local, refused). Claude,
-    /// Gemini and OpenCode execute them with full `sh -c` shell semantics.
-    fn hook_script_trust(&self) -> HookScriptTrust;
-
     /// Parser used as the last-resort diff source for this backend's output.
     fn parse_diff_fn(&self) -> fn(&str) -> Option<String>;
 
-    /// Run a pre/post-run hook script. The default executes via `sh -c`;
-    /// Codex overrides this with its validating, no-shell runner.
+    /// Run a pre/post-run hook script.
+    ///
+    /// Not overridable in practice: the policy lives in
+    /// [`ai_process::run_hook_script`] so all four backends treat the same
+    /// configuration identically.
     fn run_hook(
         &self,
         label: &str,
         script: &str,
+        trust: HookScriptTrust,
         project_root: &Path,
         on_log: &SharedLog,
         fail_on_error: bool,
     ) -> Result<(), BackendError> {
-        ai_process::run_hook_with_locked_log(on_log, label, script, project_root, fail_on_error)
-            .map_err(|source| BackendError::SpawnFailed {
-                backend: self.cli_name(),
-                source,
-            })
+        ai_process::run_hook_with_locked_log(
+            on_log,
+            label,
+            script,
+            trust,
+            project_root,
+            fail_on_error,
+        )
+        .map_err(|source| BackendError::SpawnFailed {
+            backend: self.cli_name(),
+            source,
+        })
     }
 
     /// Backend-specific CLI invocation: spawn, stream, wait, interpret the
@@ -220,6 +240,7 @@ pub(crate) trait AiBackend: Sync {
         self.run_hook(
             "pre-run",
             req.pre_run_script,
+            req.hook_trust,
             req.project_root,
             &on_log,
             true,
@@ -235,6 +256,7 @@ pub(crate) trait AiBackend: Sync {
         let _ = self.run_hook(
             "post-run",
             req.post_run_script,
+            req.hook_trust,
             req.project_root,
             &on_log,
             false,
@@ -253,9 +275,9 @@ pub(crate) trait AiBackend: Sync {
             stdout: response.stdout,
             edited_files: response.edited_files,
             metrics: RunMetrics {
-                cost_usd: response.cost_usd.unwrap_or(0.0),
+                cost_usd: response.cost_usd,
                 duration_ms: response.duration_ms.unwrap_or(elapsed_ms),
-                num_turns: response.num_turns.unwrap_or(0),
+                num_turns: response.num_turns,
                 ..RunMetrics::default()
             },
             metadata: response.metadata,
@@ -289,10 +311,6 @@ impl AiBackend for ClaudeBackend {
         "claude"
     }
 
-    fn hook_script_trust(&self) -> HookScriptTrust {
-        HookScriptTrust::Trusted
-    }
-
     fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
         claude::parse_diff_from_response
     }
@@ -322,10 +340,6 @@ impl AiBackend for GeminiBackend {
         "gemini"
     }
 
-    fn hook_script_trust(&self) -> HookScriptTrust {
-        HookScriptTrust::Trusted
-    }
-
     fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
         claude::parse_diff_from_response
     }
@@ -349,10 +363,6 @@ impl AiBackend for OpenCodeBackend {
 
     fn cli_name(&self) -> &'static str {
         "opencode"
-    }
-
-    fn hook_script_trust(&self) -> HookScriptTrust {
-        HookScriptTrust::Trusted
     }
 
     fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
@@ -380,34 +390,8 @@ impl AiBackend for CodexBackend {
         "codex"
     }
 
-    fn hook_script_trust(&self) -> HookScriptTrust {
-        // Hook scripts arrive via project-local settings; Codex refuses them
-        // instead of handing them to a shell.
-        HookScriptTrust::ProjectLocal
-    }
-
     fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
         no_response_diff
-    }
-
-    fn run_hook(
-        &self,
-        label: &str,
-        script: &str,
-        project_root: &Path,
-        on_log: &SharedLog,
-        fail_on_error: bool,
-    ) -> Result<(), BackendError> {
-        ai_process::with_locked_log(on_log, label, |log| {
-            codex::run_hook_script(
-                label,
-                script,
-                self.hook_script_trust(),
-                project_root,
-                &mut **log,
-                fail_on_error,
-            )
-        })
     }
 
     fn invoke_cli(
@@ -454,10 +438,6 @@ mod tests {
             "stub"
         }
 
-        fn hook_script_trust(&self) -> HookScriptTrust {
-            HookScriptTrust::Trusted
-        }
-
         fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
             no_response_diff
         }
@@ -466,6 +446,7 @@ mod tests {
             &self,
             label: &str,
             _script: &str,
+            _trust: HookScriptTrust,
             _project_root: &Path,
             _on_log: &SharedLog,
             _fail_on_error: bool,
@@ -499,6 +480,7 @@ mod tests {
             env_vars: "",
             pre_run_script: "pre",
             post_run_script: "post",
+            hook_trust: HookScriptTrust::Trusted,
             skip_permissions: false,
             use_pty: false,
         }
@@ -559,8 +541,11 @@ mod tests {
             .expect("run should succeed");
 
         assert_eq!(outcome.stdout, "out");
-        assert_eq!(outcome.metrics.cost_usd, 0.0);
-        assert_eq!(outcome.metrics.num_turns, 3);
+        assert_eq!(
+            outcome.metrics.cost_usd, None,
+            "a backend that reports no cost must not record zero"
+        );
+        assert_eq!(outcome.metrics.num_turns, Some(3));
         // duration_ms is the measured wall clock — tiny but always stamped.
         assert!(outcome.metrics.duration_ms < 60_000);
     }

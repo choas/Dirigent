@@ -42,6 +42,9 @@ impl DirigentApp {
                 return;
             }
         };
+        // The new repo's database opened, so any startup failure of the old
+        // one no longer applies.
+        self.db_open_error = None;
         self.project_root = new_root.clone();
         match FileTree::scan(&self.project_root) {
             Ok(tree) => self.file_tree = Some(tree),
@@ -70,6 +73,7 @@ impl DirigentApp {
         let settings_load = settings::load_settings(&self.project_root);
         self.settings = settings_load.settings;
         self.pending_trust = settings_load.pending_trust;
+        let settings_warning = settings_load.warning;
         self.declined_trust_hash = None;
         self.settings.recent_repos = recent_repos;
         self.ensure_jj_colocated();
@@ -139,6 +143,13 @@ impl DirigentApp {
                 "Dirigent - {}",
                 folder
             )));
+        }
+
+        // Last, so it is not overwritten by the status messages the reloads
+        // above emit — a silently discarded settings.json is what the user
+        // most needs to know about after switching repos.
+        if let Some(warning) = settings_warning {
+            self.set_status_message(warning);
         }
     }
 

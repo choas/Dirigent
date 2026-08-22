@@ -213,15 +213,13 @@ fn process_event_stream(
     cancel: &AtomicBool,
     on_log: &mut impl FnMut(&str),
 ) -> Result<(String, Vec<String>, StreamMetrics), std::io::Error> {
-    use std::io::BufRead;
-
     let reader = std::io::BufReader::new(stdout_handle);
     let mut final_result = String::new();
     let mut edited_files: Vec<String> = Vec::new();
     let mut metrics = StreamMetrics::default();
     let mut accumulated_text = String::new();
 
-    for line_result in reader.lines() {
+    for line_result in ai_process::bounded_lines(reader) {
         if cancel.load(Ordering::Relaxed) {
             break;
         }

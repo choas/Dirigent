@@ -112,7 +112,9 @@ make dmg            # Create DMG (requires create-dmg)
 make notarize APPLE_ID=... TEAM_ID=...               # Submit for notarization
 ```
 
-Releases are also automated via GitHub Actions — pushing a `v*` tag triggers a workflow that builds, signs, notarizes, and publishes a DMG to GitHub Releases.
+Every push and pull request runs CI (`.github/workflows/ci.yml`): `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `cargo audit`. Run the same checks locally before pushing.
+
+Releases are automated via GitHub Actions — pushing a `v*` tag triggers a workflow that builds, signs, notarizes, and publishes a DMG to GitHub Releases.
 
 ## Usage
 
@@ -215,7 +217,11 @@ src/
 │   ├── background.rs         — Background task orchestration
 │   ├── change_set_analysis.rs — AI-grouped change sets and the commit queue
 │   ├── claude_code_name.rs   — Claude Code name running animation
-│   ├── claude_run.rs         — AI backend execution, streaming, conversation history
+│   ├── claude_run/           — AI backend execution, streaming, conversation history
+│   │   ├── mcp_inject.rs     — Injecting Dirigent's own MCP server into a run
+│   │   ├── provider_dispatch.rs — Cue → provider invocation (command prefix, config)
+│   │   ├── result_pipeline.rs   — Backend invocation and outcome → ClaudeResult
+│   │   └── run_diff.rs       — Pre-run baseline hashes, scoped run diff
 │   ├── dino.rs               — Dino running animation overlay
 │   ├── file_navigation.rs    — File open, tab management, navigation history
 │   ├── folder_compare.rs     — Folder comparison via git diff / external diff tool
@@ -310,6 +316,7 @@ src/
 │   ├── execution_ops.rs      — Execution record operations
 │   ├── migrations.rs         — Schema migrations
 │   ├── pattern_ops.rs        — Pattern/ignore operations
+│   ├── pr_finding_ops.rs     — PR review findings → cues (dedup, update, tag)
 │   ├── source_ops.rs         — Source-imported cue operations
 │   └── types.rs              — DB data types
 ├── git/                      — Git operations
@@ -346,7 +353,15 @@ src/
 │   └── theme.rs              — Theme definitions (20 themes)
 ├── sources/                  — External cue sources
 │   ├── custom.rs             — Custom shell command sources
-│   ├── external.rs           — GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP
+│   ├── external.rs           — Shared HTTP/token/shell helpers, `curl` preview builder
+│   ├── providers/            — One module per external source
+│   │   ├── asana.rs          — Asana project tasks
+│   │   ├── github.rs         — GitHub Issues via the `gh` CLI
+│   │   ├── notion.rs         — Notion search, query, pagination, block rendering
+│   │   ├── sentry.rs         — Sentry unresolved issues
+│   │   ├── slack.rs          — Slack channel history
+│   │   ├── sonarqube.rs      — SonarQube issues, hotspots, duplications
+│   │   └── trello.rs         — Trello board cards
 │   ├── finding_text.rs       — Finding text extraction and formatting
 │   ├── html.rs               — HTML content parsing
 │   ├── pr_comments.rs        — PR comment filtering (confirmation, summary detection)

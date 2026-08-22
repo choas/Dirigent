@@ -5,17 +5,21 @@ mod html;
 mod pr_comments;
 mod pr_feedback;
 mod pr_findings;
+mod providers;
 mod types;
 
 pub(crate) use custom::{collect_drained, drain_child_pipes, fetch_custom_command};
-pub(crate) use external::{
-    build_source_curl, fetch_asana_tasks, fetch_github_issues, fetch_notion_objects,
-    fetch_notion_tasks, fetch_sentry_issues, fetch_slack_messages, fetch_sonarqube_issues,
-    fetch_trello_cards, load_env_var, mark_notion_done,
-};
+pub(crate) use external::{build_source_curl, load_env_var};
 pub(crate) use html::strip_html_tags;
 pub(crate) use pr_feedback::notify_pr_finding_fixed;
 pub(crate) use pr_findings::{fetch_pr_findings, strip_pr_context_hint};
+pub(crate) use providers::asana::fetch_asana_tasks;
+pub(crate) use providers::github::fetch_github_issues;
+pub(crate) use providers::notion::{fetch_notion_objects, fetch_notion_tasks, mark_notion_done};
+pub(crate) use providers::sentry::fetch_sentry_issues;
+pub(crate) use providers::slack::fetch_slack_messages;
+pub(crate) use providers::sonarqube::fetch_sonarqube_issues;
+pub(crate) use providers::trello::fetch_trello_cards;
 pub(crate) use types::{NotionObject, PrFinding, SourceItem};
 
 use std::path::Path;

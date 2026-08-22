@@ -52,6 +52,9 @@ impl DirigentApp {
         // the *stripped* settings can equal the current in-memory state even
         // though the user still has to see the approval dialog.
         self.update_pending_trust(settings_load.pending_trust);
+        if let Some(warning) = settings_load.warning {
+            self.set_status_message(warning);
+        }
         let new_settings = settings_load.settings;
 
         // Compare ignoring in-memory-only fields (recent_repos may differ from disk)

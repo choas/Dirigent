@@ -16,5 +16,8 @@ regex = "1"
 which = "8"
 vt100 = "0.16"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

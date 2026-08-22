@@ -18,6 +18,21 @@ enum HunkOp {
     Discard,
 }
 
+/// A hunk discard awaiting the user's confirmation.
+///
+/// Discard sits one small button away from Stage and permanently removes the
+/// change from disk (`git apply --reverse`, or an outright file deletion for an
+/// untracked file). A misclick used to be unrecoverable, so it now needs an
+/// explicit confirmation *and* leaves a `git stash` undo point behind.
+pub(crate) struct PendingHunkDiscard {
+    pub file_idx: usize,
+    pub hunk_idx: usize,
+    /// Repository-relative path, shown in the confirmation.
+    pub display_path: String,
+    /// The hunk's `@@` header, shown so the user can tell which change it is.
+    pub header: String,
+}
+
 /// Build a single-hunk patch from a raw multi-file diff, addressing the hunk by
 /// (path, `@@` header). Exact header match first, then unambiguous new-side
 /// range overlap (via [`git::match_hunk_header`]); `None` when the file or hunk
@@ -31,12 +46,17 @@ fn hunk_patch_by_path_and_header(diff: &str, path: &str, header: &str) -> Option
 
 impl DirigentApp {
     /// Which of a parsed diff's files are partially staged (drives the `[-]` mark).
+    ///
+    /// One `git status` call for the whole repository, intersected with the
+    /// diff's files — not two `git diff` subprocesses per file, which turned a
+    /// 50-file diff into ~100 synchronous process spawns per staging refresh.
     pub(in crate::app) fn compute_partial_staged(&self, parsed: &ParsedDiff) -> Vec<String> {
+        let partial = git::partially_staged_files(&self.project_root);
         parsed
             .files
             .iter()
             .map(|f| f.display_path().to_string())
-            .filter(|p| git::is_partially_staged(&self.project_root, p))
+            .filter(|p| partial.contains(p))
             .collect()
     }
 
@@ -78,8 +98,47 @@ impl DirigentApp {
         self.apply_review_hunk(file_idx, hunk_idx, HunkOp::Stage);
     }
 
-    pub(in crate::app) fn discard_review_hunk(&mut self, file_idx: usize, hunk_idx: usize) {
-        self.apply_review_hunk(file_idx, hunk_idx, HunkOp::Discard);
+    /// Ask before discarding: this is the one hunk action that destroys work.
+    pub(in crate::app) fn request_discard_review_hunk(&mut self, file_idx: usize, hunk_idx: usize) {
+        let Some(review) = self.diff_review.as_ref() else {
+            return;
+        };
+        let Some(file) = review.parsed.files.get(file_idx) else {
+            return;
+        };
+        let Some(hunk) = file.hunks.get(hunk_idx) else {
+            return;
+        };
+        self.pending_hunk_discard = Some(PendingHunkDiscard {
+            file_idx,
+            hunk_idx,
+            display_path: file.display_path().to_string(),
+            header: hunk.header.clone(),
+        });
+    }
+
+    /// Carry out a confirmed discard, taking a `git stash` undo point first.
+    pub(in crate::app) fn confirm_discard_review_hunk(&mut self) {
+        let Some(pending) = self.pending_hunk_discard.take() else {
+            return;
+        };
+        let undo = git::snapshot_for_undo(
+            &self.project_root,
+            &format!(
+                "Dirigent: before discarding a hunk in {}",
+                pending.display_path
+            ),
+        );
+        self.apply_review_hunk(pending.file_idx, pending.hunk_idx, HunkOp::Discard);
+        if let Some(hash) = undo {
+            // Appended after apply_review_hunk's own status message so the undo
+            // instructions are what the user is left looking at.
+            self.set_status_message(format!(
+                "Discarded hunk in {} — undo with: git stash apply {}",
+                pending.display_path,
+                &hash[..hash.len().min(12)]
+            ));
+        }
     }
 
     pub(in crate::app) fn unstage_review_hunk(&mut self, file_idx: usize, hunk_idx: usize) {
@@ -147,6 +206,73 @@ impl DirigentApp {
             }
             // git apply is atomic: a rejected patch leaves index and tree unchanged.
             Err(e) => self.set_status_message(format!("{e}")),
+        }
+    }
+}
+
+/// Confirmation dialog for [`PendingHunkDiscard`].
+impl DirigentApp {
+    pub(in crate::app) fn render_discard_hunk_dialog(&mut self, ctx: &eframe::egui::Context) {
+        use eframe::egui;
+
+        let Some(pending) = self.pending_hunk_discard.as_ref() else {
+            return;
+        };
+        let display_path = pending.display_path.clone();
+        let header = pending.header.clone();
+
+        let mut confirm = false;
+        let mut cancel = false;
+
+        egui::Window::new("Discard Hunk")
+            .collapsible(false)
+            .resizable(false)
+            .default_size([420.0, 0.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(self.semantic.dialog_frame())
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.label("Discard this change from your working tree?");
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(&display_path)
+                        .monospace()
+                        .color(self.semantic.secondary_text),
+                );
+                ui.label(
+                    egui::RichText::new(&header)
+                        .monospace()
+                        .small()
+                        .color(self.semantic.tertiary_text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(
+                        "The edit is removed from disk. Dirigent saves a git stash \
+                         entry first so it can be recovered.",
+                    )
+                    .small(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new("Discard").color(self.semantic.danger))
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                    });
+                });
+            });
+
+        if cancel {
+            self.pending_hunk_discard = None;
+        } else if confirm {
+            self.confirm_discard_review_hunk();
         }
     }
 }
