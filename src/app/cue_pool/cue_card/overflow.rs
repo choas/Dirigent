@@ -21,7 +21,7 @@ impl DirigentApp {
                 self.render_overflow_create_pr(ui, cue, actions);
                 self.render_overflow_save_as_play(ui, cue, actions);
                 ui.separator();
-                let split_enabled = !self.split_cue_generating
+                let split_enabled = !self.split_cue_op.in_flight()
                     && matches!(
                         cue.status,
                         crate::db::CueStatus::Inbox | crate::db::CueStatus::Backlog
@@ -106,7 +106,10 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch == "main" || i.branch == "master")
             .unwrap_or(true);
-        if !is_default_branch && !self.git.creating_pr && ui.button("Create PR").clicked() {
+        if !is_default_branch
+            && !self.git.pr_create_op.in_flight()
+            && ui.button("Create PR").clicked()
+        {
             actions.push((cue.id, CueAction::CreatePR));
         }
     }

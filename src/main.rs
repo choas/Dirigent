@@ -2,6 +2,7 @@
 
 mod acp;
 mod agents;
+mod ai_backend;
 mod ai_process;
 mod app;
 mod claude;
@@ -492,7 +493,7 @@ fn main() -> eframe::Result {
             app::set_macos_dock_name(&project_name);
             let mut app = app::DirigentApp::new(project_root, show_repo_picker);
             if show_repo_picker {
-                app.show_repo_picker = true;
+                app.dialogs.open(app::DialogId::RepoPicker);
             }
             telemetry::emit_app_started(&project_name);
             Ok(Box::new(app))

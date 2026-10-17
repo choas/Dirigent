@@ -257,20 +257,19 @@ impl DirigentApp {
             let text = format!("{}\n\n{}", section.title, section.body);
             match self.db.cue_exists_by_source_ref(&source_ref) {
                 Ok(true) => {
-                    if self
-                        .db
-                        .update_cue_by_source_ref(&source_ref, &text, "", 0)
-                        .is_ok()
-                    {
+                    if self.db_log(
+                        "update imported cue",
+                        self.db.update_cue_by_source_ref(&source_ref, &text, "", 0),
+                    ) {
                         updated_count += 1;
                     }
                 }
                 Ok(false) => {
-                    if self
-                        .db
-                        .insert_cue_from_source(&text, stem, "", &source_ref, "", 0)
-                        .is_ok()
-                    {
+                    if self.db_log(
+                        "create imported cue",
+                        self.db
+                            .insert_cue_from_source(&text, stem, "", &source_ref, "", 0),
+                    ) {
                         new_count += 1;
                     }
                 }
@@ -304,23 +303,30 @@ impl DirigentApp {
             let source_ref = format!("inbox#{}", path.display());
             match self.db.cue_exists_by_source_ref(&source_ref) {
                 Ok(true) => {
-                    if self
-                        .db
-                        .update_cue_by_source_ref(&source_ref, &text, "", 0)
-                        .is_ok()
-                    {
-                        let _ = self
-                            .db
-                            .update_source_id_by_source_ref(&source_ref, &checksum);
+                    if self.db_log(
+                        "update imported cue",
+                        self.db.update_cue_by_source_ref(&source_ref, &text, "", 0),
+                    ) {
+                        self.db_log(
+                            "store import checksum",
+                            self.db
+                                .update_source_id_by_source_ref(&source_ref, &checksum),
+                        );
                         updated_count += 1;
                     }
                 }
                 Ok(false) => {
-                    if self
-                        .db
-                        .insert_cue_from_source(&text, "inbox", &checksum, &source_ref, "", 0)
-                        .is_ok()
-                    {
+                    if self.db_log(
+                        "create imported cue",
+                        self.db.insert_cue_from_source(
+                            &text,
+                            "inbox",
+                            &checksum,
+                            &source_ref,
+                            "",
+                            0,
+                        ),
+                    ) {
                         new_count += 1;
                     }
                 }

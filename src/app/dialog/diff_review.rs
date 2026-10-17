@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_LG};
+use super::super::{icon, DialogId, DirigentApp, SPACE_LG};
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::CueStatus;
@@ -307,7 +307,7 @@ impl DirigentApp {
         } else if let Some((fi, hi)) = actions.stage_hunk {
             self.stage_review_hunk(fi, hi);
         } else if let Some((fi, hi)) = actions.discard_hunk {
-            self.discard_review_hunk(fi, hi);
+            self.request_discard_review_hunk(fi, hi);
         } else if let Some((fi, hi)) = actions.unstage_hunk {
             self.unstage_review_hunk(fi, hi);
         }
@@ -744,8 +744,11 @@ impl DirigentApp {
             && !self.claude.workspace_commit_failed.contains(&cue_id)
         {
             self.set_status_message("Accepted — changes committed in workspace".to_string());
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
-            let _ = self.db.log_activity(cue_id, "Accepted (workspace commit)");
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(cue_id, "Accepted (workspace commit)");
             self.cleanup_jj_workspace(cue_id);
             let cue_prompt = self
                 .cues
@@ -780,7 +783,7 @@ impl DirigentApp {
         self.git.commit_message_input = commit_msg;
         self.git.commit_review_cue_id = Some(cue_id);
         self.git.commit_needs_focus = true;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.diff_review = None;
     }
 
@@ -803,9 +806,12 @@ impl DirigentApp {
                 return;
             }
             self.cleanup_jj_workspace(cue_id);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-            let _ = self.db.log_activity(cue_id, "Reverted (bookmark deleted)");
             self.set_status_message("Reverted — bookmark deleted, workspace removed".to_string());
+            self.db_report(
+                "move cue back to Inbox",
+                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+            );
+            self.log_cue_activity(cue_id, "Reverted (bookmark deleted)");
             self.reload_cues();
             self.reload_git_info();
             self.diff_review = None;
@@ -820,7 +826,10 @@ impl DirigentApp {
             &file_paths,
         ) {
             Ok(()) => {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.db_report(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                );
                 let result = self.reload_open_tabs_and_notify_lsp();
                 let problems = Self::collect_reload_problems(&self.viewer.tabs, &result);
                 if !problems.is_empty() {

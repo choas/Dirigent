@@ -578,7 +578,7 @@ fn render_table(
     );
 
     egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, border))
+        .stroke(egui::Stroke::new(1.0_f32, border))
         .corner_radius(4.0)
         .outer_margin(egui::Margin {
             left: indent.round().min(i8::MAX as f32) as i8,
@@ -712,7 +712,7 @@ fn render_table_separator(ui: &mut egui::Ui, border: egui::Color32) {
             egui::pos2(rect.left(), rect.top()),
             egui::pos2(rect.right(), rect.top()),
         ],
-        egui::Stroke::new(1.0, border),
+        egui::Stroke::new(1.0_f32, border),
     );
 }
 

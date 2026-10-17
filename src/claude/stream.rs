@@ -10,6 +10,22 @@ use super::types::ClaudeRunMetadata;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SENTINEL_GRACE: Duration = Duration::from_secs(3);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a run may wait on a permission dialog nothing has answered.
+/// Generous, because a human may be answering it in a terminal — but finite,
+/// because an unanswerable dialog otherwise pins a thread and a PTY forever.
+const PERMISSION_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// The per-run knobs [`consume_pty_events`] needs beyond the session itself.
+pub(super) struct PtyConsumeOptions<'a> {
+    pub done_hook: Option<&'a DoneHook>,
+    pub session_id: Option<&'a str>,
+    /// The user opted into `--dangerously-skip-permissions`, so tool-use
+    /// dialogs are auto-accepted.
+    pub skip_permissions: bool,
+    /// The user explicitly trusted this repository in Dirigent's trust gate,
+    /// so Claude Code's own trust-folder dialog may be auto-accepted.
+    pub repo_trusted: bool,
+}
 
 /// State accumulated while consuming PTY events.
 pub(super) struct PtyResult {
@@ -47,10 +63,13 @@ struct PtyConsumeState<'a> {
     done_sentinel: Option<PathBuf>,
     done_hook: Option<&'a DoneHook>,
     skip_permissions: bool,
+    /// Whether the user approved this repository in Dirigent's trust gate.
+    /// Gates auto-accepting Claude Code's own trust-folder dialog.
+    repo_trusted: bool,
 }
 
 impl<'a> PtyConsumeState<'a> {
-    fn new(done_hook: Option<&'a DoneHook>, skip_permissions: bool) -> Self {
+    fn new(done_hook: Option<&'a DoneHook>, skip_permissions: bool, repo_trusted: bool) -> Self {
         Self {
             result: PtyResult {
                 response: String::new(),
@@ -67,6 +86,7 @@ impl<'a> PtyConsumeState<'a> {
             done_sentinel: done_hook.map(|hook| hook.sentinel_path().to_path_buf()),
             done_hook,
             skip_permissions,
+            repo_trusted,
         }
     }
 
@@ -96,7 +116,7 @@ impl<'a> PtyConsumeState<'a> {
         match event {
             Event::FilteredLine {
                 ref text, ref ansi, ..
-            } => self.handle_filtered_line(session, on_log, text, ansi),
+            } => self.handle_filtered_line(on_log, text, ansi),
             Event::PtyActivity { .. } => on_log("\0"),
             Event::ParserWarning { ref message } => {
                 self.result.metadata.parser_warnings.push(message.clone());
@@ -115,7 +135,7 @@ impl<'a> PtyConsumeState<'a> {
                 ref lines,
                 ref lines_ansi,
                 ..
-            } => self.handle_tui_screen(session, on_log, lines, lines_ansi),
+            } => self.handle_tui_screen(on_log, lines, lines_ansi),
             Event::LibDone => return true,
             Event::LibError { ref message } => {
                 on_log(&format!("error: {}\n", message));
@@ -137,51 +157,16 @@ impl<'a> PtyConsumeState<'a> {
         self.result.metadata.last_output_ms = Some(elapsed_ms);
     }
 
-    fn handle_filtered_line(
-        &mut self,
-        session: &Session,
-        on_log: &mut dyn FnMut(&str),
-        text: &str,
-        ansi: &str,
-    ) {
+    fn handle_filtered_line(&mut self, on_log: &mut dyn FnMut(&str), text: &str, ansi: &str) {
         self.saw_filtered_line = true;
         on_log(ansi);
         on_log("\n");
         self.append_response_line(text);
-        self.answer_rating_if_needed(session, on_log, text);
-        self.answer_resume_choice_if_needed(session, on_log, text);
     }
 
     fn append_response_line(&mut self, line: &str) {
         self.result.response.push_str(line);
         self.result.response.push('\n');
-    }
-
-    fn answer_rating_if_needed(
-        &mut self,
-        session: &Session,
-        on_log: &mut dyn FnMut(&str),
-        line: &str,
-    ) {
-        if !self.survey_answered && is_session_rating_prompt(line) {
-            answer_session_rating(session, on_log);
-            self.survey_answered = true;
-        }
-    }
-
-    /// Auto-confirm the `--resume` resume-choice dialog. Gated on
-    /// `!prompt_sent` so quoted text in later session output cannot trigger a
-    /// stray keypress.
-    fn answer_resume_choice_if_needed(
-        &mut self,
-        session: &Session,
-        on_log: &mut dyn FnMut(&str),
-        line: &str,
-    ) {
-        if !self.prompt_sent && !self.resume_choice_answered && is_resume_choice_prompt(line) {
-            answer_resume_choice(session, on_log);
-            self.resume_choice_answered = true;
-        }
     }
 
     fn handle_session_state(&mut self, session_state: SessionState) {
@@ -190,6 +175,15 @@ impl<'a> PtyConsumeState<'a> {
         }
     }
 
+    /// Respond to a dialog the PTY layer detected **on the current screen**.
+    ///
+    /// This is the only place Dirigent types into a live dialog. The
+    /// rating-survey and resume-choice answers used to be driven by substring
+    /// matches against arbitrary log lines — so any file the model read that
+    /// happened to contain "How is Claude doing this session" made Dirigent
+    /// press `3` at a moment the *content* chose, possibly while some other
+    /// selection dialog was on screen. Now every keystroke is tied to a
+    /// screen-verified dialog of a known kind.
     fn handle_permission_dialog(
         &mut self,
         session: &Session,
@@ -202,14 +196,42 @@ impl<'a> PtyConsumeState<'a> {
             .permission_summaries
             .push(summary.clone());
         match dialog.kind {
-            PermissionDialogKind::TrustFolder => {
+            // Trusting a folder activates that repository's .claude/settings.json
+            // — its hooks, MCP servers and permissions — inside Claude Code.
+            // That is a real trust decision, so it is only auto-accepted for a
+            // repository the user has already approved in Dirigent's own trust
+            // gate; otherwise the dialog is surfaced.
+            PermissionDialogKind::TrustFolder if self.repo_trusted => {
                 on_log(&format!("\n⏎ Permission: {summary} — accepted\n"));
                 let _ = session.confirm_permission_option();
                 self.waiting_for_permission = false;
             }
+            PermissionDialogKind::TrustFolder => {
+                on_log(&format!(
+                    "\n⚠ {summary} — not auto-accepted: this repository has not been trusted \
+                     in Dirigent. Answer in the terminal, or approve the repository first.\n"
+                ));
+                self.result.metadata.completion_reason = Some("waiting_for_permission".to_string());
+            }
             PermissionDialogKind::ToolUse if self.skip_permissions => {
                 on_log(&format!("\n⏎ Permission: {summary} — accepted by policy\n"));
                 let _ = session.confirm_permission_option();
+                self.waiting_for_permission = false;
+            }
+            PermissionDialogKind::SessionRating => {
+                if !self.survey_answered {
+                    answer_session_rating(session, on_log);
+                    self.survey_answered = true;
+                }
+                self.waiting_for_permission = false;
+            }
+            // Only meaningful before the prompt is sent; afterwards the session
+            // is already resumed and a stray Enter would pick something else.
+            PermissionDialogKind::ResumeChoice => {
+                if !self.prompt_sent && !self.resume_choice_answered {
+                    answer_resume_choice(session, on_log);
+                    self.resume_choice_answered = true;
+                }
                 self.waiting_for_permission = false;
             }
             _ => {
@@ -264,7 +286,6 @@ impl<'a> PtyConsumeState<'a> {
 
     fn handle_tui_screen(
         &mut self,
-        session: &Session,
         on_log: &mut dyn FnMut(&str),
         lines: &[String],
         lines_ansi: &[String],
@@ -273,17 +294,11 @@ impl<'a> PtyConsumeState<'a> {
             return;
         }
         for (plain, ansi) in lines.iter().zip(lines_ansi.iter()) {
-            self.handle_tui_screen_line(session, on_log, plain, ansi);
+            self.handle_tui_screen_line(on_log, plain, ansi);
         }
     }
 
-    fn handle_tui_screen_line(
-        &mut self,
-        session: &Session,
-        on_log: &mut dyn FnMut(&str),
-        plain: &str,
-        ansi: &str,
-    ) {
+    fn handle_tui_screen_line(&mut self, on_log: &mut dyn FnMut(&str), plain: &str, ansi: &str) {
         if plain.trim().is_empty() || is_tui_chrome_line(plain) {
             on_log("\0");
             return;
@@ -291,8 +306,6 @@ impl<'a> PtyConsumeState<'a> {
         on_log(ansi);
         on_log("\n");
         self.append_response_line(plain);
-        self.answer_rating_if_needed(session, on_log, plain);
-        self.answer_resume_choice_if_needed(session, on_log, plain);
     }
 
     fn handle_pending(&mut self, session: &mut Session, on_log: &mut dyn FnMut(&str)) -> bool {
@@ -303,8 +316,15 @@ impl<'a> PtyConsumeState<'a> {
         if self.sentinel_seen.is_some() {
             return self.finish_after_sentinel_grace(session, on_log);
         }
+        // The stall guard stays armed while waiting for permission. It used to
+        // be skipped entirely, which meant a dialog nothing could answer (an
+        // unapproved tool use with skip-permissions off, a PlanExit, an
+        // AskUserQuestion) blocked the run forever: no timeout, no UI to answer
+        // it, thread and PTY held until the user cancelled by hand. The longer
+        // budget reflects that a human may legitimately be answering in a
+        // terminal.
         if self.waiting_for_permission {
-            return false;
+            return self.finish_after_permission_timeout(session, on_log);
         }
         self.finish_after_idle_timeout(session, on_log)
     }
@@ -368,6 +388,24 @@ impl<'a> PtyConsumeState<'a> {
         graceful_close(session, Duration::from_secs(5), on_log);
         true
     }
+
+    /// Bound how long a run may sit on an unanswered permission dialog.
+    fn finish_after_permission_timeout(
+        &mut self,
+        session: &mut Session,
+        on_log: &mut dyn FnMut(&str),
+    ) -> bool {
+        if self.last_event_time.elapsed() < PERMISSION_TIMEOUT {
+            return false;
+        }
+        on_log(&format!(
+            "\n⚠ A permission dialog went unanswered for {} s — exiting to avoid a stalled run.\n",
+            PERMISSION_TIMEOUT.as_secs()
+        ));
+        self.result.metadata.completion_reason = Some("permission_timeout".to_string());
+        graceful_close(session, Duration::from_secs(5), on_log);
+        true
+    }
 }
 
 fn permission_dialog_summary(dialog: &claude_pty::PermissionDialog) -> String {
@@ -408,11 +446,15 @@ pub(super) fn consume_pty_events(
     prompt: &str,
     cancel: &AtomicBool,
     on_log: &mut dyn FnMut(&str),
-    done_hook: Option<&DoneHook>,
-    session_id: Option<&str>,
-    skip_permissions: bool,
+    opts: PtyConsumeOptions<'_>,
 ) -> PtyResult {
-    let mut state = PtyConsumeState::new(done_hook, skip_permissions);
+    let PtyConsumeOptions {
+        done_hook,
+        session_id,
+        skip_permissions,
+        repo_trusted,
+    } = opts;
+    let mut state = PtyConsumeState::new(done_hook, skip_permissions, repo_trusted);
 
     loop {
         if state.handle_cancel(session, cancel, on_log) {
@@ -654,20 +696,6 @@ pub(crate) fn detect_stopped_early(log: &str) -> bool {
 
 // ── Session-rating survey auto-answer ───────────────────────────────
 
-/// Detect Claude Code's optional end-of-session rating prompt, e.g.:
-///
-/// ```text
-/// ● How is Claude doing this session? (optional)
-///   1: Bad    2: Fine   3: Good   0: Dismiss
-/// ```
-///
-/// This is an interactive question Claude routinely emits in the TUI; left
-/// unanswered it can hold the PTY open. We match the distinctive question text
-/// so Dirigent can answer it automatically and let the run finish.
-fn is_session_rating_prompt(line: &str) -> bool {
-    line.contains("How is Claude doing this session")
-}
-
 /// Answer the session-rating survey by selecting option `3` (Good).
 ///
 /// The survey is a single-key selection (like the permission-option picker), so
@@ -700,15 +728,11 @@ fn answer_session_rating(session: &Session, on_log: &mut dyn FnMut(&str)) {
 /// Enter to confirm · Esc to cancel
 /// ```
 ///
-/// The dialog appears at session startup, before the TUI prompt, so it is not
-/// caught by `claude_pty`'s permission-dialog detection and would block the
-/// PTY forever (the idle timeout only arms after the prompt is sent). Callers
-/// gate on `!prompt_sent` so quoted text in later session output (e.g. Claude
-/// reading this very file) cannot trigger a stray keypress.
-fn is_resume_choice_prompt(line: &str) -> bool {
-    line.contains("Resume from summary") || line.contains("Resuming the full session will consume")
-}
-
+/// It is recognised by `claude_pty` as
+/// [`PermissionDialogKind::ResumeChoice`] against the current screen, so this
+/// is only reached for a dialog that is genuinely displayed — and the caller
+/// additionally gates on `!prompt_sent`, since after the prompt is sent the
+/// session is already resumed and a stray Enter would pick something else.
 /// Answer the resume-choice dialog by confirming the pre-selected option 1
 /// ("Resume from summary (recommended)") with Enter, matching the dialog's
 /// "Enter to confirm" footer — the same way the trust-folder dialog is
@@ -812,36 +836,6 @@ mod tests {
         assert!(!response_has_question(""));
         assert!(!response_has_question("   "));
         assert!(!response_has_question("ok?"));
-    }
-
-    #[test]
-    fn session_rating_prompt_detected() {
-        assert!(is_session_rating_prompt(
-            "● How is Claude doing this session? (optional)"
-        ));
-        assert!(is_session_rating_prompt("How is Claude doing this session"));
-        assert!(!is_session_rating_prompt(
-            "  1: Bad    2: Fine   3: Good   0: Dismiss"
-        ));
-        assert!(!is_session_rating_prompt("How are you doing today?"));
-        assert!(!is_session_rating_prompt(""));
-    }
-
-    #[test]
-    fn resume_choice_prompt_detected() {
-        assert!(is_resume_choice_prompt(
-            "❯ 1. Resume from summary (recommended)"
-        ));
-        assert!(is_resume_choice_prompt(
-            "Resuming the full session will consume a substantial portion of \
-             your usage limits. We recommend resuming from a summary."
-        ));
-        assert!(!is_resume_choice_prompt("2. Resume full session as-is"));
-        assert!(!is_resume_choice_prompt(
-            "This session is 1d 12h old and 166.2k tokens."
-        ));
-        assert!(!is_resume_choice_prompt("Enter to confirm · Esc to cancel"));
-        assert!(!is_resume_choice_prompt(""));
     }
 
     #[test]

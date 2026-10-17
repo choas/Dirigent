@@ -20,6 +20,12 @@ Task-oriented recipes for common Dirigent workflows. Each section is self-contai
 - [Switch the AI backend to OpenCode](#switch-the-ai-backend-to-opencode)
 - [Run an ACP agent (Goose, Gemini CLI, …)](How_to_ACP.md)
 - [Configure LSP for code intelligence](#configure-lsp-for-code-intelligence)
+- [Split a large cue into smaller ones](#split-a-large-cue-into-smaller-ones)
+- [Read history in the graph view](#read-history-in-the-graph-view)
+- [Use Jujutsu (jj) instead of Git](#use-jujutsu-jj-instead-of-git)
+- [Browse a remote host over SSH](#browse-a-remote-host-over-ssh)
+- [Create a custom theme](#create-a-custom-theme)
+- [Let an agent manage cues via the MCP server](#let-an-agent-manage-cues-via-the-mcp-server)
 - [Set up observability](#set-up-observability)
 - [Build a macOS .app bundle](#build-a-macos-app-bundle)
 
@@ -49,7 +55,7 @@ Playbook prompts are predefined tasks you can run without writing a prompt from 
 4. If the play has template variables (e.g. version number), fill them in the dialog
 5. The play creates a global cue and optionally runs it immediately
 
-Built-in plays include: Documentation (Diataxis), Verify architecture, Verify last 5 commits, Create release, Security audit, Check dead code, Add tests, Fix all warnings, Commit changes, Pin dependency versions.
+Built-in plays include: Documentation (Diataxis), Verify architecture, Git Pull, Create release, Security audit, Check dead code, Add tests, Fix all warnings, Commit changes, Zero day test, Pin dependency versions.
 
 ## Send follow-up feedback (reply workflow)
 
@@ -190,6 +196,75 @@ LSP provides diagnostics, hover info, go-to-definition, and find-references.
 6. Add custom server configurations if needed
 
 Once enabled, diagnostics appear as inline markers in the code viewer, and Cmd+click on a symbol triggers go-to-definition.
+
+## Split a large cue into smaller ones
+
+A cue that describes several unrelated changes runs badly: the agent has to
+hold all of them at once, and the resulting diff is hard to review.
+
+1. Open the cue's overflow menu (`⋯`) in the Inbox or Backlog column
+2. Choose **✂ Split**
+3. Dirigent sends the cue text to the configured AI backend as a read-only
+   analysis prompt and proposes a set of sub-cues
+4. Review the proposal; accepted sub-cues are created in the same column and
+   the original is archived
+
+Split is only offered for Inbox and Backlog cues — once a cue is Ready or
+running, splitting it would orphan the run.
+
+## Read history in the graph view
+
+The sidebar's Git log shows a compact lane graph. For a full-window view:
+
+1. Click the **📊** button in the Git log section header
+2. Commits load 100 at a time; scrolling near the bottom loads more
+3. Hover a row to highlight that branch's lineage through the graph
+4. Click a commit to open its diff in the review pane
+5. **⇄** in the header opens *Analyze changes over…*, which groups the diff
+   between two refs into reviewable change sets
+
+## Use Jujutsu (jj) instead of Git
+
+Dirigent drives either backend through the same UI.
+
+1. Dirigent switches automatically when the project has a `.jj` directory
+2. Otherwise set **Settings > Version control > VCS backend** to `Jj`; on a
+   git-only repository Dirigent offers to run `jj git init --colocate`
+3. The Git menu becomes the jj menu: commit describes the working copy and
+   starts a new change, and branches become bookmarks
+4. Per-cue workspaces replace worktrees — see
+   [Work with Git worktrees](#work-with-git-worktrees) for the equivalent flow
+
+A longer walkthrough lives in [jj-demo-walkthrough.md](jj-demo-walkthrough.md).
+
+## Browse a remote host over SSH
+
+1. Open **Settings > SSH Servers** and add a host (name, host, username)
+2. Use **Test connection** to verify SSH *and* SFTP reachability
+3. Pick the server from the **SSH** menu to replace the file tree with the
+   remote host's files
+4. Files open read-only in the viewer; cues you create on them stay local
+
+## Create a custom theme
+
+1. Open **Settings > General**
+2. Click **+** next to the theme dropdown — the new theme starts as a copy of
+   the current one
+3. Adjust the colors; **✎** re-opens an existing custom theme for editing
+4. Custom themes are repo-scoped and apply without a trust prompt, since they
+   cannot cause anything to execute
+
+## Let an agent manage cues via the MCP server
+
+Dirigent exposes its cue database over MCP, so a run can list, add and move
+cues while it works.
+
+1. Mention "dirigent" anywhere in the cue or prompt text — that is the trigger
+2. Dirigent writes an MCP config into `.Dirigent/` and passes it to the run
+3. Override the server binary or database in **Settings > Dirigent MCP server**
+   if they are not where Dirigent expects them
+
+Full tool list: [How_to_Dirigent_MCP.md](How_to_Dirigent_MCP.md).
 
 ## Set up observability
 

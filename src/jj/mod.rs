@@ -20,10 +20,17 @@ pub(crate) use worktree::{
     BookmarkPushStatus, SuspiciousBookmark,
 };
 
+/// Build a `jj` command pinned to the C locale.
+///
+/// Stale-working-copy and conflict detection match English substrings of jj's
+/// stderr (see [`commit`]); under a translated locale those checks silently
+/// never fire. See [`crate::git::force_c_locale`].
 fn jj_cmd(jj_path: &str) -> std::process::Command {
-    if jj_path.is_empty() {
+    let mut cmd = if jj_path.is_empty() {
         std::process::Command::new("jj")
     } else {
         std::process::Command::new(jj_path)
-    }
+    };
+    crate::git::force_c_locale(&mut cmd);
+    cmd
 }

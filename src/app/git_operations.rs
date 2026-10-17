@@ -1,4 +1,3 @@
-use std::sync::mpsc;
 use std::time::Instant;
 
 use crate::db::CueStatus;
@@ -6,48 +5,58 @@ use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;
 
-use super::{detect_pr_number_from_branch, DirigentApp};
+use super::{detect_pr_number_from_branch, AsyncPoll, DialogId, DirigentApp};
+use crate::db::PrImportCounts;
+
+/// Phrase the outcome of a PR-findings import for the status bar.
+///
+/// Partial failures are reported rather than hidden behind the success count:
+/// "3 new" is misleading when two other findings failed to write.
+fn pr_import_status(pr_number: &str, tag: &str, total: usize, counts: &PrImportCounts) -> String {
+    if counts.errors > 0 && !counts.has_changes() {
+        return format!(
+            "PR #{pr_number}: import failed ({} DB errors across {total} findings)",
+            counts.errors
+        );
+    }
+    if counts.errors > 0 {
+        return format!(
+            "PR #{pr_number}: {} (tag: {tag}) (partial failure: {} DB errors)",
+            counts.summary(),
+            counts.errors
+        );
+    }
+    if counts.has_changes() {
+        return format!("PR #{pr_number}: {} (tag: {tag})", counts.summary());
+    }
+    format!("PR #{pr_number}: all {total} findings already imported")
+}
 
 impl DirigentApp {
     /// Start an async push operation (git push or jj git push).
     pub(super) fn start_git_push(&mut self) {
-        if self.git.pushing {
-            return;
-        }
-        self.git.pushing = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.push_rx = Some(rx);
         let root = self.project_root.clone();
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        std::thread::spawn(move || {
-            let result = match backend {
-                VcsBackend::Jj => jj::jj_push(&root, &jj_path).map_err(|e| e.to_string()),
-                VcsBackend::Git => git::git_push(&root).map_err(|e| e.to_string()),
-            };
-            let _ = tx.send(result);
+        let started = self.git.push_op.spawn(move || match backend {
+            VcsBackend::Jj => jj::jj_push(&root, &jj_path).map_err(|e| e.to_string()),
+            VcsBackend::Git => git::git_push(&root).map_err(|e| e.to_string()),
         });
-        self.set_status_message("Pushing...".to_string());
+        if started {
+            self.set_status_message("Pushing...".to_string());
+        }
     }
 
     /// Check for completed git push.
     pub(super) fn process_push_result(&mut self) {
-        let rx = match self.git.push_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.pushing = false;
-                self.git.push_rx = None;
+        let result = match self.git.push_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Git push failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.pushing = false;
-        self.git.push_rx = None;
         match result {
             Ok(msg) => {
                 self.set_status_message(msg);
@@ -56,7 +65,7 @@ impl DirigentApp {
             }
             Err(e) => {
                 self.git.push_error_message = e;
-                self.git.show_push_error = true;
+                self.dialogs.open(DialogId::PushError);
                 self.set_status_message("Push failed — see dialog".to_string());
             }
         }
@@ -72,34 +81,27 @@ impl DirigentApp {
 
     /// Start an async jj git fetch.
     fn start_jj_fetch(&mut self) {
-        if self.git.pulling {
-            return;
-        }
-        self.git.pulling = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.pull_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        std::thread::spawn(move || {
-            let result = jj::jj_pull(&root, &jj_path).map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        });
-        self.set_status_message("Fetching...".to_string());
+        let started = self
+            .git
+            .pull_op
+            .spawn(move || jj::jj_pull(&root, &jj_path).map_err(|e| e.to_string()));
+        if started {
+            self.set_status_message("Fetching...".to_string());
+        }
     }
 
     /// Start an async git pull with a specific strategy.
     pub(super) fn start_git_pull_with_strategy(&mut self, strategy: git::PullStrategy) {
-        if self.git.pulling {
+        let root = self.project_root.clone();
+        let started = self
+            .git
+            .pull_op
+            .spawn(move || git::git_pull(&root, strategy).map_err(|e| e.to_string()));
+        if !started {
             return;
         }
-        self.git.pulling = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.pull_rx = Some(rx);
-        let root = self.project_root.clone();
-        std::thread::spawn(move || {
-            let result = git::git_pull(&root, strategy).map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        });
         let label = match strategy {
             git::PullStrategy::FfOnly => "Pulling...",
             git::PullStrategy::Merge => "Pulling (merge)...",
@@ -112,7 +114,7 @@ impl DirigentApp {
     pub(super) fn open_switch_branch_dialog(&mut self) {
         self.refresh_branch_list();
         self.git.new_branch_name.clear();
-        self.git.show_switch_branch = true;
+        self.dialogs.open(DialogId::SwitchBranch);
     }
 
     /// (Re)populate the list of available branches/bookmarks used by the
@@ -160,42 +162,34 @@ impl DirigentApp {
         self.git.pr_body = String::new();
         self.git.pr_base = "main".to_string();
         self.git.pr_draft = false;
-        self.git.show_create_pr = true;
+        self.dialogs.open(DialogId::CreatePr);
 
-        let (tx, rx) = mpsc::channel();
-        self.git.pr_prefill_rx = Some(rx);
-        self.git.pr_prefill_loading = true;
         let root = self.project_root.clone();
         let ctx = std::sync::Arc::clone(&self.egui_ctx);
-        std::thread::spawn(move || {
-            let base = git::get_default_branch(&root);
-            let body = git::build_pr_body(&root, &base);
-            let _ = tx.send((base, body));
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        // A reopened dialog supersedes any prefill still in flight.
+        self.git.pr_prefill_op.cancel();
+        self.git.pr_prefill_op.spawn_then(
+            move || {
+                let base = git::get_default_branch(&root);
+                let body = git::build_pr_body(&root, &base);
+                (base, body)
+            },
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
     }
 
     /// Apply the async Create PR prefill once it arrives. Fields the user has
     /// already edited in the meantime are left untouched.
     pub(super) fn process_pr_prefill_result(&mut self) {
-        let rx = match self.git.pr_prefill_rx {
-            Some(ref rx) => rx,
-            None => return,
+        let (base, body) = match self.git.pr_prefill_op.poll() {
+            AsyncPoll::Ready(r) => r,
+            _ => return,
         };
-        let (base, body) = match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.git.pr_prefill_rx = None;
-                self.git.pr_prefill_loading = false;
-                return;
-            }
-            Ok(r) => r,
-        };
-        self.git.pr_prefill_rx = None;
-        self.git.pr_prefill_loading = false;
-        if !self.git.show_create_pr {
+        if !self.dialogs.is_open(DialogId::CreatePr) {
             return;
         }
         if self.git.pr_base == "main" {
@@ -208,13 +202,6 @@ impl DirigentApp {
 
     /// Start an async PR creation (pushes first, then creates the PR).
     pub(super) fn start_create_pr(&mut self) {
-        if self.git.creating_pr {
-            return;
-        }
-        self.git.creating_pr = true;
-        self.git.show_create_pr = false;
-        let (tx, rx) = mpsc::channel();
-        self.git.pr_rx = Some(rx);
         let root = self.project_root.clone();
         let title = self.git.pr_title.clone();
         let body = self.git.pr_body.clone();
@@ -222,41 +209,34 @@ impl DirigentApp {
         let draft = self.git.pr_draft;
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        std::thread::spawn(move || {
+        let started = self.git.pr_create_op.spawn(move || {
             // Push first so the remote branch exists
             let push_result = match backend {
                 VcsBackend::Jj => jj::jj_push(&root, &jj_path),
                 VcsBackend::Git => git::git_push(&root),
             };
             if let Err(e) = push_result {
-                let _ = tx.send(Err(format!("Push failed: {}", e)));
-                return;
+                return Err(format!("Push failed: {}", e));
             }
-            let result = git::create_pull_request(&root, &title, &body, &base, draft)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+            git::create_pull_request(&root, &title, &body, &base, draft).map_err(|e| e.to_string())
         });
+        if !started {
+            return;
+        }
+        self.close_dialog(DialogId::CreatePr);
         self.set_status_message("Pushing & creating PR...".to_string());
     }
 
     /// Check for completed PR creation.
     pub(super) fn process_pr_result(&mut self) {
-        let rx = match self.git.pr_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.creating_pr = false;
-                self.git.pr_rx = None;
+        let result = match self.git.pr_create_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("PR creation failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.creating_pr = false;
-        self.git.pr_rx = None;
         match result {
             Ok(url) => {
                 self.set_status_message(format!("PR created: {}", url));
@@ -265,14 +245,14 @@ impl DirigentApp {
             }
             Err(e) => {
                 self.git.pr_error_message = e;
-                self.git.show_pr_error = true;
+                self.dialogs.open(DialogId::PrError);
                 self.set_status_message("PR creation failed — see dialog".to_string());
             }
         }
     }
 
     pub(super) fn open_import_pr_dialog(&mut self) {
-        self.git.show_import_pr = true;
+        self.dialogs.open(DialogId::ImportPr);
         // Pre-fill with current branch PR number if available
         if self.git.import_pr_number.is_empty() {
             // Try to detect PR number from current branch
@@ -285,7 +265,7 @@ impl DirigentApp {
     }
 
     pub(super) fn start_import_pr_findings(&mut self) {
-        if self.git.importing_pr {
+        if self.git.import_pr_op.in_flight() {
             self.set_status_message("PR import already in progress".to_string());
             return;
         }
@@ -298,28 +278,19 @@ impl DirigentApp {
             }
         };
 
-        self.git.importing_pr = true;
         self.git.importing_pr_start = Some(Instant::now());
-        self.git.show_import_pr = false;
+        self.close_dialog(DialogId::ImportPr);
         self.set_status_message(format!("Refreshing PR #{}…", pr_number));
         let project_root = self.project_root.clone();
-        let (tx, rx) = mpsc::channel();
-        self.git.import_pr_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result = crate::sources::fetch_pr_findings(&project_root, pr_number)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+        self.git.import_pr_op.spawn(move || {
+            crate::sources::fetch_pr_findings(&project_root, pr_number).map_err(|e| e.to_string())
         });
     }
 
     pub(super) fn process_import_pr_result(&mut self) {
-        let rx = match self.git.import_pr_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
+        let result = match self.git.import_pr_op.poll() {
+            AsyncPoll::Idle => return,
+            AsyncPoll::Pending => {
                 if let Some(start) = self.git.importing_pr_start {
                     let secs = start.elapsed().as_secs();
                     let pr = self.git.import_pr_number.trim();
@@ -327,18 +298,14 @@ impl DirigentApp {
                 }
                 return;
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.importing_pr = false;
+            AsyncPoll::Failed => {
                 self.git.importing_pr_start = None;
-                self.git.import_pr_rx = None;
                 self.set_status_message("PR import failed unexpectedly".into());
                 return;
             }
-            Ok(result) => result,
+            AsyncPoll::Ready(result) => result,
         };
-        self.git.importing_pr = false;
         self.git.importing_pr_start = None;
-        self.git.import_pr_rx = None;
 
         let findings = match result {
             Ok(f) => f,
@@ -373,8 +340,8 @@ impl DirigentApp {
 
         self.auto_exclude_by_patterns();
 
-        self.git.show_import_pr = false;
-        self.git.show_pr_filter = true;
+        self.close_dialog(DialogId::ImportPr);
+        self.dialogs.open(DialogId::PrFilter);
     }
 
     /// Filter out findings that are already imported (exist in DB by source_ref).
@@ -415,157 +382,14 @@ impl DirigentApp {
         }
         let pr_number = self.git.import_pr_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
-        let (new_count, updated_count, error_count) = self.upsert_pr_findings(&findings, &tag);
-        let has_changes = new_count > 0 || updated_count > 0;
+        let counts = self.db.import_pr_findings(&findings, &tag);
         self.reload_cues();
-        if error_count > 0 && !has_changes {
-            self.set_status_message(format!(
-                "PR #{}: import failed ({} DB errors across {} findings)",
-                pr_number,
-                error_count,
-                findings.len()
-            ));
-        } else if error_count > 0 {
-            let summary = Self::build_findings_summary(new_count, updated_count);
-            self.set_status_message(format!(
-                "PR #{}: {} (tag: {}) (partial failure: {} DB errors)",
-                pr_number, summary, tag, error_count
-            ));
-        } else if has_changes {
-            let summary = Self::build_findings_summary(new_count, updated_count);
-            self.set_status_message(format!("PR #{}: {} (tag: {})", pr_number, summary, tag));
-        } else {
-            self.set_status_message(format!(
-                "PR #{}: all {} findings already imported",
-                pr_number,
-                findings.len()
-            ));
-        }
-    }
-
-    /// Upsert each PR finding: update existing cues or insert new ones.
-    /// Returns (new_count, updated_count, error_count).
-    fn upsert_pr_findings(
-        &mut self,
-        findings: &[crate::sources::PrFinding],
-        tag: &str,
-    ) -> (usize, usize, usize) {
-        let mut new_count = 0;
-        let mut updated_count = 0;
-        let mut error_count = 0;
-        for finding in findings {
-            match self.db.get_cue_by_source_ref(&finding.external_id) {
-                Ok(Some((
-                    existing_id,
-                    existing_text,
-                    _existing_status,
-                    existing_path,
-                    existing_line,
-                ))) => {
-                    match self.update_existing_finding(
-                        finding,
-                        existing_id,
-                        &existing_text,
-                        &existing_path,
-                        existing_line,
-                    ) {
-                        Ok(Some("updated")) => updated_count += 1,
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::error!("DB error updating finding {}: {e}", finding.external_id);
-                            error_count += 1;
-                        }
-                    }
-                    continue;
-                }
-                Ok(None) => {} // New finding — fall through to insert
-                Err(e) => {
-                    log::error!(
-                        "DB error looking up source ref {}: {e}",
-                        finding.external_id
-                    );
-                    error_count += 1;
-                    continue;
-                }
-            }
-            match self.db.insert_cue_from_source(
-                &finding.text,
-                "PR Review",
-                "",
-                &finding.external_id,
-                &finding.file_path,
-                finding.line_number,
-            ) {
-                Ok(id) => {
-                    if let Err(e) = self.db.update_cue_tag(id, Some(tag)) {
-                        log::error!("DB error tagging new cue {id}: {e}");
-                        error_count += 1;
-                    } else {
-                        new_count += 1;
-                    }
-                }
-                Err(e) => {
-                    log::error!("DB error inserting finding {}: {e}", finding.external_id);
-                    error_count += 1;
-                }
-            }
-        }
-        (new_count, updated_count, error_count)
-    }
-
-    /// Handle a single existing finding: update text/location if changed.
-    /// Returns `Ok(Some("updated"))` when the cue was updated and reset to Inbox,
-    /// `Ok(None)` when no change was needed, or `Err` if a DB write failed.
-    ///
-    /// Done/Archived cues are left alone when their text and location match —
-    /// only actual content changes from the PR reviewer warrant a re-open.
-    fn update_existing_finding(
-        &mut self,
-        finding: &crate::sources::PrFinding,
-        existing_id: i64,
-        existing_text: &str,
-        existing_path: &str,
-        existing_line: usize,
-    ) -> anyhow::Result<Option<&'static str>> {
-        let clean_existing = crate::sources::strip_html_tags(existing_text);
-        let clean_finding = crate::sources::strip_html_tags(&finding.text);
-        let text_changed = crate::sources::strip_pr_context_hint(&clean_existing)
-            != crate::sources::strip_pr_context_hint(&clean_finding);
-        let location_changed =
-            existing_path != finding.file_path || existing_line != finding.line_number;
-        if text_changed || location_changed {
-            // Text or location changed: update and reset to Inbox
-            self.db.update_cue_by_source_ref(
-                &finding.external_id,
-                &finding.text,
-                &finding.file_path,
-                finding.line_number,
-            )?;
-            self.db.update_cue_status(existing_id, CueStatus::Inbox)?;
-            let _ = self
-                .db
-                .log_activity(existing_id, "PR comment updated, reset to Inbox");
-            Ok(Some("updated"))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Build a human-readable summary of finding counts.
-    fn build_findings_summary(new_count: usize, updated_count: usize) -> String {
-        let mut parts = Vec::new();
-        if new_count > 0 {
-            parts.push(format!("{} new", new_count));
-        }
-        if updated_count > 0 {
-            parts.push(format!("{} updated", updated_count));
-        }
-        format!("{} finding(s)", parts.join(", "))
+        self.set_status_message(pr_import_status(&pr_number, &tag, findings.len(), &counts));
     }
 
     /// Notify a single PR comment that a finding was fixed.
     pub(super) fn start_notify_pr_single(&mut self, cue_id: i64) {
-        if self.git.notifying_pr {
+        if self.git.pr_notify_op.in_flight() {
             self.set_status_message("PR notification already in progress".to_string());
             return;
         }
@@ -596,25 +420,21 @@ impl DirigentApp {
             })
             .unwrap_or_else(|| "latest commit".to_string());
 
-        self.git.notifying_pr = true;
         let project_root = self.project_root.clone();
-        let (tx, rx) = mpsc::channel();
-        self.git.pr_notify_rx = Some(rx);
-
-        std::thread::spawn(move || {
+        self.git.pr_notify_op.spawn(move || {
             let result =
                 crate::sources::notify_pr_finding_fixed(&project_root, &source_ref, &commit_hash);
-            let _ = tx.send(match result {
+            match result {
                 Ok(true) => Ok(format!("Notified PR comment for cue #{}", cue_id)),
                 Ok(false) => Err("Could not parse PR source reference".to_string()),
                 Err(e) => Err(e.to_string()),
-            });
+            }
         });
     }
 
     /// Push and notify all Done PR-sourced cues.
     pub(super) fn start_push_and_notify_pr(&mut self) {
-        if self.git.notifying_pr {
+        if self.git.pr_notify_op.in_flight() {
             self.set_status_message("PR notification already in progress".to_string());
             return;
         }
@@ -626,22 +446,18 @@ impl DirigentApp {
             return;
         }
 
-        self.git.notifying_pr = true;
         let project_root = self.project_root.clone();
-        let (tx, rx) = mpsc::channel();
-        self.git.pr_notify_rx = Some(rx);
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
 
-        std::thread::spawn(move || {
+        self.git.pr_notify_op.spawn(move || {
             // First push
             let push_result = match backend {
                 VcsBackend::Jj => crate::jj::jj_push(&project_root, &jj_path),
                 VcsBackend::Git => crate::git::git_push(&project_root),
             };
             if let Err(e) = push_result {
-                let _ = tx.send(Err(format!("Push failed: {}", e)));
-                return;
+                return Err(format!("Push failed: {}", e));
             }
 
             // Then notify each PR comment, collecting only IDs that were actually notified
@@ -669,7 +485,7 @@ impl DirigentApp {
             }
             // Encode only actually-notified cue IDs in the result for activity logging
             let ids_str: Vec<String> = notified_ids.iter().map(|id| id.to_string()).collect();
-            let _ = tx.send(Ok(format!("{}|{}", msg, ids_str.join(","))));
+            Ok(format!("{}|{}", msg, ids_str.join(",")))
         });
     }
 
@@ -712,22 +528,14 @@ impl DirigentApp {
     }
 
     pub(super) fn process_pr_notify_result(&mut self) {
-        let rx = match self.git.pr_notify_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.notifying_pr = false;
-                self.git.pr_notify_rx = None;
+        let result = match self.git.pr_notify_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("PR notify failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.notifying_pr = false;
-        self.git.pr_notify_rx = None;
         match result {
             Ok(msg) => {
                 // Parse "message|id1,id2,..." format
@@ -750,29 +558,21 @@ impl DirigentApp {
     fn log_activity_for_ids(&mut self, ids_csv: &str) {
         for id_str in ids_csv.split(',') {
             if let Ok(cue_id) = id_str.parse::<i64>() {
-                let _ = self.db.log_activity(cue_id, "Notified PR");
+                self.log_cue_activity(cue_id, "Notified PR");
             }
         }
     }
 
     /// Check for completed git pull.
     pub(super) fn process_pull_result(&mut self) {
-        let rx = match self.git.pull_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.pulling = false;
-                self.git.pull_rx = None;
+        let result = match self.git.pull_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Git pull failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.pulling = false;
-        self.git.pull_rx = None;
         match result {
             Ok(msg) => {
                 self.set_status_message(msg);
@@ -794,7 +594,7 @@ impl DirigentApp {
         let is_unmerged = e.contains("unmerged files") || e.contains("unresolved conflict");
 
         if is_diverged {
-            self.git.show_pull_diverged = true;
+            self.dialogs.open(DialogId::PullDiverged);
             self.set_status_message("Pull: branches have diverged — choose a strategy".to_string());
         } else if is_conflict || is_unmerged {
             self.open_merge_conflict_dialog();
@@ -809,13 +609,13 @@ impl DirigentApp {
         let files = git::get_conflicted_files(&self.project_root);
         if files.is_empty() && op.is_none() {
             // No active operation and no conflicts — fall back to the old informational dialog
-            self.git.show_pull_unmerged = true;
+            self.dialogs.open(DialogId::PullUnmerged);
             self.set_status_message("Pull: resolve unmerged files first".to_string());
             return;
         }
         self.git.merge_operation = op;
         self.git.conflict_files = files;
-        self.git.show_merge_conflicts = true;
+        self.dialogs.open(DialogId::MergeConflicts);
         let label = match op {
             Some(git::MergeOperation::Merge) => "Merge",
             Some(git::MergeOperation::Rebase) => "Rebase",
@@ -832,7 +632,7 @@ impl DirigentApp {
     pub(super) fn open_move_to_branch_dialog(&mut self) {
         self.git.move_to_branch_name.clear();
         self.git.move_to_branch_needs_focus = true;
-        self.git.show_move_to_branch = true;
+        self.dialogs.open(DialogId::MoveToBranch);
     }
 
     /// Start an async move-to-branch operation: create a new branch at HEAD,
@@ -843,33 +643,24 @@ impl DirigentApp {
             self.set_status_message("Branch name cannot be empty".into());
             return;
         }
-        if self.git.moving_to_branch {
-            return;
-        }
-        self.git.moving_to_branch = true;
-        self.git.show_move_to_branch = false;
-        let (tx, rx) = mpsc::channel();
-        self.git.move_to_branch_rx = Some(rx);
         let root = self.project_root.clone();
         let branch_name = name.clone();
-        std::thread::spawn(move || {
-            let result = git::move_to_new_branch(&root, &branch_name).map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        });
+        let started = self
+            .git
+            .move_to_branch_op
+            .spawn(move || git::move_to_new_branch(&root, &branch_name).map_err(|e| e.to_string()));
+        if !started {
+            return;
+        }
+        self.close_dialog(DialogId::MoveToBranch);
         self.set_status_message(format!("Moving commits to branch '{}'...", name));
     }
 
     /// Check for completed move-to-branch operation.
     pub(super) fn process_move_to_branch_result(&mut self) {
-        let rx = match self.git.move_to_branch_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.moving_to_branch = false;
-                self.git.move_to_branch_rx = None;
+        let result = match self.git.move_to_branch_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.show_move_to_branch_error(
                     "The move operation ended unexpectedly before reporting a result.".into(),
                 );
@@ -879,10 +670,8 @@ impl DirigentApp {
                 self.reload_commit_history();
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.moving_to_branch = false;
-        self.git.move_to_branch_rx = None;
         match result {
             Ok(branch_name) => {
                 self.set_status_message(format!(
@@ -905,14 +694,14 @@ impl DirigentApp {
     pub(super) fn show_move_to_branch_error(&mut self, message: String) {
         self.set_status_message(format!("Move to branch failed: {}", message));
         self.git.move_to_branch_error_message = message;
-        self.git.show_move_to_branch_error = true;
+        self.dialogs.open(DialogId::MoveToBranchError);
     }
 
     /// Open the Create Bookmark dialog (jj only).
     pub(super) fn open_create_bookmark_dialog(&mut self) {
         self.git.create_bookmark_name.clear();
         self.git.create_bookmark_needs_focus = true;
-        self.git.show_create_bookmark = true;
+        self.dialogs.open(DialogId::CreateBookmark);
     }
 
     /// Create a jj bookmark at the current commit (runs off the UI thread).
@@ -922,44 +711,32 @@ impl DirigentApp {
             self.set_status_message("Bookmark name cannot be empty".into());
             return;
         }
-        if self.git.creating_bookmark {
-            return;
-        }
-        self.git.active_bookmark = Some(name.clone());
-        self.git.show_create_bookmark = false;
-        self.git.creating_bookmark = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.create_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let bm = name.clone();
-        std::thread::spawn(move || {
-            let result = jj::jj_create_bookmark(&root, &bm, &jj_path)
+        let started = self.git.create_bookmark_op.spawn(move || {
+            jj::jj_create_bookmark(&root, &bm, &jj_path)
                 .map(|()| format!("Created bookmark '{}'", bm))
-                .map_err(|e| format!("Create bookmark failed: {}", e));
-            let _ = tx.send(result);
+                .map_err(|e| format!("Create bookmark failed: {}", e))
         });
+        if !started {
+            return;
+        }
+        self.git.active_bookmark = Some(name.clone());
+        self.close_dialog(DialogId::CreateBookmark);
         self.set_status_message(format!("Creating bookmark '{}'...", name));
     }
 
     /// Check for completed bookmark creation.
     pub(super) fn process_create_bookmark_result(&mut self) {
-        let rx = match self.git.create_bookmark_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.creating_bookmark = false;
-                self.git.create_bookmark_rx = None;
+        let result = match self.git.create_bookmark_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Create bookmark failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.creating_bookmark = false;
-        self.git.create_bookmark_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(e),
@@ -970,9 +747,6 @@ impl DirigentApp {
 
     /// Squash all commits on the current bookmark into a single commit (jj only).
     pub(super) fn start_squash_current_bookmark(&mut self) {
-        if self.git.squashing {
-            return;
-        }
         let bookmark = self
             .git
             .info
@@ -983,14 +757,11 @@ impl DirigentApp {
             self.set_status_message("No bookmark to squash".into());
             return;
         }
-        self.git.squashing = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.squash_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let bm = bookmark.clone();
-        std::thread::spawn(move || {
-            let result = jj::jj_squash_bookmark(&root, &bm, &jj_path)
+        let started = self.git.squash_op.spawn(move || {
+            jj::jj_squash_bookmark(&root, &bm, &jj_path)
                 .map(|n| {
                     if n == 0 {
                         format!("Nothing to squash \u{2014} '{}' has 0 or 1 commits", bm)
@@ -999,30 +770,23 @@ impl DirigentApp {
                         format!("Squashed {} commit{} on '{}' into one", n, plural, bm)
                     }
                 })
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+                .map_err(|e| e.to_string())
         });
-        self.set_status_message(format!("Squashing commits on '{}'...", bookmark));
+        if started {
+            self.set_status_message(format!("Squashing commits on '{}'...", bookmark));
+        }
     }
 
     /// Check for completed squash operation.
     pub(super) fn process_squash_result(&mut self) {
-        let rx = match self.git.squash_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.squashing = false;
-                self.git.squash_rx = None;
+        let result = match self.git.squash_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Squash failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.squashing = false;
-        self.git.squash_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Squash failed: {}", e)),
@@ -1034,39 +798,27 @@ impl DirigentApp {
 
     /// Undo the last jj operation (runs off the UI thread).
     pub(super) fn start_jj_undo(&mut self) {
-        if self.git.undoing {
-            return;
-        }
-        self.git.undoing = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.undo_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        std::thread::spawn(move || {
-            let result = jj::jj_undo(&root, &jj_path).map_err(|e| format!("Undo failed: {}", e));
-            let _ = tx.send(result);
-        });
-        self.set_status_message("Undoing last operation...".into());
+        let started = self
+            .git
+            .undo_op
+            .spawn(move || jj::jj_undo(&root, &jj_path).map_err(|e| format!("Undo failed: {}", e)));
+        if started {
+            self.set_status_message("Undoing last operation...".into());
+        }
     }
 
     /// Check for completed undo operation.
     pub(super) fn process_undo_result(&mut self) {
-        let rx = match self.git.undo_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.undoing = false;
-                self.git.undo_rx = None;
+        let result = match self.git.undo_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Undo failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.undoing = false;
-        self.git.undo_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(e),
@@ -1086,7 +838,7 @@ impl DirigentApp {
             jj::jj_merged_bookmarks(&self.project_root, &self.settings.jj_cli_path);
         self.git.trunk_bookmarks =
             jj::jj_trunk_bookmarks(&self.project_root, &self.settings.jj_cli_path);
-        self.git.show_delete_bookmark = true;
+        self.dialogs.open(DialogId::DeleteBookmark);
     }
 
     /// Whether a bookmark is the repository's trunk and must not be deleted.
@@ -1104,27 +856,23 @@ impl DirigentApp {
 
     /// Start an async delete-bookmark operation (jj only).
     pub(super) fn start_delete_bookmark(&mut self, name: &str) {
-        if self.git.deleting_bookmark {
-            return;
-        }
         // Never delete the repository's trunk bookmark.
         if self.is_protected_bookmark(name) {
             self.set_status_message(format!("Refusing to delete protected bookmark '{}'", name));
             return;
         }
-        self.git.deleting_bookmark = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.delete_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let bm = name.to_string();
-        self.set_status_message(format!("Deleting bookmark '{}'...", bm));
-        std::thread::spawn(move || {
-            let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
+        let label = format!("Deleting bookmark '{}'...", bm);
+        let started = self.git.delete_bookmark_op.spawn(move || {
+            jj::jj_delete_bookmark(&root, &bm, &jj_path)
                 .map(|()| format!("Deleted bookmark '{}'", bm))
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+                .map_err(|e| e.to_string())
         });
+        if started {
+            self.set_status_message(label);
+        }
     }
 
     /// Start an async delete of every bookmark fully merged into trunk (jj only).
@@ -1132,7 +880,7 @@ impl DirigentApp {
     /// The repository's trunk bookmark is never deleted, even though it is
     /// itself reported as merged into `trunk()`.
     pub(super) fn start_delete_merged_bookmarks(&mut self) {
-        if self.git.deleting_bookmark {
+        if self.git.delete_bookmark_op.in_flight() {
             return;
         }
         let merged: Vec<String> = self
@@ -1146,13 +894,10 @@ impl DirigentApp {
             self.set_status_message("No merged bookmarks to delete".to_string());
             return;
         }
-        self.git.deleting_bookmark = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.delete_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         self.set_status_message(format!("Deleting {} merged bookmark(s)...", merged.len()));
-        std::thread::spawn(move || {
+        self.git.delete_bookmark_op.spawn(move || {
             let mut deleted = 0usize;
             let mut errors: Vec<String> = Vec::new();
             for bm in &merged {
@@ -1161,7 +906,7 @@ impl DirigentApp {
                     Err(e) => errors.push(format!("{}: {}", bm, e)),
                 }
             }
-            let result = if errors.is_empty() {
+            if errors.is_empty() {
                 Ok(format!("Deleted {} merged bookmark(s)", deleted))
             } else {
                 Err(format!(
@@ -1169,29 +914,20 @@ impl DirigentApp {
                     deleted,
                     errors.join("; ")
                 ))
-            };
-            let _ = tx.send(result);
+            }
         });
     }
 
     /// Check for completed delete-bookmark operation.
     pub(super) fn process_delete_bookmark_result(&mut self) {
-        let rx = match self.git.delete_bookmark_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.deleting_bookmark = false;
-                self.git.delete_bookmark_rx = None;
+        let result = match self.git.delete_bookmark_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Bookmark deletion failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.deleting_bookmark = false;
-        self.git.delete_bookmark_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Delete failed: {}", e)),
@@ -1199,7 +935,7 @@ impl DirigentApp {
         // Refresh the branch list in the dialog if still open. This must run for
         // both success and failure: a partial-success deletion returns an Err but
         // still removes some bookmarks, so the list would otherwise stay stale.
-        if self.git.show_delete_bookmark {
+        if self.dialogs.is_open(DialogId::DeleteBookmark) {
             let infos =
                 jj::jj_list_bookmarks_with_status(&self.project_root, &self.settings.jj_cli_path)
                     .unwrap_or_default();
@@ -1222,47 +958,35 @@ impl DirigentApp {
             .map(|b| (b.name.clone(), b.push_status))
             .collect();
         self.git.available_branches = infos.into_iter().map(|b| b.name).collect();
-        self.git.show_merge_bookmark = true;
+        self.dialogs.open(DialogId::MergeBookmark);
     }
 
     /// Start an async merge-bookmark operation (jj only).
     pub(super) fn start_merge_bookmark(&mut self, source: &str) {
-        if self.git.merging_bookmark {
-            return;
-        }
-        self.git.merging_bookmark = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.merge_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let source_owned = source.to_string();
         let dest_bm = self.git.active_bookmark.clone();
-        self.set_status_message(format!("Merging '{}'...", source_owned));
-        std::thread::spawn(move || {
-            let result = jj::jj_merge_bookmark(&root, &source_owned, &jj_path, dest_bm.as_deref())
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+        let label = format!("Merging '{}'...", source_owned);
+        let started = self.git.merge_bookmark_op.spawn(move || {
+            jj::jj_merge_bookmark(&root, &source_owned, &jj_path, dest_bm.as_deref())
+                .map_err(|e| e.to_string())
         });
+        if started {
+            self.set_status_message(label);
+        }
     }
 
     /// Check for completed merge-bookmark operation.
     pub(super) fn process_merge_bookmark_result(&mut self) {
-        let rx = match self.git.merge_bookmark_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.merging_bookmark = false;
-                self.git.merge_bookmark_rx = None;
+        let result = match self.git.merge_bookmark_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Merge failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.merging_bookmark = false;
-        self.git.merge_bookmark_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Merge failed: {}", e)),
@@ -1275,13 +999,25 @@ impl DirigentApp {
     }
 
     /// Open the Commit dialog (jj only).
+    ///
+    /// Refuses to discard a change-set queue the user is still working through:
+    /// this used to clear it unconditionally, so picking "Commit" from the menu
+    /// mid-queue silently threw away every remaining group.
     pub(super) fn open_commit_dialog(&mut self) {
+        if !self.git.commit_queue.is_empty() {
+            // Reopen on the current group instead of resetting to a single commit.
+            self.dialogs.open(DialogId::Commit);
+            self.git.commit_needs_focus = true;
+            self.set_status_message(
+                "A split-commit queue is in progress — showing the current group".into(),
+            );
+            return;
+        }
         self.git.commit_message_input.clear();
         self.git.commit_review_cue_id = None;
-        self.git.commit_queue.clear();
         self.git.commit_queue_pos = 0;
         self.git.commit_needs_focus = true;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
     }
 
     /// Commit the working copy with the user's message (runs off the UI thread).
@@ -1296,7 +1032,7 @@ impl DirigentApp {
             self.set_status_message("Commit message cannot be empty".into());
             return;
         }
-        if self.git.committing {
+        if self.git.commit_op.in_flight() {
             return;
         }
 
@@ -1306,44 +1042,50 @@ impl DirigentApp {
         // Resolve the diff to commit:
         // - a reviewed cue commits its stored execution diff;
         // - a Git-view selection or a queued change-set group commits only those
-        //   files (path-scoped diff);
+        //   files (path-scoped diff, computed on the worker thread below —
+        //   `git diff` over many paths is slow enough to stutter the UI);
         // - otherwise the whole working copy is committed (`commit_all`).
-        let diff_text = if let Some(id) = review_cue_id {
+        let stored_diff = review_cue_id.and_then(|id| {
             self.db
                 .get_latest_execution(id)
                 .ok()
                 .flatten()
                 .and_then(|e| e.diff)
-        } else if !selected_files.is_empty() {
-            // Staged-inclusive diff: files fully staged via the Stage button
-            // must stay committable, and `commit_diff` only needs the paths.
-            let diff = super::vcs_dispatch::get_uncommitted_diff(
-                &self.settings.vcs_backend,
-                &self.settings.jj_cli_path,
-                &self.project_root,
-                &selected_files,
-            )
-            .filter(|d| !d.trim().is_empty());
-            match diff {
-                Some(d) => Some(d),
-                None => {
-                    self.set_status_message("No changes to commit for the selected files".into());
-                    return;
-                }
-            }
+        });
+        let scope_files = if review_cue_id.is_none() {
+            selected_files.clone()
         } else {
-            None
+            Vec::new()
         };
 
-        self.git.show_commit_dialog = false;
-        self.git.committing = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.commit_rx = Some(rx);
+        self.dialogs.close(DialogId::Commit);
         let root = self.project_root.clone();
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let active_bm = self.git.active_bookmark.clone();
-        std::thread::spawn(move || {
+        self.git.commit_op.spawn(move || {
+            let diff_text = match stored_diff {
+                Some(d) => Some(d),
+                None if !scope_files.is_empty() => {
+                    // Staged-inclusive diff: files fully staged via the Stage
+                    // button must stay committable, and `commit_diff` only
+                    // needs the paths.
+                    let diff = super::vcs_dispatch::get_uncommitted_diff(
+                        &backend,
+                        &jj_path,
+                        &root,
+                        &scope_files,
+                    )
+                    .filter(|d| !d.trim().is_empty());
+                    match diff {
+                        Some(d) => Some(d),
+                        None => {
+                            return Err("No changes to commit for the selected files".to_string())
+                        }
+                    }
+                }
+                None => None,
+            };
             let result = if let Some(ref diff) = diff_text {
                 super::vcs_dispatch::commit_diff(
                     &backend,
@@ -1362,10 +1104,9 @@ impl DirigentApp {
                     active_bm.as_deref(),
                 )
             };
-            let result = result
+            result
                 .map(|change_id| format!("Committed: {}", &change_id[..7.min(change_id.len())]))
-                .map_err(|e| format!("Commit failed: {}", e));
-            let _ = tx.send(result);
+                .map_err(|e| format!("Commit failed: {}", e))
         });
 
         self.git.commit_pending_cue_id = review_cue_id;
@@ -1374,20 +1115,14 @@ impl DirigentApp {
 
     /// Check for completed commit operation.
     pub(super) fn process_commit_result(&mut self) {
-        let rx = match self.git.commit_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+        let result = match self.git.commit_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.handle_commit_channel_disconnect();
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.committing = false;
-        self.git.commit_rx = None;
         let pending_cue = self.git.commit_pending_cue_id.take();
         let in_queue = !self.git.commit_queue.is_empty();
         match result {
@@ -1399,17 +1134,21 @@ impl DirigentApp {
     }
 
     fn handle_commit_channel_disconnect(&mut self) {
-        self.git.committing = false;
-        self.git.commit_rx = None;
         if let Some(id) = self.git.commit_pending_cue_id.take() {
-            let _ = self.db.log_activity(id, "Commit failed");
+            self.log_cue_activity(id, "Commit failed");
         }
         self.set_status_message("Commit failed unexpectedly".into());
     }
 
     fn finish_commit_success(&mut self, pending_cue: Option<i64>, in_queue: bool, msg: String) {
+        // Collected rather than reported inline: the commit message set at the
+        // end of this function would otherwise immediately clobber the error.
+        let mut status_saved = true;
         if let Some(id) = pending_cue {
-            let _ = self.db.update_cue_status(id, CueStatus::Done);
+            status_saved = self.db_log(
+                "move cue to Done",
+                self.db.update_cue_status(id, CueStatus::Done),
+            );
             // The worker reports success as "Committed: <hash>"; record it
             // as "Committed (<hash>)" so cue_commit_hash can recover the
             // hash and offer "Save as Play" on the cue.
@@ -1417,7 +1156,7 @@ impl DirigentApp {
                 Some(hash) => format!("Committed ({})", hash),
                 None => "Committed".to_string(),
             };
-            let _ = self.db.log_activity(id, &activity);
+            self.log_cue_activity(id, &activity);
             self.clear_review_question_and_recheck_workflow(id);
             // Run configured AfterCommit agents (format/lint/build/test)
             // for changes committed via the diff-review dialog, matching
@@ -1434,7 +1173,14 @@ impl DirigentApp {
                 &cue_prompt,
             );
         }
-        self.set_status_message(msg);
+        if status_saved {
+            self.set_status_message(msg);
+        } else {
+            self.set_status_message(format!(
+                "{} — but the cue could not be marked Done (database error)",
+                msg
+            ));
+        }
         if in_queue {
             self.advance_commit_queue();
         }
@@ -1442,7 +1188,7 @@ impl DirigentApp {
 
     fn finish_commit_failure(&mut self, pending_cue: Option<i64>, in_queue: bool, error: String) {
         if let Some(id) = pending_cue {
-            let _ = self.db.log_activity(id, "Commit failed");
+            self.log_cue_activity(id, "Commit failed");
         }
         if in_queue {
             self.restore_current_commit_group();
@@ -1455,7 +1201,7 @@ impl DirigentApp {
         if let Some(group) = self.git.commit_queue.get(pos) {
             self.git.commit_files = group.files.clone();
         }
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
     }
 
     pub(super) fn reload_git_info(&mut self) {
@@ -1494,12 +1240,13 @@ impl DirigentApp {
         self.git.pr_detect_branch = branch;
         self.git.pr_number = None;
         self.git.pr_url = None;
+        // A previous detection for another branch may still be running; drop
+        // its (now stale) result and start fresh.
+        self.git.pr_detect_op.cancel();
         let project_root = self.project_root.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.git.pr_detect_rx = Some(rx);
-        std::thread::spawn(move || {
-            let _ = tx.send(super::detect_pr_info(&project_root));
-        });
+        self.git
+            .pr_detect_op
+            .spawn(move || super::detect_pr_info(&project_root));
     }
 
     pub(super) fn reload_commit_history(&mut self) {
@@ -1535,51 +1282,37 @@ impl DirigentApp {
 
     /// Find empty head commits and abandon them in one shot (jj only).
     pub(super) fn start_abandon_empty_heads(&mut self) {
-        if self.git.abandoning_empty {
-            return;
-        }
-        self.git.abandoning_empty = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.abandon_empty_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        std::thread::spawn(move || {
+        let started = self.git.abandon_empty_op.spawn(move || {
             let heads = jj::jj_find_empty_heads(&root, &jj_path);
             if heads.is_empty() {
-                let _ = tx.send(Ok("No empty head commits found".to_string()));
-                return;
+                return Ok("No empty head commits found".to_string());
             }
             let ids: Vec<String> = heads.iter().map(|(id, _)| id.clone()).collect();
             let count = ids.len();
-            let result = jj::jj_abandon(&root, &ids, &jj_path)
+            jj::jj_abandon(&root, &ids, &jj_path)
                 .map(|_| {
                     let plural = if count == 1 { "" } else { "s" };
                     format!("Abandoned {} empty head commit{}", count, plural)
                 })
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+                .map_err(|e| e.to_string())
         });
-        self.set_status_message("Finding empty heads...".into());
+        if started {
+            self.set_status_message("Finding empty heads...".into());
+        }
     }
 
     /// Check for completed abandon-empty-heads operation.
     pub(super) fn process_abandon_empty_result(&mut self) {
-        let rx = match self.git.abandon_empty_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.abandoning_empty = false;
-                self.git.abandon_empty_rx = None;
+        let result = match self.git.abandon_empty_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Abandon empty heads failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.abandoning_empty = false;
-        self.git.abandon_empty_rx = None;
         match result {
             Ok(msg) => self.set_status_message(msg),
             Err(e) => self.set_status_message(format!("Abandon failed: {}", e)),
@@ -1600,47 +1333,34 @@ impl DirigentApp {
                 return;
             }
         }
-        self.git.show_cleanup_bookmarks = true;
+        self.dialogs.open(DialogId::CleanupBookmarks);
     }
 
     /// Delete a suspicious bookmark (runs off the UI thread).
     pub(super) fn start_delete_suspicious_bookmark(&mut self, name: String) {
-        if self.git.cleaning_bookmark {
-            return;
-        }
-        self.git.cleaning_bookmark = true;
-        let (tx, rx) = mpsc::channel();
-        self.git.cleanup_bookmark_rx = Some(rx);
         let root = self.project_root.clone();
         let jj_path = self.settings.jj_cli_path.clone();
         let bm = name.clone();
-        std::thread::spawn(move || {
-            let result = jj::jj_delete_bookmark(&root, &bm, &jj_path)
+        let started = self.git.cleanup_bookmark_op.spawn(move || {
+            jj::jj_delete_bookmark(&root, &bm, &jj_path)
                 .map(|()| bm)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
+                .map_err(|e| e.to_string())
         });
-        self.set_status_message(format!("Deleting bookmark '{}'...", name));
+        if started {
+            self.set_status_message(format!("Deleting bookmark '{}'...", name));
+        }
     }
 
     /// Check for completed cleanup-bookmark deletion.
     pub(super) fn process_cleanup_bookmark_result(&mut self) {
-        let rx = match self.git.cleanup_bookmark_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.git.cleaning_bookmark = false;
-                self.git.cleanup_bookmark_rx = None;
+        let result = match self.git.cleanup_bookmark_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Bookmark deletion failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.git.cleaning_bookmark = false;
-        self.git.cleanup_bookmark_rx = None;
         match result {
             Ok(deleted_name) => {
                 self.git

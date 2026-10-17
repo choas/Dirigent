@@ -123,6 +123,6 @@ pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
         }
     }
     // Sort by modified time, newest first
-    result.sort_by(|a, b| b.modified.cmp(&a.modified));
+    result.sort_by_key(|entry| std::cmp::Reverse(entry.modified));
     result
 }

@@ -5,11 +5,53 @@ All notable changes to Dirigent are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Trust gate for `.Dirigent/settings.json`: execution-capable fields (LSP server commands, source commands, pre/post-run scripts, agent commands, extra CLI args, program paths, LLM endpoints, …) from a repository's settings file are disabled — and `--dangerously-skip-permissions` is forced off — until the user explicitly approves exactly those fields in a first-open dialog. Approvals are remembered per repository by content hash in the user profile (`~/Library/Application Support/Dirigent/trusted_repos.json`); only cosmetic fields (theme, fonts, layout, notifications) apply without approval, and any future settings field is gated by default
+- Git graph view with branch/commit visualization and incremental history loading
+- "Tidy my working tree" — the coding-agent CLI groups the working diff into logical change sets, which become a reviewable, reorderable commit queue
+- Hunk-level staging: stage, unstage, and discard individual hunks from the diff review
+- "Analyze changes over…" — cross-branch/range review that imports findings as cues
+- Folder comparison, with support for an external diff tool (`external_diff_tool`)
+- Pull request creation on Codeberg via the Forgejo REST API, alongside GitHub
+- In-app log viewer and a Mermaid diagram view
+- CI workflow running `cargo test`, `cargo clippy -D warnings`, `cargo fmt --check` and `cargo audit` on every push and pull request — previously only tag pushes were built, and nothing verified them
+- Recovery dialog when `.Dirigent/Dirigent.db` cannot be opened (locked, corrupt, permission-denied), offering retry, "open another repo", "move aside and recreate", or continuing on a temporary in-memory database
+- `PRAGMA user_version` schema stamping; a database written by a newer Dirigent is now refused at open instead of being silently half-understood
 - ACP Agent CLI provider: run cues through any Agent Client Protocol (v1) agent — OpenCode, Gemini CLI, Goose, Claude Code / Codex via Zed's adapters, or custom agents — with streamed text, tool calls and plans, project-root-confined file access, and a permission policy tied to the skip-permissions setting (see `docs/How_to_ACP.md`)
 - Settings → General → **Test Connection**: sends `hello` to the selected CLI provider (Claude, OpenCode, Gemini, Codex or ACP agent) with the current settings and shows the reply or the error
 
 ### Changed
+- Rust is pinned to 1.99.1 in `rust-toolchain.toml` (also `rust-version` in both crates); CI and the release build install that version instead of whatever is the latest stable, so a new Rust release can no longer break CI without a code change
+- All AI CLI backends (Claude, Gemini, OpenCode, Codex, and the new ACP agent provider) now run through a single `AiBackend` trait with one canonical sequence — pre-run hook, CLI invocation, post-run hook (always executed, even on error or cancel), cancellation winning over the CLI result — and one shared metrics mapping, error type, and request/response shape
 - Conversation view groups each CLI run under a foldable header (run number, provider, prompt preview, and duration/cost) — the latest and in-flight runs stay expanded while earlier runs collapse for easier scanning of long conversations
+- Commit flows include staged changes, and staged queue groups stay queued until they are committed
+- Hook scripts now follow one policy across all backends, derived from the repository trust gate rather than hard-coded per backend: an unapproved script is skipped with a warning (never fatal), an approved one runs. Previously Codex refused *every* hook — disabling the backend outright whenever one was configured — while the other three handed the same configuration straight to `sh -c`
+- Analysis runs ("Tidy my working tree", "Analyze changes over…", cue splitting, workflow planning, theme generation) no longer inherit `--dangerously-skip-permissions`, and the diff they embed is explicitly delimited as untrusted data
+- Claude Code's trust-folder dialog is only auto-accepted for a repository already approved in Dirigent's trust gate; accepting it activates that repository's `.claude/settings.json`
+- `git` and `jj` are invoked with `LC_ALL=C`, so conflict/diverged/stale detection keeps working under a non-English locale
+- `sources/external.rs` split into one module per provider under `sources/providers/`, with parser tests against captured fixtures for all seven
+- `app/claude_run.rs` split into `provider_dispatch`, `mcp_inject`, `run_diff` and `result_pipeline`; PR-findings import moved out of `app/git_operations.rs` into `db/pr_finding_ops.rs`
+- Unknown run metrics are recorded as NULL instead of zero, so cost totals no longer count a run whose cost the backend never reported as free
+
+### Fixed
+- Claude and Codex runs recorded a zero duration; the run duration is now measured at the backend seam when the CLI stream doesn't report one
+- Gemini and OpenCode runs panicked instead of erroring when the child's stdout/stderr pipes were missing, and Gemini could block indefinitely on a stream read error (the child is now killed first, as OpenCode already did)
+- Cancelling a Gemini/OpenCode run skipped the post-run hook, and a cancel racing run completion could leave the child process unkilled
+- Remote code execution via LSP environment variables in an attacker-controlled `.Dirigent/settings.json`
+- Two advisories that failed `cargo audit`: `h2` 0.4.13 → 0.4.18 (RUSTSEC-2026-0258, unbounded empty DATA frames) and `webbrowser` 1.2.0 → 1.2.4 (RUSTSEC-2026-0257, argument injection via the Unix `BROWSER` variable)
+- Orphaned PTY processes are cleaned up, and stale Stop-hook entries are pruned on install
+- File renames made outside Dirigent are followed instead of closing the tab as deleted
+- Only the *first* tool-permission dialog of a PTY run was auto-accepted; later ones went unanswered until the 120 s idle timeout killed the run. Dialog state is now read from the live terminal screen instead of an append-only buffer
+- Repository or model output containing "How is Claude doing this session" or "Resume from summary" could make Dirigent type into the PTY at a moment the content chose. Those answers are now driven only by a screen-verified dialog
+- A permission dialog nothing could answer blocked a run forever (no timeout, no UI); the stall guard now stays armed while waiting
+- A corrupt `.Dirigent/settings.json` silently reset every preference; it is now backed up to `settings.json.bak-<timestamp>` and the failure is reported
+- `jj` partial commits snapshot the other dirty files to disk before reverting them, so a crash in that window no longer discards uncommitted work; write-back failures are reported instead of ignored
+- Discarding a hunk now asks for confirmation and leaves a `git stash` undo point
+- Unbounded buffers on child-process output and LSP `Content-Length` bodies are capped
+- PTY, LSP and agent processes are killed by process group and reaped, instead of leaving zombies and orphaned descendants; agents are cancelled on quit
+- Staging refresh ran two `git diff` subprocesses per file on the UI thread (~100 spawns for a 50-file diff); one `git status --porcelain=v2` call replaces them
+- The graph view re-walked the whole history every frame while parked at the bottom of a large repository
+- Starting a split-commit analysis or opening the commit dialog mid-queue silently discarded queued groups
+- "Analyze changes over…" reported a bad ref as "Nothing to analyze between those refs", and had no oversized-diff guard
 
 ## [0.6.1] - 2026-05-28
 

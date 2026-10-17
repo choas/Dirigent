@@ -123,7 +123,7 @@ impl DirigentApp {
             .show(ui, |ui| {
                 if let Some(ref plan) = self.workflow_plan.clone() {
                     self.render_plan_steps(ui, &plan.steps, actions);
-                } else if self.workflow_generating {
+                } else if self.workflow_op.in_flight() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(40.0);
                         ui.spinner();
@@ -249,7 +249,7 @@ impl DirigentApp {
         egui::Frame::NONE
             .inner_margin(8.0)
             .corner_radius(6)
-            .stroke(egui::Stroke::new(1.5, border_color))
+            .stroke(egui::Stroke::new(1.5_f32, border_color))
             .fill(fill)
     }
 

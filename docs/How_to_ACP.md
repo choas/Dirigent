@@ -20,7 +20,7 @@ Background and design: [acp-concept.md](acp-concept.md). The reverse direction, 
 | Agent Command | Executable on `PATH`, or an absolute path | `opencode` |
 | Extra Arguments | Shell-quoted arguments; most agents need an "ACP mode" flag here | `acp` |
 | Permissions | Auto-approve the agent's permission requests (shared with Claude's skip-permissions toggle) | on |
-| Pre-run / Post-run Script | Shell commands around each run, like the other providers | `cargo fmt` |
+| Pre-run / Post-run Script | Shell commands around each run, like the other providers; they only run in repositories whose settings you approved | `cargo fmt` |
 | Env Variables | `KEY=VAL`, one per line; `.Dirigent/.env` is applied too | `GOOSE_PROVIDER=anthropic` |
 
 4. Click **Test Connection**. Dirigent sends `hello` to the agent and shows its reply (or the error) next to the button. See [Testing the connection](#testing-the-connection).
@@ -52,7 +52,7 @@ Running an agent through `npx` downloads it on first use, so the first run (or c
    - `fs/write_text_file`: inside the project root only; written files are tracked for the diff.
    - `session/request_permission`: see [Permissions](#permissions).
    - Anything else (such as `terminal/create`): answered with JSON-RPC "method not found", so the agent falls back to its own tools.
-6. When the turn ends, stdin is closed, so the agent exits. SIGTERM and then SIGKILL go to its process group if it lingers. Then the post-run script runs.
+6. When the turn ends, stdin is closed, so the agent exits. SIGTERM and then SIGKILL go to its process group if it lingers. Then the post-run script runs, also after an error or a cancel.
 7. The diff is computed like it is for every other provider: the working tree is the source of truth, scoped to the files the agent reported editing.
 
 **Cancel** sends `session/cancel`. Dirigent waits up to 5 s for the agent to wind down, then kills it.

@@ -1,5 +1,6 @@
 mod agents_poll;
 mod ansi;
+mod async_op;
 mod background;
 mod change_set_analysis;
 mod claude_code_name;
@@ -7,6 +8,7 @@ mod claude_run;
 mod code_viewer;
 mod cue_pool;
 mod dialog;
+mod dialog_registry;
 mod dino;
 mod file_navigation;
 mod folder_compare;
@@ -106,7 +108,10 @@ use crate::settings::{self, CustomTheme, SemanticColors, Settings, VcsBackend};
 use crate::ssh;
 
 // Re-export items from submodules so existing sibling modules can use `super::icon` etc.
+use async_op::{AsyncOp, AsyncPoll};
 use claude_run::ClaudeRunState;
+pub(crate) use dialog_registry::DialogId;
+use dialog_registry::DialogRegistry;
 use sources_poll::SourceState;
 use tasks::TaskHandle;
 use theme::{icon, icon_small};
@@ -212,9 +217,20 @@ pub(crate) fn update_macos_dock_icon(custom_path: &str, project_root: &Path) {
     }
 }
 
+/// The on-disk database could not be opened; the app is running on an
+/// in-memory fallback. See `app::dialog::db_error`.
+#[derive(Clone, Debug)]
+pub(crate) struct DbOpenError {
+    pub message: String,
+}
+
 pub struct DirigentApp {
     project_root: PathBuf,
     db: Database,
+    /// Set when the on-disk database could not be opened at startup and `db`
+    /// is a throwaway in-memory fallback. Drives the recovery dialog; nothing
+    /// is persisted while this is `Some`.
+    db_open_error: Option<DbOpenError>,
 
     // File tree
     file_tree: Option<FileTree>,
@@ -252,10 +268,13 @@ pub struct DirigentApp {
     git_status_rx: mpsc::Receiver<(PathBuf, HashMap<String, char>, usize)>,
     _git_status_tx: mpsc::Sender<(PathBuf, HashMap<String, char>, usize)>,
 
+    /// Single source of truth for open dialogs: rendering, modal detection
+    /// and Esc/backdrop dismissal all derive from this one registry.
+    pub dialogs: DialogRegistry,
+
     // Settings & theme
     settings: Settings,
     pub(super) semantic: SemanticColors,
-    show_settings: bool,
     needs_theme_apply: bool,
     playbook_expanded: bool,
     sources_expanded: bool,
@@ -273,7 +292,6 @@ pub struct DirigentApp {
     global_prompt_images: Vec<PathBuf>,
 
     // Repo picker
-    pub show_repo_picker: bool,
     repo_path_input: String,
     cached_existing_repos: Vec<String>,
 
@@ -287,11 +305,7 @@ pub struct DirigentApp {
     pub(super) conversation_replies: HashMap<i64, String>,
     pub(super) conversation_reply_images: HashMap<i64, Vec<PathBuf>>,
 
-    // About dialog
-    show_about: bool,
-
     // Log viewer
-    show_log_viewer: bool,
     log_viewer_filter: log::LevelFilter,
     log_viewer_auto_scroll: bool,
     logo_texture: Option<egui::TextureHandle>,
@@ -397,6 +411,13 @@ pub struct DirigentApp {
     // "git init" confirmation: path that is a directory but not a git repo
     git_init_confirm: Option<PathBuf>,
 
+    // Execution-capable .Dirigent/settings.json fields awaiting user approval
+    pending_trust: Option<crate::settings::PendingTrust>,
+
+    // Trust hash the user declined this session (suppresses re-prompting
+    // until the settings file changes again or the repo is switched)
+    declined_trust_hash: Option<String>,
+
     // Go-to-definition background search
     goto_def_tx: mpsc::Sender<(u64, PathBuf, usize, String)>,
     goto_def_rx: mpsc::Receiver<(u64, PathBuf, usize, String)>,
@@ -433,6 +454,8 @@ pub struct DirigentApp {
 
     // Pending file/directory delete confirmation (path, is_dir)
     pending_file_delete: Option<(PathBuf, bool)>,
+    /// A hunk discard awaiting confirmation (see `hunk_staging`).
+    pending_hunk_discard: Option<hunk_staging::PendingHunkDiscard>,
 
     // Inline rename in file tree
     rename_target: Option<PathBuf>,
@@ -440,13 +463,14 @@ pub struct DirigentApp {
     rename_focus_requested: bool,
 
     // Notion "mark done" async state
-    notion_done_in_progress: bool,
-    notion_done_rx: Option<mpsc::Receiver<Result<i64, String>>>,
+    notion_done_op: AsyncOp<Result<i64, String>>,
 
     // Cache of cue IDs that have been marked done in Notion (avoids DB reads during repaint)
     notion_done_cache: HashSet<i64>,
 
-    // Notion object listing for settings dropdown (source index → objects)
+    // Notion object listing for settings dropdown (source index → objects).
+    // Raw receivers rather than AsyncOps: the source index travels alongside
+    // the channel so a result can be attributed even if the worker dies.
     notion_objects: HashMap<usize, Vec<crate::sources::NotionObject>>,
     notion_objects_rx: Option<NotionObjectsReceiver>,
     notion_objects_error: HashMap<usize, String>,
@@ -459,8 +483,7 @@ pub struct DirigentApp {
 
     // Workflow plan state
     workflow_plan: Option<crate::workflow::WorkflowPlan>,
-    workflow_generating: bool,
-    workflow_rx: Option<mpsc::Receiver<WorkflowResult>>,
+    workflow_op: AsyncOp<WorkflowResult>,
     /// Warning from workflow plan parsing (e.g. missing cues, fallback).
     workflow_warning: Option<String>,
     /// Whether the workflow graph overlay is visible (separate from plan existence).
@@ -469,29 +492,29 @@ pub struct DirigentApp {
     workflow_inbox_snapshot: Vec<i64>,
 
     // Split cue async state
-    split_cue_generating: bool,
     split_cue_source_id: Option<i64>,
-    split_cue_rx: Option<mpsc::Receiver<SplitCueResult>>,
+    split_cue_op: AsyncOp<SplitCueResult>,
     split_cue_cancel: Arc<AtomicBool>,
 
     // Split-commit grouping async state: the "Commit Changes" button groups the
     // working tree into logical change sets via the CLI, then feeds them to the
     // commit dialog's queue.
-    change_set_generating: bool,
-    change_set_rx: Option<mpsc::Receiver<change_set_analysis::ChangeSetResult>>,
+    change_set_op: AsyncOp<change_set_analysis::ChangeSetResult>,
+    /// A queued change-set group being committed. `Ok` carries the paths whose
+    /// hunk mapping failed and were committed whole.
+    partial_commit_op: AsyncOp<Result<Vec<String>, String>>,
     /// Cancellation flag for the in-flight change-set CLI run.
     change_set_cancel: Arc<AtomicBool>,
 
     // "Analyze Changes over" (read-only cross-branch range analysis)
-    analyze_over_show_picker: bool,
     analyze_over_base: String,
     analyze_over_head: String,
-    analyze_over_generating: bool,
-    analyze_over_rx: Option<mpsc::Receiver<change_set_analysis::AnalyzeOverResult>>,
+    analyze_over_op: AsyncOp<change_set_analysis::AnalyzeOverResult>,
     analyze_over_cancel: Arc<AtomicBool>,
     analyze_over_result: Option<change_set_analysis::AnalyzeOver>,
 
-    // Folder "Compare to…" async state
+    // Folder "Compare to…" async state. A raw receiver rather than an
+    // AsyncOp: the worker streams multiple progress messages per run.
     folder_compare_rx: Option<mpsc::Receiver<folder_compare::FolderCompareMsg>>,
 
     // Custom theme editor dialog
@@ -512,13 +535,12 @@ pub struct DirigentApp {
     ssh_worker: Option<ssh::SshWorkerHandle>,
     ssh_remote_entries: Vec<ssh::RemoteEntry>,
     ssh_remote_path: String,
-    ssh_connecting: bool,
-    ssh_connect_rx: Option<mpsc::Receiver<Result<ssh::SshWorkerHandle, String>>>,
+    ssh_connect_op: AsyncOp<Result<ssh::SshWorkerHandle, String>>,
     ssh_expanded_dirs: HashSet<String>,
     ssh_listing: bool,
     ssh_reading_file: Option<String>,
     show_ssh_panel: bool,
-    ssh_test_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    ssh_test_op: AsyncOp<Result<String, String>>,
 
     // Frame timing for status bar display
     last_frame_time: Duration,
@@ -536,10 +558,8 @@ pub(super) struct CustomThemeEdit {
     pub editing_index: Option<usize>,
     /// AI prompt text for generating theme colors.
     pub ai_prompt: String,
-    /// Whether AI generation is in progress.
-    pub ai_generating: bool,
-    /// Channel to receive AI-generated theme data.
-    pub ai_rx: Option<mpsc::Receiver<Result<CustomTheme, String>>>,
+    /// In-flight AI theme generation.
+    pub ai_op: AsyncOp<Result<CustomTheme, String>>,
     /// Last error from AI generation.
     pub ai_error: Option<String>,
     /// Cancellation token for in-flight AI generation.
@@ -552,8 +572,7 @@ impl CustomThemeEdit {
             theme,
             editing_index,
             ai_prompt: String::new(),
-            ai_generating: false,
-            ai_rx: None,
+            ai_op: AsyncOp::default(),
             ai_error: None,
             ai_cancel: Default::default(),
         }
@@ -741,15 +760,36 @@ fn initial_worktrees(project_root: &Path, settings: &Settings) -> Vec<git::Workt
 
 impl DirigentApp {
     pub fn new(project_root: PathBuf, skip_scan: bool) -> Self {
-        let db = Database::open(&project_root).expect("failed to open database");
-        let mut settings = settings::load_settings(&project_root);
+        // A locked, corrupt or permission-denied database used to panic here,
+        // killing the app before any UI existed to explain why. Fall back to an
+        // in-memory database so the window opens, and surface a recovery dialog
+        // (see `render_db_error_dialog`). If even that fails the process is
+        // unusable and panicking is the honest outcome.
+        let (db, db_open_error) = match Database::open(&project_root) {
+            Ok(db) => (db, None),
+            Err(e) => {
+                let message = format!("{e:#}");
+                log::error!("Failed to open database at {project_root:?}: {message}");
+                let db = Database::open_in_memory()
+                    .expect("in-memory database fallback must be constructible");
+                (db, Some(DbOpenError { message }))
+            }
+        };
+        let settings_load = settings::load_settings(&project_root);
+        let pending_trust = settings_load.pending_trust;
+        let settings_warning = settings_load.warning;
+        let mut settings = settings_load.settings;
         // Apply one-time settings migrations (e.g. updated default plays).
         if db.migrate_settings(&mut settings).unwrap_or_else(|e| {
             log::warn!("settings migration error: {e:#}");
             false
         }) {
-            if let Err(e) = settings::save_settings(&project_root, &settings) {
-                log::warn!("Failed to save migrated settings: {e}");
+            // While the repo's settings await trust approval, skip the
+            // write-back so the unapproved file is not clobbered.
+            if pending_trust.is_none() {
+                if let Err(e) = settings::save_settings(&project_root, &settings) {
+                    log::warn!("Failed to save migrated settings: {e}");
+                }
             }
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -834,6 +874,7 @@ impl DirigentApp {
         let mut app = DirigentApp {
             project_root,
             db,
+            db_open_error,
             file_tree,
             expanded_dirs: HashSet::new(),
             file_tree_tx,
@@ -881,43 +922,27 @@ impl DirigentApp {
                 history_cache_key: (String::new(), 0),
                 worktrees,
                 new_worktree_name: String::new(),
-                show_worktree_panel: false,
                 available_branches: Vec::new(),
                 own_branches: HashSet::new(),
                 bookmark_push_statuses: HashMap::new(),
-                pushing: false,
-                push_rx: None,
-                show_push_error: false,
+                push_op: AsyncOp::default(),
                 push_error_message: String::new(),
-                show_pr_error: false,
                 pr_error_message: String::new(),
-                pulling: false,
-                pull_rx: None,
-                show_pull_diverged: false,
-                show_pull_unmerged: false,
-                show_merge_conflicts: false,
+                pull_op: AsyncOp::default(),
                 merge_operation: None,
                 conflict_files: Vec::new(),
-                show_create_pr: false,
                 pr_title: String::new(),
                 pr_body: String::new(),
                 pr_base: String::new(),
                 pr_draft: false,
-                creating_pr: false,
-                pr_rx: None,
-                pr_prefill_loading: false,
-                pr_prefill_rx: None,
-                show_import_pr: false,
+                pr_create_op: AsyncOp::default(),
+                pr_prefill_op: AsyncOp::default(),
                 import_pr_number: String::new(),
-                importing_pr: false,
+                import_pr_op: AsyncOp::default(),
                 importing_pr_start: None,
-                import_pr_rx: None,
                 pr_findings_pending: Vec::new(),
                 pr_findings_excluded: std::collections::HashSet::new(),
-                show_pr_filter: false,
-                notifying_pr: false,
-                pr_notify_rx: None,
-                show_switch_branch: false,
+                pr_notify_op: AsyncOp::default(),
                 new_branch_name: String::new(),
                 archived_dbs: Vec::new(),
                 show_archived_dbs: false,
@@ -931,47 +956,30 @@ impl DirigentApp {
                 editing_pattern: None,
                 hovered_graph_row: None,
                 selected_files: HashSet::new(),
-                show_move_to_branch: false,
                 move_to_branch_needs_focus: false,
                 move_to_branch_name: String::new(),
-                moving_to_branch: false,
-                move_to_branch_rx: None,
-                show_move_to_branch_error: false,
+                move_to_branch_op: AsyncOp::default(),
                 move_to_branch_error_message: String::new(),
-                show_create_bookmark: false,
                 create_bookmark_name: String::new(),
                 create_bookmark_needs_focus: false,
-                creating_bookmark: false,
-                create_bookmark_rx: None,
-                show_cleanup_bookmarks: false,
+                create_bookmark_op: AsyncOp::default(),
                 suspicious_bookmarks: Vec::new(),
-                cleaning_bookmark: false,
-                cleanup_bookmark_rx: None,
-                squashing: false,
-                squash_rx: None,
-                undoing: false,
-                undo_rx: None,
-                abandoning_empty: false,
-                abandon_empty_rx: None,
-                show_delete_bookmark: false,
-                deleting_bookmark: false,
-                delete_bookmark_rx: None,
+                cleanup_bookmark_op: AsyncOp::default(),
+                squash_op: AsyncOp::default(),
+                undo_op: AsyncOp::default(),
+                abandon_empty_op: AsyncOp::default(),
+                delete_bookmark_op: AsyncOp::default(),
                 merged_bookmarks: Vec::new(),
                 trunk_bookmarks: Vec::new(),
-                show_merge_bookmark: false,
-                merging_bookmark: false,
-                merge_bookmark_rx: None,
-                show_commit_dialog: false,
+                merge_bookmark_op: AsyncOp::default(),
                 commit_message_input: String::new(),
                 commit_needs_focus: false,
                 commit_review_cue_id: None,
                 commit_queue: Vec::new(),
                 commit_queue_pos: 0,
-                committing: false,
-                commit_rx: None,
+                commit_op: AsyncOp::default(),
                 commit_pending_cue_id: None,
-                commit_suggesting: false,
-                commit_suggest_rx: None,
+                commit_suggest_op: AsyncOp::default(),
                 commit_files: Vec::new(),
                 commit_in_background: false,
                 commit_suggest_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
@@ -980,18 +988,20 @@ impl DirigentApp {
                 active_bookmark: None,
                 pr_number: None,
                 pr_url: None,
-                pr_detect_rx: None,
+                pr_detect_op: AsyncOp::default(),
                 pr_detect_branch: String::new(),
                 show_graph_view: false,
                 graph_view_commits: Vec::new(),
                 graph_view_rows: Vec::new(),
                 graph_view_max_lanes: 0,
                 graph_view_limit: 100,
+                graph_view_exhausted: false,
+                graph_view_last_load: None,
                 graph_view_hovered_row: None,
             },
             settings,
             semantic,
-            show_settings: false,
+            dialogs: DialogRegistry::default(),
             needs_theme_apply: true,
             playbook_expanded: false,
             sources_expanded: false,
@@ -1004,15 +1014,12 @@ impl DirigentApp {
             lsp_init_language: crate::lsp::LspLanguage::Rust,
             global_prompt_input: String::new(),
             global_prompt_images: Vec::new(),
-            show_repo_picker: false,
             repo_path_input: String::new(),
             cached_existing_repos: Vec::new(),
             editing_cue: None,
             reply_inputs: HashMap::new(),
             conversation_replies: HashMap::new(),
             conversation_reply_images: HashMap::new(),
-            show_about: false,
-            show_log_viewer: false,
             log_viewer_filter: log::LevelFilter::Trace,
             log_viewer_auto_scroll: true,
             logo_texture: None,
@@ -1068,6 +1075,8 @@ impl DirigentApp {
             lava_lamp_big: false,
             pending_play: None,
             git_init_confirm: None,
+            pending_trust,
+            declined_trust_hash: None,
             goto_def_tx,
             goto_def_rx,
             goto_def_gen: 0,
@@ -1093,12 +1102,12 @@ impl DirigentApp {
             cue_warnings: HashMap::new(),
 
             pending_file_delete: None,
+            pending_hunk_discard: None,
 
             rename_target: None,
             rename_buffer: String::new(),
             rename_focus_requested: false,
-            notion_done_in_progress: false,
-            notion_done_rx: None,
+            notion_done_op: AsyncOp::default(),
             notion_done_cache: HashSet::new(),
             notion_objects: HashMap::new(),
             notion_objects_rx: None,
@@ -1107,26 +1116,22 @@ impl DirigentApp {
             source_fetch_status: HashMap::new(),
 
             workflow_plan: None,
-            workflow_generating: false,
-            workflow_rx: None,
+            workflow_op: AsyncOp::default(),
             workflow_warning: None,
             show_workflow_graph: false,
             workflow_inbox_snapshot: Vec::new(),
 
-            split_cue_generating: false,
             split_cue_source_id: None,
-            split_cue_rx: None,
+            split_cue_op: AsyncOp::default(),
             split_cue_cancel: Arc::new(AtomicBool::new(false)),
 
-            change_set_generating: false,
-            change_set_rx: None,
+            change_set_op: AsyncOp::default(),
+            partial_commit_op: AsyncOp::default(),
             change_set_cancel: Arc::new(AtomicBool::new(false)),
 
-            analyze_over_show_picker: false,
             analyze_over_base: String::new(),
             analyze_over_head: String::new(),
-            analyze_over_generating: false,
-            analyze_over_rx: None,
+            analyze_over_op: AsyncOp::default(),
             analyze_over_cancel: Arc::new(AtomicBool::new(false)),
             analyze_over_result: None,
 
@@ -1142,13 +1147,12 @@ impl DirigentApp {
             ssh_worker: None,
             ssh_remote_entries: Vec::new(),
             ssh_remote_path: String::new(),
-            ssh_connecting: false,
-            ssh_connect_rx: None,
+            ssh_connect_op: AsyncOp::default(),
             ssh_expanded_dirs: HashSet::new(),
             ssh_listing: false,
             ssh_reading_file: None,
             show_ssh_panel: false,
-            ssh_test_rx: None,
+            ssh_test_op: AsyncOp::default(),
             last_frame_time: Duration::ZERO,
             last_poll_time: Duration::ZERO,
             last_render_time: Duration::ZERO,
@@ -1159,6 +1163,9 @@ impl DirigentApp {
             mermaid_dialog: None,
         };
         app.git.recompute_dirty_dirs(&app.project_root);
+        if let Some(warning) = settings_warning {
+            app.set_status_message(warning);
+        }
         if !skip_scan {
             app.maybe_detect_pr();
         }
@@ -1219,6 +1226,46 @@ impl DirigentApp {
 
     fn set_status_message(&mut self, msg: String) {
         self.status_message = Some((msg, Instant::now()));
+    }
+
+    /// Record the outcome of a database write whose failure would otherwise be
+    /// invisible. `what` names the operation in past tense ("log activity",
+    /// "update execution log"). Returns `true` when the write succeeded.
+    ///
+    /// Use this for bookkeeping writes (activity log entries, execution
+    /// telemetry) where a failure is worth a log line but does not leave the UI
+    /// showing state that was never persisted. For writes the user *can* see
+    /// the effect of — status transitions, cue creation, execution records —
+    /// use [`Self::db_report`] instead so the failure also reaches the status
+    /// bar.
+    fn db_log<T>(&self, what: &str, result: anyhow::Result<T>) -> bool {
+        match result {
+            Ok(_) => true,
+            Err(e) => {
+                log::error!("[db] {} failed: {:#}", what, e);
+                false
+            }
+        }
+    }
+
+    /// Append an entry to a cue's activity log (the per-cue logbook).
+    ///
+    /// A failure is logged but not surfaced: the logbook records what happened,
+    /// it is not state the rest of the UI reads back.
+    fn log_cue_activity(&self, cue_id: i64, event: &str) {
+        self.db_log("log activity", self.db.log_activity(cue_id, event));
+    }
+
+    /// Like [`Self::db_log`], but also surfaces the failure as a status
+    /// message. Use for writes backing something the user just saw happen, so
+    /// a DB hiccup cannot leave the cue pool showing a state that was never
+    /// persisted. Returns `true` when the write succeeded.
+    fn db_report<T>(&mut self, what: &str, result: anyhow::Result<T>) -> bool {
+        if self.db_log(what, result) {
+            return true;
+        }
+        self.set_status_message(format!("Database error: could not {} — not saved", what));
+        false
     }
 
     fn format_elapsed(&self, cue_id: i64) -> String {
@@ -1329,8 +1376,15 @@ impl DirigentApp {
             .iter()
             .any(|c| c.id == id && c.status == CueStatus::Inbox)
         {
-            let _ = self.db.update_cue_status(id, CueStatus::Ready);
-            let _ = self.db.log_activity(id, activity);
+            // If the cue cannot be moved to Ready it stays Inbox in the DB;
+            // bail out rather than start a run the pool will never show.
+            if !self.db_report(
+                "move cue to Ready",
+                self.db.update_cue_status(id, CueStatus::Ready),
+            ) {
+                return false;
+            }
+            self.db_log("log activity", self.db.log_activity(id, activity));
             self.cue_move_flash.insert(id, Instant::now());
             self.claude.expand_running = true;
             self.reload_cues();
@@ -1338,7 +1392,10 @@ impl DirigentApp {
             // Verify the run actually started — trigger_claude may bail out
             // (e.g. home guard sync failure) leaving the cue stuck in Ready.
             if !self.claude.running_logs.contains_key(&id) {
-                let _ = self.db.update_cue_status(id, CueStatus::Inbox);
+                self.db_report(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(id, CueStatus::Inbox),
+                );
                 self.reload_cues();
                 return false;
             }
@@ -1385,7 +1442,7 @@ impl DirigentApp {
     /// Dismiss any overlay that occupies the central panel (settings, diff review, running log)
     /// so the code viewer becomes visible.
     fn dismiss_central_overlays(&mut self) {
-        self.show_settings = false;
+        self.close_dialog(DialogId::Settings);
         self.diff_review = None;
         // Only clear conversation history when dismissing the log overlay, not
         // when opening it (process_show_running_log loads history first).
@@ -1470,6 +1527,7 @@ impl eframe::App for DirigentApp {
 
         // Poll for change-set analysis results
         self.process_change_set_result();
+        self.process_partial_commit_result();
 
         // Poll for cross-branch range analysis results
         self.process_analyze_over_result();
@@ -1553,6 +1611,9 @@ impl Drop for DirigentApp {
         self.change_set_cancel.store(true, Ordering::SeqCst);
         self.analyze_over_cancel.store(true, Ordering::SeqCst);
         self.shutdown_tasks();
+        // Agents run on their own threads with their own process groups; without
+        // this, quitting mid-run orphaned the whole tree.
+        self.agent_state.shutdown();
     }
 }
 

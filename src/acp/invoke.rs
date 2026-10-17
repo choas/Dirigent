@@ -2,60 +2,84 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::client::{AcpConnection, ClientPolicy, Turn};
 use super::types::{AcpError, StopReason};
-use crate::ai_process;
+use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
 use crate::claude;
 
-pub(crate) struct AcpRunConfig<'a> {
+struct AcpRunConfig<'a> {
     /// Agent command, e.g. `claude-code-acp`, `gemini` (with `--experimental-acp`),
     /// `goose` (with `acp`), or an absolute path.
-    pub cli_path: &'a str,
-    pub extra_args: &'a str,
-    pub env_vars: &'a str,
-    pub pre_run_script: &'a str,
-    pub post_run_script: &'a str,
+    cli_path: &'a str,
+    extra_args: &'a str,
+    env_vars: &'a str,
     /// Approve the agent's permission requests without asking.
-    pub skip_permissions: bool,
+    skip_permissions: bool,
     /// Analysis prompts: refuse file writes and non-read tool permissions.
-    pub read_only: bool,
+    read_only: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AcpResponse {
+struct AcpResponse {
     /// All `agent_message_chunk` text of the turn.
-    pub stdout: String,
+    stdout: String,
     /// Paths the agent reported editing (diff content, edit-tool locations,
     /// `fs/write_text_file`). May be absolute.
-    pub edited_files: Vec<String>,
-    pub duration_ms: u64,
-    pub num_turns: u64,
+    edited_files: Vec<String>,
+    num_turns: u64,
+}
+
+/// [`crate::ai_backend::AcpBackend`]'s CLI invocation. Hooks, the final cancel
+/// check and the run duration belong to the shared `AiBackend::invoke` driver.
+pub(crate) fn run_acp_cli(
+    req: &BackendRequest<'_>,
+    on_log: &mut dyn FnMut(&str),
+    cancel: &Arc<AtomicBool>,
+) -> Result<BackendResponse, BackendError> {
+    let config = AcpRunConfig {
+        cli_path: req.cli_path,
+        extra_args: req.extra_args,
+        env_vars: req.env_vars,
+        skip_permissions: req.skip_permissions,
+        read_only: req.read_only,
+    };
+    let response = invoke_acp_streaming(req.prompt, req.project_root, &config, on_log, cancel)
+        .map_err(|e| match e {
+            AcpError::Cancelled => BackendError::Cancelled,
+            AcpError::SpawnFailed(source) => BackendError::SpawnFailed {
+                backend: "ACP agent",
+                source,
+            },
+            AcpError::InvalidExtraArgs(args) => BackendError::InvalidExtraArgs {
+                backend: "ACP agent",
+                args,
+            },
+            other => BackendError::Failed {
+                message: other.to_string(),
+            },
+        })?;
+    Ok(BackendResponse {
+        stdout: response.stdout,
+        edited_files: response.edited_files,
+        num_turns: Some(response.num_turns),
+        ..BackendResponse::default()
+    })
 }
 
 /// Run one prompt turn against an ACP agent: spawn → `initialize` →
 /// `session/new` → `session/prompt` (streaming `session/update`s into
 /// `on_log`) → close stdin. Every run gets a fresh agent process and session.
-pub(crate) fn invoke_acp_streaming(
+fn invoke_acp_streaming(
     prompt: &str,
     project_root: &Path,
     config: &AcpRunConfig<'_>,
     mut on_log: impl FnMut(&str),
-    cancel: Arc<AtomicBool>,
+    cancel: &AtomicBool,
 ) -> Result<AcpResponse, AcpError> {
     let agent_bin = resolve_agent_bin(config.cli_path)?;
     let args = shlex::split(config.extra_args)
         .ok_or_else(|| AcpError::InvalidExtraArgs(config.extra_args.to_string()))?;
-
-    ai_process::run_hook_script(
-        "pre-run",
-        config.pre_run_script,
-        project_root,
-        &mut on_log,
-        true,
-    )
-    .map_err(AcpError::Hook)?;
 
     let mut cmd = Command::new(&agent_bin);
     cmd.args(&args).current_dir(project_root);
@@ -66,9 +90,8 @@ pub(crate) fn invoke_acp_streaming(
         allow_writes: !config.read_only,
         auto_approve: config.skip_permissions,
     };
-    let run_start = Instant::now();
     let mut turn = Turn::new(&mut on_log);
-    let stop_reason = run_turn(cmd, project_root, policy, prompt, &mut turn, &cancel)?;
+    let stop_reason = run_turn(cmd, project_root, policy, prompt, &mut turn, cancel)?;
     match stop_reason {
         StopReason::Cancelled => return Err(AcpError::Cancelled),
         StopReason::Refusal => return Err(AcpError::Refused),
@@ -78,28 +101,15 @@ pub(crate) fn invoke_acp_streaming(
         }
         StopReason::EndTurn | StopReason::Other => {}
     }
-    let response = AcpResponse {
+    Ok(AcpResponse {
         stdout: std::mem::take(&mut turn.text),
         edited_files: std::mem::take(&mut turn.edited_files),
-        duration_ms: run_start.elapsed().as_millis() as u64,
         num_turns: turn.tool_calls_completed,
-    };
-    drop(turn);
-
-    ai_process::run_hook_script(
-        "post-run",
-        config.post_run_script,
-        project_root,
-        &mut on_log,
-        false,
-    )
-    .map_err(AcpError::Hook)?;
-
-    Ok(response)
+    })
 }
 
 /// The connection lives only inside this function, so the agent process is
-/// shut down (see `AcpConnection::drop`) before post-run hooks start.
+/// shut down (see `AcpConnection::drop`) before the driver's post-run hook.
 fn run_turn(
     cmd: Command,
     project_root: &Path,
@@ -161,8 +171,6 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             cli_path: "sh",
             extra_args: script,
             env_vars: "",
-            pre_run_script: "",
-            post_run_script: "",
             skip_permissions: true,
             read_only,
         }
@@ -189,7 +197,7 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             &root,
             &config(&script, false),
             |s| logged.push_str(s),
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -226,7 +234,7 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             &root,
             &config(&script, true),
             |_| {},
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -253,7 +261,7 @@ echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Authentication r
             dir.path(),
             &config(&script, false),
             |_| {},
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap_err();
         assert!(
@@ -271,7 +279,7 @@ echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Authentication r
             dir.path(),
             &config(&script, false),
             |_| {},
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap_err();
         assert!(
@@ -305,7 +313,7 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             &root,
             &config(&script, false),
             |_| {},
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -349,7 +357,7 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}'
             flag.store(true, Ordering::Relaxed);
         });
         let err =
-            invoke_acp_streaming("x", &root, &config(&script, false), |_| {}, cancel).unwrap_err();
+            invoke_acp_streaming("x", &root, &config(&script, false), |_| {}, &cancel).unwrap_err();
         assert!(matches!(err, AcpError::Cancelled), "{err}");
         let sent = std::fs::read_to_string(root.join("cancel.json")).unwrap();
         assert!(sent.contains(r#""method":"session/cancel""#), "{sent}");
@@ -374,13 +382,11 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}'
                 cli_path: &bin,
                 extra_args: &args,
                 env_vars: "",
-                pre_run_script: "",
-                post_run_script: "",
                 skip_permissions: false,
                 read_only: true,
             },
             |s| print!("{s}"),
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap();
         assert!(
@@ -407,13 +413,11 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"cancelled"}}'
                 cli_path: &bin,
                 extra_args: &args,
                 env_vars: "",
-                pre_run_script: "",
-                post_run_script: "",
                 skip_permissions: true,
                 read_only: false,
             },
             |s| print!("{s}"),
-            Arc::new(AtomicBool::new(false)),
+            &AtomicBool::new(false),
         )
         .unwrap();
         println!("\nedited: {:?}", response.edited_files);

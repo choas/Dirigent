@@ -10,9 +10,10 @@
 //! `git apply` is atomic per invocation: a patch that doesn't apply cleanly is
 //! rejected wholesale, giving us the failure isolation we want.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::error::{DirigentError, Result};
 
@@ -232,7 +233,7 @@ pub(crate) fn build_hunk_patch(file: &FileRawDiff, hunk_idx: usize) -> Option<St
 /// Apply `patch` with `git apply <args>`, feeding it on stdin. Atomic: a patch
 /// that does not apply cleanly leaves the index and working tree unchanged.
 fn git_apply(repo_path: &Path, patch: &str, args: &[&str]) -> Result<()> {
-    let mut child = Command::new("git")
+    let mut child = super::git_cmd()
         .current_dir(repo_path)
         .arg("apply")
         .args(args)
@@ -274,9 +275,40 @@ pub(crate) fn discard_hunk(repo_path: &Path, patch: &str) -> Result<()> {
     git_apply(repo_path, patch, &["--reverse"])
 }
 
+/// Take an undo point for a destructive working-tree operation.
+///
+/// `git stash create` builds a stash *commit* from the current index and
+/// working tree and prints its hash, without touching either — so it is a free
+/// snapshot rather than a state change. The commit is initially unreferenced,
+/// so it is anchored with `git stash store` to keep it out of reach of `gc`.
+///
+/// Returns `None` when there is nothing to snapshot (a clean tree) or git
+/// failed; discarding still proceeds in that case, just without an undo point.
+pub(crate) fn snapshot_for_undo(repo_path: &Path, label: &str) -> Option<String> {
+    let out = super::git_cmd()
+        .args(["stash", "create", label])
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if hash.is_empty() {
+        return None;
+    }
+    // Anchor the dangling commit in the stash reflog so `git gc` cannot
+    // collect the user's only copy of what they are about to discard.
+    let _ = super::git_cmd()
+        .args(["stash", "store", "-m", label, &hash])
+        .current_dir(repo_path)
+        .output();
+    Some(hash)
+}
+
 /// The staged diff (index vs HEAD): `git diff --cached`. None when nothing staged.
 pub(crate) fn get_staged_diff(repo_path: &Path, files: &[String]) -> Option<String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = super::git_cmd();
     cmd.arg("diff").arg("--cached").current_dir(repo_path);
     if !files.is_empty() {
         cmd.arg("--");
@@ -296,29 +328,79 @@ pub(crate) fn get_staged_diff(repo_path: &Path, files: &[String]) -> Option<Stri
     }
 }
 
-/// A file is partially staged when it has both staged (index vs HEAD) and
-/// unstaged (working tree vs index) changes.
-pub(crate) fn is_partially_staged(repo_path: &Path, file: &str) -> bool {
-    let nonempty = |args: &[&str]| -> bool {
-        Command::new("git")
-            .current_dir(repo_path)
-            .args(args)
-            .arg("--")
-            .arg(file)
-            .output()
-            .map(|o| o.status.success() && !o.stdout.is_empty())
-            .unwrap_or(false)
+/// Every path that is partially staged — it has both staged (index vs HEAD)
+/// and unstaged (working tree vs index) changes.
+///
+/// One `git status --porcelain=v2 -z` call answers this for the whole
+/// repository. The previous per-file `is_partially_staged` spawned two `git
+/// diff` processes *per file*, synchronously on the UI thread, on every staging
+/// refresh — around 100 process spawns for a 50-file diff, once per click.
+pub(crate) fn partially_staged_files(repo_path: &Path) -> HashSet<String> {
+    let output = super::git_cmd()
+        .current_dir(repo_path)
+        .args(["status", "--porcelain=v2", "-z"])
+        .output();
+    let Ok(output) = output else {
+        return HashSet::new();
     };
-    nonempty(&["diff", "--cached"]) && nonempty(&["diff"])
+    if !output.status.success() {
+        return HashSet::new();
+    }
+    parse_partially_staged(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse `git status --porcelain=v2 -z` output into the set of partially
+/// staged paths.
+///
+/// Records are NUL-separated. The two that carry an XY status pair are:
+///
+/// ```text
+/// 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+/// 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\0<origPath>
+/// ```
+///
+/// `X` is the index-vs-HEAD status and `Y` the worktree-vs-index status; `.`
+/// means unchanged on that side. Both non-`.` is exactly "partially staged".
+/// A rename record is followed by an extra NUL-terminated original path, which
+/// is skipped so it is not mistaken for the next record.
+fn parse_partially_staged(stdout: &str) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let mut records = stdout.split('\0');
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        let mut fields = record.splitn(2, ' ');
+        let kind = fields.next().unwrap_or_default();
+        // Rename/copy records carry their original path as a separate record.
+        let path_field_index = match kind {
+            "1" => 8,
+            "2" => {
+                records.next();
+                9
+            }
+            // "u" (unmerged), "?" (untracked) and "!" (ignored) are never
+            // "partially staged" in the index-vs-worktree sense.
+            _ => continue,
+        };
+        let parts: Vec<&str> = record.splitn(path_field_index + 1, ' ').collect();
+        if parts.len() <= path_field_index {
+            continue;
+        }
+        let xy = parts[1].as_bytes();
+        if xy.len() == 2 && xy[0] != b'.' && xy[1] != b'.' {
+            result.insert(parts[path_field_index].to_string());
+        }
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     fn run(dir: &Path, args: &[&str]) -> String {
-        let out = Command::new("git")
+        let out = crate::git::git_cmd()
             .current_dir(dir)
             .args(args)
             .output()
@@ -341,7 +423,7 @@ mod tests {
 
     fn working_diff(dir: &Path) -> String {
         String::from_utf8_lossy(
-            &Command::new("git")
+            &crate::git::git_cmd()
                 .current_dir(dir)
                 .args(["diff"])
                 .output()
@@ -407,7 +489,7 @@ mod tests {
         stage_hunk(p, &patch).expect("stage first hunk");
 
         // The file is now partially staged: staged has hunk 1, working still has hunk 2.
-        assert!(is_partially_staged(p, "f.txt"));
+        assert!(partially_staged_files(p).contains("f.txt"));
         let staged = get_staged_diff(p, &[]).unwrap();
         assert!(staged.contains("CHANGED1"));
         assert!(
@@ -552,6 +634,99 @@ mod tests {
     }
 
     #[test]
+    fn commit_partial_preserves_unrelated_staged_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        // Stage a change to b.txt through the hunk UI path, then regenerate
+        // the file on disk without it — the staged blob is the only copy left.
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        let files = split_into_file_diffs(&working_diff(p));
+        let b_diff = files.iter().find(|f| f.path.ends_with("b.txt")).unwrap();
+        let patch = build_hunk_patch(b_diff, 0).unwrap();
+        stage_hunk(p, &patch).expect("stage b.txt hunk");
+        std::fs::write(p.join("b.txt"), "regenerated\n").unwrap();
+
+        // Commit an unrelated change to a.txt.
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+        crate::git::commit_partial(p, &["a.txt".to_string()], &[], "fix: a only")
+            .expect("commit a.txt");
+
+        // The commit contains only a.txt; b.txt's staged content survived.
+        assert!(run(p, &["show", "HEAD:a.txt"]).contains('A'));
+        assert_eq!(run(p, &["show", "HEAD:b.txt"]), "b\n");
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+        assert!(!staged.contains("a.txt"), "a.txt must not stay staged");
+    }
+
+    #[test]
+    fn commit_diff_preserves_unrelated_staged_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        // Externally staged change to b.txt, then the file changes on disk.
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        run(p, &["add", "b.txt"]);
+        std::fs::write(p.join("b.txt"), "regenerated\n").unwrap();
+
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+        let diff =
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a\n+A\n";
+        crate::git::commit_diff(p, diff, "fix: a only").expect("commit diff");
+
+        assert!(run(p, &["show", "HEAD:a.txt"]).contains('A'));
+        assert_eq!(run(p, &["show", "HEAD:b.txt"]), "b\n");
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+    }
+
+    #[test]
+    fn failed_partial_commit_restores_prestaged_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        init_repo(p);
+        std::fs::write(p.join("a.txt"), "a\n").unwrap();
+        std::fs::write(p.join("b.txt"), "b\n").unwrap();
+        run(p, &["add", "."]);
+        run(p, &["commit", "-qm", "base"]);
+
+        std::fs::write(p.join("b.txt"), "B\n").unwrap();
+        run(p, &["add", "b.txt"]);
+        std::fs::write(p.join("a.txt"), "A\n").unwrap();
+
+        // The bogus hunk (nonexistent file) makes the commit fail after a.txt
+        // was staged.
+        let bogus =
+            "diff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1,1 +1,1 @@\n-zzz\n+yyy\n";
+        let err = crate::git::commit_partial(
+            p,
+            &["a.txt".to_string()],
+            &[bogus.to_string()],
+            "part: must fail",
+        );
+        assert!(err.is_err(), "rejected hunk must fail the commit");
+
+        // Rollback removed a.txt from the index but kept b.txt's staged state.
+        let staged = get_staged_diff(p, &[]).expect("b.txt must still be staged");
+        assert!(staged.contains("b.txt") && staged.contains("+B"));
+        assert!(
+            !staged.contains("a.txt"),
+            "a.txt staging must be rolled back"
+        );
+    }
+
+    #[test]
     fn rejected_patch_leaves_tree_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path();
@@ -569,5 +744,51 @@ mod tests {
             std::fs::read_to_string(p.join("f.txt")).unwrap(),
             "a\nb\nc\n"
         );
+    }
+
+    // -- porcelain=v2 partial-staging parsing --
+
+    #[test]
+    fn parse_partially_staged_picks_only_both_sides_modified() {
+        // `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`, NUL-separated.
+        let stdout = concat!(
+            "1 MM N... 100644 100644 100644 aaa bbb both.rs\0",
+            "1 M. N... 100644 100644 100644 aaa bbb staged_only.rs\0",
+            "1 .M N... 100644 100644 100644 aaa bbb worktree_only.rs\0",
+            "? untracked.rs\0",
+        );
+        let set = parse_partially_staged(stdout);
+        assert_eq!(set.len(), 1, "got: {set:?}");
+        assert!(set.contains("both.rs"));
+    }
+
+    /// Rename records carry their original path as an extra NUL-terminated
+    /// field; skipping it wrong would misparse every following record.
+    #[test]
+    fn parse_partially_staged_handles_rename_records() {
+        let stdout = concat!(
+            "2 RM N... 100644 100644 100644 aaa bbb R100 new_name.rs\0old_name.rs\0",
+            "1 MM N... 100644 100644 100644 aaa bbb after.rs\0",
+        );
+        let set = parse_partially_staged(stdout);
+        assert!(set.contains("new_name.rs"), "got: {set:?}");
+        assert!(
+            set.contains("after.rs"),
+            "the record after a rename must still parse: {set:?}"
+        );
+        assert!(!set.contains("old_name.rs"));
+    }
+
+    #[test]
+    fn parse_partially_staged_on_clean_repo_is_empty() {
+        assert!(parse_partially_staged("").is_empty());
+    }
+
+    /// Paths with spaces survive: only the fields *before* the path are split.
+    #[test]
+    fn parse_partially_staged_keeps_spaces_in_paths() {
+        let stdout = "1 MM N... 100644 100644 100644 aaa bbb dir with spaces/f.rs\0";
+        let set = parse_partially_staged(stdout);
+        assert!(set.contains("dir with spaces/f.rs"), "got: {set:?}");
     }
 }

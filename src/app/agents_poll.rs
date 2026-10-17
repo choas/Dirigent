@@ -186,7 +186,7 @@ impl DirigentApp {
             AgentStatus::Error => format!("{} error ({})", label, dur),
             AgentStatus::Idle | AgentStatus::Running => format!("{} completed ({})", label, dur),
         };
-        let _ = self.db.log_activity(cue_id, &event);
+        self.log_cue_activity(cue_id, &event);
     }
 
     /// Get the first non-empty line of the latest output for an agent, truncated to 80 chars.
@@ -209,7 +209,7 @@ impl DirigentApp {
         cue_id: Option<i64>,
         prompt: &str,
     ) -> usize {
-        agents::trigger_agents(
+        let handles = agents::trigger_agents(
             &self.settings.agents,
             trigger,
             &self.project_root,
@@ -219,7 +219,12 @@ impl DirigentApp {
             &self.agent_state.tx,
             &mut self.agent_state.statuses,
             &mut self.agent_state.cancel_flags,
-        )
+        );
+        let started = handles.len();
+        for handle in handles {
+            self.agent_state.track_thread(handle);
+        }
+        started
     }
 
     /// Manually trigger a specific agent kind.
@@ -239,9 +244,10 @@ impl DirigentApp {
             let init = self.settings.agent_shell_init.clone();
             let tx = self.agent_state.tx.clone();
 
-            std::thread::spawn(move || {
+            let handle = std::thread::spawn(move || {
                 agents::run_agent(&config, &root, &init, None, "", &tx, &cancel);
             });
+            self.agent_state.track_thread(handle);
         }
     }
 

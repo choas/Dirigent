@@ -1,11 +1,11 @@
 use eframe::egui;
 use log::Level;
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 
 impl DirigentApp {
     pub(in super::super) fn render_log_viewer(&mut self, ctx: &egui::Context) {
-        if !self.show_log_viewer {
+        if !self.dialogs.is_open(DialogId::LogViewer) {
             return;
         }
         let mut open = true;
@@ -33,7 +33,7 @@ impl DirigentApp {
                     });
             });
         if !open {
-            self.show_log_viewer = false;
+            self.close_dialog(DialogId::LogViewer);
         }
     }
 

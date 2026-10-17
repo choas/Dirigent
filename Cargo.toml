@@ -5,6 +5,7 @@ members = [".", "claude_pty"]
 name = "Dirigent"
 version = "0.6.1"
 edition = "2021"
+rust-version = "1.99"
 
 [dependencies]
 claude_pty = { path = "claude_pty" }

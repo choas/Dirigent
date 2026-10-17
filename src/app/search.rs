@@ -450,6 +450,27 @@ impl DirigentApp {
     }
 }
 
+pub(super) fn update_diff_search_matches(review: &mut super::DiffReview) {
+    review.search_matches.clear();
+    review.search_current = None;
+    if review.search_query.is_empty() {
+        return;
+    }
+    let query = review.search_query.to_lowercase();
+    for (file_idx, file) in review.parsed.files.iter().enumerate() {
+        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+            for (line_idx, line) in hunk.lines.iter().enumerate() {
+                if line.content.to_lowercase().contains(&query) {
+                    review.search_matches.push((file_idx, hunk_idx, line_idx));
+                }
+            }
+        }
+    }
+    if !review.search_matches.is_empty() {
+        review.search_current = Some(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,26 +537,5 @@ mod tests {
         let mut files = Vec::new();
         collect_files(&[], &mut files);
         assert!(files.is_empty());
-    }
-}
-
-pub(super) fn update_diff_search_matches(review: &mut super::DiffReview) {
-    review.search_matches.clear();
-    review.search_current = None;
-    if review.search_query.is_empty() {
-        return;
-    }
-    let query = review.search_query.to_lowercase();
-    for (file_idx, file) in review.parsed.files.iter().enumerate() {
-        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-            for (line_idx, line) in hunk.lines.iter().enumerate() {
-                if line.content.to_lowercase().contains(&query) {
-                    review.search_matches.push((file_idx, hunk_idx, line_idx));
-                }
-            }
-        }
-    }
-    if !review.search_matches.is_empty() {
-        review.search_current = Some(0);
     }
 }

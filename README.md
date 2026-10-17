@@ -32,19 +32,21 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Tabs & navigation** — Open multiple files in tabs; breadcrumb path bar; back/forward navigation history
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items; bulk actions on Review and Done columns
-- **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
+- **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.8 default; Opus, Sonnet, and Haiku 4.x selectable), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
+- **Multiple AI backends** — Besides Claude Code: **OpenCode** (OpenAI o1/o3/o4-mini/GPT-4.1 and Anthropic models), **Gemini CLI** (Gemini 3 and 2.5 families), and **Codex** (GPT-5-Codex); plus an optional OpenAI-compatible "fast LLM" helper for lightweight tasks like commit-message suggestions
 - **ACP agents** — Run cues through any [Agent Client Protocol](https://agentclientprotocol.com) agent (OpenCode, Gemini CLI, Goose, Claude Code/Codex adapters, …) via the "ACP Agent" provider; see [docs/How_to_ACP.md](docs/How_to_ACP.md)
-- **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
 - **Prompt quality hints** — Heuristic analysis flags vague, too-short, or missing-context prompts before sending to AI
 - **Cue commands** — Prefix cues with `[plan]`, `[test]`, `[refactor]`, `[review]`, or `[fix]` to apply specialized prompt templates with optional pre/post scripts; customizable in Settings
 - **Image attachments** — Attach images to cues for Claude to reference during execution; drag and drop files onto the window to attach
 - **Diff view** — Review AI-generated changes inline or side-by-side before accepting; collapsible per-file diffs with +/- statistics and in-diff search
-- **Git integration** — View commit history (last 50 commits), create commits, manage worktrees, see dirty-file indicators in the file tree; merge conflict resolution dialog, diverged-branch handling, and `git init` for non-repo directories
-- **Pull requests** — Create GitHub PRs directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues with a filter dialog for selective import
+- **Git integration** — View commit history (loaded incrementally), create commits, manage worktrees, see dirty-file indicators in the file tree; merge conflict resolution dialog, diverged-branch handling, and `git init` for non-repo directories
+- **Git graph & staging** — Branch/commit graph view, hunk-level staging, commit queue with AI-grouped change sets ("Tidy my working tree"), cross-branch "Analyze changes over…" review, and folder compare with an optional external diff tool
+- **Jujutsu (jj) support** — Optional jj VCS backend: bookmarks (create, delete, merge, switch), squash, undo, and jj workspaces alongside the git backend
+- **Pull requests** — Create PRs on GitHub (via `gh`) or Codeberg (via the Forgejo REST API) directly from Dirigent (title, base branch, description, draft flag); import actionable findings from PR reviews (e.g. CodeRabbit) as cues with a filter dialog for selective import
 - **Search** — In-file search (Cmd+F) with match navigation; project-wide search (Cmd+Shift+F) with clickable results
-- **Source integration** — Import cues from GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, or custom shell commands with automatic deduplication and configurable polling
+- **Source integration** — Import cues from GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, Sentry, MCP, or custom shell commands with automatic deduplication and configurable polling
 - **Markdown import** — Import cues from a Markdown document (headings become cue titles); supports upsert to avoid duplicates
 - **Playbook** — Predefined prompts (e.g. "Update README", "Security audit", "Add tests", "Commit changes") that can be run as global cues; supports template variables with free-text and dropdown inputs
 - **Themes** — 20 themes: 10 dark (Nord, Dracula, Solarized, Monokai, Gruvbox, Tokyo Night, One Dark, Catppuccin Mocha, Everforest, Dark) and 10 light (Solarized, Gruvbox, GitHub, Catppuccin Latte, Everforest, Rose Pine Dawn, One Light, Nord, Tokyo Night, Light)
@@ -52,7 +54,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **File watching** — Automatic filesystem monitoring with debounced rescan when files change on disk
 - **File operations** — Rename files directly from the code viewer
 - **Notifications** — macOS notifications with three-tier fallback (UNUserNotificationCenter → NSUserNotificationCenter → osascript) and configurable sound/popup
-- **Lava lamp** — Retro pixelated lava lamp animation while a cue is running
+- **Running animations** — Selectable overlay while a cue is running: retro pixelated lava lamp (default), Claude Code name, dino, jujutsu, thunderdome, or off
 - **Agents** — Post-run automation agents (Format, Lint, Build, Test) with configurable triggers: AfterRun, AfterCommit, AfterAgent chaining, OnFileChange, and Manual; per-cue agent run history, dedicated log viewer, and cargo diagnostic parsing
 - **Workflow planning** — LLM-analyzed execution plans for multiple Inbox cues; automatically groups independent cues for parallel execution and orders dependent steps sequentially; visual workflow graph overlay with step-by-step progress
 - **Task management** — Background task lifecycle with cancellation support; running Claude tasks can be stopped mid-execution
@@ -64,7 +66,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 ## Prerequisites
 
-- **Rust** (1.75+ recommended) — [rustup.rs](https://rustup.rs)
+- **Rust** 1.99 — [rustup.rs](https://rustup.rs) installs it automatically from `rust-toolchain.toml` on the first `cargo` command
 - **Claude Code CLI** — Must be installed and available on your `PATH` (or configured via Settings). See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code).
 - **`merman-cli`** _(optional)_ — Enables rendering of `mermaid` code blocks as diagrams in the Markdown viewer. Install with `cargo install merman-cli`; without it, Mermaid blocks fall back to showing their source.
 - **System dependencies** for your platform:
@@ -111,7 +113,9 @@ make dmg            # Create DMG (requires create-dmg)
 make notarize APPLE_ID=... TEAM_ID=...               # Submit for notarization
 ```
 
-Releases are also automated via GitHub Actions — pushing a `v*` tag triggers a workflow that builds, signs, notarizes, and publishes a DMG to GitHub Releases.
+Every push and pull request runs CI (`.github/workflows/ci.yml`): `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `cargo audit`. Run the same checks locally before pushing.
+
+Releases are automated via GitHub Actions — pushing a `v*` tag triggers a workflow that builds, signs, notarizes, and publishes a DMG to GitHub Releases.
 
 ## Usage
 
@@ -179,6 +183,11 @@ Detailed documentation is organized following the [Diataxis](https://diataxis.fr
 | Explanation | [Explanation](docs/explanation.md) | Architecture, design decisions, and core concepts |
 | How-To Guide | [Observability Setup](docs/observability-setup.md) | OpenTelemetry + Grafana local observability stack |
 | How-To Guide | [Git Workflows](docs/git-workflows.md) | AI-assisted commit splitting, hunk staging, cross-branch review, worktrees |
+| How-To Guide | [Jujutsu Walkthrough](docs/jj-demo-walkthrough.md) | Using the jj VCS backend (bookmarks, workspaces, squash, undo) |
+| How-To Guide | [Dirigent MCP Server](docs/How_to_Dirigent_MCP.md) | Exposing cues to AI agents over MCP |
+| How-To Guide | [OpenCode](docs/How_to_OpenCode.md) | Configuring and using the OpenCode backend |
+| How-To Guide | [SonarQube](docs/How_to_use_SonarQube.md) | Running a local SonarQube analysis of Dirigent |
+| Reference | [Claude PTY Recording](docs/claude-pty-recording.md) | Recording and replaying Claude Code PTY sessions |
 
 ## Architecture
 
@@ -190,7 +199,8 @@ claude_pty/                       — Standalone crate: PTY wrapper for interact
 │   ├── event.rs                  — Typed event enum (TuiScreen, TuiPrompt, TuiToolConfirmation, …)
 │   └── session.rs                — PTY spawning, vt100 parsing, screen-delta extraction, prompt detection
 └── examples/
-    └── diag.rs                   — Diagnostic example showing PTY event flow
+    ├── diag.rs                   — Diagnostic example showing PTY event flow
+    └── fixreadme.rs              — Example driving a full Claude Code session via PTY
 
 src/
 ├── main.rs                   — Entry point, window setup, macOS integration
@@ -204,10 +214,22 @@ src/
 ├── app/
 │   ├── mod.rs                — App state, update loop, panel orchestration
 │   ├── agents_poll.rs        — Agent result processing and state management
+│   ├── ansi.rs               — ANSI escape-sequence parsing for CLI output
 │   ├── background.rs         — Background task orchestration
-│   ├── claude_run.rs         — Claude/OpenCode execution, streaming, conversation history
+│   ├── change_set_analysis.rs — AI-grouped change sets and the commit queue
+│   ├── claude_code_name.rs   — Claude Code name running animation
+│   ├── claude_run/           — AI backend execution, streaming, conversation history
+│   │   ├── mcp_inject.rs     — Injecting Dirigent's own MCP server into a run
+│   │   ├── provider_dispatch.rs — Cue → provider invocation (command prefix, config)
+│   │   ├── result_pipeline.rs   — Backend invocation and outcome → ClaudeResult
+│   │   └── run_diff.rs       — Pre-run baseline hashes, scoped run diff
+│   ├── dino.rs               — Dino running animation overlay
 │   ├── file_navigation.rs    — File open, tab management, navigation history
+│   ├── folder_compare.rs     — Folder comparison via git diff / external diff tool
 │   ├── git_operations.rs     — Git operation handlers
+│   ├── graph_helpers.rs      — Shared commit-graph layout helpers
+│   ├── hunk_staging.rs       — Hunk-level stage / unstage / discard
+│   ├── jujutsu.rs            — Jujutsu running animation overlay
 │   ├── lava_lamp.rs          — Retro pixelated lava lamp animation overlay
 │   ├── markdown_parser.rs    — Markdown-to-block parsing (headings, code, tables, lists)
 │   ├── markdown_viewer.rs    — Rendered Markdown display with syntax-highlighted code
@@ -217,11 +239,15 @@ src/
 │   ├── repo_management.rs    — Repository switching and management
 │   ├── search.rs             — In-file and project-wide search
 │   ├── sources_poll.rs       — Background polling of external cue sources
+│   ├── split_cue.rs          — AI-assisted splitting of a cue into sub-cues
+│   ├── ssh_operations.rs     — Remote SSH server operations
 │   ├── symbols.rs            — Multi-language code symbol parsing and definition lookup
 │   ├── tasks.rs              — Background task lifecycle and cancellation
 │   ├── theme.rs              — Theme system, semantic colors, font loading
+│   ├── thunderdome.rs        — Thunderdome running animation overlay
 │   ├── types.rs              — Shared app-level types (PendingPlay, DiffReview, etc.)
 │   ├── util.rs               — Utility functions (ANSI stripping, duration formatting)
+│   ├── vcs_dispatch.rs       — Git / Jujutsu backend dispatch
 │   ├── workflow_graph.rs     — Workflow plan graph overlay rendering
 │   ├── workflow_run.rs       — Workflow creation, step execution, and progress
 │   ├── code_viewer/
@@ -242,7 +268,17 @@ src/
 │   │   └── cue_card/         — Cue card rendering (activity, buttons, inputs, etc.)
 │   ├── dialog/
 │   │   ├── agent_log.rs      — Agent execution log viewer
-│   │   ├── create_pr.rs      — GitHub pull request creation dialog
+│   │   ├── analyze_over.rs   — Cross-branch "Analyze changes over…" picker
+│   │   ├── cleanup_bookmarks.rs — jj bookmark cleanup
+│   │   ├── commit_dialog.rs  — Commit dialog and commit queue
+│   │   ├── create_bookmark.rs / delete_bookmark.rs / merge_bookmark.rs — jj bookmark dialogs
+│   │   ├── create_pr.rs      — Pull request creation dialog (GitHub / Forgejo)
+│   │   ├── custom_theme.rs   — Custom theme import, export, and editing
+│   │   ├── error_dialog.rs, pr_error.rs, push_error.rs, move_to_branch_error.rs — Error dialogs
+│   │   ├── graph_view.rs     — Commit / branch graph view
+│   │   ├── log_viewer.rs     — In-app application log viewer
+│   │   ├── mermaid_view.rs   — Rendered Mermaid diagram view
+│   │   ├── move_to_branch.rs — Move uncommitted work to another branch
 │   │   ├── cue_agent_runs.rs — Per-cue agent run history
 │   │   ├── diff_review.rs    — Diff review with reply, search, accept/reject
 │   │   ├── file_ops.rs       — File rename dialog
@@ -260,11 +296,15 @@ src/
 │       ├── menu_bar.rs       — Application menu bar
 │       ├── repo_bar.rs       — Repository and branch bar
 │       ├── file_tree.rs      — File tree panel
+│       ├── git_view.rs       — Git panel (status, staging, history)
 │       ├── prompt_field.rs   — Prompt input field
+│       ├── ssh_panel.rs      — Remote SSH server panel
 │       └── status_bar.rs     — Status bar
 ├── claude/                   — Claude Code CLI invocation via PTY
 │   ├── cli.rs                — Env-var resolution, lifecycle scripts, .Dirigent/.env loading
 │   ├── diff_parser.rs        — Diff extraction from Claude output
+│   ├── done_hook.rs          — Claude Code Stop-hook install and payload handling
+│   ├── import_cues.rs        — Cue import from Claude output
 │   ├── invoke.rs             — PTY session builder, prompt submission, response collection
 │   ├── prompt.rs             — Prompt construction
 │   ├── stream.rs             — PTY event loop, auto-accept, idle timeout, graceful shutdown
@@ -277,18 +317,27 @@ src/
 │   ├── execution_ops.rs      — Execution record operations
 │   ├── migrations.rs         — Schema migrations
 │   ├── pattern_ops.rs        — Pattern/ignore operations
+│   ├── pr_finding_ops.rs     — PR review findings → cues (dedup, update, tag)
 │   ├── source_ops.rs         — Source-imported cue operations
 │   └── types.rs              — DB data types
 ├── git/                      — Git operations
 │   ├── archive.rs            — Worktree DB archival before removal
 │   ├── commit.rs             — Commit creation
 │   ├── diff.rs               — Diff generation
+│   ├── forgejo.rs            — Forgejo/Codeberg pull request REST API
 │   ├── graph.rs              — Branch/commit graph visualization
 │   ├── history.rs            — Commit history queries
 │   ├── merge.rs              — Merge and conflict resolution
 │   ├── pr.rs                 — GitHub pull request operations
+│   ├── staging.rs            — Index staging and hunk patch construction
 │   ├── status.rs             — Working tree status
 │   └── worktree.rs           — Worktree management
+├── jj/                       — Jujutsu (jj) VCS backend
+│   ├── commit.rs             — jj commit and squash
+│   ├── diff.rs               — jj diff generation
+│   ├── history.rs            — jj log / history queries
+│   ├── status.rs             — jj working copy status
+│   └── worktree.rs           — jj workspace management
 ├── lsp/                      — Language Server Protocol client
 │   ├── client.rs             — LSP JSON-RPC client
 │   ├── manager.rs            — Multi-server lifecycle and routing
@@ -305,16 +354,33 @@ src/
 │   └── theme.rs              — Theme definitions (20 themes)
 ├── sources/                  — External cue sources
 │   ├── custom.rs             — Custom shell command sources
-│   ├── external.rs           — GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP
+│   ├── external.rs           — Shared HTTP/token/shell helpers, `curl` preview builder
+│   ├── providers/            — One module per external source
+│   │   ├── asana.rs          — Asana project tasks
+│   │   ├── github.rs         — GitHub Issues via the `gh` CLI
+│   │   ├── notion.rs         — Notion search, query, pagination, block rendering
+│   │   ├── sentry.rs         — Sentry unresolved issues
+│   │   ├── slack.rs          — Slack channel history
+│   │   ├── sonarqube.rs      — SonarQube issues, hotspots, duplications
+│   │   └── trello.rs         — Trello board cards
 │   ├── finding_text.rs       — Finding text extraction and formatting
 │   ├── html.rs               — HTML content parsing
 │   ├── pr_comments.rs        — PR comment filtering (confirmation, summary detection)
 │   ├── pr_feedback.rs        — PR review feedback processing
 │   ├── pr_findings.rs        — PR findings import via gh CLI
 │   └── types.rs              — Source data types
+├── util/                     — Shared helpers
+│   ├── fs.rs                 — Filesystem helpers (recursive copy)
+│   └── json_extract.rs       — Lenient JSON extraction from LLM responses
 ├── syntax.rs                 — Extended syntax highlighting (Kotlin, Dart)
+├── ai_process.rs             — Shared AI-CLI process helpers (watchdog, stderr, hooks, stream)
 ├── opencode.rs               — OpenCode CLI support (multi-provider backend)
 ├── acp/                      — Agent Client Protocol client (ACP Agent provider)
+├── gemini.rs                 — Gemini CLI backend
+├── codex.rs                  — Codex CLI backend
+├── fast_llm.rs               — Optional OpenAI-compatible helper LLM (commit messages, analysis)
+├── ssh.rs                    — Remote SSH/SFTP server support (host-key verified, read-only)
+├── log_collector.rs          — In-memory log ring buffer for the log viewer
 ├── diff_view.rs              — Unified diff parsing, inline and side-by-side rendering
 ├── error.rs                  — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs              — Recursive directory scanning with ignore patterns
@@ -344,7 +410,7 @@ src/
 
 ## Status
 
-Dirigent is in active development (v0.5.0, 900+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
+Dirigent is in active development (v0.6.1, 1,500+ commits). Core features work — file browsing with tabs and quick-open, LSP-powered code intelligence (diagnostics, goto definition, hover), code symbols, cue management with bulk actions and cue commands, Claude Code and OpenCode integration with conversation history and reply workflow, diff review, GitHub PR creation and import with filtering, git operations with merge conflict resolution, search, source integration (GitHub Issues, Slack, SonarQube, Notion, Trello, Asana, MCP, custom), image attachments with drag-and-drop, prompt quality hints, workflow planning, post-run agents with diagnostic parsing, OpenTelemetry telemetry, home directory guard, and macOS app bundling — but expect rough edges. Contributions and feedback are welcome.
 
 ## License
 

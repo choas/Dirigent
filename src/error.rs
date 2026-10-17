@@ -17,8 +17,8 @@ pub enum DirigentError {
     #[error("sqlite: {0}")]
     Sqlite(String),
 
-    #[error("claude error: {0}")]
-    Claude(#[from] crate::claude::ClaudeError),
+    #[error("AI backend error: {0}")]
+    Claude(#[from] crate::ai_backend::BackendError),
 
     #[error("source: {0}")]
     Source(String),

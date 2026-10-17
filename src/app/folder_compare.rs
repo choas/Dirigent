@@ -45,7 +45,7 @@ impl DirigentApp {
             }
         }
 
-        self.git.show_worktree_panel = false;
+        self.dialogs.close(super::DialogId::WorktreePanel);
         let label = format!("{} \u{2194} {}", left.display(), right.display());
         let (tx, rx) = mpsc::channel();
         self.folder_compare_rx = Some(rx);

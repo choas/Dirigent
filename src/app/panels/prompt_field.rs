@@ -20,7 +20,7 @@ impl DirigentApp {
                 ui.painter().hline(
                     rect.x_range(),
                     rect.top(),
-                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                    egui::Stroke::new(1.0_f32, self.semantic.prompt_border()),
                 );
 
                 self.render_prompt_attached_images(ui);

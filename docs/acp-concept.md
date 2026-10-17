@@ -53,7 +53,7 @@ The dedicated providers stay. They expose things ACP v1 does not (model selectio
 
 ## Implementation
 
-Code: `src/acp/` (`types.rs` wire types, `client.rs` connection, `invoke.rs` run lifecycle). It is wired in like every other provider: `CliProvider::Acp`, `acp_*` settings, and arms in `claude_run.rs`, `split_cue.rs::run_cli_prompt` and `custom_theme.rs`.
+Code: `src/acp/` (`types.rs` wire types, `client.rs` connection, `invoke.rs` run lifecycle). It is wired in like every other provider: `CliProvider::Acp`, `acp_*` settings, and `AcpBackend` in `src/ai_backend.rs`. The shared `AiBackend::invoke` driver runs the hooks, the final cancel check and the duration measurement; `acp::run_acp_cli` only runs the turn. Analysis prompts (`split_cue::run_cli_prompt`) set `BackendRequest::read_only`.
 
 ### Decisions
 

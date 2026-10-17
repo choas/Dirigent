@@ -1,14 +1,12 @@
-use std::sync::mpsc;
-
 use crate::db::{Cue, CueStatus};
 use crate::workflow::{self, WorkflowPlan, WorkflowStepStatus};
 
-use super::DirigentApp;
+use super::{AsyncPoll, DirigentApp};
 
 impl DirigentApp {
     /// Trigger LLM analysis of Inbox cues to create a workflow plan.
     pub(super) fn create_workflow(&mut self) {
-        if self.workflow_generating {
+        if self.workflow_op.in_flight() {
             return;
         }
 
@@ -18,7 +16,6 @@ impl DirigentApp {
             return;
         }
 
-        self.workflow_generating = true;
         self.show_workflow_graph = true;
         let prompt = workflow::build_workflow_prompt(&inbox_cues);
         let expected_ids: Vec<i64> = inbox_cues.iter().map(|c| c.id).collect();
@@ -28,13 +25,8 @@ impl DirigentApp {
         let project_root = self.project_root.clone();
         let settings = self.settings.clone();
 
-        let (tx, rx) = mpsc::channel();
-        self.workflow_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result =
-                run_workflow_analysis(&prompt, &expected_ids, &provider, &project_root, &settings);
-            let _ = tx.send(result);
+        self.workflow_op.spawn(move || {
+            run_workflow_analysis(&prompt, &expected_ids, &provider, &project_root, &settings)
         });
 
         self.set_status_message("Analyzing cues for workflow plan...".into());
@@ -42,22 +34,14 @@ impl DirigentApp {
 
     /// Poll for workflow analysis results.
     pub(super) fn process_workflow_result(&mut self) {
-        let rx = match self.workflow_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.workflow_generating = false;
-                self.workflow_rx = None;
+        let result = match self.workflow_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Workflow analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.workflow_generating = false;
-        self.workflow_rx = None;
         match result {
             Ok((plan, warning)) => {
                 let step_count = plan.steps.len();
@@ -207,11 +191,20 @@ impl DirigentApp {
             if !is_inbox {
                 continue;
             }
-            let _ = self.db.update_cue_workflow_flags(cue_id, true, auto_commit);
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
-            let _ = self
-                .db
-                .log_activity(cue_id, &format!("Workflow: started (step {})", step_idx));
+            self.db_report(
+                "set workflow flags",
+                self.db.update_cue_workflow_flags(cue_id, true, auto_commit),
+            );
+            // If the status write fails the cue is still Inbox in the DB. The
+            // reload below reflects that, and trigger_ready_workflow_cues skips
+            // it, so the UI never claims a cue is running when it is not.
+            if !self.db_report(
+                "move cue to Ready",
+                self.db.update_cue_status(cue_id, CueStatus::Ready),
+            ) {
+                continue;
+            }
+            self.log_cue_activity(cue_id, &format!("Workflow: started (step {})", step_idx));
             self.cue_move_flash
                 .insert(cue_id, std::time::Instant::now());
         }
@@ -231,10 +224,14 @@ impl DirigentApp {
                 // Verify the run actually started — trigger_claude may bail out
                 // (e.g. home guard sync failure) leaving the cue stuck in Ready.
                 if !self.claude.running_logs.contains_key(&cue_id) {
-                    let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
-                    let _ = self
-                        .db
-                        .log_activity(cue_id, "Workflow: run failed to start, moved back to Inbox");
+                    self.db_report(
+                        "move cue back to Inbox",
+                        self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                    );
+                    self.log_cue_activity(
+                        cue_id,
+                        "Workflow: run failed to start, moved back to Inbox",
+                    );
                     reverted = true;
                 }
             }
@@ -269,8 +266,7 @@ impl DirigentApp {
     /// Cancel the current workflow.
     pub(super) fn cancel_workflow(&mut self) {
         // Invalidate any in-flight analysis so a late result cannot repopulate.
-        self.workflow_generating = false;
-        self.workflow_rx = None;
+        self.workflow_op.cancel();
 
         // Collect cue IDs to cancel before mutating self.
         let cue_ids_to_cancel: Vec<i64> = self
@@ -285,6 +281,9 @@ impl DirigentApp {
             })
             .unwrap_or_default();
 
+        // Collected rather than reported per-cue: the "Workflow cancelled"
+        // message below would otherwise immediately clobber the error.
+        let mut failed = 0usize;
         for cue_id in cue_ids_to_cancel {
             // Only demote cues still in Ready (running). Don't touch cues that
             // already moved to Review/Done — that would discard completed work.
@@ -293,21 +292,39 @@ impl DirigentApp {
                 .iter()
                 .any(|c| c.id == cue_id && c.status == CueStatus::Ready);
             self.cancel_cue_task(cue_id);
-            if is_ready {
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            if is_ready
+                && !self.db_log(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                )
+            {
+                failed += 1;
             }
             // Clear the persisted workflow/auto-commit flags so a later manual
             // run of this cue is not treated as part of a (now-cancelled)
-            // workflow and silently auto-committed.
-            let _ = self.db.update_cue_workflow_flags(cue_id, false, false);
-            let _ = self.db.log_activity(cue_id, "Workflow cancelled");
+            // workflow and silently auto-committed. A failure here matters: the
+            // stale auto-commit flag would survive the cancellation.
+            if !self.db_log(
+                "clear workflow flags",
+                self.db.update_cue_workflow_flags(cue_id, false, false),
+            ) {
+                failed += 1;
+            }
+            self.log_cue_activity(cue_id, "Workflow cancelled");
         }
         self.workflow_plan = None;
         self.workflow_warning = None;
         self.show_workflow_graph = false;
         self.workflow_inbox_snapshot.clear();
         self.reload_cues();
-        self.set_status_message("Workflow cancelled".into());
+        if failed > 0 {
+            self.set_status_message(format!(
+                "Workflow cancelled — {} database write(s) failed, some cues may keep workflow state",
+                failed
+            ));
+        } else {
+            self.set_status_message("Workflow cancelled".into());
+        }
     }
 
     /// Toggle pause_after on a specific step.

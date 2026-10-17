@@ -1,11 +1,11 @@
 use eframe::egui;
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 use super::error_dialog::{create_global_error_cue, render_error_dialog, ErrorDialogSpec};
 
 impl DirigentApp {
     pub(in crate::app) fn render_pr_error_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_pr_error {
+        if !self.dialogs.is_open(DialogId::PrError) {
             return;
         }
 
@@ -39,7 +39,6 @@ impl DirigentApp {
     }
 
     fn close_pr_error_dialog(&mut self) {
-        self.git.show_pr_error = false;
-        self.git.pr_error_message.clear();
+        self.close_dialog(DialogId::PrError);
     }
 }

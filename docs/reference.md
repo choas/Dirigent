@@ -74,6 +74,10 @@ Right-click a tab for additional actions: Close All, Close Others, Close to Righ
 
 Settings are stored per-project in `.Dirigent/settings.json` and edited via the Settings dialog in the app.
 
+### Repository trust
+
+Because `.Dirigent/settings.json` arrives with a checkout, many of its fields are execution-capable input (LSP server commands, source commands, pre/post-run scripts, agent commands, extra CLI args, program paths, LLM endpoints, …). On the first open of a repository — or whenever those fields change on disk outside the app — Dirigent shows exactly the execution-capable fields and asks for approval. Until you trust the repository, those fields stay at their defaults and `--dangerously-skip-permissions` is off, so agents run restricted. Only cosmetic fields (theme, fonts, layout, notifications) apply without approval; any settings field not on that safe list — including fields added in future versions — is gated by default. Approvals are remembered per repository by a content hash of the execution-capable fields in `~/Library/Application Support/Dirigent/trusted_repos.json`.
+
 ### General
 
 | Setting | Type | Default | Description |
@@ -83,10 +87,18 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 | Font size | float | 13.0 | Font size in points |
 | Notify sound | bool | true | Play sound when a cue finishes |
 | Notify popup | bool | true | Show macOS notification popup |
-| Lava lamp | bool | true | Show lava lamp animation during runs |
+| Running animation | enum | LavaLamp | Overlay during runs: `Off`, `LavaLamp`, `ClaudeCodeName`, `Dino`, `Jujutsu`, `Thunderdome` |
 | Prompt suggestions | bool | false | Show heuristic refinement hints below prompt |
 | Auto-context: file | bool | false | Include surrounding lines around cue location in prompt |
 | Auto-context: git diff | bool | false | Include current git diff in prompt |
+| Font weight | enum | Regular | `Light`, `Regular`, `Medium`, `SemiBold`, `Bold` |
+| Custom themes | list | empty | User-defined themes (see [Themes](#themes)) |
+| Diff color scheme | enum | RedGreen | `RedGreen`, `RedBlue`, `YellowBlue` |
+| Heartbeat style | enum | Heartbeat | Status-bar activity indicator: `Heartbeat`, `Wave`, `GabbaPeak`, `MorseCode`, `Off` |
+| Claude Code display name | string | empty | Rename "Claude Code" in the UI |
+| Custom dock icon path | string | empty | PNG used as the macOS Dock icon; falls back to a project `logo.png` |
+| Show frame timing | bool | false | Overlay per-panel render times (debugging) |
+| External diff tool | string | empty | Command used to open a diff externally instead of the built-in viewer |
 
 ### CLI Provider
 
@@ -94,7 +106,7 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 |---------|------|---------|-------------|
 | CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, or `ACP Agent` |
 | Test Connection | button | — | Sends `hello` to the selected provider with the current (unsaved) settings and shows the reply or error; pre/post-run scripts are skipped ([How_to_ACP.md](How_to_ACP.md#testing-the-connection)) |
-| Claude model | string | claude-opus-4-6 | Model to use with Claude Code |
+| Claude model | string | claude-opus-4-8 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
 | Claude CLI path | string | (auto-detect) | Path to `claude` binary; auto-detected via `which` |
 | Claude extra args | string | empty | Additional CLI arguments appended to every invocation |
@@ -102,13 +114,67 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 | Claude pre-run script | string | empty | Shell script executed before each Claude run |
 | Claude post-run script | string | empty | Shell script executed after each Claude run |
 | Skip permissions | bool | true | Append `--dangerously-skip-permissions` to CLI |
+| Claude use PTY | bool | true | Drive `claude` through a pseudo-terminal (the interactive TUI). Off falls back to headless `claude -p`. |
 | OpenCode model | string | openai/o1 | Model for OpenCode provider |
 | OpenCode CLI path | string | (auto-detect) | Path to `opencode` binary |
 | OpenCode extra args | string | empty | Additional OpenCode CLI arguments |
+| OpenCode env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| Gemini model | string | gemini-2.5-flash | Model for the Gemini provider |
+| Gemini CLI path | string | (auto-detect) | Path to `gemini` binary |
+| Gemini extra args / env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| Codex model | string | gpt-5-codex | Model for the Codex provider |
+| Codex CLI path | string | (auto-detect) | Path to `codex` binary |
+| Codex extra args / env vars / pre-run / post-run | string | empty | As for Claude, per provider |
 | ACP agent command | string | empty | ACP agent executable, e.g. `opencode`, `gemini`, `goose` ([How_to_ACP.md](How_to_ACP.md)) |
 | ACP extra args | string | empty | Arguments that start the agent in ACP mode, e.g. `acp`, `--experimental-acp` |
 | ACP env vars | string | empty | `KEY=VAL` lines set on the agent process |
 | ACP pre-/post-run script | string | empty | Shell scripts executed around each ACP run |
+| Auto-continue | bool | false | Re-prompt a run that stopped with unfinished work |
+| Auto-continue max | int | 3 | Cap on consecutive auto-continues per cue |
+
+Pre/post-run scripts only execute for a repository whose execution-capable
+settings you approved — see [Repository trust](#repository-trust). In an
+unapproved repository they are skipped with a warning; the run itself still
+proceeds.
+
+### Version control
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| VCS backend | enum | Git | `Git` or `Jj`. Auto-switches to `Jj` when the project has a `.jj` directory. |
+| jj CLI path | string | (auto-detect) | Path to the `jj` binary |
+| Auto commit | bool | false | Commit automatically when a run's changes are accepted |
+| Commit footer | bool | true | Append Dirigent's co-author footer to commit messages |
+
+### Fast LLM
+
+A small local model used for quick, non-agentic jobs (commit-message drafts,
+change-set grouping). When disabled, those jobs fall back to the configured CLI
+provider.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| Fast LLM enabled | bool | false | Use the Fast LLM for quick jobs |
+| Fast LLM provider | string | Ollama | Label for the OpenAI-compatible endpoint |
+| Fast LLM base URL | string | `http://localhost:11434/v1` | OpenAI-compatible endpoint. A non-local URL requires explicit approval before any repository content is sent to it. |
+| Fast LLM API key | string | empty | Bearer token for the endpoint |
+| Fast LLM model | string | gemma4:26b-mlx | Model identifier |
+
+### Dirigent MCP server
+
+Dirigent exposes its own cue database over MCP so an agent can read and move
+cues mid-run. Injected automatically when the prompt mentions "dirigent".
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| MCP server path | string | (auto-detect) | Path to the `dirigent-mcp-server` binary |
+| MCP database path | string | (project DB) | Override the database the MCP server reads |
+
+### SSH servers
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| SSH servers | list | empty | Remote hosts browsable from the SSH panel (name, host, username) |
 
 ### Security
 
@@ -131,6 +197,8 @@ Each agent has: name, command, trigger, and optional language.
 |---------|------|---------|-------------|
 | LSP enabled | bool | false | Master toggle for Language Server Protocol |
 | LSP servers | list | 13 presets | Server configurations per language |
+
+A server's command must be the language server binary itself. Shells, exec wrappers and language interpreters (`sh`, `env`, `xargs`, `node`, `python3`, `java`, …) are refused as the command, and eval-style arguments (`-c`, `-e`, `--eval`, `-exec`, …) are refused in the args list — otherwise a repository's `.Dirigent/settings.json` could run arbitrary code through a server definition. Wrap such an invocation in a small executable script on your PATH and point the command at that. Servers also do not start until the repository is trusted (see [Repository trust](#repository-trust)).
 
 ### Sources
 
@@ -179,7 +247,7 @@ Predefined prompts available from the Playbook menu. Plays with template variabl
 |------|-------------|-----------|
 | Documentation (Diataxis) | Update docs following Diataxis framework; sync README | -- |
 | Verify architecture | Check for structural issues, circular dependencies | -- |
-| Verify last 5 commits | Review recent commits for bugs or inconsistencies | -- |
+| Git Pull | Pull the latest changes and resolve any conflicts | -- |
 | Create release | Prepare release: version numbers, CHANGELOG, tests, tag | `{VERSION}`, `{LICENSE}` (dropdown) |
 | Security audit | Check for secrets, insecure deps, injection vulnerabilities | -- |
 | Check dead code | Find unused functions, imports, unreachable branches | -- |
@@ -207,7 +275,7 @@ Backlog -> Inbox -> Ready -> (Running) -> Review -> Done -> Archived
 | **Running** | Claude/OpenCode is executing (transient) |
 | **Review** | Execution complete; diff awaiting review |
 | **Done** | Changes accepted; ready to commit |
-| **Archived** | Completed and archived (paginated, 50 per page) |
+| **Archived** | Completed and archived (paginated, 10 per page) |
 
 Bulk actions are available on the Review and Done columns.
 
@@ -260,6 +328,20 @@ Solarized Light, Gruvbox Light, GitHub Light, Catppuccin Latte, Everforest Light
 | `DIRIGENT_OTEL_ENDPOINT` | OTLP HTTP endpoint for telemetry (e.g. `http://localhost:4318`). Read once at startup. |
 | `SENTRY_DSN` | Sentry DSN for crash reporting. Optional. |
 
+Source integrations read their tokens from the process environment, then from
+`.Dirigent/.env` (preferred) or `.env`. Setting the token in the source's
+configuration overrides both.
+
+| Variable | Used by |
+|----------|---------|
+| `SLACK_BOT_TOKEN` | Slack source |
+| `SONAR_TOKEN` | SonarQube source |
+| `TRELLO_API_KEY` | Trello source (API key; paired with the token below) |
+| `TRELLO_TOKEN` | Trello source |
+| `ASANA_TOKEN` | Asana source |
+| `NOTION_TOKEN` | Notion source |
+| `SENTRY_AUTH_TOKEN` | Sentry source |
+
 Claude Code environment variables (for observability) are documented in the [Observability Setup](observability-setup.md) guide.
 
 ## Per-Project Data
@@ -285,10 +367,9 @@ When `DIRIGENT_OTEL_ENDPOINT` is set, Dirigent emits these structured log events
 |-------|---------------|
 | `app.started` | `project` |
 | `execution.started` | `project`, `cue_id`, `provider`, `model` |
-| `execution.completed` | `project`, `cue_id`, `provider`, `cost_usd`, `duration_ms`, `num_turns`, `input_tokens`, `output_tokens`, `has_diff` |
+| `execution.completed` | `project`, `cue_id`, `provider`, `duration_ms`, `has_diff`; plus `cost_usd`, `num_turns`, `input_tokens`, `output_tokens` when the backend reported them |
 | `execution.failed` | `project`, `cue_id`, `provider`, `error` |
 | `execution.rate_limited` | `project`, `cue_id`, `message` |
-| `cue.status_changed` | `project`, `cue_id`, `from_status`, `to_status` |
 | `agent.completed` | `project`, `agent_kind`, `status`, `duration_ms`, `cue_id` |
 | `git.commit` | `project`, `files_changed` |
 

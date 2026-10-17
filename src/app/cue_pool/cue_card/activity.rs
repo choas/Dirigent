@@ -98,10 +98,8 @@ impl DirigentApp {
         let arrow = if is_expanded { "\u{25BE}" } else { "\u{25B8}" };
         let clicked = ui
             .add(
-                egui::Label::new(
-                    egui::RichText::new(format!("{} {}", arrow, &entry.event)).small(),
-                )
-                .sense(egui::Sense::click()),
+                egui::Label::new(egui::RichText::new(format!("{} {}", arrow, entry.event)).small())
+                    .sense(egui::Sense::click()),
             )
             .clicked();
         if clicked {

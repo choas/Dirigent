@@ -237,7 +237,7 @@ pub(super) enum ToolCallContent {
         content: ContentBlock,
     },
     /// Only the path is kept: the working tree is the source of truth for the
-    /// run diff (see `resolve_run_diff` in `app/claude_run.rs`).
+    /// run diff (see `resolve_run_diff` in `app/claude_run/run_diff.rs`).
     Diff {
         path: String,
     },
@@ -321,8 +321,6 @@ pub(crate) enum AcpError {
     NotFound(String),
     SpawnFailed(std::io::Error),
     InvalidExtraArgs(String),
-    /// The pre-run (or post-run) hook script failed.
-    Hook(std::io::Error),
     Io(std::io::Error),
     /// The agent sent something we cannot work with.
     Protocol(String),
@@ -348,7 +346,6 @@ impl std::fmt::Display for AcpError {
             AcpError::InvalidExtraArgs(args) => {
                 write!(f, "failed to parse extra_args (unmatched quote?): {args}")
             }
-            AcpError::Hook(e) => write!(f, "hook script failed: {e}"),
             AcpError::Io(e) => write!(f, "ACP I/O error: {e}"),
             AcpError::Protocol(msg) => write!(f, "ACP protocol error: {msg}"),
             AcpError::Agent {

@@ -56,18 +56,29 @@ impl Database {
     }
 
     /// Store run metrics (cost, duration, tokens, turns) for an execution.
+    ///
+    /// `None` is written as SQL NULL, not zero: `total_cost()` sums the column
+    /// and must not count a run whose cost the backend never reported as a
+    /// free one.
     pub fn update_execution_metrics(
         &self,
         id: i64,
-        cost_usd: f64,
+        cost_usd: Option<f64>,
         duration_ms: u64,
-        num_turns: u64,
-        input_tokens: u64,
-        output_tokens: u64,
+        num_turns: Option<u64>,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
     ) -> Result<()> {
         self.conn.execute(
             "UPDATE executions SET cost_usd = ?1, duration_ms = ?2, num_turns = ?3, input_tokens = ?4, output_tokens = ?5 WHERE id = ?6",
-            params![cost_usd, duration_ms as i64, num_turns as i64, input_tokens as i64, output_tokens as i64, id],
+            params![
+                cost_usd,
+                duration_ms as i64,
+                num_turns.map(|v| v as i64),
+                input_tokens.map(|v| v as i64),
+                output_tokens.map(|v| v as i64),
+                id
+            ],
         )?;
         Ok(())
     }

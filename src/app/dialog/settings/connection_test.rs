@@ -298,7 +298,7 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             .unwrap_or_else(|| panic!("unknown provider {name}"))
             .clone();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut settings = crate::settings::load_settings(root);
+        let mut settings = crate::settings::load_settings(root).settings;
         if let Ok(spec) = std::env::var("ACP_SMOKE_AGENT") {
             let (cmd, args) = spec.split_once(' ').unwrap_or((spec.as_str(), ""));
             settings.acp_cli_path = cmd.into();

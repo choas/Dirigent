@@ -67,8 +67,7 @@ pub(crate) fn is_branch_eligible_for_worktree(repo_path: &Path, branch: &str) ->
 /// Prune worktree registrations whose folders no longer exist
 /// (`git worktree prune`).
 pub(crate) fn prune_worktrees(repo_path: &Path) -> crate::error::Result<()> {
-    use std::process::Command;
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["worktree", "prune"])
         .current_dir(repo_path)
         .output()?;
@@ -81,9 +80,7 @@ pub(crate) fn prune_worktrees(repo_path: &Path) -> crate::error::Result<()> {
 }
 
 pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<WorktreeInfo>> {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_path)
         .output()?;
@@ -136,9 +133,7 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
 /// Return the set of branch names whose tip commit was authored by the
 /// currently configured git user (matched by email).
 pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String> {
-    use std::process::Command;
-
-    let email = Command::new("git")
+    let email = super::git_cmd()
         .args(["config", "user.email"])
         .current_dir(repo_path)
         .output()
@@ -150,7 +145,7 @@ pub(crate) fn own_branches(repo_path: &Path) -> std::collections::HashSet<String
     };
 
     let mut own = std::collections::HashSet::new();
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args([
             "for-each-ref",
             "--format=%(refname)\t%(authoremail)",
@@ -237,8 +232,8 @@ pub(crate) fn list_all_branches(repo_path: &Path) -> crate::error::Result<Vec<St
 /// Best-effort / fire-and-forget: the process is spawned in the background
 /// so callers on the UI thread are not blocked by network I/O.
 fn fetch_and_prune(repo_path: &Path) {
-    use std::process::{Command, Stdio};
-    let _ = Command::new("git")
+    use std::process::Stdio;
+    let _ = super::git_cmd()
         .args(["fetch", "--prune"])
         .current_dir(repo_path)
         .stdout(Stdio::null())
@@ -247,9 +242,7 @@ fn fetch_and_prune(repo_path: &Path) {
 }
 
 fn run_git_checked(repo_path: &Path, args: &[&str]) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(args)
         .current_dir(repo_path)
         .output()?;
@@ -266,9 +259,8 @@ fn run_git_checked(repo_path: &Path, args: &[&str]) -> crate::error::Result<()> 
 /// been deleted (marked `[gone]`), e.g. after a PR was merged and the remote
 /// branch removed.
 fn collect_gone_branches(repo_path: &Path) -> std::collections::HashSet<String> {
-    use std::process::Command;
     let mut gone = std::collections::HashSet::new();
-    let Ok(output) = Command::new("git")
+    let Ok(output) = super::git_cmd()
         .args([
             "for-each-ref",
             "--format=%(refname:short) %(upstream:track)",
@@ -300,9 +292,7 @@ fn collect_local_branches(
     gone: &std::collections::HashSet<String>,
     branches: &mut std::collections::BTreeSet<String>,
 ) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["branch", "--format=%(refname:short)"])
         .current_dir(repo_path)
         .output()?;
@@ -323,9 +313,7 @@ fn collect_remote_branches(
     checked_out: &std::collections::HashSet<String>,
     branches: &mut std::collections::BTreeSet<String>,
 ) -> crate::error::Result<()> {
-    use std::process::Command;
-
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["branch", "-r", "--format=%(refname:short)"])
         .current_dir(repo_path)
         .output()?;
@@ -350,8 +338,6 @@ fn collect_remote_branches(
 }
 
 pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Result<PathBuf> {
-    use std::process::Command;
-
     // Always resolve the *main* worktree so new worktrees are created as
     // siblings of it, even when called from a linked (secondary) worktree.
     let worktrees = list_worktrees(repo_path)?;
@@ -372,14 +358,14 @@ pub(crate) fn create_worktree(repo_path: &Path, name: &str) -> crate::error::Res
     // First try without -b: this works for local branches AND remote-tracking
     // branches (git auto-creates a local tracking branch from e.g.
     // origin/claude/add-deno-support-brnCw).
-    let output = Command::new("git")
+    let output = super::git_cmd()
         .args(["worktree", "add", &wt_path.to_string_lossy(), name])
         .current_dir(repo_path)
         .output()?;
 
     // If the branch didn't exist at all, fall back to creating it with -b.
     if !output.status.success() {
-        let output = Command::new("git")
+        let output = super::git_cmd()
             .args(["worktree", "add", "-b", name, &wt_path.to_string_lossy()])
             .current_dir(repo_path)
             .output()?;
@@ -439,10 +425,9 @@ pub(crate) fn remove_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
-        let o = Command::new("git")
+        let o = crate::git::git_cmd()
             .current_dir(dir)
             .args(args)
             .output()

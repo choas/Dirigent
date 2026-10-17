@@ -7,17 +7,23 @@ use std::time::{Duration, Instant};
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
 use super::DirigentApp;
-use crate::acp;
 use crate::agents::AgentTrigger;
+use crate::ai_backend::ProviderRunOutcome;
 use crate::claude;
-use crate::codex;
 use crate::db::{Cue, CueStatus, Execution};
-use crate::gemini;
-use crate::git;
 use crate::jj;
-use crate::opencode;
 use crate::settings::{self, CliProvider, CueCommand, VcsBackend};
 use crate::telemetry;
+
+mod mcp_inject;
+mod provider_dispatch;
+mod result_pipeline;
+mod run_diff;
+
+use provider_dispatch::{
+    build_pr_hint_text, build_provider_config, resolve_command_prefix, ProviderConfig,
+};
+use result_pipeline::run_provider;
 
 /// Result of a background Claude invocation.
 struct ClaudeResult {
@@ -103,215 +109,6 @@ impl ClaudeRunState {
     }
 }
 
-/// Configuration extracted from Settings for a specific CLI provider.
-struct ProviderConfig {
-    model: String,
-    cli_path: String,
-    extra_args: String,
-    /// Structured args that must not go through shlex::split (e.g. --mcp-config
-    /// paths). Passed directly as individual Command::arg entries.
-    extra_args_vec: Vec<String>,
-    env_vars: String,
-    pre_run_script: String,
-    post_run_script: String,
-    skip_permissions: bool,
-    use_pty: bool,
-}
-
-/// Resolve a `[command]` prefix from cue text, returning the effective prompt text
-/// and the matched command config (if any).
-fn resolve_command_prefix(cue_text: &str, commands: &[CueCommand]) -> (String, Option<CueCommand>) {
-    let parsed = claude::parse_command_prefix(cue_text);
-    let (cmd_name, rest) = match parsed {
-        Some((name, rest)) => (name, rest),
-        None => return (cue_text.to_string(), None),
-    };
-    match commands.iter().find(|c| c.name == cmd_name) {
-        Some(cmd) => {
-            let expanded = cmd.prompt.replace("{task}", rest);
-            (expanded, Some(cmd.clone()))
-        }
-        None => (cue_text.to_string(), None),
-    }
-}
-
-/// For PR-sourced cues, append a hint so the AI can fetch more context.
-/// The hint is added at prompt time (not stored in cue text) to avoid
-/// triggering spurious text-changed updates on existing cues.
-fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String {
-    if let Some(sref) = source_ref {
-        if let Some(pr_num) = sref
-            .strip_prefix("pr")
-            .and_then(|s| s.split(':').next())
-            .and_then(|n| n.parse::<u64>().ok())
-        {
-            return format!(
-                "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
-                text, pr_num,
-            );
-        }
-    }
-    text.to_string()
-}
-
-fn should_inject_dirigent_mcp(prompt: &str) -> bool {
-    prompt.to_lowercase().contains("dirigent")
-}
-
-fn write_dirigent_mcp_config(
-    project_root: &std::path::Path,
-    mcp_bin: &str,
-    db_path: &std::path::Path,
-) -> std::io::Result<std::path::PathBuf> {
-    let dir = project_root.join(".Dirigent");
-    std::fs::create_dir_all(&dir)?;
-    let config_path = dir.join("mcp-config.json");
-    let escaped_bin = mcp_bin.replace('\\', "\\\\").replace('"', "\\\"");
-    let escaped_db = db_path
-        .display()
-        .to_string()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
-    let config = format!(
-        r#"{{"mcpServers":{{"dirigent":{{"type":"stdio","command":"{}","args":["{}"]}}}}}}"#,
-        escaped_bin, escaped_db,
-    );
-    std::fs::write(&config_path, config)?;
-    Ok(config_path)
-}
-
-fn resolve_dirigent_db(
-    project_root: &std::path::Path,
-    settings: &settings::Settings,
-) -> Option<std::path::PathBuf> {
-    let local_db = project_root.join(".Dirigent").join("Dirigent.db");
-    if local_db.exists() {
-        return Some(local_db);
-    }
-    if !settings.dirigent_mcp_db_path.is_empty() {
-        let path = std::path::PathBuf::from(&settings.dirigent_mcp_db_path);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    None
-}
-
-/// Build provider-specific configuration from settings, with optional command overrides.
-/// When the prompt mentions "Dirigent" and the provider is Claude, the Dirigent MCP
-/// server is conditionally injected via `--mcp-config` so Claude gains cue-management tools.
-fn build_provider_config(
-    settings: &settings::Settings,
-    provider: &CliProvider,
-    matched_command: &Option<CueCommand>,
-    prompt: &str,
-    project_root: &std::path::Path,
-) -> ProviderConfig {
-    let pf = settings.provider_fields(provider);
-    let model = pf.model.to_string();
-    let cli_path = pf.cli_path.to_string();
-    let mut extra_args = pf.extra_args.to_string();
-    let env_vars = pf.env_vars.to_string();
-    let pre_run_script = matched_command
-        .as_ref()
-        .filter(|cmd| !cmd.pre_agent.is_empty())
-        .map(|cmd| cmd.pre_agent.clone())
-        .unwrap_or_else(|| pf.pre_run_script.to_string());
-    let post_run_script = matched_command
-        .as_ref()
-        .filter(|cmd| !cmd.post_agent.is_empty())
-        .map(|cmd| cmd.post_agent.clone())
-        .unwrap_or_else(|| pf.post_run_script.to_string());
-    append_command_cli_args(&mut extra_args, matched_command);
-    let extra_args_vec = provider_extra_args_vec(settings, provider, prompt, project_root);
-    ProviderConfig {
-        model,
-        cli_path,
-        extra_args,
-        extra_args_vec,
-        env_vars,
-        pre_run_script,
-        post_run_script,
-        skip_permissions: settings.allow_dangerous_skip_permissions,
-        use_pty: settings.claude_use_pty,
-    }
-}
-
-fn append_command_cli_args(extra_args: &mut String, matched_command: &Option<CueCommand>) {
-    let Some(cmd) = matched_command.as_ref() else {
-        return;
-    };
-    let cmd_args = cmd.cli_args.trim();
-    if cmd_args.is_empty() {
-        return;
-    }
-    if extra_args.is_empty() {
-        *extra_args = cmd_args.to_string();
-    } else {
-        *extra_args = format!("{} {}", extra_args, cmd_args);
-    }
-}
-
-fn provider_extra_args_vec(
-    settings: &settings::Settings,
-    provider: &CliProvider,
-    prompt: &str,
-    project_root: &std::path::Path,
-) -> Vec<String> {
-    if *provider != CliProvider::Claude || !should_inject_dirigent_mcp(prompt) {
-        return Vec::new();
-    }
-    let Some(db_path) = resolve_dirigent_db(project_root, settings) else {
-        return Vec::new();
-    };
-    dirigent_mcp_args(project_root, settings, &db_path)
-}
-
-fn dirigent_mcp_args(
-    project_root: &std::path::Path,
-    settings: &settings::Settings,
-    db_path: &std::path::Path,
-) -> Vec<String> {
-    let mcp_bin = dirigent_mcp_bin(settings);
-    if !mcp_bin_exists(&mcp_bin) {
-        log::warn!(
-            "Dirigent MCP server binary '{}' not found — \
-             install with: cd dirigent-mcp-server && npm install && npm run build && npm link",
-            mcp_bin,
-        );
-        return Vec::new();
-    }
-    match write_dirigent_mcp_config(project_root, &mcp_bin, db_path) {
-        Ok(config_path) => {
-            log::info!(
-                "Dirigent MCP server injected: {} {}",
-                mcp_bin,
-                db_path.display()
-            );
-            vec![
-                "--mcp-config".to_string(),
-                config_path.display().to_string(),
-            ]
-        }
-        Err(e) => {
-            log::warn!("Failed to write Dirigent MCP config: {e}");
-            Vec::new()
-        }
-    }
-}
-
-fn dirigent_mcp_bin(settings: &settings::Settings) -> String {
-    if settings.dirigent_mcp_server_path.is_empty() {
-        "dirigent-mcp".to_string()
-    } else {
-        settings.dirigent_mcp_server_path.clone()
-    }
-}
-
-fn mcp_bin_exists(mcp_bin: &str) -> bool {
-    which::which(mcp_bin).is_ok() || std::path::Path::new(mcp_bin).exists()
-}
-
 /// Bundles the parameters needed by a single CLI provider invocation.
 struct RunRequest<'a> {
     provider: CliProvider,
@@ -322,352 +119,6 @@ struct RunRequest<'a> {
     exec_id: i64,
     vcs_backend: VcsBackend,
     jj_cli_path: String,
-}
-
-fn vcs_get_working_diff(req: &RunRequest, files: &[String]) -> Option<String> {
-    match req.vcs_backend {
-        VcsBackend::Jj => jj::jj_get_working_diff(req.project_root, files, &req.jj_cli_path),
-        VcsBackend::Git => git::get_working_diff(req.project_root, files),
-    }
-}
-
-fn vcs_get_dirty_files(req: &RunRequest) -> HashMap<String, char> {
-    match req.vcs_backend {
-        VcsBackend::Jj => jj::jj_get_dirty_files(req.project_root, &req.jj_cli_path),
-        VcsBackend::Git => git::get_dirty_files(req.project_root),
-    }
-}
-
-/// Run the CLI provider on a background thread and produce a `ClaudeResult`.
-fn run_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    match req.provider {
-        CliProvider::Claude => run_claude_provider(req, on_log, cancel),
-        CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
-        CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
-        CliProvider::Codex => run_codex_provider(req, on_log, cancel),
-        CliProvider::Acp => run_acp_provider(req, on_log, cancel),
-    }
-}
-
-/// Normalized outcome from any CLI provider's streaming invocation. Each
-/// provider adapts its specific response into this common shape so the
-/// post-run diff resolution and `ClaudeResult` mapping can be shared via
-/// `finalize_run` — keeping provider-specific drift out of the result path.
-struct ProviderRunOutcome {
-    stdout: String,
-    edited_files: Vec<String>,
-    metrics: claude::RunMetrics,
-    metadata: Option<claude::ClaudeRunMetadata>,
-    parse_diff: fn(&str) -> Option<String>,
-}
-
-/// Resolve the run diff using a single canonical source order shared by all
-/// providers. The order is, from most to least trustworthy:
-///
-///   1. `git diff` over files the provider explicitly reports it edited.
-///   2. `git diff` over files whose content actually changed vs. the pre-run
-///      baseline (`scoped_working_diff`).
-///   3. A diff parsed out of the provider's response text
-///      (`outcome.parse_diff`).
-///
-/// Filesystem reality (1 and 2) always wins over text-parsed diffs (3): the
-/// working tree is the ground truth, while parsing a diff out of free-form
-/// model output depends on provider-specific formatting and is easily fooled
-/// by truncation, fenced examples, or multiple embedded hunks. Putting the
-/// text-parsed diff last is what keeps the same model output from being
-/// interpreted differently across Claude, Gemini, and OpenCode.
-fn resolve_run_diff(
-    req: &RunRequest,
-    baseline: &HashMap<String, Option<u64>>,
-    outcome: &ProviderRunOutcome,
-) -> Option<String> {
-    if !outcome.edited_files.is_empty() {
-        if let Some(d) = vcs_get_working_diff(req, &outcome.edited_files) {
-            return Some(d);
-        }
-    }
-    scoped_working_diff(req, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
-}
-
-/// Build a `ClaudeResult` from a provider's outcome (or error). Centralizing
-/// this here prevents the three providers from drifting in how they map
-/// success/failure into the result type.
-fn finalize_run<E: std::fmt::Display>(
-    req: &RunRequest,
-    baseline: &HashMap<String, Option<u64>>,
-    res: Result<ProviderRunOutcome, E>,
-) -> ClaudeResult {
-    match res {
-        Ok(outcome) => {
-            let diff = resolve_run_diff(req, baseline, &outcome);
-            ClaudeResult {
-                cue_id: req.cue_id,
-                exec_id: req.exec_id,
-                diff,
-                response: outcome.stdout,
-                error: None,
-                metrics: outcome.metrics,
-                metadata: outcome.metadata,
-            }
-        }
-        Err(e) => ClaudeResult {
-            cue_id: req.cue_id,
-            exec_id: req.exec_id,
-            diff: None,
-            response: String::new(),
-            error: Some(e.to_string()),
-            metrics: claude::RunMetrics::default(),
-            metadata: None,
-        },
-    }
-}
-
-fn run_claude_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let res = claude::invoke_claude_streaming(
-        req.prompt,
-        req.project_root,
-        &req.config.model,
-        &req.config.cli_path,
-        &req.config.extra_args,
-        &req.config.extra_args_vec,
-        &req.config.env_vars,
-        &req.config.pre_run_script,
-        &req.config.post_run_script,
-        req.config.skip_permissions,
-        req.config.use_pty,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: Vec::new(),
-        metrics: response.metrics,
-        metadata: response.metadata,
-        parse_diff: claude::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
-}
-
-/// Fingerprint a file for change detection. Returns `None` when the file
-/// cannot be stat'd (e.g. it has been deleted in the working tree).
-///
-/// Files at or below `HASH_CONTENT_CAP_BYTES` are hashed by content for
-/// exact comparison. Larger files (large logs, binaries, datasets that
-/// happen to be in the dirty set) fall back to a `(size, mtime)`
-/// fingerprint — reading them on every run would otherwise burn memory
-/// and stall the pre-run snapshot.
-fn hash_file_bytes(path: &Path) -> Option<u64> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    const HASH_CONTENT_CAP_BYTES: u64 = 4 * 1024 * 1024;
-
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() {
-        return None;
-    }
-    let size = meta.len();
-    let mut hasher = DefaultHasher::new();
-    if size > HASH_CONTENT_CAP_BYTES {
-        size.hash(&mut hasher);
-        if let Ok(mt) = meta.modified() {
-            if let Ok(d) = mt.duration_since(std::time::UNIX_EPOCH) {
-                d.as_nanos().hash(&mut hasher);
-            }
-        }
-        return Some(hasher.finish());
-    }
-    let bytes = std::fs::read(path).ok()?;
-    bytes.hash(&mut hasher);
-    Some(hasher.finish())
-}
-
-/// Snapshot every currently-dirty file's content hash before a run starts.
-/// `scoped_working_diff` consults this to decide whether an already-dirty
-/// file was further modified by the run.
-fn snapshot_dirty_state(req: &RunRequest) -> HashMap<String, Option<u64>> {
-    vcs_get_dirty_files(req)
-        .into_keys()
-        .map(|f| {
-            let hash = hash_file_bytes(&req.project_root.join(&f));
-            (f, hash)
-        })
-        .collect()
-}
-
-fn scoped_working_diff(
-    req: &RunRequest,
-    baseline: &HashMap<String, Option<u64>>,
-) -> Option<String> {
-    let current_dirty = vcs_get_dirty_files(req);
-    let changed: Vec<String> = current_dirty
-        .into_keys()
-        .filter(|f| {
-            let current = hash_file_bytes(&req.project_root.join(f));
-            match baseline.get(f) {
-                None => true,
-                Some(prev) => prev != &current,
-            }
-        })
-        .collect();
-    if changed.is_empty() {
-        return None;
-    }
-    vcs_get_working_diff(req, &changed)
-}
-
-fn run_gemini_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let gemini_config = gemini::GeminiRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        post_run_script: &req.config.post_run_script,
-    };
-    let res = gemini::invoke_gemini_streaming(
-        req.prompt,
-        req.project_root,
-        &gemini_config,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: response.edited_files,
-        metrics: claude::RunMetrics {
-            cost_usd: response.cost_usd.unwrap_or(0.0),
-            duration_ms: response.duration_ms.unwrap_or(0),
-            num_turns: response.num_turns.unwrap_or(0),
-            ..claude::RunMetrics::default()
-        },
-        metadata: None,
-        parse_diff: gemini::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
-}
-
-fn run_codex_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let codex_config = codex::CodexRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        pre_run_script_trust: codex::HookScriptTrust::ProjectLocal,
-        post_run_script: &req.config.post_run_script,
-        post_run_script_trust: codex::HookScriptTrust::ProjectLocal,
-        skip_permissions: req.config.skip_permissions,
-    };
-    let res =
-        codex::invoke_codex_streaming(req.prompt, req.project_root, &codex_config, on_log, cancel)
-            .map(|response| ProviderRunOutcome {
-                stdout: response.stdout,
-                edited_files: response.edited_files,
-                metrics: claude::RunMetrics {
-                    cost_usd: response.cost_usd.unwrap_or(0.0),
-                    duration_ms: response.duration_ms.unwrap_or(0),
-                    num_turns: response.num_turns.unwrap_or(0),
-                    ..claude::RunMetrics::default()
-                },
-                metadata: None,
-                parse_diff: codex::parse_diff_from_response,
-            });
-    finalize_run(req, &baseline, res)
-}
-
-fn run_acp_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    let baseline = snapshot_dirty_state(req);
-
-    let acp_config = acp::AcpRunConfig {
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        post_run_script: &req.config.post_run_script,
-        skip_permissions: req.config.skip_permissions,
-        read_only: false,
-    };
-    // ACP diffs are structured, but the files are already on disk by the time
-    // the turn ends, so the edited paths feed the shared VCS-first resolution.
-    let res = acp::invoke_acp_streaming(req.prompt, req.project_root, &acp_config, on_log, cancel)
-        .map(|response| ProviderRunOutcome {
-            stdout: response.stdout,
-            edited_files: response.edited_files,
-            metrics: claude::RunMetrics {
-                duration_ms: response.duration_ms,
-                num_turns: response.num_turns,
-                ..claude::RunMetrics::default()
-            },
-            metadata: None,
-            parse_diff: claude::parse_diff_from_response,
-        });
-    finalize_run(req, &baseline, res)
-}
-
-fn run_opencode_provider(
-    req: &RunRequest,
-    on_log: impl FnMut(&str) + Send + 'static,
-    cancel: Arc<AtomicBool>,
-) -> ClaudeResult {
-    // Snapshot dirty files before the run so the fallback diff can detect
-    // which files were actually modified — including ones that were already
-    // dirty at baseline — by comparing post-run content to pre-run hashes.
-    let baseline = snapshot_dirty_state(req);
-
-    let opencode_config = opencode::OpenCodeRunConfig {
-        model: &req.config.model,
-        cli_path: &req.config.cli_path,
-        extra_args: &req.config.extra_args,
-        env_vars: &req.config.env_vars,
-        pre_run_script: &req.config.pre_run_script,
-        post_run_script: &req.config.post_run_script,
-    };
-    let res = opencode::invoke_opencode_streaming(
-        req.prompt,
-        req.project_root,
-        &opencode_config,
-        on_log,
-        cancel,
-    )
-    .map(|response| ProviderRunOutcome {
-        stdout: response.stdout,
-        edited_files: response.edited_files,
-        metrics: claude::RunMetrics {
-            cost_usd: response.cost_usd.unwrap_or(0.0),
-            duration_ms: response.duration_ms.unwrap_or(0),
-            num_turns: response.num_turns.unwrap_or(0),
-            ..claude::RunMetrics::default()
-        },
-        metadata: None,
-        parse_diff: opencode::parse_diff_from_response,
-    });
-    finalize_run(req, &baseline, res)
 }
 
 impl DirigentApp {
@@ -811,7 +262,12 @@ impl DirigentApp {
                 config.extra_args_vec.push(id.clone());
                 id
             };
-            let _ = self.db.update_execution_session_id(exec_id, &session_id);
+            // Losing this breaks --resume for the run, but the run itself is
+            // fine, so log rather than interrupt the user with a status message.
+            self.db_log(
+                "store session id",
+                self.db.update_execution_session_id(exec_id, &session_id),
+            );
         }
 
         telemetry::emit_execution_started(
@@ -853,7 +309,10 @@ impl DirigentApp {
                 self.claude.start_times.remove(&cue_id);
                 self.claude.log_heartbeats.remove(&cue_id);
                 self.claude.last_message_times.remove(&cue_id);
-                let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+                self.db_log(
+                    "move cue back to Inbox",
+                    self.db.update_cue_status(cue_id, CueStatus::Inbox),
+                );
                 self.set_status_message("Failed to start run: cue not found".to_string());
                 self.reload_cues();
                 return;
@@ -865,7 +324,10 @@ impl DirigentApp {
         let prompt = self.build_initial_prompt(&effective_text, &cue);
 
         if !self.insert_exec_and_spawn(cue_id, prompt, provider, &matched_command, None) {
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Inbox);
+            self.db_report(
+                "move cue back to Inbox",
+                self.db.update_cue_status(cue_id, CueStatus::Inbox),
+            );
             self.cleanup_jj_workspace(cue_id);
             self.reload_cues();
         }
@@ -939,7 +401,10 @@ impl DirigentApp {
             )
         };
 
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.db_report(
+            "move cue to Ready",
+            self.db.update_cue_status(cue_id, CueStatus::Ready),
+        );
         self.claude.expand_running = true;
         self.reload_cues();
 
@@ -962,7 +427,10 @@ impl DirigentApp {
             }
         } else {
             // Restore the cue to Review (its state before we attempted the reply).
-            let _ = self.db.update_cue_status(cue_id, CueStatus::Review);
+            self.db_report(
+                "restore cue to Review",
+                self.db.update_cue_status(cue_id, CueStatus::Review),
+            );
             self.reload_cues();
         }
     }
@@ -1020,7 +488,10 @@ impl DirigentApp {
             )
         };
 
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Ready);
+        self.db_report(
+            "move cue to Ready",
+            self.db.update_cue_status(cue_id, CueStatus::Ready),
+        );
         self.claude.expand_running = true;
         self.reload_cues();
 
@@ -1060,7 +531,11 @@ impl DirigentApp {
         } else {
             self.pending_auto_continues.push(cue_id);
         }
-        let _ = self.db.update_cue_status(cue_id, CueStatus::Done);
+        // A failure here leaves the cue stuck in Ready with nothing running.
+        self.db_report(
+            "restore cue to Done",
+            self.db.update_cue_status(cue_id, CueStatus::Done),
+        );
         self.reload_cues();
     }
 
@@ -1098,13 +573,16 @@ impl DirigentApp {
             .get(&result.cue_id)
             .is_some_and(|&current| current != result.exec_id);
 
-        let _ = self.db.update_execution_metrics(
-            result.exec_id,
-            result.metrics.cost_usd,
-            result.metrics.duration_ms,
-            result.metrics.num_turns,
-            result.metrics.input_tokens,
-            result.metrics.output_tokens,
+        self.db_log(
+            "store execution metrics",
+            self.db.update_execution_metrics(
+                result.exec_id,
+                result.metrics.cost_usd,
+                result.metrics.duration_ms,
+                result.metrics.num_turns,
+                result.metrics.input_tokens,
+                result.metrics.output_tokens,
+            ),
         );
         self.persist_execution_metadata(&result);
 
@@ -1161,29 +639,40 @@ impl DirigentApp {
             return;
         };
         if let Ok(payload) = serde_json::to_value(metadata) {
-            let _ = self
-                .db
-                .insert_execution_event(result.exec_id, "pty_metadata", &payload);
+            self.db_log(
+                "store pty metadata event",
+                self.db
+                    .insert_execution_event(result.exec_id, "pty_metadata", &payload),
+            );
         }
         for summary in &metadata.permission_summaries {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "permission",
-                &serde_json::json!({ "summary": summary }),
+            self.db_log(
+                "store permission event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "permission",
+                    &serde_json::json!({ "summary": summary }),
+                ),
             );
         }
         for warning in &metadata.parser_warnings {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "parser_warning",
-                &serde_json::json!({ "message": warning }),
+            self.db_log(
+                "store parser warning event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "parser_warning",
+                    &serde_json::json!({ "message": warning }),
+                ),
             );
         }
         if let Some(reason) = metadata.completion_reason.as_ref() {
-            let _ = self.db.insert_execution_event(
-                result.exec_id,
-                "completion",
-                &serde_json::json!({ "reason": reason }),
+            self.db_log(
+                "store completion event",
+                self.db.insert_execution_event(
+                    result.exec_id,
+                    "completion",
+                    &serde_json::json!({ "reason": reason }),
+                ),
             );
         }
     }
@@ -1191,7 +680,10 @@ impl DirigentApp {
     /// Flush the running log to DB and remove tracking state for a completed result.
     fn flush_and_clear_tracking(&mut self, result: &ClaudeResult) {
         if let Some((log_text, _)) = self.claude.running_logs.get(&result.cue_id) {
-            let _ = self.db.update_execution_log(result.exec_id, log_text);
+            self.db_log(
+                "flush execution log",
+                self.db.update_execution_log(result.exec_id, log_text),
+            );
         }
         self.claude.running_logs.remove(&result.cue_id);
         self.claude.exec_ids.remove(&result.cue_id);
@@ -1253,9 +745,11 @@ impl DirigentApp {
             .running_logs
             .get(&result.cue_id)
             .and_then(|(log, _)| claude::extract_plan_path(log));
-        let _ = self
-            .db
-            .update_cue_plan_path(result.cue_id, plan_path.as_deref());
+        self.db_log(
+            "store plan path",
+            self.db
+                .update_cue_plan_path(result.cue_id, plan_path.as_deref()),
+        );
 
         let _ = self.reload_open_tabs_and_notify_lsp();
         self.reload_git_info();
@@ -1265,15 +759,21 @@ impl DirigentApp {
     /// Finalize a stale execution in the DB without touching live state.
     fn complete_stale_execution(&self, result: &ClaudeResult) {
         if let Some(ref error) = result.error {
-            let _ = self.db.fail_execution(result.exec_id, error);
+            self.db_log(
+                "record stale execution failure",
+                self.db.fail_execution(result.exec_id, error),
+            );
         } else {
-            let _ = self.db.complete_execution(
-                result.exec_id,
-                &result.response,
-                result.diff.as_deref(),
-                Some(result.metrics.cost_usd),
-                Some(result.metrics.duration_ms),
-                Some(result.metrics.num_turns),
+            self.db_log(
+                "record stale execution result",
+                self.db.complete_execution(
+                    result.exec_id,
+                    &result.response,
+                    result.diff.as_deref(),
+                    result.metrics.cost_usd,
+                    Some(result.metrics.duration_ms),
+                    result.metrics.num_turns,
+                ),
             );
         }
     }
@@ -1350,7 +850,7 @@ impl DirigentApp {
             } else {
                 "Auto-sending follow-up".to_string()
             };
-            let _ = self.db.log_activity(cue_id, &msg);
+            self.log_cue_activity(cue_id, &msg);
             self.trigger_claude_reply(cue_id, &follow_up_text, &[]);
         }
     }
@@ -1364,9 +864,18 @@ impl DirigentApp {
             .map(|(_, p)| p.display_name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         self.set_status_message(format!("{provider_name} error for \"{preview}\": {error}"));
-        let _ = self.db.fail_execution(result.exec_id, error);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
-        let _ = self.db.log_activity(result.cue_id, "Run failed");
+        // Reported after the run error above: if the DB is also failing, that
+        // is the more actionable message — the cue would otherwise be shown as
+        // running forever.
+        self.db_report(
+            "record execution failure",
+            self.db.fail_execution(result.exec_id, error),
+        );
+        self.db_report(
+            "move cue back to Inbox",
+            self.db.update_cue_status(result.cue_id, CueStatus::Inbox),
+        );
+        self.log_cue_activity(result.cue_id, "Run failed");
         telemetry::emit_execution_failed(
             &self.project_name(),
             result.cue_id,
@@ -1378,10 +887,16 @@ impl DirigentApp {
     fn handle_rate_limit(&mut self, result: &ClaudeResult, limit_line: &str) {
         let preview = self.cue_preview(result.cue_id);
         self.set_status_message(format!("Rate limited: \"{}\" — {}", preview, limit_line));
-        let _ = self.db.fail_execution(result.exec_id, limit_line);
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Inbox);
+        self.db_report(
+            "record execution failure",
+            self.db.fail_execution(result.exec_id, limit_line),
+        );
+        self.db_report(
+            "move cue back to Inbox",
+            self.db.update_cue_status(result.cue_id, CueStatus::Inbox),
+        );
         let activity = format!("Rate limited — {}", limit_line);
-        let _ = self.db.log_activity(result.cue_id, &activity);
+        self.log_cue_activity(result.cue_id, &activity);
         self.cue_warnings
             .insert(result.cue_id, limit_line.to_string());
         telemetry::emit_execution_rate_limited(&self.project_name(), result.cue_id, limit_line);
@@ -1393,22 +908,26 @@ impl DirigentApp {
             return;
         };
         let (m_cost, m_dur, m_turns) = (
-            Some(result.metrics.cost_usd),
+            result.metrics.cost_usd,
             Some(result.metrics.duration_ms),
-            Some(result.metrics.num_turns),
+            result.metrics.num_turns,
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            Some(diff),
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                Some(diff),
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Review);
-        let _ = self
-            .db
-            .log_activity(result.cue_id, "Run completed — review ready");
+        self.db_report(
+            "move cue to Review",
+            self.db.update_cue_status(result.cue_id, CueStatus::Review),
+        );
+        self.log_cue_activity(result.cue_id, "Run completed — review ready");
 
         // Claude can make changes AND still end by asking the user something
         // (e.g. "I updated X — should I also do Y?"). Surface that so the user
@@ -1421,7 +940,10 @@ impl DirigentApp {
             self.flag_pending_question(result.cue_id);
             return;
         }
-        let _ = self.db.update_cue_has_question(result.cue_id, false);
+        self.db_log(
+            "clear pending-question flag",
+            self.db.update_cue_has_question(result.cue_id, false),
+        );
         self.notify_review_ready(result.cue_id);
 
         let cue_prompt = self
@@ -1430,7 +952,7 @@ impl DirigentApp {
             .find(|c| c.id == result.cue_id)
             .map(|c| c.text.clone())
             .unwrap_or_default();
-        if !self.show_settings {
+        if !self.dialogs.is_open(super::DialogId::Settings) {
             self.reload_settings_from_disk();
         }
         let agents_started =
@@ -1483,6 +1005,7 @@ impl DirigentApp {
         let source_label = claude::extract_pr_label(&cue_text);
 
         let mut count = 0;
+        let mut failed = 0;
         for item in imported {
             if item.text.trim().is_empty() {
                 continue;
@@ -1495,39 +1018,53 @@ impl DirigentApp {
             {
                 continue;
             }
-            if self
-                .db
-                .insert_cue_from_source(
+            if self.db_log(
+                "create imported cue",
+                self.db.insert_cue_from_source(
                     &item.text,
                     &source_label,
                     "",
                     &source_ref,
                     &item.file_path,
                     item.line_number,
-                )
-                .is_ok()
-            {
+                ),
+            ) {
                 count += 1;
+            } else {
+                failed += 1;
             }
         }
 
         let (m_cost, m_dur, m_turns) = (
-            Some(result.metrics.cost_usd),
+            result.metrics.cost_usd,
             Some(result.metrics.duration_ms),
-            Some(result.metrics.num_turns),
+            result.metrics.num_turns,
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            None,
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                None,
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
-        let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+        let moved = self.db_report(
+            "move cue to Done",
+            self.db.update_cue_status(result.cue_id, CueStatus::Done),
+        );
         let activity = format!("Imported {} cue(s)", count);
-        let _ = self.db.log_activity(result.cue_id, &activity);
-        self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
+        self.log_cue_activity(result.cue_id, &activity);
+        if failed > 0 {
+            self.set_status_message(format!(
+                "Imported {} cue(s) from {} — {} could not be saved",
+                count, source_label, failed
+            ));
+        } else if moved {
+            self.set_status_message(format!("Imported {} cue(s) from {}", count, source_label));
+        }
     }
 
     /// Detect whether a completed run ended with a question for the user.
@@ -1556,32 +1093,41 @@ impl DirigentApp {
         self.set_status_message(format!(
             "Claude is waiting for your answer about \"{preview}\""
         ));
-        let _ = self.db.update_cue_has_question(cue_id, true);
-        let _ = self
-            .db
-            .log_activity(cue_id, "Run completed — question pending");
+        // If this flag is lost the cue looks finished while Claude is actually
+        // blocked waiting, and a workflow would start dependent steps early.
+        self.db_report(
+            "flag pending question",
+            self.db.update_cue_has_question(cue_id, true),
+        );
+        self.log_cue_activity(cue_id, "Run completed — question pending");
         self.reply_inputs.entry(cue_id).or_default();
         self.notify_run_complete(cue_id, true);
     }
 
     fn handle_run_no_changes(&mut self, result: &ClaudeResult) {
         let (m_cost, m_dur, m_turns) = (
-            Some(result.metrics.cost_usd),
+            result.metrics.cost_usd,
             Some(result.metrics.duration_ms),
-            Some(result.metrics.num_turns),
+            result.metrics.num_turns,
         );
-        let _ = self.db.complete_execution(
-            result.exec_id,
-            &result.response,
-            None,
-            m_cost,
-            m_dur,
-            m_turns,
+        self.db_report(
+            "record execution result",
+            self.db.complete_execution(
+                result.exec_id,
+                &result.response,
+                None,
+                m_cost,
+                m_dur,
+                m_turns,
+            ),
         );
         let has_question = self.run_has_question(result);
         let preview = self.cue_preview(result.cue_id);
         if has_question {
-            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(result.cue_id, CueStatus::Done),
+            );
             self.flag_pending_question(result.cue_id);
         } else if self.should_auto_continue(result.cue_id) {
             let count = self
@@ -1593,8 +1139,11 @@ impl DirigentApp {
             let n = *count;
             let max = self.settings.auto_continue_max;
             self.set_status_message(format!("Auto-continuing \"{}\" ({}/{})", preview, n, max,));
-            let _ = self.db.update_cue_has_question(result.cue_id, false);
-            let _ = self.db.log_activity(
+            self.db_log(
+                "clear pending-question flag",
+                self.db.update_cue_has_question(result.cue_id, false),
+            );
+            self.log_cue_activity(
                 result.cue_id,
                 &format!("Stopped early — auto-continue {}/{}", n, max),
             );
@@ -1605,11 +1154,15 @@ impl DirigentApp {
                 "Claude completed but no file changes detected for \"{}\"",
                 preview
             ));
-            let _ = self.db.update_cue_has_question(result.cue_id, false);
-            let _ = self.db.update_cue_status(result.cue_id, CueStatus::Done);
-            let _ = self
-                .db
-                .log_activity(result.cue_id, "Run completed — no changes");
+            self.db_log(
+                "clear pending-question flag",
+                self.db.update_cue_has_question(result.cue_id, false),
+            );
+            self.db_report(
+                "move cue to Done",
+                self.db.update_cue_status(result.cue_id, CueStatus::Done),
+            );
+            self.log_cue_activity(result.cue_id, "Run completed — no changes");
         }
     }
 
@@ -1706,10 +1259,19 @@ impl DirigentApp {
 
     /// Flush all local running logs to the database.
     fn flush_local_logs_to_db(&self) {
+        // This runs on a timer for every live run, so failures are counted and
+        // logged once per sweep rather than once per cue — a broken DB would
+        // otherwise flood the log every interval.
+        let mut failed = 0;
         for (&cue_id, (log_text, _)) in &self.claude.running_logs {
             if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id) {
-                let _ = self.db.update_execution_log(exec_id, log_text);
+                if self.db.update_execution_log(exec_id, log_text).is_err() {
+                    failed += 1;
+                }
             }
+        }
+        if failed > 0 {
+            log::error!("[db] flush execution log failed for {} run(s)", failed);
         }
     }
 
@@ -1767,7 +1329,7 @@ impl DirigentApp {
                 // they all load CoreAudio/MediaToolbox which triggers the macOS
                 // TCC "would like to access Apple Music" permission dialog.
                 use std::io::Write;
-                static GLASS_AIFF: &[u8] = include_bytes!("../../assets/Glass.aiff");
+                static GLASS_AIFF: &[u8] = include_bytes!("../../../assets/Glass.aiff");
                 let tmp = std::env::temp_dir().join("dirigent_glass.aiff");
                 if !tmp.exists() {
                     if let Ok(mut f) = std::fs::File::create(&tmp) {

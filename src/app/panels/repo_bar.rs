@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon_small, vcs_dispatch, DirigentApp};
+use super::super::{icon_small, vcs_dispatch, DialogId, DirigentApp};
 
 impl DirigentApp {
     // Feature 4: Repo bar at top
@@ -22,7 +22,7 @@ impl DirigentApp {
                     .on_hover_text("Click to copy path");
                 if ui.small_button("Change...").clicked() {
                     self.repo_path_input = self.project_root.to_string_lossy().to_string();
-                    self.show_repo_picker = true;
+                    self.dialogs.open(DialogId::RepoPicker);
                 }
                 if ui.small_button("Worktrees").clicked() {
                     self.reload_worktrees();
@@ -48,7 +48,7 @@ impl DirigentApp {
                             self.git.bookmark_push_statuses.clear();
                         }
                     }
-                    self.git.show_worktree_panel = true;
+                    self.dialogs.open(DialogId::WorktreePanel);
                 }
             });
         });

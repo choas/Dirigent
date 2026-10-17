@@ -337,7 +337,7 @@ impl DirigentApp {
                     .contains("push")
             })
             .unwrap_or(false);
-        if self.git.ahead_of_remote == 0 || self.git.pushing || !log_mentions_push {
+        if self.git.ahead_of_remote == 0 || self.git.push_op.in_flight() || !log_mentions_push {
             return;
         }
         let push_btn = egui::Button::new(icon("\u{2191} Push", fs).color(self.semantic.badge_text))
@@ -404,7 +404,7 @@ impl DirigentApp {
             .ok()
             .flatten()
             .is_some();
-        if !already_notified && !self.git.notifying_pr {
+        if !already_notified && !self.git.pr_notify_op.in_flight() {
             if ui
                 .small_button(icon("\u{1F514} Notify PR", fs))
                 .on_hover_text("Reply to the PR comment that this finding was fixed")

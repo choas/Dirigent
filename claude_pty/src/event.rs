@@ -135,6 +135,10 @@ pub enum PermissionDialogKind {
     PlanEnter,
     PlanExit,
     AskUserQuestion,
+    /// Claude Code's "How is Claude doing this session?" satisfaction survey.
+    SessionRating,
+    /// The `--resume` "resume full session or from summary?" choice.
+    ResumeChoice,
     Unknown,
 }
 

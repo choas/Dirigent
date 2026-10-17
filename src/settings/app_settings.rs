@@ -154,6 +154,16 @@ impl FontWeight {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
+    /// Runtime-only: whether this repository's execution-capable settings were
+    /// approved by the user (see `settings::trust`).
+    ///
+    /// Never serialized — a repository could otherwise declare itself trusted.
+    /// Set by `settings::load_settings`; consumed as
+    /// [`crate::ai_backend::HookScriptTrust`] when running pre/post-run hooks.
+    /// Defaults to trusted so settings built in code (tests, defaults) behave
+    /// as before; only the untrusted-repository load path clears it.
+    #[serde(skip, default = "default_true")]
+    pub hooks_trusted: bool,
     pub theme: ThemeChoice,
     /// User-defined custom themes.
     #[serde(default)]
@@ -339,10 +349,13 @@ pub(crate) struct Settings {
     pub fast_llm_provider: String,
     /// OpenAI-compatible base URL for the Fast LLM. Defaults to the local
     /// Ollama endpoint. `/chat/completions` is appended at call time.
+    /// Execution-capable (calls send working diffs): gated behind repository
+    /// trust, and must be https unless the host is local/private-network.
     #[serde(default = "default_fast_llm_base_url")]
     pub fast_llm_base_url: String,
     /// API key sent as a Bearer token to the Fast LLM. Optional — local
-    /// providers such as Ollama ignore it.
+    /// providers such as Ollama ignore it. Only ever sent to an origin the
+    /// user approved for this key via the settings UI (see `settings::trust`).
     #[serde(default)]
     pub fast_llm_api_key: String,
     /// Model identifier passed to the Fast LLM (e.g. `gemma4:26b-mlx`).
@@ -361,6 +374,16 @@ pub(crate) struct ProviderFields<'a> {
 }
 
 impl Settings {
+    /// The trust level to apply to this configuration's pre/post-run hook
+    /// scripts. Single source for all four backends.
+    pub(crate) fn hook_trust(&self) -> crate::ai_backend::HookScriptTrust {
+        if self.hooks_trusted {
+            crate::ai_backend::HookScriptTrust::Trusted
+        } else {
+            crate::ai_backend::HookScriptTrust::ProjectLocal
+        }
+    }
+
     /// Return the provider-specific fields for the given CLI provider.
     pub(crate) fn provider_fields(&self, provider: &CliProvider) -> ProviderFields<'_> {
         match provider {
@@ -440,6 +463,7 @@ fn default_fast_llm_model() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            hooks_trusted: true,
             theme: ThemeChoice::Dark,
             custom_themes: Vec::new(),
             cli_provider: CliProvider::default(),

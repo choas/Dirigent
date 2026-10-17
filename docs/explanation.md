@@ -22,7 +22,7 @@ Understanding Dirigent's architecture, design decisions, and core concepts.
 
 ## What is Dirigent?
 
-Dirigent is a desktop application for AI-assisted code editing. Unlike AI-powered IDEs that let you edit code directly alongside AI suggestions, Dirigent enforces a strict separation: you browse code **read-only** and create **cues** (natural-language instructions), then an AI backend (Claude Code or OpenCode) executes the changes. You review the resulting diffs before accepting them into your working tree.
+Dirigent is a desktop application for AI-assisted code editing. Unlike AI-powered IDEs that let you edit code directly alongside AI suggestions, Dirigent enforces a strict separation: you browse code **read-only** and create **cues** (natural-language instructions), then an AI backend (Claude Code, OpenCode, Gemini, or Codex) executes the changes. You review the resulting diffs before accepting them into your working tree.
 
 This makes Dirigent a coordination layer between human intent and AI execution, rather than a code editor.
 
@@ -55,7 +55,7 @@ A **cue** is the central unit of work. It contains:
 - **Text** -- a natural-language instruction describing what should change
 - **File path** (optional) -- the file the cue targets
 - **Line range** (optional) -- specific lines the cue references
-- **Status** -- where the cue is in its lifecycle (Inbox, Ready, Review, Done, Archived)
+- **Status** -- where the cue is in its lifecycle (Backlog, Inbox, Ready, Review, Done, Archived)
 - **Attachments** (optional) -- images for the AI to reference
 - **Tags** (optional) -- for organization
 
@@ -161,17 +161,25 @@ This per-project approach means settings and cue history travel with the project
 
 ## AI backend abstraction
 
-Dirigent supports two CLI backends:
+Dirigent supports four CLI backends:
 
 ### Claude Code
 
-The primary backend. Dirigent invokes the `claude` CLI with a prompt on stdin, parses streaming output from stderr (progress messages) and stdout (final result), and extracts diffs from the response. The model is configurable (Opus, Sonnet, etc.).
+The primary backend. By default (`claude_use_pty`) Dirigent runs the `claude` CLI under a real PTY via the `claude_pty` crate, parsing the terminal screen into typed events (prompts, tool confirmations, session state) and auto-accepting tool confirmations. A headless fallback path invokes the CLI with `-p` and parses streaming stdout/stderr instead. The model is configurable (Opus, Sonnet, Haiku).
 
 ### OpenCode
 
-An alternative backend that supports multiple AI providers (OpenAI, Anthropic, Google). Dirigent invokes `opencode` similarly but with provider-specific model strings (e.g. `openai/o3`, `google/gemini-2.5-pro`).
+An alternative backend that supports multiple AI providers (OpenAI and Anthropic models). Dirigent invokes `opencode` with provider-specific model strings (e.g. `openai/o3`, `anthropic/claude-sonnet-4-6`) and parses newline-delimited JSON events.
 
-Both backends produce diffs in the same format, so the review workflow is identical regardless of provider.
+### Gemini
+
+Runs the `gemini` CLI against the Gemini 3 and 2.5 model families, parsing streamed JSON events.
+
+### Codex
+
+Runs the `codex` CLI (default model `gpt-5-codex`), parsing streamed JSON events. Codex additionally validates any configured pre/post-run hook scripts against an allowlist.
+
+All backends are normalized into a single result shape (`ProviderRunOutcome`), so the review workflow is identical regardless of provider. An optional OpenAI-compatible "fast LLM" is used separately for lightweight tasks such as commit-message suggestions and change-set grouping.
 
 ## The agent system
 

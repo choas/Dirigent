@@ -230,6 +230,25 @@ impl LspManager {
         self.log(msg);
         self.failed_servers.remove(&cfg.id);
 
+        // Defense in depth: `command`/`args`/`env` come from
+        // `.Dirigent/settings.json`, which ships with the checkout and is
+        // attacker-controlled until the user approves it, and `start_servers`
+        // runs from `DirigentApp::new` before the user has seen any code.
+        // `load_settings` strips unapproved execution-capable fields, but this
+        // site spawns a process and must not depend on every caller (present
+        // and future) having gone through it.
+        if !crate::settings::repo_settings_trusted(&self.project_root) {
+            let msg = format!(
+                "Refusing to start {}: this repository's settings have not been \
+                 approved (accept the trust prompt first)",
+                cfg.name
+            );
+            log::warn!("[lsp] {}", msg);
+            self.log(msg.clone());
+            self.failed_servers.insert(cfg.id.clone(), msg);
+            return;
+        }
+
         match LspClient::spawn(
             &cfg.name,
             &cfg.command,

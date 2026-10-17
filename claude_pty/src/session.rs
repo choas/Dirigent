@@ -337,12 +337,29 @@ impl Session {
         Ok(())
     }
 
+    /// Kill the child **and its descendants**, then reap it.
+    ///
+    /// Two things this deliberately does beyond `Child::kill`:
+    ///
+    /// * It signals the whole process group. The PTY slave makes the child a
+    ///   session leader, so everything Claude spawned (bash tools, builds,
+    ///   language servers) shares its group. Killing only the direct child left
+    ///   those running until the master fd happened to drop and SIGHUP them.
+    /// * It `wait()`s afterwards. Without the reap the entry stayed in the
+    ///   process table as a zombie for the life of the GUI — and the cancel
+    ///   path's `try_wait` regularly races the signal and returns `None`, so
+    ///   nothing else was going to collect it.
     pub fn kill(&self) -> Result<(), Error> {
         let mut c = self
             .child
             .lock()
             .map_err(|_| Error::Io("child poisoned".into()))?;
-        c.kill().map_err(|e| Error::Io(e.to_string()))?;
+        kill_process_group(c.process_id());
+        let kill_result = c.kill().map_err(|e| Error::Io(e.to_string()));
+        // Reap regardless of whether the kill itself reported an error: the
+        // child may already have exited, and the zombie still needs collecting.
+        let _ = c.wait();
+        kill_result?;
         emit_critical(
             &self.events_tx,
             self.recorder.as_ref(),
@@ -410,8 +427,29 @@ fn prompt_bytes(text: &str, bracketed: bool) -> Vec<u8> {
     buf
 }
 
+/// Best-effort SIGKILL to the child's whole process group.
+///
+/// A negative pid in `kill(2)` addresses the process group. Failures are
+/// ignored: the group may already be gone, and [`Session::kill`] still signals
+/// and reaps the direct child either way.
+#[cfg(unix)]
+fn kill_process_group(pid: Option<u32>) {
+    let Some(pid) = pid.and_then(|p| libc::pid_t::try_from(p).ok()) else {
+        return;
+    };
+    // SAFETY: `kill` with a negative pid is a plain signal syscall; it cannot
+    // violate memory safety, and an invalid pid just returns ESRCH.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: Option<u32>) {}
+
 impl Drop for Session {
     fn drop(&mut self) {
+        // `kill` reaps, so dropping a session no longer leaves a zombie behind.
         let _ = self.kill();
     }
 }
@@ -791,6 +829,10 @@ fn permission_dialog_kind(normalized: &str) -> Option<PermissionDialogKind> {
         Some(PermissionDialogKind::TrustFolder)
     } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
         Some(PermissionDialogKind::ToolUse)
+    } else if is_session_rating_screen(normalized) {
+        Some(PermissionDialogKind::SessionRating)
+    } else if is_resume_choice_screen(normalized) {
+        Some(PermissionDialogKind::ResumeChoice)
     } else if normalized.contains("ExitPlanMode") || normalized.contains("exitplanmode") {
         Some(PermissionDialogKind::PlanExit)
     } else if normalized.contains("AskUserQuestion") || normalized.contains("askuserquestion") {
@@ -800,6 +842,29 @@ fn permission_dialog_kind(normalized: &str) -> Option<PermissionDialogKind> {
     } else {
         None
     }
+}
+
+/// The session-satisfaction survey, recognised on the *current screen*.
+///
+/// Both this and [`is_resume_choice_screen`] require the numbered option list
+/// to be present alongside the prompt text. Matching the phrase alone against
+/// arbitrary output let any file the model happened to read — a changelog, a
+/// test fixture, this very source file — masquerade as the dialog and make the
+/// host type a digit into the PTY at a moment an attacker chose.
+fn is_session_rating_screen(normalized: &str) -> bool {
+    // The survey renders its choices as `1: Bad  2: Fine  3: Good  0: Dismiss`,
+    // but Claude Code has also shipped a `1.`-style list — accept both.
+    let has_option =
+        |n: char| normalized.contains(&format!("{n}:")) || normalized.contains(&format!("{n}."));
+    normalized.contains("HowisClaudedoingthissession") && has_option('1') && has_option('3')
+}
+
+/// The `--resume` "resume full session or from summary?" choice.
+fn is_resume_choice_screen(normalized: &str) -> bool {
+    (normalized.contains("Resumefromsummary")
+        || normalized.contains("Resumingthefullsessionwillconsume"))
+        && normalized.contains("1.")
+        && normalized.contains("2.")
 }
 
 fn visible_permission_rows(plain_rows: &[String]) -> Vec<String> {
@@ -831,6 +896,8 @@ fn default_permission_title(kind: PermissionDialogKind) -> String {
         PermissionDialogKind::ToolUse => "Tool permission dialog",
         PermissionDialogKind::PlanExit => "Plan permission dialog",
         PermissionDialogKind::AskUserQuestion => "Ask user question dialog",
+        PermissionDialogKind::SessionRating => "Session rating prompt",
+        PermissionDialogKind::ResumeChoice => "Resume choice dialog",
         PermissionDialogKind::PlanEnter | PermissionDialogKind::Unknown => "Permission dialog",
     }
     .to_string()
@@ -977,8 +1044,7 @@ struct TuiReadContext<'a> {
     recorder: Option<&'a Recorder>,
     ansi_regex: Regex,
     vt: vt100::Parser,
-    accumulated: String,
-    active_confirmation: Option<&'static str>,
+    active_confirmation: Option<PermissionDialogKind>,
     prompt_count: usize,
     last_response_count: usize,
     prev_chat_lines: Vec<String>,
@@ -1009,7 +1075,6 @@ impl<'a> TuiReadContext<'a> {
             recorder,
             ansi_regex,
             vt: vt100::Parser::new(rows, cols, 0),
-            accumulated: String::new(),
             active_confirmation: None,
             prompt_count: 0,
             last_response_count: 0,
@@ -1027,15 +1092,10 @@ impl<'a> TuiReadContext<'a> {
     fn process_chunk(&mut self, chunk: Vec<u8>) -> bool {
         let (cursor_row, cursor_col, raw) = self.record_and_process_chunk(&chunk);
         self.observe_control_modes(&raw);
-        self.push_accumulated(&raw);
         let cleaned_chunk = self.ansi_regex.replace_all(&raw, "").to_string();
-        let cleaned_acc = self
-            .ansi_regex
-            .replace_all(&self.accumulated, "")
-            .to_string();
 
         self.emit_assistant_message(&cleaned_chunk);
-        self.update_permission_confirmation(&cleaned_acc);
+        self.update_permission_confirmation();
 
         let (plain_rows, ansi_rows) = self.screen_rows();
         let (start, end) = chat_region_bounds(&plain_rows);
@@ -1092,20 +1152,6 @@ impl<'a> TuiReadContext<'a> {
         }
     }
 
-    fn push_accumulated(&mut self, raw: &str) {
-        self.accumulated.push_str(raw);
-        if self.accumulated.len() <= 30_000 {
-            return;
-        }
-        let start = self.accumulated.ceil_char_boundary(20_000);
-        let cut = self.accumulated[start..]
-            .find('\n')
-            .map(|i| start + i + 1)
-            .unwrap_or(start);
-        let cut = self.accumulated.ceil_char_boundary(cut);
-        self.accumulated = self.accumulated[cut..].to_string();
-    }
-
     fn emit_assistant_message(&self, cleaned_chunk: &str) {
         let Some(content) = cleaned_chunk.split('●').next_back() else {
             return;
@@ -1121,22 +1167,37 @@ impl<'a> TuiReadContext<'a> {
         }
     }
 
-    fn update_permission_confirmation(&mut self, cleaned_acc: &str) {
-        let normalized = cleaned_acc.replace([' ', '\u{a0}'], "");
-        let current_confirmation = current_confirmation_message(&normalized);
+    /// Track whether a confirmation dialog is on screen *right now*.
+    ///
+    /// This deliberately reads the current vt100 screen rather than the
+    /// 20–30 KB append-only `accumulated` buffer. Against the accumulator the
+    /// dialog text never disappeared once seen, so `active_confirmation` never
+    /// transitioned back to `None` and only the **first** dialog of a run ever
+    /// emitted `PermissionDialogDetected` / `TuiToolConfirmation`. Every later
+    /// dialog went unanswered until the 120 s idle timeout Ctrl-C'd the run.
+    fn update_permission_confirmation(&mut self) {
+        let plain_rows = self.plain_screen_rows();
+        let normalized = plain_rows.join("\n").replace([' ', '\u{a0}'], "");
+        // One classifier drives both the transition tracking and the emitted
+        // dialog, so a kind cannot be recognised by one and missed by the other.
+        let current_confirmation = permission_dialog_kind(&normalized);
         if current_confirmation == self.active_confirmation {
             return;
         }
-        if let Some(msg) = current_confirmation {
-            self.emit_permission_confirmation(&normalized, msg);
+        if let Some(kind) = current_confirmation {
+            self.emit_permission_confirmation(&plain_rows, &normalized, kind);
         }
         self.active_confirmation = current_confirmation;
     }
 
-    fn emit_permission_confirmation(&self, normalized: &str, msg: &str) {
-        let plain_rows = self.plain_screen_rows();
+    fn emit_permission_confirmation(
+        &self,
+        plain_rows: &[String],
+        normalized: &str,
+        kind: PermissionDialogKind,
+    ) {
         if let Some(dialog) =
-            detect_permission_dialog(normalized, &plain_rows, self.frame_generation)
+            detect_permission_dialog(normalized, plain_rows, self.frame_generation)
         {
             emit_critical(
                 self.tx,
@@ -1151,13 +1212,17 @@ impl<'a> TuiReadContext<'a> {
                 },
             );
         }
-        emit_critical(
-            self.tx,
-            self.recorder,
-            Event::TuiToolConfirmation {
-                message: msg.to_string(),
-            },
-        );
+        // Legacy compatibility event; only the two dialogs it has always
+        // described are reported through it.
+        if let Some(message) = legacy_confirmation_message(kind) {
+            emit_critical(
+                self.tx,
+                self.recorder,
+                Event::TuiToolConfirmation {
+                    message: message.to_string(),
+                },
+            );
+        }
     }
 
     fn plain_screen_rows(&self) -> Vec<String> {
@@ -1401,15 +1466,13 @@ impl<'a> TuiReadContext<'a> {
     }
 }
 
-fn current_confirmation_message(normalized: &str) -> Option<&'static str> {
-    if normalized.contains("1.Yes")
-        && (normalized.contains("trustthisfolder") || normalized.contains("projectyoucreated"))
-    {
-        Some("Trust folder dialog")
-    } else if normalized.contains("1.Yes") && normalized.contains("Doyouwantto") {
-        Some("Tool confirmation dialog")
-    } else {
-        None
+/// The message string the pre-typed-dialog `TuiToolConfirmation` event has
+/// always carried. `None` for kinds that never appeared in it.
+fn legacy_confirmation_message(kind: PermissionDialogKind) -> Option<&'static str> {
+    match kind {
+        PermissionDialogKind::TrustFolder => Some("Trust folder dialog"),
+        PermissionDialogKind::ToolUse => Some("Tool confirmation dialog"),
+        _ => None,
     }
 }
 
@@ -1756,6 +1819,54 @@ mod tests {
         let json = serde_json::to_string(&dialog).unwrap();
         assert!(json.contains("permission_dialog_detected"));
         assert!(json.contains("tool_use"));
+    }
+
+    /// The rating survey and resume-choice dialogs are recognised only when
+    /// the numbered options are on screen with them. Matching the prompt text
+    /// alone let file content the model happened to read impersonate the
+    /// dialog and steal a keystroke.
+    #[test]
+    fn rating_and_resume_dialogs_need_their_option_lists() {
+        let survey = "HowisClaudedoingthissession?(optional)\n1:Bad2:Fine3:Good0:Dismiss";
+        assert_eq!(
+            permission_dialog_kind(survey),
+            Some(PermissionDialogKind::SessionRating)
+        );
+        // The question quoted on its own — e.g. inside a file the model read.
+        assert_eq!(
+            permission_dialog_kind("HowisClaudedoingthissession"),
+            None,
+            "prompt text alone must not count as the dialog"
+        );
+
+        let resume = "Resumingthefullsessionwillconsume\n1.Resumefromsummary\n2.Resumefullsession";
+        assert_eq!(
+            permission_dialog_kind(resume),
+            Some(PermissionDialogKind::ResumeChoice)
+        );
+        assert_eq!(permission_dialog_kind("Resumefromsummary"), None);
+    }
+
+    /// The two dialogs that predate typed detection keep their legacy
+    /// `TuiToolConfirmation` message; the new kinds do not invent one.
+    #[test]
+    fn legacy_confirmation_messages_cover_only_the_original_two() {
+        assert_eq!(
+            legacy_confirmation_message(PermissionDialogKind::TrustFolder),
+            Some("Trust folder dialog")
+        );
+        assert_eq!(
+            legacy_confirmation_message(PermissionDialogKind::ToolUse),
+            Some("Tool confirmation dialog")
+        );
+        assert_eq!(
+            legacy_confirmation_message(PermissionDialogKind::SessionRating),
+            None
+        );
+        assert_eq!(
+            legacy_confirmation_message(PermissionDialogKind::ResumeChoice),
+            None
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use eframe::egui;
 
 use crate::git::{self, MergeOperation};
 
-use super::super::DirigentApp;
+use super::super::{DialogId, DirigentApp};
 
 /// Actions collected during UI rendering, applied after the closure ends.
 struct MergeConflictActions {
@@ -29,7 +29,7 @@ impl MergeConflictActions {
 
 impl DirigentApp {
     pub(in crate::app) fn render_merge_conflicts_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_merge_conflicts {
+        if !self.dialogs.is_open(DialogId::MergeConflicts) {
             return;
         }
 
@@ -205,7 +205,7 @@ impl DirigentApp {
         }
 
         if actions.dismiss {
-            self.git.show_merge_conflicts = false;
+            self.close_dialog(DialogId::MergeConflicts);
         }
     }
 
@@ -235,7 +235,7 @@ impl DirigentApp {
     }
 
     fn handle_merge_continue(&mut self, op: Option<MergeOperation>, op_label: &str) {
-        self.git.show_merge_conflicts = false;
+        self.close_dialog(DialogId::MergeConflicts);
         let result = match op {
             Some(MergeOperation::Rebase) => git::rebase_continue(&self.project_root),
             _ => git::merge_continue(&self.project_root),
@@ -258,7 +258,7 @@ impl DirigentApp {
     }
 
     fn handle_merge_abort(&mut self, op: Option<MergeOperation>, op_label: &str) {
-        self.git.show_merge_conflicts = false;
+        self.close_dialog(DialogId::MergeConflicts);
         let result = match op {
             Some(MergeOperation::Rebase) => git::rebase_abort(&self.project_root),
             _ => git::merge_abort(&self.project_root),

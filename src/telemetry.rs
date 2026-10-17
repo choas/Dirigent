@@ -57,36 +57,45 @@ pub(crate) fn emit_execution_started(project: &str, cue_id: i64, provider: &str,
     );
 }
 
+/// `None` metrics mean the backend did not report them; they are omitted from
+/// the event rather than sent as zero, so aggregates are not skewed by runs
+/// that simply had nothing to report.
 pub(crate) struct ExecutionCompleted<'a> {
     pub project: &'a str,
     pub cue_id: i64,
     pub provider: &'a str,
-    pub cost_usd: f64,
+    pub cost_usd: Option<f64>,
     pub duration_ms: u64,
-    pub num_turns: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    pub num_turns: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
     pub has_diff: bool,
 }
 
 pub(crate) fn emit_execution_completed(e: &ExecutionCompleted<'_>) {
-    emit(
-        "execution.completed",
-        &[
-            ("project", str_val(e.project)),
-            ("cue_id", double_val(e.cue_id as f64)),
-            ("provider", str_val(e.provider)),
-            ("cost_usd", double_val(e.cost_usd)),
-            ("duration_ms", double_val(e.duration_ms as f64)),
-            ("num_turns", double_val(e.num_turns as f64)),
-            ("input_tokens", double_val(e.input_tokens as f64)),
-            ("output_tokens", double_val(e.output_tokens as f64)),
-            (
-                "has_diff",
-                str_val(if e.has_diff { "true" } else { "false" }),
-            ),
-        ],
-    );
+    let mut attrs = vec![
+        ("project", str_val(e.project)),
+        ("cue_id", double_val(e.cue_id as f64)),
+        ("provider", str_val(e.provider)),
+        ("duration_ms", double_val(e.duration_ms as f64)),
+        (
+            "has_diff",
+            str_val(if e.has_diff { "true" } else { "false" }),
+        ),
+    ];
+    if let Some(cost) = e.cost_usd {
+        attrs.push(("cost_usd", double_val(cost)));
+    }
+    for (name, value) in [
+        ("num_turns", e.num_turns),
+        ("input_tokens", e.input_tokens),
+        ("output_tokens", e.output_tokens),
+    ] {
+        if let Some(v) = value {
+            attrs.push((name, double_val(v as f64)));
+        }
+    }
+    emit("execution.completed", &attrs);
 }
 
 pub(crate) fn emit_execution_failed(project: &str, cue_id: i64, provider: &str, error: &str) {

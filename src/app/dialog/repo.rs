@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM};
+use super::super::{icon, DialogId, DirigentApp, SPACE_SM};
 use crate::app::util::expand_tilde;
 use crate::git;
 use crate::jj;
@@ -181,7 +181,7 @@ impl DirigentApp {
 
     /// Repo picker window.
     pub(in crate::app) fn render_repo_picker(&mut self, ctx: &egui::Context) {
-        if !self.show_repo_picker {
+        if !self.dialogs.is_open(DialogId::RepoPicker) {
             return;
         }
 
@@ -197,7 +197,7 @@ impl DirigentApp {
                 .collect();
         }
 
-        let mut open = self.show_repo_picker;
+        let mut open = true;
         let mut switch_to: Option<PathBuf> = None;
         let mut error_msg: Option<String> = None;
 
@@ -216,9 +216,8 @@ impl DirigentApp {
                 self.render_recent_repos(ui, &mut switch_to);
             });
 
-        self.show_repo_picker = open;
         if !open {
-            self.cached_existing_repos.clear();
+            self.close_dialog(DialogId::RepoPicker);
         }
         self.apply_repo_picker_result(switch_to, error_msg);
     }
@@ -274,8 +273,7 @@ impl DirigentApp {
             self.set_status_message(msg);
         }
         if let Some(new_root) = switch_to {
-            self.show_repo_picker = false;
-            self.cached_existing_repos.clear();
+            self.close_dialog(DialogId::RepoPicker);
             self.switch_repo(new_root);
         }
     }
@@ -284,7 +282,7 @@ impl DirigentApp {
 
     /// Dialog to switch to a different branch.
     pub(in crate::app) fn render_switch_branch_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_switch_branch {
+        if !self.dialogs.is_open(DialogId::SwitchBranch) {
             return;
         }
 
@@ -310,7 +308,7 @@ impl DirigentApp {
             });
 
         if !open {
-            self.git.show_switch_branch = false;
+            self.close_dialog(DialogId::SwitchBranch);
         }
 
         if let Some(name) = create {
@@ -412,7 +410,7 @@ impl DirigentApp {
 
     /// Execute a branch switch and update state accordingly.
     fn perform_branch_switch(&mut self, branch: &str) {
-        self.git.show_switch_branch = false;
+        self.close_dialog(DialogId::SwitchBranch);
         let switch_result = match self.settings.vcs_backend {
             VcsBackend::Jj => {
                 jj::jj_checkout_bookmark(&self.project_root, branch, &self.settings.jj_cli_path)
@@ -476,11 +474,11 @@ impl DirigentApp {
 
     /// Worktree panel.
     pub(in crate::app) fn render_worktree_panel(&mut self, ctx: &egui::Context) {
-        if !self.git.show_worktree_panel {
+        if !self.dialogs.is_open(DialogId::WorktreePanel) {
             return;
         }
 
-        let mut open = self.git.show_worktree_panel;
+        let mut open = true;
         let mut actions = WorktreeActions::default();
 
         egui::Window::new("Git Worktrees")
@@ -498,7 +496,7 @@ impl DirigentApp {
                 self.render_archived_dbs_section(ui, &mut actions);
             });
 
-        self.git.show_worktree_panel = open;
+        self.dialogs.set_open(DialogId::WorktreePanel, open);
         self.handle_worktree_actions(actions);
     }
 
@@ -765,7 +763,7 @@ impl DirigentApp {
     }
 
     fn switch_to_worktree(&mut self, path: PathBuf) {
-        self.git.show_worktree_panel = false;
+        self.close_dialog(DialogId::WorktreePanel);
         match std::fs::canonicalize(&path) {
             Ok(canonical) => self.switch_repo(canonical),
             Err(_) => self.switch_repo(path),

@@ -15,7 +15,8 @@ APPLE_ID ?= $(NOTARIZE_APPLE_ID)
 TEAM_ID ?= $(NOTARIZE_TEAM_ID)
 
 .PHONY: all test build install bundle sign dmg notarize clean \
-	sonar-up sonar-down sonar-setup sonar-analyze sonar-report sonar-run
+	sonar-up sonar-down sonar-setup sonar-analyze sonar-report sonar-run \
+	strata
 
 build:
 	cargo build --release
@@ -91,3 +92,8 @@ sonar-report:
 
 sonar-run:
 	bash scripts/sonar.sh run
+
+# Strata diff UI — HEAD vs working tree. See scripts/strata.sh for options:
+#   make strata ARGS="--from main --provenance"
+strata:
+	bash scripts/strata.sh $(ARGS)

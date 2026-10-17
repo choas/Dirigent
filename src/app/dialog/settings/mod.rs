@@ -11,7 +11,7 @@ use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{icon, DialogId, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::gemini;
 use crate::opencode;
 use crate::settings;
@@ -252,7 +252,10 @@ impl DirigentApp {
                         .hint_text("http://localhost:11434/v1")
                         .font(egui::TextStyle::Monospace),
                 )
-                .on_hover_text("OpenAI-compatible base URL. `/chat/completions` is appended.");
+                .on_hover_text(
+                    "OpenAI-compatible base URL. `/chat/completions` is appended. \
+                     Must be https, except for localhost / private-network hosts.",
+                );
                 ui.end_row();
 
                 ui.label("API Key:");
@@ -263,7 +266,11 @@ impl DirigentApp {
                         .password(true)
                         .font(egui::TextStyle::Monospace),
                 )
-                .on_hover_text("Sent as a Bearer token. Leave empty for local providers.");
+                .on_hover_text(
+                    "Sent as a Bearer token. Leave empty for local providers. \
+                     Saving Settings approves sending this key to the Base URL above; \
+                     it is never sent to an endpoint you have not approved here.",
+                );
                 ui.end_row();
 
                 ui.label("Model:");
@@ -317,13 +324,17 @@ impl DirigentApp {
         fetch_idx: Option<usize>,
     ) {
         if close {
-            self.show_settings = false;
+            self.close_dialog(DialogId::Settings);
         }
         if save {
             let mut errors = Vec::new();
             if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
                 errors.push(format!("save settings: {e:#}"));
             }
+            // Saving the dialog is the user's explicit approval of the Fast LLM
+            // API-key → endpoint pairing; a repository-shipped settings file
+            // never gets this, so a pulled base_url change cannot capture the key.
+            crate::fast_llm::approve_configured_key_host(&self.settings);
             if let Err(e) = settings::sync_home_guard_hook(
                 &self.project_root,
                 self.settings.allow_home_folder_access,

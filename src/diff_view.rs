@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use crate::app::{SPACE_SM, SPACE_XS};
-use crate::claude::parse_hunk_header;
+use crate::claude::{parse_hunk_header, parse_hunk_header_counts};
 use crate::settings::SemanticColors;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,6 +39,11 @@ impl FileDiff {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiffHunk {
+    /// The verbatim `@@ ... @@` header line. Stable key for re-finding this
+    /// hunk in a re-read diff (via `git::match_hunk_header`) — positional
+    /// indices are not stable across parses because this parser skips files
+    /// without textual hunks (binary, mode-only, pure renames).
+    pub header: String,
     pub new_start: usize,
     pub lines: Vec<DiffLine>,
     pub sbs_pairs: Vec<(Option<usize>, Option<usize>)>,
@@ -153,13 +158,17 @@ fn parse_file_hunks(lines: &[&str], mut i: usize) -> (Vec<DiffHunk>, usize) {
         }
 
         let (old_start, new_start, _) = parse_hunk_header(lines[i]);
+        let (old_count, new_count) = parse_hunk_header_counts(lines[i]);
+        let header = lines[i].to_string();
         i += 1;
 
-        let (hunk_lines, next_i) = parse_hunk_lines(lines, i, old_start, new_start);
+        let (hunk_lines, next_i) =
+            parse_hunk_lines(lines, i, (old_start, old_count), (new_start, new_count));
         i = next_i;
 
         let sbs_pairs = build_sbs_pair_indices(&hunk_lines);
         hunks.push(DiffHunk {
+            header,
             new_start,
             lines: hunk_lines,
             sbs_pairs,
@@ -171,25 +180,48 @@ fn parse_file_hunks(lines: &[&str], mut i: usize) -> (Vec<DiffHunk>, usize) {
 
 /// Parse the individual lines within a single hunk.
 /// Returns the diff lines and the updated line index.
+///
+/// The `(start, count)` pairs come from the `@@` header. The counts decide
+/// where the hunk ends: a deleted line whose content begins with `-- ` renders
+/// as `--- ...` and must stay hunk content, not terminate the hunk as a file
+/// header. While budget for a line's side remains it is consumed as content;
+/// once both budgets are spent (or a line no longer fits them) the hunk is done.
 fn parse_hunk_lines(
     lines: &[&str],
     mut i: usize,
-    mut old_line: usize,
-    mut new_line: usize,
+    (mut old_line, mut old_left): (usize, usize),
+    (mut new_line, mut new_left): (usize, usize),
 ) -> (Vec<DiffLine>, usize) {
     let mut hunk_lines = Vec::new();
 
-    while i < lines.len() {
+    while i < lines.len() && (old_left > 0 || new_left > 0) {
         let line = lines[i];
-        if line.starts_with("@@ ") || line.starts_with("--- ") {
+        if line.starts_with('\\') {
+            // "\ No newline at end of file" — marker, not a content line.
+            i += 1;
+            continue;
+        }
+        let fits_budget = match line.as_bytes().first() {
+            Some(b'+') => new_left > 0,
+            Some(b'-') => old_left > 0,
+            Some(b' ') | None => old_left > 0 && new_left > 0,
+            _ => false,
+        };
+        if !fits_budget {
             break;
         }
-
-        if let Some(diff_line) = classify_hunk_line(line, &mut old_line, &mut new_line) {
-            hunk_lines.push(diff_line);
-        } else {
+        let Some(diff_line) = classify_hunk_line(line, &mut old_line, &mut new_line) else {
             break;
+        };
+        match diff_line.kind {
+            DiffLineKind::Addition => new_left -= 1,
+            DiffLineKind::Deletion => old_left -= 1,
+            DiffLineKind::Context => {
+                old_left -= 1;
+                new_left -= 1;
+            }
         }
+        hunk_lines.push(diff_line);
         i += 1;
     }
 
@@ -928,6 +960,55 @@ mod tests {
     }
 
     #[test]
+    fn parse_keeps_deleted_lines_that_look_like_file_headers() {
+        // Deleting a `-- ` comment renders as `--- ...` in the hunk body; it
+        // must stay hunk content, not terminate the hunk as a file header.
+        let diff = "\
+--- a/query.sql
++++ b/query.sql
+@@ -1,3 +1,3 @@
+ SELECT 1;
+--- a/not_a_file.rs
++-- new comment
+ SELECT 2;
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].new_path, "query.sql");
+        let hunk = &parsed.files[0].hunks[0];
+        assert_eq!(hunk.lines.len(), 4);
+        assert_eq!(hunk.lines[1].kind, DiffLineKind::Deletion);
+        assert_eq!(hunk.lines[1].content, "-- a/not_a_file.rs");
+        assert_eq!(hunk.lines[2].kind, DiffLineKind::Addition);
+        assert_eq!(hunk.lines[2].content, "-- new comment");
+    }
+
+    #[test]
+    fn parse_header_pair_lookalike_does_not_split_file() {
+        // A deleted `-- a/x` plus an added `++ b/y` reproduce an exact
+        // `--- a/` / `+++ b/` header pair inside the hunk body; the following
+        // real file must still be recognised once the hunk budget is spent.
+        let diff = "\
+--- a/notes.md
++++ b/notes.md
+@@ -1,2 +1,2 @@
+--- a/phantom.rs
++++ b/phantom.rs
+ tail
+--- a/real.rs
++++ b/real.rs
+@@ -1,1 +1,1 @@
+-x
++y
+";
+        let parsed = parse_unified_diff(diff);
+        assert_eq!(parsed.files.len(), 2);
+        assert_eq!(parsed.files[0].new_path, "notes.md");
+        assert_eq!(parsed.files[0].hunks[0].lines.len(), 3);
+        assert_eq!(parsed.files[1].new_path, "real.rs");
+    }
+
+    #[test]
     fn parse_multi_hunk_diff() {
         let diff = "\
 --- a/f.rs
@@ -1086,6 +1167,7 @@ mod tests {
                 ];
                 let sbs_pairs = build_sbs_pair_indices(&lines);
                 vec![DiffHunk {
+                    header: "@@ -1,2 +1,3 @@".into(),
                     new_start: 1,
                     lines,
                     sbs_pairs,

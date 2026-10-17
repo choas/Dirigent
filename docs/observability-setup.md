@@ -250,7 +250,6 @@ sum_over_time(
 | `execution.completed` | `project`, `cue_id`, `provider`, `cost_usd`, `duration_ms`, `num_turns`, `input_tokens`, `output_tokens`, `has_diff` |
 | `execution.failed` | `project`, `cue_id`, `provider`, `error` |
 | `execution.rate_limited` | `project`, `cue_id`, `message` |
-| `cue.status_changed` | `project`, `cue_id`, `from_status`, `to_status` |
 | `agent.completed` | `project`, `agent_kind`, `status`, `duration_ms`, `cue_id` (optional) |
 | `git.commit` | `project`, `files_changed` |
 

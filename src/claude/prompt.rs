@@ -227,7 +227,7 @@ fn truncate_to_byte_limit(text: &mut String) {
 
 /// Build the git-diff section for auto-context.
 fn gather_git_diff_section(project_root: &std::path::Path, file_path: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::git_cmd()
         .args(["diff", "--", file_path])
         .current_dir(project_root)
         .output()

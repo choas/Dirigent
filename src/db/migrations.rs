@@ -44,6 +44,20 @@ fn ok_if_duplicate<T>(result: rusqlite::Result<T>, sql: &str) -> Result<()> {
     }
 }
 
+/// Schema version stamped into `PRAGMA user_version`.
+///
+/// The column migrations below are additive and idempotent, so they can run in
+/// any order against any older database — the version stamp exists to answer
+/// the one question probing cannot: *is this database newer than this binary?*
+/// Bump it whenever a schema change is introduced that an older Dirigent build
+/// would misinterpret rather than merely ignore (dropped/renamed columns,
+/// changed semantics of an existing column, new NOT NULL constraints).
+///
+/// History:
+///   0 — pre-versioning (every release up to and including v0.6.1)
+///   1 — first stamped version; schema identical to 0, introduces the guard
+pub(crate) const SCHEMA_VERSION: i32 = 1;
+
 pub(crate) struct Database {
     pub(super) conn: Connection,
 }
@@ -61,8 +75,49 @@ impl Database {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         let db = Database { conn };
+        db.check_schema_version()
+            .with_context(|| format!("opening database at {}", db_path.display()))?;
         db.create_tables()?;
+        db.stamp_schema_version()?;
         Ok(db)
+    }
+
+    /// Read `PRAGMA user_version`.
+    fn schema_version(&self) -> Result<i32> {
+        self.conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .context("reading PRAGMA user_version")
+    }
+
+    /// Refuse to open a database written by a newer Dirigent than this binary.
+    ///
+    /// Without this, an older build silently ignores columns it does not know
+    /// about and writes rows the newer build then reads as incomplete — data
+    /// corruption that surfaces much later. Failing loudly at open time is the
+    /// only honest outcome; the caller turns this into a dialog.
+    fn check_schema_version(&self) -> Result<()> {
+        let found = self.schema_version()?;
+        if found > SCHEMA_VERSION {
+            anyhow::bail!(
+                "This database was created by a newer version of Dirigent \
+                 (schema v{found}; this build understands up to v{SCHEMA_VERSION}). \
+                 Update Dirigent, or move .Dirigent/Dirigent.db aside to start fresh."
+            );
+        }
+        Ok(())
+    }
+
+    /// Stamp the current schema version after migrations have run.
+    ///
+    /// `user_version` takes no bind parameters, so the value is formatted in —
+    /// it is a compile-time constant `i32`, never user input.
+    pub(super) fn stamp_schema_version(&self) -> Result<()> {
+        if self.schema_version()? != SCHEMA_VERSION {
+            self.conn
+                .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
+                .context("stamping PRAGMA user_version")?;
+        }
+        Ok(())
     }
 
     /// Add a column to a table if it does not already exist.
@@ -401,5 +456,52 @@ mod tests {
     #[should_panic(expected = "invalid SQL column type expression")]
     fn col_type_rejects_empty() {
         assert_valid_col_type("");
+    }
+
+    /// A fresh database gets stamped, and reopening it is a no-op.
+    #[test]
+    fn open_stamps_and_accepts_current_schema_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::open(dir.path()).expect("open fresh db");
+        assert_eq!(db.schema_version().expect("read version"), SCHEMA_VERSION);
+        drop(db);
+
+        let db = Database::open(dir.path()).expect("reopen db");
+        assert_eq!(db.schema_version().expect("read version"), SCHEMA_VERSION);
+    }
+
+    /// Pre-versioning databases (user_version == 0) still open and get stamped.
+    #[test]
+    fn open_upgrades_unversioned_database() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::open(dir.path()).expect("open fresh db");
+        db.conn
+            .execute_batch("PRAGMA user_version = 0;")
+            .expect("reset version");
+        drop(db);
+
+        let db = Database::open(dir.path()).expect("reopen legacy db");
+        assert_eq!(db.schema_version().expect("read version"), SCHEMA_VERSION);
+    }
+
+    /// A database from a future Dirigent is refused rather than silently
+    /// half-understood.
+    #[test]
+    fn open_refuses_newer_schema_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::open(dir.path()).expect("open fresh db");
+        db.conn
+            .execute_batch(&format!("PRAGMA user_version = {};", SCHEMA_VERSION + 1))
+            .expect("bump version");
+        drop(db);
+
+        let Err(err) = Database::open(dir.path()) else {
+            panic!("must refuse newer schema");
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("newer version of Dirigent"),
+            "unexpected error: {msg}"
+        );
     }
 }

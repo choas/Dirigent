@@ -17,14 +17,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 use crate::fast_llm::ChangeSetGroupRaw;
 use crate::git::FileRawDiff;
 use crate::settings::{CliProvider, Settings, VcsBackend};
 
 use super::types::CommitGroup;
-use super::DirigentApp;
+use super::{AsyncPoll, DialogId, DirigentApp};
 
 /// Diffs larger than this (in characters) skip the model and collapse to a
 /// single "All changes" group, guarding against poor or expensive groupings.
@@ -41,6 +41,17 @@ pub(super) struct ChangeSetGroup {
     pub description: String,
     pub files: Vec<String>,
     pub hunk_selection: HashMap<String, Vec<String>>,
+}
+
+/// The single fall-back group used when a diff is too large to hand to a model:
+/// every changed file, committed whole.
+fn oversized_change_set_group(changed: &[String]) -> ChangeSetGroup {
+    ChangeSetGroup {
+        title: "All changes".to_string(),
+        description: "Diff too large to group automatically".to_string(),
+        files: changed.to_vec(),
+        hunk_selection: HashMap::new(),
+    }
 }
 
 /// Outcome of a change-set analysis run.
@@ -82,15 +93,30 @@ fn run_analyze_over(
     head: String,
     cancel: Arc<AtomicBool>,
 ) -> AnalyzeOverResult {
-    let diff = match crate::git::get_range_diff(project_root, &base, &head) {
+    // A git failure (bad ref, missing remote branch, corrupt repo) is reported
+    // as an error; only a genuinely empty range yields `Ok(None)`.
+    let diff = match crate::git::try_get_range_diff(project_root, &base, &head)? {
         Some(d) => d,
         None => return Ok(None),
     };
-    let file_diffs = crate::git::split_into_file_diffs(&diff);
     let changed = changed_files_from_diff(&diff);
     if changed.is_empty() {
         return Ok(None);
     }
+
+    // Same degradation the working-tree path applies: a wide range such as
+    // `main...release` produces a diff far past anything a model can group
+    // usefully, and building a prompt from it is slow and expensive.
+    if diff.len() > OVERSIZED_DIFF_CHARS {
+        return Ok(Some(AnalyzeOver {
+            base,
+            head,
+            groups: vec![oversized_change_set_group(&changed)],
+            diff,
+        }));
+    }
+
+    let file_diffs = crate::git::split_into_file_diffs(&diff);
     let prompt = build_change_set_prompt(&file_diffs);
     let response =
         super::split_cue::run_cli_prompt(&prompt, provider, project_root, settings, cancel)?;
@@ -143,21 +169,36 @@ fn build_change_set_prompt(file_diffs: &[FileRawDiff]) -> String {
          - Short imperative title (max ~50 chars) and one-line description per group.\n\
          - Use file paths exactly as shown.\n\
          - Do NOT modify any files. Only analyze and return JSON.\n\n\
-         Changes:\n{body}"
+         {changes}",
+        changes = super::split_cue::untrusted_content_block("diff", &body),
     )
 }
 
 fn append_file_hunks(body: &mut String, budget: &mut usize, file_diff: &FileRawDiff) {
-    body.push_str(&format!("File: {}\n", file_diff.path));
+    // The budget bounds hunk *bodies*; the `File:`/`Hunk N:` header lines used
+    // to be appended unconditionally, so a diff with thousands of small hunks
+    // still produced an enormous prompt no matter what the budget said.
+    if *budget == 0 {
+        return;
+    }
+    let header = format!("File: {}\n", file_diff.path);
+    *budget = budget.saturating_sub(header.len());
+    body.push_str(&header);
     for i in 0..file_diff.hunk_count() {
+        if *budget == 0 {
+            body.push_str("  … (remaining hunks omitted)\n");
+            return;
+        }
         let Some(lines) = file_diff.hunk_lines(i) else {
             continue;
         };
-        body.push_str(&format!(
+        let hunk_header = format!(
             "  Hunk {}: {}\n",
             i + 1,
             lines.first().map(|s| s.as_str()).unwrap_or("")
-        ));
+        );
+        *budget = budget.saturating_sub(hunk_header.len());
+        body.push_str(&hunk_header);
         append_hunk_body_lines(body, budget, lines);
     }
 }
@@ -212,12 +253,9 @@ fn run_change_set_analysis(
     }
     // Degrade an oversized diff to a single whole-file group rather than failing.
     if diff.chars().count() > OVERSIZED_DIFF_CHARS {
-        return Ok(ChangeSetOutcome::Groups(vec![ChangeSetGroup {
-            title: "All changes".to_string(),
-            description: "Working tree too large to group automatically".to_string(),
-            files: changed,
-            hunk_selection: HashMap::new(),
-        }]));
+        return Ok(ChangeSetOutcome::Groups(vec![oversized_change_set_group(
+            &changed,
+        )]));
     }
     let prompt = build_change_set_prompt(&file_diffs);
     let response =
@@ -246,8 +284,16 @@ impl DirigentApp {
     /// yet shown — [`process_change_set_result`](Self::process_change_set_result)
     /// opens it once the groups land.
     pub(super) fn start_split_commit(&mut self) {
-        if self.change_set_generating {
+        if self.change_set_op.in_flight() {
             self.set_status_message("Already analyzing changes…".into());
+            return;
+        }
+        // A commit thread in flight will call `advance_commit_queue` when it
+        // lands, which removes an entry from whatever queue exists *then*.
+        // Replacing the queue underneath it drops a group that was never
+        // committed, so the analysis has to wait for the commit to finish.
+        if self.git.commit_op.in_flight() {
+            self.set_status_message("A commit is still running — wait for it to finish".into());
             return;
         }
         if self.git.dirty_files.is_empty() {
@@ -255,10 +301,7 @@ impl DirigentApp {
             return;
         }
 
-        self.change_set_generating = true;
         self.change_set_cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        self.change_set_rx = Some(rx);
 
         let settings = self.settings.clone();
         let backend = self.settings.vcs_backend.clone();
@@ -268,20 +311,23 @@ impl DirigentApp {
         let cancel = Arc::clone(&self.change_set_cancel);
         let ctx = self.egui_ctx.clone();
 
-        std::thread::spawn(move || {
-            let result = run_change_set_analysis(
-                &settings,
-                &backend,
-                &jj_path,
-                &project_root,
-                &provider,
-                cancel,
-            );
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        self.change_set_op.spawn_then(
+            move || {
+                run_change_set_analysis(
+                    &settings,
+                    &backend,
+                    &jj_path,
+                    &project_root,
+                    &provider,
+                    cancel,
+                )
+            },
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
 
         self.set_status_message("Analyzing changes with the selected CLI…".into());
     }
@@ -291,28 +337,32 @@ impl DirigentApp {
     /// gets the same review-then-commit flow); a clean/empty result just reports
     /// status without opening the dialog.
     pub(super) fn process_change_set_result(&mut self) {
-        let rx = match self.change_set_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.change_set_generating = false;
-                self.change_set_rx = None;
+        let result = match self.change_set_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Change analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.change_set_generating = false;
-        self.change_set_rx = None;
 
         match result {
             Ok(ChangeSetOutcome::Nothing) => {
                 self.set_status_message("Nothing to commit — no changes found".into());
             }
             Ok(ChangeSetOutcome::Groups(groups)) => {
+                // Second line of defence for the race `start_split_commit`
+                // guards against: an analysis started before a commit was
+                // queued must not silently replace a queue the user is still
+                // working through.
+                if !self.git.commit_queue.is_empty() {
+                    self.set_status_message(
+                        "Change analysis finished, but a commit queue is already in progress — \
+                         finish or cancel it first, then split again."
+                            .into(),
+                    );
+                    return;
+                }
                 self.git.commit_queue = groups
                     .into_iter()
                     .map(|g| CommitGroup {
@@ -340,7 +390,7 @@ impl DirigentApp {
         self.git.commit_review_cue_id = None;
         self.git.commit_in_background = false;
         self.git.commit_queue_pos = 0;
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.load_commit_group(0);
         let n = self.git.commit_queue.len();
         self.set_status_message(format!(
@@ -364,8 +414,7 @@ impl DirigentApp {
         self.git
             .commit_suggest_cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.git.commit_suggesting = false;
-        self.git.commit_suggest_rx = None;
+        self.git.commit_suggest_op.cancel();
         self.git.commit_queue_pos = pos;
         self.git.commit_files = files;
         self.git.commit_message_input = message;
@@ -388,10 +437,11 @@ impl DirigentApp {
 
     /// Stage just the current commit target's files (`git add`), without
     /// committing. Git-only; jj has no separate staging area. In queue mode the
-    /// staged group stays queued until it is actually committed: committing any
-    /// other group resets the index to HEAD (see [`crate::git::commit_diff`]),
-    /// which silently unstages this one — dropping it here would lose the
-    /// reviewed split. The dialog just moves on to the next group.
+    /// staged group stays queued until it is actually committed: staging is
+    /// only a convenience, and the queue entry is what guarantees the reviewed
+    /// split survives (commit flows snapshot and restore staged entries for
+    /// untouched paths, see [`crate::git::commit_diff`], but a group shouldn't
+    /// depend on that). The dialog just moves on to the next group.
     /// Refused for a group that owns only some hunks of a file: `git add`
     /// stages the whole file, silently pulling in later groups' hunks.
     pub(in crate::app) fn stage_commit_files(&mut self) {
@@ -449,15 +499,12 @@ impl DirigentApp {
             self.set_status_message("Pick two different refs to compare".into());
             return;
         }
-        if self.analyze_over_generating {
+        if self.analyze_over_op.in_flight() {
             return;
         }
-        self.analyze_over_generating = true;
-        self.analyze_over_show_picker = false;
+        self.close_dialog(DialogId::AnalyzeOverPicker);
         self.analyze_over_result = None;
         self.analyze_over_cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
-        self.analyze_over_rx = Some(rx);
 
         let settings = self.settings.clone();
         let provider = self.settings.cli_provider.clone();
@@ -466,34 +513,27 @@ impl DirigentApp {
         let ctx = self.egui_ctx.clone();
         let (b, h) = (base.clone(), head.clone());
 
-        std::thread::spawn(move || {
-            let result = run_analyze_over(&settings, &project_root, &provider, b, h, cancel);
-            let _ = tx.send(result);
-            if let Some(c) = ctx.get() {
-                c.request_repaint();
-            }
-        });
+        self.analyze_over_op.spawn_then(
+            move || run_analyze_over(&settings, &project_root, &provider, b, h, cancel),
+            move || {
+                if let Some(c) = ctx.get() {
+                    c.request_repaint();
+                }
+            },
+        );
         self.set_status_message(format!("Analyzing {base}\u{2026}{head}\u{2026}"));
     }
 
     /// Poll for a completed range analysis and open the read-only results.
     pub(in crate::app) fn process_analyze_over_result(&mut self) {
-        let rx = match self.analyze_over_rx {
-            Some(ref rx) => rx,
-            None => return,
-        };
-        let result = match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.analyze_over_generating = false;
-                self.analyze_over_rx = None;
+        let result = match self.analyze_over_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
                 self.set_status_message("Range analysis failed unexpectedly".into());
                 return;
             }
-            Ok(r) => r,
+            AsyncPoll::Ready(r) => r,
         };
-        self.analyze_over_generating = false;
-        self.analyze_over_rx = None;
         match result {
             Ok(None) => self.set_status_message("Nothing to analyze between those refs".into()),
             Ok(Some(a)) => {
@@ -519,40 +559,67 @@ impl DirigentApp {
             self.set_status_message("Commit message cannot be empty".into());
             return;
         }
+        if self.partial_commit_op.in_flight() {
+            self.set_status_message("A commit is already running".into());
+            return;
+        }
         let pos = self.git.commit_queue_pos;
         let group = match self.git.commit_queue.get(pos) {
             Some(g) => g.clone(),
             None => return,
         };
 
-        // Re-read the live diff so the hunk mapping reflects the current tree.
-        // Diffed against HEAD (staged + unstaged) to match both the analysis
-        // view and `commit_partial`, which applies patches onto a HEAD index.
-        let diff = crate::git::get_uncommitted_diff(&self.project_root, &[]).unwrap_or_default();
-        let file_diffs = crate::git::split_into_file_diffs(&diff);
+        // `git diff` + one `git apply` per hunk + a libgit2 commit is far too
+        // much work for the UI thread; it runs on a worker like every other
+        // commit path, with the result picked up by
+        // `process_partial_commit_result`.
+        let root = self.project_root.clone();
+        self.dialogs.close(DialogId::Commit);
+        self.partial_commit_op.spawn(move || {
+            // Re-read the live diff so the hunk mapping reflects the current
+            // tree. Diffed against HEAD (staged + unstaged) to match both the
+            // analysis view and `commit_partial`, which applies patches onto a
+            // HEAD index.
+            let diff = crate::git::get_uncommitted_diff(&root, &[]).unwrap_or_default();
+            let file_diffs = crate::git::split_into_file_diffs(&diff);
+            let parts = build_partial_commit_parts(&group, &file_diffs);
+            crate::git::commit_partial(&root, &parts.whole_files, &parts.patches, &msg)
+                .map(|_| parts.warned)
+                .map_err(|e| format!("Commit failed: {e}"))
+        });
+        self.set_status_message("Committing change set…".into());
+    }
 
-        let parts = build_partial_commit_parts(&group, &file_diffs);
-
-        match crate::git::commit_partial(
-            &self.project_root,
-            &parts.whole_files,
-            &parts.patches,
-            &msg,
-        ) {
-            Ok(_) => {
-                if parts.warned.is_empty() {
+    /// Pick up a finished partial (change-set) commit.
+    pub(super) fn process_partial_commit_result(&mut self) {
+        let result = match self.partial_commit_op.poll() {
+            AsyncPoll::Idle | AsyncPoll::Pending => return,
+            AsyncPoll::Failed => {
+                self.set_status_message("Change-set commit failed unexpectedly".into());
+                self.dialogs.open(DialogId::Commit);
+                return;
+            }
+            AsyncPoll::Ready(r) => r,
+        };
+        match result {
+            Ok(warned) => {
+                if warned.is_empty() {
                     self.set_status_message("Committed change set".into());
                 } else {
                     self.set_status_message(format!(
                         "Committed; hunk mapping failed for {} — committed whole file",
-                        parts.warned.join(", ")
+                        warned.join(", ")
                     ));
                 }
                 self.advance_commit_queue();
                 self.reload_git_info();
                 self.reload_commit_history();
             }
-            Err(e) => self.set_status_message(format!("Commit failed: {e}")),
+            Err(e) => {
+                self.set_status_message(e);
+                // Put the dialog back so the user can retry or edit the group.
+                self.dialogs.open(DialogId::Commit);
+            }
         }
     }
 
@@ -582,14 +649,14 @@ impl DirigentApp {
             // already hides it in `start_commit`, but the partial-commit path
             // relies on us here, so without this the dialog would linger open
             // (empty) after the last group is committed.
-            self.git.show_commit_dialog = false;
+            self.dialogs.close(DialogId::Commit);
             self.git.commit_files.clear();
             self.set_status_message("All change sets committed".into());
             return;
         }
         // `pos` now points at the next group (indices shifted down by the removal).
         let next = pos.min(self.git.commit_queue.len() - 1);
-        self.git.show_commit_dialog = true;
+        self.dialogs.open(DialogId::Commit);
         self.load_commit_group(next);
     }
 }

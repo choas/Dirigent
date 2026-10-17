@@ -46,7 +46,16 @@ impl DirigentApp {
     /// Only applies the new settings (and triggers a theme re-apply) if they actually differ
     /// from the current in-memory state, to avoid unnecessary theme resets on unrelated FS changes.
     pub(super) fn reload_settings_from_disk(&mut self) {
-        let new_settings = settings::load_settings(&self.project_root);
+        let settings_load = settings::load_settings(&self.project_root);
+        // Surface (or clear) the trust prompt before the equality short-circuit
+        // below: when unapproved execution-capable fields appear in the file,
+        // the *stripped* settings can equal the current in-memory state even
+        // though the user still has to see the approval dialog.
+        self.update_pending_trust(settings_load.pending_trust);
+        if let Some(warning) = settings_load.warning {
+            self.set_status_message(warning);
+        }
+        let new_settings = settings_load.settings;
 
         // Compare ignoring in-memory-only fields (recent_repos may differ from disk)
         let mut current_cmp = self.settings.clone();
@@ -76,6 +85,23 @@ impl DirigentApp {
         }
     }
 
+    /// Update the settings-trust prompt state after a reload from disk.
+    fn update_pending_trust(&mut self, pending: Option<crate::settings::PendingTrust>) {
+        match pending {
+            Some(p) => {
+                // Don't re-prompt for a field set the user already declined
+                // this session; a changed file produces a new hash and prompts.
+                if self.declined_trust_hash.as_deref() != Some(p.hash.as_str()) {
+                    self.pending_trust = Some(p);
+                }
+            }
+            None => {
+                self.pending_trust = None;
+                self.declined_trust_hash = None;
+            }
+        }
+    }
+
     /// Handle filesystem changes: rescan file tree, reload tabs, trigger agents.
     pub(super) fn handle_fs_changes(&mut self) {
         // Poll for background git status results
@@ -96,16 +122,13 @@ impl DirigentApp {
         }
 
         // Poll for async PR detection result
-        if let Some(ref rx) = self.git.pr_detect_rx {
-            if let Ok(result) = rx.try_recv() {
-                if let Some((number, url)) = result {
-                    self.git.pr_number = Some(number);
-                    self.git.pr_url = Some(url);
-                } else {
-                    self.git.pr_number = None;
-                    self.git.pr_url = None;
-                }
-                self.git.pr_detect_rx = None;
+        if let super::AsyncPoll::Ready(result) = self.git.pr_detect_op.poll() {
+            if let Some((number, url)) = result {
+                self.git.pr_number = Some(number);
+                self.git.pr_url = Some(url);
+            } else {
+                self.git.pr_number = None;
+                self.git.pr_url = None;
             }
         }
 
@@ -132,7 +155,7 @@ impl DirigentApp {
             &self.settings.jj_cli_path,
             &self.project_root,
         );
-        if !self.show_settings {
+        if !self.dialogs.is_open(super::DialogId::Settings) {
             self.reload_settings_from_disk();
         }
         self.remap_renamed_tabs();
@@ -414,7 +437,10 @@ impl DirigentApp {
         }
         if self.last_agent_cleanup.elapsed() >= Duration::from_secs(3600) {
             self.last_agent_cleanup = std::time::Instant::now();
-            let _ = self.db.cleanup_agent_runs(200, 65536);
+            self.db_log(
+                "clean up agent run history",
+                self.db.cleanup_agent_runs(200, 65536),
+            );
         }
     }
 
@@ -436,11 +462,11 @@ impl DirigentApp {
         if !self.scheduled_runs.is_empty() {
             ctx.request_repaint_after(ELAPSED_REPAINT);
         }
-        let has_async_git = self.git.importing_pr
-            || self.git.pushing
-            || self.git.pulling
-            || self.git.creating_pr
-            || self.git.notifying_pr;
+        let has_async_git = self.git.import_pr_op.in_flight()
+            || self.git.push_op.in_flight()
+            || self.git.pull_op.in_flight()
+            || self.git.pr_create_op.in_flight()
+            || self.git.pr_notify_op.in_flight();
         if has_async_git {
             ctx.request_repaint_after(REPAINT_SLOW);
         }

@@ -1,10 +1,10 @@
 use eframe::egui;
 
-use crate::app::DirigentApp;
+use crate::app::{DialogId, DirigentApp};
 
 impl DirigentApp {
     pub(in crate::app) fn render_merge_bookmark_dialog(&mut self, ctx: &egui::Context) {
-        if !self.git.show_merge_bookmark {
+        if !self.dialogs.is_open(DialogId::MergeBookmark) {
             return;
         }
 
@@ -70,11 +70,11 @@ impl DirigentApp {
             });
 
         if !open {
-            self.git.show_merge_bookmark = false;
+            self.close_dialog(DialogId::MergeBookmark);
         }
 
         if let Some(source) = merge_source {
-            self.git.show_merge_bookmark = false;
+            self.close_dialog(DialogId::MergeBookmark);
             self.start_merge_bookmark(&source);
         }
     }

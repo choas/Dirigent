@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use std::io::Write;
 use std::path::Path;
+
+use crate::util::fs::atomic_write;
 
 /// Install or remove the Claude Code home-directory guard hook.
 ///
@@ -26,8 +27,11 @@ pub(crate) fn sync_home_guard_hook(project_root: &Path, allow: bool) -> Result<(
     } else {
         // --- Install the hook ---
         std::fs::create_dir_all(&dirigent_dir).context("creating .Dirigent directory")?;
-        std::fs::write(&hook_script, home_guard_script_content(project_root))
-            .context("writing home_guard.sh")?;
+        atomic_write(
+            &hook_script,
+            home_guard_script_content(project_root).as_bytes(),
+        )
+        .context("writing home_guard.sh")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -151,20 +155,6 @@ fn remove_hook_from_settings(settings_path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(&root).context("serializing settings JSON")?;
         atomic_write(settings_path, json.as_bytes()).context("writing settings.local.json")?;
     }
-    Ok(())
-}
-
-/// Write `data` to `path` atomically: write to a temp file in the same
-/// directory, fsync, then rename over the target. This prevents
-/// crash-corruption of the settings file.
-fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
-    let dir = path
-        .parent()
-        .context("settings path has no parent directory")?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).context("creating temp file")?;
-    tmp.write_all(data).context("writing temp file")?;
-    tmp.as_file().sync_all().context("fsync temp file")?;
-    tmp.persist(path).context("renaming temp file into place")?;
     Ok(())
 }
 

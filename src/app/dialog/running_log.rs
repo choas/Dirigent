@@ -308,7 +308,7 @@ impl DirigentApp {
                 ui.painter().hline(
                     top_border.x_range(),
                     top_border.top(),
-                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                    egui::Stroke::new(1.0_f32, self.semantic.prompt_border()),
                 );
 
                 let (rect, _) = ui.allocate_exact_size(
@@ -323,7 +323,7 @@ impl DirigentApp {
                 ui.painter().hline(
                     rect.x_range(),
                     baseline_y,
-                    egui::Stroke::new(1.0, baseline_color),
+                    egui::Stroke::new(1.0_f32, baseline_color),
                 );
 
                 let style = self.settings.heartbeat_style.clone();
@@ -357,7 +357,7 @@ impl DirigentApp {
                 ui.painter().hline(
                     rect.x_range(),
                     rect.top(),
-                    egui::Stroke::new(1.0, self.semantic.prompt_border()),
+                    egui::Stroke::new(1.0_f32, self.semantic.prompt_border()),
                 );
 
                 // Show attached files above the input line
@@ -1044,7 +1044,7 @@ fn paint_heartbeat_line(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]
     });
     ui.painter().add(egui::Shape::line(
         points,
-        egui::Stroke::new(1.5, paint.stroke_color),
+        egui::Stroke::new(1.5_f32, paint.stroke_color),
     ));
 }
 
@@ -1061,7 +1061,7 @@ fn paint_wave_line(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
     });
     ui.painter().add(egui::Shape::line(
         points,
-        egui::Stroke::new(1.5, paint.stroke_color),
+        egui::Stroke::new(1.5_f32, paint.stroke_color),
     ));
 }
 
@@ -1095,7 +1095,7 @@ fn paint_gabba_peaks(ui: &mut egui::Ui, paint: &HeartbeatPaint, beats: &[f32]) {
         ui.painter().rect_stroke(
             bar,
             0.0,
-            egui::Stroke::new(1.5, paint.stroke_color),
+            egui::Stroke::new(1.5_f32, paint.stroke_color),
             egui::StrokeKind::Inside,
         );
     }
@@ -1137,7 +1137,7 @@ fn paint_morse_tail(
                 egui::pos2(line_start_x, line_y),
                 egui::pos2(line_end_x, line_y),
             ],
-            egui::Stroke::new(1.5, paint.stroke_color),
+            egui::Stroke::new(1.5_f32, paint.stroke_color),
         );
     }
 }

