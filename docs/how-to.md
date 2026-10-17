@@ -18,6 +18,7 @@ Task-oriented recipes for common Dirigent workflows. Each section is self-contai
 - [Use workflow planning for multiple cues](#use-workflow-planning-for-multiple-cues)
 - [Work with Git worktrees](#work-with-git-worktrees)
 - [Switch the AI backend to OpenCode](#switch-the-ai-backend-to-opencode)
+- [Run an ACP agent (Goose, Gemini CLI, …)](How_to_ACP.md)
 - [Configure LSP for code intelligence](#configure-lsp-for-code-intelligence)
 - [Set up observability](#set-up-observability)
 - [Build a macOS .app bundle](#build-a-macos-app-bundle)

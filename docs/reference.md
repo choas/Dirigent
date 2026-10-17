@@ -92,7 +92,7 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| CLI provider | enum | Claude | `Claude` or `OpenCode` |
+| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, or `ACP Agent` |
 | Claude model | string | claude-opus-4-6 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
 | Claude CLI path | string | (auto-detect) | Path to `claude` binary; auto-detected via `which` |
@@ -104,6 +104,10 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 | OpenCode model | string | openai/o1 | Model for OpenCode provider |
 | OpenCode CLI path | string | (auto-detect) | Path to `opencode` binary |
 | OpenCode extra args | string | empty | Additional OpenCode CLI arguments |
+| ACP agent command | string | empty | ACP agent executable, e.g. `opencode`, `gemini`, `goose` ([How_to_ACP.md](How_to_ACP.md)) |
+| ACP extra args | string | empty | Arguments that start the agent in ACP mode, e.g. `acp`, `--experimental-acp` |
+| ACP env vars | string | empty | `KEY=VAL` lines set on the agent process |
+| ACP pre-/post-run script | string | empty | Shell scripts executed around each ACP run |
 
 ### Security
 

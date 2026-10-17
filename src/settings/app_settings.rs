@@ -213,6 +213,17 @@ pub(crate) struct Settings {
     pub codex_pre_run_script: String,
     #[serde(default)]
     pub codex_post_run_script: String,
+    /// ACP agent command, e.g. `claude-code-acp` or `gemini` (+ `--experimental-acp`).
+    #[serde(default)]
+    pub acp_cli_path: String,
+    #[serde(default)]
+    pub acp_extra_args: String,
+    #[serde(default)]
+    pub acp_env_vars: String,
+    #[serde(default)]
+    pub acp_pre_run_script: String,
+    #[serde(default)]
+    pub acp_post_run_script: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -385,6 +396,15 @@ impl Settings {
                 pre_run_script: &self.codex_pre_run_script,
                 post_run_script: &self.codex_post_run_script,
             },
+            // The agent picks its own model; ACP v1 has no stable model selection.
+            CliProvider::Acp => ProviderFields {
+                model: "",
+                cli_path: &self.acp_cli_path,
+                extra_args: &self.acp_extra_args,
+                env_vars: &self.acp_env_vars,
+                pre_run_script: &self.acp_pre_run_script,
+                post_run_script: &self.acp_post_run_script,
+            },
         }
     }
 }
@@ -448,6 +468,11 @@ impl Default for Settings {
             codex_env_vars: String::new(),
             codex_pre_run_script: String::new(),
             codex_post_run_script: String::new(),
+            acp_cli_path: String::new(),
+            acp_extra_args: String::new(),
+            acp_env_vars: String::new(),
+            acp_pre_run_script: String::new(),
+            acp_post_run_script: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,

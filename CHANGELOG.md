@@ -4,6 +4,9 @@ All notable changes to Dirigent are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- ACP Agent CLI provider: run cues through any Agent Client Protocol (v1) agent — OpenCode, Gemini CLI, Goose, Claude Code / Codex via Zed's adapters, or custom agents — with streamed text, tool calls and plans, project-root-confined file access, and a permission policy tied to the skip-permissions setting (see `docs/How_to_ACP.md`)
+
 ### Changed
 - Conversation view groups each CLI run under a foldable header (run number, provider, prompt preview, and duration/cost) — the latest and in-flight runs stay expanded while earlier runs collapse for easier scanning of long conversations
 

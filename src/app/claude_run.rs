@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
 use super::DirigentApp;
+use crate::acp;
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::codex;
@@ -348,6 +349,7 @@ fn run_provider(
         CliProvider::OpenCode => run_opencode_provider(req, on_log, cancel),
         CliProvider::Gemini => run_gemini_provider(req, on_log, cancel),
         CliProvider::Codex => run_codex_provider(req, on_log, cancel),
+        CliProvider::Acp => run_acp_provider(req, on_log, cancel),
     }
 }
 
@@ -594,6 +596,40 @@ fn run_codex_provider(
             });
     finalize_run(req, &baseline, res)
 }
+
+fn run_acp_provider(
+    req: &RunRequest,
+    on_log: impl FnMut(&str) + Send + 'static,
+    cancel: Arc<AtomicBool>,
+) -> ClaudeResult {
+    let baseline = snapshot_dirty_state(req);
+
+    let acp_config = acp::AcpRunConfig {
+        cli_path: &req.config.cli_path,
+        extra_args: &req.config.extra_args,
+        env_vars: &req.config.env_vars,
+        pre_run_script: &req.config.pre_run_script,
+        post_run_script: &req.config.post_run_script,
+        skip_permissions: req.config.skip_permissions,
+        read_only: false,
+    };
+    // ACP diffs are structured, but the files are already on disk by the time
+    // the turn ends, so the edited paths feed the shared VCS-first resolution.
+    let res = acp::invoke_acp_streaming(req.prompt, req.project_root, &acp_config, on_log, cancel)
+        .map(|response| ProviderRunOutcome {
+            stdout: response.stdout,
+            edited_files: response.edited_files,
+            metrics: claude::RunMetrics {
+                duration_ms: response.duration_ms,
+                num_turns: response.num_turns,
+                ..claude::RunMetrics::default()
+            },
+            metadata: None,
+            parse_diff: claude::parse_diff_from_response,
+        });
+    finalize_run(req, &baseline, res)
+}
+
 fn run_opencode_provider(
     req: &RunRequest,
     on_log: impl FnMut(&str) + Send + 'static,
