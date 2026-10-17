@@ -35,6 +35,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.8 default; Opus, Sonnet, and Haiku 4.x selectable), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
 - **Multiple AI backends** — Besides Claude Code: **OpenCode** (OpenAI o1/o3/o4-mini/GPT-4.1 and Anthropic models), **Gemini CLI** (Gemini 3 and 2.5 families), and **Codex** (GPT-5-Codex); plus an optional OpenAI-compatible "fast LLM" helper for lightweight tasks like commit-message suggestions
 - **ACP agents** — Run cues through any [Agent Client Protocol](https://agentclientprotocol.com) agent (OpenCode, Gemini CLI, Goose, Claude Code/Codex adapters, …) via the "ACP Agent" provider; see [docs/How_to_ACP.md](docs/How_to_ACP.md)
+- **herdr** (experimental) — Run a cue as native, interactive Claude Code in a [herdr](https://herdr.dev) tab you can watch and type into; Dirigent hands over the prompt and collects the diff, transcript and metrics. Pick the "Herdr" provider or use the **H** button next to the prompt; see [docs/How_to_Herdr.md](docs/How_to_Herdr.md)
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
 - **Prompt quality hints** — Heuristic analysis flags vague, too-short, or missing-context prompts before sending to AI
@@ -376,6 +377,7 @@ src/
 ├── ai_process.rs             — Shared AI-CLI process helpers (watchdog, stderr, hooks, stream)
 ├── opencode.rs               — OpenCode CLI support (multi-provider backend)
 ├── acp/                      — Agent Client Protocol client (ACP Agent provider)
+├── herdr/                    — herdr socket client and pane runs (Herdr provider)
 ├── gemini.rs                 — Gemini CLI backend
 ├── codex.rs                  — Codex CLI backend
 ├── fast_llm.rs               — Optional OpenAI-compatible helper LLM (commit messages, analysis)

@@ -19,6 +19,7 @@ Task-oriented recipes for common Dirigent workflows. Each section is self-contai
 - [Work with Git worktrees](#work-with-git-worktrees)
 - [Switch the AI backend to OpenCode](#switch-the-ai-backend-to-opencode)
 - [Run an ACP agent (Goose, Gemini CLI, …)](How_to_ACP.md)
+- [Run cues as interactive Claude Code in herdr](How_to_Herdr.md)
 - [Configure LSP for code intelligence](#configure-lsp-for-code-intelligence)
 - [Split a large cue into smaller ones](#split-a-large-cue-into-smaller-ones)
 - [Read history in the graph view](#read-history-in-the-graph-view)

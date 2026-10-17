@@ -18,6 +18,8 @@ All notable changes to Dirigent are documented in this file.
 - `PRAGMA user_version` schema stamping; a database written by a newer Dirigent is now refused at open instead of being silently half-understood
 - ACP Agent CLI provider: run cues through any Agent Client Protocol (v1) agent — OpenCode, Gemini CLI, Goose, Claude Code / Codex via Zed's adapters, or custom agents — with streamed text, tool calls and plans, project-root-confined file access, and a permission policy tied to the skip-permissions setting (see `docs/How_to_ACP.md`)
 - Settings → General → **Test Connection**: sends `hello` to the selected CLI provider (Claude, OpenCode, Gemini, Codex or ACP agent) with the current settings and shows the reply or the error
+- Herdr CLI provider (experimental): runs a cue as native, interactive Claude Code in a [herdr](https://herdr.dev) tab, submits the prompt over herdr's socket API and collects the diff, transcript, turns and tokens when Claude's Stop hook fires. Cancel interrupts Claude in the pane; a closed pane or an early exit fails the run; Settings env vars and `.Dirigent/.env` are forwarded without appearing on any command line. Also available per prompt via the **H** button next to the prompt field (see `docs/How_to_Herdr.md`)
+- Runs record input/output token counts when the backend reports them (Herdr today)
 
 ### Changed
 - Rust is pinned to 1.99.1 in `rust-toolchain.toml` (also `rust-version` in both crates); CI and the release build install that version instead of whatever is the latest stable, so a new Rust release can no longer break CI without a code change
@@ -39,6 +41,7 @@ All notable changes to Dirigent are documented in this file.
 - Remote code execution via LSP environment variables in an attacker-controlled `.Dirigent/settings.json`
 - Two advisories that failed `cargo audit`: `h2` 0.4.13 → 0.4.18 (RUSTSEC-2026-0258, unbounded empty DATA frames) and `webbrowser` 1.2.0 → 1.2.4 (RUSTSEC-2026-0257, argument injection via the Unix `BROWSER` variable)
 - Orphaned PTY processes are cleaned up, and stale Stop-hook entries are pruned on install
+- Installing the Stop hook replaced a `.claude/settings.local.json` that wasn't valid JSON with just the hook, dropping every other setting in it; the file is now left untouched and the run logs why the hook is missing
 - File renames made outside Dirigent are followed instead of closing the tab as deleted
 - Only the *first* tool-permission dialog of a PTY run was auto-accepted; later ones went unanswered until the 120 s idle timeout killed the run. Dialog state is now read from the live terminal screen instead of an append-only buffer
 - Repository or model output containing "How is Claude doing this session" or "Resume from summary" could make Dirigent type into the PTY at a moment the content chose. Those answers are now driven only by a screen-verified dialog
