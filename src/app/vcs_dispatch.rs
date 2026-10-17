@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::types::DiffLineKind;
-use crate::diff_view::{parse_unified_diff, DiffHunk, DiffLineKind as DiffViewLineKind};
+use crate::diff_view::{DiffHunk, DiffLineKind as DiffViewLineKind, parse_unified_diff};
 use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;

@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{DialogId, DirigentApp};
-use super::error_dialog::{create_global_error_cue, render_error_dialog, ErrorDialogSpec};
+use super::error_dialog::{ErrorDialogSpec, create_global_error_cue, render_error_dialog};
 
 impl DirigentApp {
     pub(in crate::app) fn render_move_to_branch_error_dialog(&mut self, ctx: &egui::Context) {

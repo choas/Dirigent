@@ -243,10 +243,10 @@ pub(crate) fn jj_commit_all(
     // this prevents dragging unrelated bookmarks (e.g. "main") forward
     // when they happen to share the same parent commit.
     for bm in &parent_bookmarks {
-        if let Some(target) = bookmark_to_advance {
-            if bm != target {
-                continue;
-            }
+        if let Some(target) = bookmark_to_advance
+            && bm != target
+        {
+            continue;
         }
         let _ = super::jj_cmd(jj_path)
             .args(["bookmark", "set", bm, "-r", "@-"])

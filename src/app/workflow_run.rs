@@ -329,10 +329,10 @@ impl DirigentApp {
 
     /// Toggle pause_after on a specific step.
     pub(super) fn toggle_workflow_pause(&mut self, step_idx: usize) {
-        if let Some(ref mut plan) = self.workflow_plan {
-            if let Some(step) = plan.steps.get_mut(step_idx) {
-                step.pause_after = !step.pause_after;
-            }
+        if let Some(ref mut plan) = self.workflow_plan
+            && let Some(step) = plan.steps.get_mut(step_idx)
+        {
+            step.pause_after = !step.pause_after;
         }
     }
 

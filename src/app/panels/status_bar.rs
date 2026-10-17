@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon_small, DirigentApp};
+use super::super::{DirigentApp, icon_small};
 use crate::agents::{AgentKind, AgentStatus};
 use crate::git;
 use crate::settings::VcsBackend;
@@ -36,7 +36,7 @@ fn get_memory_usage_mb() -> Option<u64> {
         suspend_count: i32,
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn mach_task_self() -> mach_port_t;
         fn task_info(
             target_task: mach_port_t,
@@ -150,10 +150,10 @@ impl DirigentApp {
             )
             .sense(egui::Sense::click()),
         );
-        if resp.clicked() {
-            if let Some(ref url) = self.git.pr_url {
-                let _ = std::process::Command::new("open").arg(url).spawn();
-            }
+        if resp.clicked()
+            && let Some(ref url) = self.git.pr_url
+        {
+            let _ = std::process::Command::new("open").arg(url).spawn();
         }
         resp.on_hover_text("Open pull request in browser");
     }

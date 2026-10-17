@@ -10,7 +10,17 @@ use std::process::Command;
 /// an expected auth token (e.g. `ANTHROPIC_API_KEY`) was not set, instead of
 /// the run failing opaquely.
 pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str, on_log: &mut dyn FnMut(&str)) {
-    for (name, value) in resolve_env_pairs(env_vars, on_log) {
+    apply_env_vars_with(cmd, env_vars, on_log, |name| std::env::var(name).ok());
+}
+
+/// [`apply_env_vars`] with an injectable lookup (see [`resolve_env_pairs_with`]).
+pub(super) fn apply_env_vars_with(
+    cmd: &mut Command,
+    env_vars: &str,
+    on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
+) {
+    for (name, value) in resolve_env_pairs_with(env_vars, on_log, lookup) {
         cmd.env(name, value);
     }
 }
@@ -79,14 +89,18 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
 }
 
 /// Resolve environment variable **names** (one per line, `#` comments allowed)
-/// from the current process environment and return them as `(key, value)` pairs.
+/// via `lookup` and return them as `(key, value)` pairs. Production callers
+/// pass `std::env::var`; tests pass a fixed map instead of mutating the
+/// process environment (`set_var` is unsafe while other test threads may be
+/// reading it).
 ///
 /// Missing names are reported via `on_log` (and `log::warn!`) so the live run
 /// log surfaces an unset auth token instead of the user only seeing an opaque
 /// downstream failure.
-pub(super) fn resolve_env_pairs(
+pub(super) fn resolve_env_pairs_with(
     env_vars: &str,
     on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
 ) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     for line in env_vars.lines() {
@@ -101,9 +115,9 @@ pub(super) fn resolve_env_pairs(
         if name.is_empty() {
             continue;
         }
-        match std::env::var(name) {
-            Ok(value) => pairs.push((name.to_string(), value)),
-            Err(_) => {
+        match lookup(name) {
+            Some(value) => pairs.push((name.to_string(), value)),
+            None => {
                 log::warn!("env var '{}' not found in environment, skipping", name);
                 on_log(&format!(
                     "\u{26A0} env var '{}' not found in environment, skipping\n",
@@ -113,6 +127,16 @@ pub(super) fn resolve_env_pairs(
         }
     }
     pairs
+}
+
+/// Test lookup over a fixed set of variables, standing in for the process env.
+#[cfg(test)]
+pub(super) fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+    let vars: std::collections::HashMap<String, String> = vars
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    move |name| vars.get(name).cloned()
 }
 
 /// Load KEY=VALUE pairs from `.Dirigent/.env` relative to `project_root`.
@@ -276,17 +300,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_env_pairs_resolves_names_from_process_env() {
-        // Use a name that is overwhelmingly likely to be set on dev machines.
+    fn resolve_env_pairs_resolves_known_names_and_reports_missing() {
         // We assert that the helper round-trips known-present names, drops
         // unknown ones, and forwards a warning about missing names to on_log.
-        std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123");
+        let env = fake_env(&[("DIRIGENT_TEST_ENV_VAR", "test_value_123")]);
         let mut log_buf = String::new();
-        let pairs = resolve_env_pairs(
+        let pairs = resolve_env_pairs_with(
             "DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n",
             &mut |s| log_buf.push_str(s),
+            env,
         );
-        std::env::remove_var("DIRIGENT_TEST_ENV_VAR");
         assert_eq!(
             pairs,
             vec![(
@@ -306,9 +329,9 @@ mod tests {
 
     #[test]
     fn resolve_env_pairs_strips_legacy_key_equals_value_suffix() {
-        std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value");
-        let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {});
-        std::env::remove_var("DIRIGENT_LEGACY_VAR");
+        let env = fake_env(&[("DIRIGENT_LEGACY_VAR", "real_value")]);
+        let pairs =
+            resolve_env_pairs_with("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {}, env);
         assert_eq!(
             pairs,
             vec![("DIRIGENT_LEGACY_VAR".to_string(), "real_value".to_string())]

@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use claude_pty::ClaudeCode;
 
-use super::cli::{apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs};
+use super::cli::{
+    apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs_with,
+};
 use super::done_hook::DoneHook;
 use super::stream::consume_pty_events;
 use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
@@ -220,10 +222,10 @@ fn extract_session_id(args: &[String]) -> Option<String> {
 /// return [`BackendError::NotFound`], which surfaces a clear "configure path
 /// in Settings" message instead of a cryptic spawn ENOENT.
 fn resolve_claude_binary(cli_path: &str) -> Result<String, BackendError> {
-    if !cli_path.is_empty() {
-        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
-            return Ok(path);
-        }
+    if !cli_path.is_empty()
+        && let Some(path) = crate::settings::resolve_in_path(cli_path)
+    {
+        return Ok(path);
     }
     crate::settings::resolve_in_path("claude").ok_or(BackendError::NotFound { backend: "claude" })
 }
@@ -354,8 +356,21 @@ fn compose_pty_envs(
     project_root: &Path,
     on_log: &mut dyn FnMut(&str),
 ) -> Vec<(String, String)> {
+    compose_pty_envs_with(env_vars, project_root, on_log, |name| {
+        std::env::var(name).ok()
+    })
+}
+
+/// [`compose_pty_envs`] with an injectable lookup for the Settings `env_vars`
+/// names, so tests don't have to mutate the process environment.
+fn compose_pty_envs_with(
+    env_vars: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
     let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
-    envs.extend(resolve_env_pairs(env_vars, on_log));
+    envs.extend(resolve_env_pairs_with(env_vars, on_log, lookup));
     envs.extend(load_dirigent_env_pairs(project_root, on_log));
     envs
 }
@@ -363,45 +378,9 @@ fn compose_pty_envs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude::cli::{apply_env_vars_with, fake_env};
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
-
-    /// RAII guard that sets a process env var on creation and restores the
-    /// previous value (or removes it) on drop — even if the test panics.
-    /// Holds a process-wide lock to serialize env mutations across parallel tests.
-    struct EnvVarGuard {
-        key: &'static str,
-        prev: Option<OsString>,
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-            let prev = std::env::var_os(key);
-            // SAFETY: test-only; the guard ensures restore-on-drop.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key,
-                prev,
-                _lock: lock,
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                // SAFETY: test-only restore of the previous value.
-                Some(v) => unsafe { std::env::set_var(self.key, v) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-            // _lock is dropped after this, releasing the mutex
-        }
-    }
 
     /// Collapse a list of `(key, value)` env pairs the same way the underlying
     /// command builders do: insert in order, last-write wins.
@@ -436,15 +415,25 @@ mod tests {
         )
         .unwrap();
 
-        let _guard = EnvVarGuard::set("DIRIGENT_PRECEDENCE_KEY", "from_process_env");
+        let process_env = [("DIRIGENT_PRECEDENCE_KEY", "from_process_env")];
         let settings_env_vars = "DIRIGENT_PRECEDENCE_KEY\n";
 
         let mut headless_cmd = Command::new("true");
-        apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
+        apply_env_vars_with(
+            &mut headless_cmd,
+            settings_env_vars,
+            &mut |_| {},
+            fake_env(&process_env),
+        );
         apply_dirigent_env(&mut headless_cmd, project_root, &mut |_| {});
         let headless = cmd_envs(&headless_cmd);
 
-        let pty_pairs = compose_pty_envs(settings_env_vars, project_root, &mut |_| {});
+        let pty_pairs = compose_pty_envs_with(
+            settings_env_vars,
+            project_root,
+            &mut |_| {},
+            fake_env(&process_env),
+        );
         let pty = effective_envs(&pty_pairs);
 
         assert_eq!(
@@ -474,18 +463,24 @@ mod tests {
         let project_root = tmp.path();
         // No .Dirigent/.env on purpose — Settings should be the only source.
 
-        let _guard = EnvVarGuard::set("DIRIGENT_SETTINGS_ONLY_KEY", "settings_value");
+        let process_env = [("DIRIGENT_SETTINGS_ONLY_KEY", "settings_value")];
         let settings_env_vars = "DIRIGENT_SETTINGS_ONLY_KEY\n";
 
         let mut headless_cmd = Command::new("true");
-        apply_env_vars(&mut headless_cmd, settings_env_vars, &mut |_| {});
+        apply_env_vars_with(
+            &mut headless_cmd,
+            settings_env_vars,
+            &mut |_| {},
+            fake_env(&process_env),
+        );
         apply_dirigent_env(&mut headless_cmd, project_root, &mut |_| {});
         let headless = cmd_envs(&headless_cmd);
 
-        let pty = effective_envs(&compose_pty_envs(
+        let pty = effective_envs(&compose_pty_envs_with(
             settings_env_vars,
             project_root,
             &mut |_| {},
+            fake_env(&process_env),
         ));
 
         assert_eq!(

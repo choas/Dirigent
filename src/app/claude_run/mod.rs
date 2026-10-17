@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+use super::DirigentApp;
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
-use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::ai_backend::ProviderRunOutcome;
 use crate::claude;
@@ -21,7 +21,7 @@ mod result_pipeline;
 mod run_diff;
 
 use provider_dispatch::{
-    build_pr_hint_text, build_provider_config, resolve_command_prefix, ProviderConfig,
+    ProviderConfig, build_pr_hint_text, build_provider_config, resolve_command_prefix,
 };
 use result_pipeline::run_provider;
 
@@ -717,7 +717,7 @@ impl DirigentApp {
         if let Some(ref error) = result.error {
             self.handle_run_error(result, error);
             true
-        } else if let Some(ref limit_line) = usage_limit_msg {
+        } else if let Some(limit_line) = usage_limit_msg {
             self.handle_rate_limit(result, limit_line);
             true
         } else {
@@ -813,10 +813,10 @@ impl DirigentApp {
 
     /// Reload the conversation history panel if it is showing this cue.
     fn refresh_conversation_history(&mut self, cue_id: i64) {
-        if self.claude.show_log == Some(cue_id) {
-            if let Ok(execs) = self.db.get_all_executions(cue_id) {
-                self.claude.conversation_history = execs;
-            }
+        if self.claude.show_log == Some(cue_id)
+            && let Ok(execs) = self.db.get_all_executions(cue_id)
+        {
+            self.claude.conversation_history = execs;
         }
     }
 
@@ -1264,10 +1264,10 @@ impl DirigentApp {
         // otherwise flood the log every interval.
         let mut failed = 0;
         for (&cue_id, (log_text, _)) in &self.claude.running_logs {
-            if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id) {
-                if self.db.update_execution_log(exec_id, log_text).is_err() {
-                    failed += 1;
-                }
+            if let Some(&exec_id) = self.claude.exec_ids.get(&cue_id)
+                && self.db.update_execution_log(exec_id, log_text).is_err()
+            {
+                failed += 1;
             }
         }
         if failed > 0 {
@@ -1331,10 +1331,10 @@ impl DirigentApp {
                 use std::io::Write;
                 static GLASS_AIFF: &[u8] = include_bytes!("../../../assets/Glass.aiff");
                 let tmp = std::env::temp_dir().join("dirigent_glass.aiff");
-                if !tmp.exists() {
-                    if let Ok(mut f) = std::fs::File::create(&tmp) {
-                        let _ = f.write_all(GLASS_AIFF);
-                    }
+                if !tmp.exists()
+                    && let Ok(mut f) = std::fs::File::create(&tmp)
+                {
+                    let _ = f.write_all(GLASS_AIFF);
                 }
                 let _ = std::process::Command::new("/usr/bin/afplay")
                     .arg(&tmp)

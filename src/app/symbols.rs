@@ -624,11 +624,7 @@ pub(super) fn word_at_offset(line: &str, byte_offset: usize) -> Option<&str> {
         .unwrap_or(byte_offset + 1);
 
     let word = &line[start..end];
-    if word.is_empty() {
-        None
-    } else {
-        Some(word)
-    }
+    if word.is_empty() { None } else { Some(word) }
 }
 
 fn is_word_char(b: u8) -> bool {
@@ -800,12 +796,14 @@ mod tests {
             "        pass".into(),
         ];
         let syms = parse_symbols(&content, "py");
-        assert!(syms
-            .iter()
-            .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class));
-        assert!(syms
-            .iter()
-            .any(|s| s.name == "greet" && s.kind == SymbolKind::Function));
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "Greeter" && s.kind == SymbolKind::Class)
+        );
+        assert!(
+            syms.iter()
+                .any(|s| s.name == "greet" && s.kind == SymbolKind::Function)
+        );
     }
 
     #[test]

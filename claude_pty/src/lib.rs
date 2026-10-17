@@ -54,7 +54,7 @@ pub use event::{
     SessionState, StopHookSummary, TerminalMode,
 };
 pub use portable_pty::ExitStatus;
-pub use session::{replay_chunks, RecordingConfig, RecordingEvent, Session};
+pub use session::{RecordingConfig, RecordingEvent, Session, replay_chunks};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

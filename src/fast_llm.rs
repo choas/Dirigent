@@ -172,13 +172,13 @@ pub fn complete(
     user: &str,
 ) -> Result<String, String> {
     let mut messages = Vec::new();
-    if let Some(sys) = system {
-        if !sys.is_empty() {
-            messages.push(ChatMessage {
-                role: "system",
-                content: sys,
-            });
-        }
+    if let Some(sys) = system
+        && !sys.is_empty()
+    {
+        messages.push(ChatMessage {
+            role: "system",
+            content: sys,
+        });
     }
     messages.push(ChatMessage {
         role: "user",

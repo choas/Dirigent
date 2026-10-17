@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DialogId, DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 /// Truncate `text` to `max` characters. If truncated and `ellipsis` is true, append "…".
 fn truncate(text: &str, max: usize, ellipsis: bool) -> String {

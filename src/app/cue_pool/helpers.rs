@@ -116,10 +116,10 @@ pub(super) fn group_cues_by_status<'a>(
 ) -> HashMap<CueStatus, Vec<&'a Cue>> {
     let mut map: HashMap<CueStatus, Vec<&Cue>> = HashMap::new();
     for cue in cues.iter().rev() {
-        if let Some(ref filter) = source_filter {
-            if cue.source_label.as_deref() != Some(filter.as_str()) {
-                continue;
-            }
+        if let Some(filter) = source_filter
+            && cue.source_label.as_deref() != Some(filter.as_str())
+        {
+            continue;
         }
         map.entry(cue.status).or_default().push(cue);
     }
@@ -176,11 +176,7 @@ fn build_single_cue_subject(cue: &Cue) -> String {
     let trimmed = first_line.trim();
     let trimmed = if trimmed.is_empty() {
         let fallback = cue.text.trim();
-        if fallback.is_empty() {
-            ""
-        } else {
-            fallback
-        }
+        if fallback.is_empty() { "" } else { fallback }
     } else {
         trimmed
     };

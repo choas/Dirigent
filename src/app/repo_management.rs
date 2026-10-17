@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use super::{start_fs_watcher, DirigentApp, NavigationHistory};
+use super::{DirigentApp, NavigationHistory, start_fs_watcher};
 use crate::db::Database;
 use crate::file_tree::FileTree;
 use crate::git;
@@ -109,10 +109,10 @@ impl DirigentApp {
         settings::add_recent_repo(&mut self.settings, &path_str);
         // While the repo's settings await trust approval, skip the write-back
         // so the unapproved settings.json is not clobbered with defaults.
-        if self.pending_trust.is_none() {
-            if let Err(e) = settings::save_settings(&self.project_root, &self.settings) {
-                self.set_status_message(format!("Failed to save settings: {e}"));
-            }
+        if self.pending_trust.is_none()
+            && let Err(e) = settings::save_settings(&self.project_root, &self.settings)
+        {
+            self.set_status_message(format!("Failed to save settings: {e}"));
         }
         // Persist to global list so every app launch remembers this project.
         settings::add_global_recent_project(&path_str);

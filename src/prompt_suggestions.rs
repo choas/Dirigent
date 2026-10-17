@@ -180,16 +180,20 @@ mod tests {
     #[test]
     fn file_mention_in_global_cue_flagged() {
         let suggestions = analyse_prompt("Add error handling to main.rs line 42", false);
-        assert!(suggestions
-            .iter()
-            .any(|s| s.label == "Consider file context"));
+        assert!(
+            suggestions
+                .iter()
+                .any(|s| s.label == "Consider file context")
+        );
     }
 
     #[test]
     fn file_mention_with_context_not_flagged() {
         let suggestions = analyse_prompt("Add error handling to main.rs line 42", true);
-        assert!(!suggestions
-            .iter()
-            .any(|s| s.label == "Consider file context"));
+        assert!(
+            !suggestions
+                .iter()
+                .any(|s| s.label == "Consider file context")
+        );
     }
 }

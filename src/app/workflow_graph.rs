@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::{icon, truncate_str, CueAction, DirigentApp, SPACE_SM, SPACE_XS};
+use super::{CueAction, DirigentApp, SPACE_SM, SPACE_XS, icon, truncate_str};
 use crate::workflow::WorkflowStepStatus;
 
 impl DirigentApp {

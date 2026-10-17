@@ -33,13 +33,7 @@ pub(crate) fn fetch_notion_objects(
 }
 fn sort_notion_objects(objects: &mut [super::super::types::NotionObject]) {
     objects.sort_by(|a, b| {
-        let type_order = |t: &str| -> u8 {
-            if t == "database" {
-                0
-            } else {
-                1
-            }
-        };
+        let type_order = |t: &str| -> u8 { if t == "database" { 0 } else { 1 } };
         type_order(&a.object_type)
             .cmp(&type_order(&b.object_type))
             .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
@@ -693,8 +687,8 @@ fn rich_text_plain(obj: &serde_json::Value) -> String {
 /// 2. Fall back to the `child_page.title` field (returned for some child pages).
 fn extract_notion_page_title(obj: &serde_json::Value) -> String {
     // Strategy 1: properties → first "title"-type property.
-    if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
-        if let Some(title) = props.values().find_map(|prop| {
+    if let Some(props) = obj.get("properties").and_then(|p| p.as_object())
+        && let Some(title) = props.values().find_map(|prop| {
             if prop.get("type")?.as_str()? != "title" {
                 return None;
             }
@@ -708,9 +702,9 @@ fn extract_notion_page_title(obj: &serde_json::Value) -> String {
             } else {
                 Some(parts.join(""))
             }
-        }) {
-            return title;
-        }
+        })
+    {
+        return title;
     }
 
     // Strategy 2: child_page block title (some search results include this).
@@ -718,10 +712,9 @@ fn extract_notion_page_title(obj: &serde_json::Value) -> String {
         .get("child_page")
         .and_then(|cp| cp.get("title"))
         .and_then(|t| t.as_str())
+        && !title.is_empty()
     {
-        if !title.is_empty() {
-            return title.to_string();
-        }
+        return title.to_string();
     }
 
     String::new()

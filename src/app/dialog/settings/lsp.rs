@@ -1,8 +1,8 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS, icon};
 use crate::lsp::{
-    default_lsp_servers, lsp_install_hint, lsp_servers_for_language, LspLanguage, LspServerConfig,
+    LspLanguage, LspServerConfig, default_lsp_servers, lsp_install_hint, lsp_servers_for_language,
 };
 
 struct LspServerStatus {
@@ -366,17 +366,16 @@ impl DirigentApp {
         if let Some(id) = actions.stop_id {
             self.lsp.stop_server(&id);
         }
-        if let Some(start_id) = actions.start_id {
-            if let Some(cfg) = self
+        if let Some(start_id) = actions.start_id
+            && let Some(cfg) = self
                 .settings
                 .lsp_servers
                 .iter()
                 .find(|s| s.id == start_id)
                 .cloned()
-            {
-                let result = self.lsp.start_single(&cfg);
-                self.log_lsp_error(result);
-            }
+        {
+            let result = self.lsp.start_single(&cfg);
+            self.log_lsp_error(result);
         }
         if let Some(name) = actions.install_server_name {
             let hint = lsp_install_hint(&name);

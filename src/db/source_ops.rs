@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use super::types::CueStatus;
 use super::Database;
+use super::types::CueStatus;
 
 /// (id, text, status, file_path, line_number)
 pub(crate) type CueSourceRow = (i64, String, String, String, usize);
@@ -304,22 +304,26 @@ mod tests {
         }
 
         // Verify only the included findings exist
-        assert!(db
-            .get_cue_by_source_ref("pr42:comment:1001")
-            .unwrap()
-            .is_none()); // excluded
-        assert!(db
-            .get_cue_by_source_ref("pr42:comment:1002")
-            .unwrap()
-            .is_some()); // included
-        assert!(db
-            .get_cue_by_source_ref("pr42:issue_comment:2001")
-            .unwrap()
-            .is_none()); // excluded
-        assert!(db
-            .get_cue_by_source_ref("pr42:comment:1003")
-            .unwrap()
-            .is_some()); // included
+        assert!(
+            db.get_cue_by_source_ref("pr42:comment:1001")
+                .unwrap()
+                .is_none()
+        ); // excluded
+        assert!(
+            db.get_cue_by_source_ref("pr42:comment:1002")
+                .unwrap()
+                .is_some()
+        ); // included
+        assert!(
+            db.get_cue_by_source_ref("pr42:issue_comment:2001")
+                .unwrap()
+                .is_none()
+        ); // excluded
+        assert!(
+            db.get_cue_by_source_ref("pr42:comment:1003")
+                .unwrap()
+                .is_some()
+        ); // included
 
         // Verify the included ones have correct data
         let row = db

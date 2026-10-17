@@ -4,8 +4,8 @@ use anyhow::Result;
 use chrono::Local;
 use rusqlite::params;
 
-use super::types::{ActivityEntry, CueHistoryRow};
 use super::Database;
+use super::types::{ActivityEntry, CueHistoryRow};
 
 impl Database {
     // -- Activity log --

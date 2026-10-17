@@ -657,10 +657,10 @@ pub(crate) fn extract_plan_path(log: &str) -> Option<String> {
         };
         if rest.contains(".claude/plans/") {
             let path = rest.trim();
-            if let Some(suffix) = path.strip_prefix("~/") {
-                if let Some(home) = dirs::home_dir() {
-                    return Some(home.join(suffix).to_string_lossy().to_string());
-                }
+            if let Some(suffix) = path.strip_prefix("~/")
+                && let Some(home) = dirs::home_dir()
+            {
+                return Some(home.join(suffix).to_string_lossy().to_string());
             }
             return Some(path.to_string());
         }

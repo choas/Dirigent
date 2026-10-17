@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use crate::db::CueStatus;
@@ -322,12 +322,10 @@ fn strip_runnable_marker(text: &str) -> String {
     let lines: Vec<&str> = text
         .lines()
         .filter_map(|line| {
-            if !found {
-                if let Some(rest) = line.trim_start().strip_prefix(RUNNABLE_TOKEN) {
-                    found = true;
-                    let rest = rest.trim();
-                    return if rest.is_empty() { None } else { Some(rest) };
-                }
+            if !found && let Some(rest) = line.trim_start().strip_prefix(RUNNABLE_TOKEN) {
+                found = true;
+                let rest = rest.trim();
+                return if rest.is_empty() { None } else { Some(rest) };
             }
             Some(line)
         })
@@ -347,11 +345,7 @@ fn fetch_source_items(
 }
 
 fn non_empty_or<'a>(value: &'a str, default: &'a str) -> &'a str {
-    if value.is_empty() {
-        default
-    } else {
-        value
-    }
+    if value.is_empty() { default } else { value }
 }
 
 fn resolve_trello_api_key(source: &settings::SourceConfig, project_root: &Path) -> String {

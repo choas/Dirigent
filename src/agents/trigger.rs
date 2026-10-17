@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::Arc;
 
-use super::execution::{run_agent, AgentResult};
+use super::execution::{AgentResult, run_agent};
 use super::types::{AgentConfig, AgentKind, AgentStatus, AgentTrigger};
 
 // ---------------------------------------------------------------------------

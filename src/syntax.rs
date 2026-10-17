@@ -87,9 +87,9 @@ pub(crate) fn highlight(
 
     let cached = HIGHLIGHT_CACHE.with(|c| {
         let mut inner = c.borrow_mut();
-        let gen = inner.1;
+        let generation = inner.1;
         if let Some(entry) = inner.0.get_mut(&key) {
-            entry.generation = gen;
+            entry.generation = generation;
             return Some(entry.job.clone());
         }
         None
@@ -115,17 +115,17 @@ pub(crate) fn highlight(
 
     HIGHLIGHT_CACHE.with(|c| {
         let mut inner = c.borrow_mut();
-        let (cache, gen) = &mut *inner;
+        let (cache, generation) = &mut *inner;
         if cache.len() >= MAX_CACHE_ENTRIES {
-            let cutoff = gen.saturating_sub(*gen / 2);
+            let cutoff = generation.saturating_sub(*generation / 2);
             cache.retain(|_, v| v.generation >= cutoff);
         }
-        *gen += 1;
+        *generation += 1;
         cache.insert(
             key,
             CacheEntry {
                 job: job.clone(),
-                generation: *gen,
+                generation: *generation,
             },
         );
     });
@@ -149,9 +149,9 @@ pub(crate) fn highlight_galley(
 
     let cached = GALLEY_CACHE.with(|c| {
         let mut inner = c.borrow_mut();
-        let gen = inner.1;
+        let generation = inner.1;
         if let Some(entry) = inner.0.get_mut(&key) {
-            entry.generation = gen;
+            entry.generation = generation;
             return Some(entry.galley.clone());
         }
         None
@@ -167,17 +167,17 @@ pub(crate) fn highlight_galley(
 
     GALLEY_CACHE.with(|c| {
         let mut inner = c.borrow_mut();
-        let (cache, gen) = &mut *inner;
+        let (cache, generation) = &mut *inner;
         if cache.len() >= MAX_CACHE_ENTRIES {
-            let cutoff = gen.saturating_sub(*gen / 2);
+            let cutoff = generation.saturating_sub(*generation / 2);
             cache.retain(|_, v| v.generation >= cutoff);
         }
-        *gen += 1;
+        *generation += 1;
         cache.insert(
             key,
             GalleyEntry {
                 galley: galley.clone(),
-                generation: *gen,
+                generation: *generation,
             },
         );
     });

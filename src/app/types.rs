@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::db::CueStatus;
@@ -559,10 +559,10 @@ impl CodeViewerState {
         if idx + 1 < self.tabs.len() {
             self.tabs.truncate(idx + 1);
         }
-        if let Some(active) = self.active_tab {
-            if active > idx {
-                self.active_tab = Some(idx);
-            }
+        if let Some(active) = self.active_tab
+            && active > idx
+        {
+            self.active_tab = Some(idx);
         }
     }
 }

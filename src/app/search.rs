@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use super::{icon, DirigentApp, SPACE_SM};
+use super::{DirigentApp, SPACE_SM, icon};
 use crate::file_tree::FileEntry;
 
 /// A single match from project-wide search.

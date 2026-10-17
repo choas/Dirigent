@@ -2,7 +2,7 @@ use eframe::egui;
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM};
+use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, icon};
 use crate::settings::{NotionPageType, SourceConfig, SourceKind};
 
 fn notion_type_icon(object_type: &str) -> &'static str {

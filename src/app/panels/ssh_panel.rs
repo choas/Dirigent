@@ -58,10 +58,9 @@ impl DirigentApp {
                 .small_button("\u{2191}")
                 .on_hover_text("Parent directory")
                 .clicked()
+                && let Some(parent) = parent_path(&self.ssh_remote_path)
             {
-                if let Some(parent) = parent_path(&self.ssh_remote_path) {
-                    navigate_to = Some(parent);
-                }
+                navigate_to = Some(parent);
             }
             ui.label(
                 egui::RichText::new(&self.ssh_remote_path)

@@ -96,10 +96,7 @@ fn verify_host_key(session: &Session, host: &str, port: u16) -> Result<(), Strin
             "HOST KEY MISMATCH for '{}' — the server's key does not match known_hosts (possible MITM attack)",
             host
         )),
-        CheckResult::Failure => Err(format!(
-            "failed to verify host key for '{}'",
-            host
-        )),
+        CheckResult::Failure => Err(format!("failed to verify host key for '{}'", host)),
     }
 }
 
@@ -205,13 +202,13 @@ impl SshConnection {
         let stat = sftp
             .stat(Path::new(&resolved))
             .map_err(|e| format!("stat '{}': {}", resolved, e))?;
-        if let Some(size) = stat.size {
-            if size > MAX_FILE_SIZE {
-                return Err(format!(
-                    "file too large: '{}' is {} bytes (limit: {} bytes)",
-                    resolved, size, MAX_FILE_SIZE
-                ));
-            }
+        if let Some(size) = stat.size
+            && size > MAX_FILE_SIZE
+        {
+            return Err(format!(
+                "file too large: '{}' is {} bytes (limit: {} bytes)",
+                resolved, size, MAX_FILE_SIZE
+            ));
         }
 
         let file = sftp

@@ -67,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 if gap > 0.5 || text.contains('❯') {
                     let preview: String = text.chars().take(120).collect();
-                    eprintln!("[{elapsed:.1}s +{gap:.1}s] OUTPUT (cursor={cursor_row},{cursor_col}, has_❯={}): {preview:?}", text.contains('❯'));
+                    eprintln!(
+                        "[{elapsed:.1}s +{gap:.1}s] OUTPUT (cursor={cursor_row},{cursor_col}, has_❯={}): {preview:?}",
+                        text.contains('❯')
+                    );
                 }
             }
             Event::LibDone => {

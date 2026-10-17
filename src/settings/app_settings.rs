@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{default_agents, AgentConfig};
-use crate::lsp::{default_lsp_servers, LspServerConfig};
+use crate::agents::{AgentConfig, default_agents};
+use crate::lsp::{LspServerConfig, default_lsp_servers};
 
-use super::commands::{default_commands, CueCommand};
-use super::playbook::{default_playbook, Play};
+use super::commands::{CueCommand, default_commands};
+use super::playbook::{Play, default_playbook};
 use super::providers::{CliProvider, SourceConfig, SshServer, VcsBackend};
 use super::theme::{CustomTheme, ThemeChoice};
 

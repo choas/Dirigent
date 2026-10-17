@@ -1,8 +1,8 @@
 use eframe::egui;
 
 use crate::agents::{
-    agents_for_language, default_agents, next_custom_id, AgentConfig, AgentKind, AgentLanguage,
-    AgentTrigger,
+    AgentConfig, AgentKind, AgentLanguage, AgentTrigger, agents_for_language, default_agents,
+    next_custom_id,
 };
 use crate::app::{DirigentApp, SPACE_SM, SPACE_XS};
 

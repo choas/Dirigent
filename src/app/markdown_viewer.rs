@@ -48,10 +48,10 @@ impl DirigentApp {
             render_blocks(ui, blocks, &ctx, scroll_target, &mut heading_counter);
 
             // If an internal anchor link was clicked, resolve it to a heading index.
-            if let Some(anchor) = anchor_click.into_inner() {
-                if let Some(idx) = find_heading_index_by_slug(blocks, &anchor) {
-                    self.viewer.scroll_to_heading = Some(idx);
-                }
+            if let Some(anchor) = anchor_click.into_inner()
+                && let Some(idx) = find_heading_index_by_slug(blocks, &anchor)
+            {
+                self.viewer.scroll_to_heading = Some(idx);
             }
             clicked_diagram = mermaid_click.into_inner();
         }
@@ -813,11 +813,7 @@ fn render_checkbox(ui: &mut egui::Ui, checked: bool, segments: &[TextSegment], c
 // ---------------------------------------------------------------------------
 
 fn checkbox_icon(checked: bool) -> &'static str {
-    if checked {
-        "\u{2611}"
-    } else {
-        "\u{2610}"
-    }
+    if checked { "\u{2611}" } else { "\u{2610}" }
 }
 
 fn checkbox_color(checked: bool, semantic: &crate::settings::SemanticColors) -> egui::Color32 {

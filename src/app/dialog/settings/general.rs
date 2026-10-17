@@ -87,19 +87,18 @@ impl DirigentApp {
                 None,
             ));
         }
-        if let ThemeChoice::Custom(ref custom_theme) = self.settings.theme {
-            if ui
+        if let ThemeChoice::Custom(ref custom_theme) = self.settings.theme
+            && ui
                 .small_button("\u{270E}")
                 .on_hover_text("Edit custom theme")
                 .clicked()
-            {
-                let idx = self
-                    .settings
-                    .custom_themes
-                    .iter()
-                    .position(|theme| theme == custom_theme);
-                self.custom_theme_edit = Some(CustomThemeEdit::new(custom_theme.clone(), idx));
-            }
+        {
+            let idx = self
+                .settings
+                .custom_themes
+                .iter()
+                .position(|theme| theme == custom_theme);
+            self.custom_theme_edit = Some(CustomThemeEdit::new(custom_theme.clone(), idx));
         }
     }
 
@@ -727,13 +726,12 @@ impl DirigentApp {
                     .hint_text("default logo")
                     .font(egui::TextStyle::Monospace),
             );
-            if ui.small_button("Browse\u{2026}").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
+            if ui.small_button("Browse\u{2026}").clicked()
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter("Images", &["png", "jpg", "jpeg", "ico", "icns"])
                     .pick_file()
-                {
-                    self.settings.custom_dock_icon_path = path.to_string_lossy().to_string();
-                }
+            {
+                self.settings.custom_dock_icon_path = path.to_string_lossy().to_string();
             }
             if !self.settings.custom_dock_icon_path.is_empty()
                 && ui

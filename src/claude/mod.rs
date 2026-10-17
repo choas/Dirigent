@@ -12,7 +12,7 @@ pub(crate) use diff_parser::{
     parse_diff_from_response, parse_hunk_header, parse_hunk_header_counts,
 };
 pub(crate) use import_cues::{
-    build_import_prompt, extract_pr_label, is_import_request, parse_import_cues, ImportedCue,
+    ImportedCue, build_import_prompt, extract_pr_label, is_import_request, parse_import_cues,
 };
 pub(crate) use invoke::{run_claude_cli, summarize_commit_message_via_cli};
 pub(crate) use prompt::{

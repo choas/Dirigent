@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp};
+use super::super::{DirigentApp, icon};
 use super::ReuseCueData;
 
 impl DirigentApp {

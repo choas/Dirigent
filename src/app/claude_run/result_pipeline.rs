@@ -3,8 +3,8 @@
 //! a single [`super::ClaudeResult`].
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use super::run_diff::{resolve_run_diff, snapshot_dirty_state};
 use super::{ClaudeResult, RunRequest};

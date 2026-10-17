@@ -7,7 +7,7 @@
 //! from a freshly re-read diff, so a file appearing, disappearing or shifting
 //! between refresh and click can never retarget the operation to another file.
 
-use crate::diff_view::{parse_unified_diff, ParsedDiff};
+use crate::diff_view::{ParsedDiff, parse_unified_diff};
 use crate::git;
 
 use super::DirigentApp;

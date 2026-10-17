@@ -1,9 +1,9 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use eframe::egui;
 
-use super::super::{icon, AsyncPoll, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{AsyncPoll, DialogId, DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 /// Actions requested from within the Commit dialog UI, applied after the
 /// window closure has returned so `self` can be mutated freely.

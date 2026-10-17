@@ -281,18 +281,16 @@ pub(crate) fn gather_auto_context(
 
     let mut sections = Vec::new();
 
-    if include_file {
-        if let Some(snippet) =
+    if include_file
+        && let Some(snippet) =
             gather_file_snippet(project_root, file_path, line_number, line_number_end)
-        {
-            sections.push(snippet);
-        }
+    {
+        sections.push(snippet);
     }
 
-    if include_git_diff {
-        if let Some(diff_section) = gather_git_diff_section(project_root, file_path) {
-            sections.push(diff_section);
-        }
+    if include_git_diff && let Some(diff_section) = gather_git_diff_section(project_root, file_path)
+    {
+        sections.push(diff_section);
     }
 
     sections.join("\n\n")
@@ -414,11 +412,7 @@ pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let end = rest.find(end_tag)?;
     let msg = rest[..end].replace("\\n", "\n");
     let msg = reflow_commit_message(msg.trim());
-    if msg.is_empty() {
-        None
-    } else {
-        Some(msg)
-    }
+    if msg.is_empty() { None } else { Some(msg) }
 }
 
 /// Undo the soft word-wrapping the Claude TUI applies when it renders prose to

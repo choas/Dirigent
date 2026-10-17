@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 /// Width reserved for the send button and its surrounding padding.
 const SEND_BUTTON_RESERVED_WIDTH: f32 = 44.0;
@@ -469,12 +469,12 @@ impl DirigentApp {
                 }
             }
         });
-        if let Some(i) = remove_idx {
-            if let Some(imgs) = self.conversation_reply_images.get_mut(&cue_id) {
-                imgs.remove(i);
-                if imgs.is_empty() {
-                    self.conversation_reply_images.remove(&cue_id);
-                }
+        if let Some(i) = remove_idx
+            && let Some(imgs) = self.conversation_reply_images.get_mut(&cue_id)
+        {
+            imgs.remove(i);
+            if imgs.is_empty() {
+                self.conversation_reply_images.remove(&cue_id);
             }
         }
         ui.add_space(SPACE_XS);
@@ -792,7 +792,7 @@ impl DirigentApp {
             } else {
                 self.render_ansi_log(ui, current_running_log);
             }
-        } else if let Some(ref log_text) = log {
+        } else if let Some(log_text) = log {
             if !log_text.is_empty() {
                 match resume_session_id {
                     Some(sid) => self.render_ansi_log_with_resume(ui, log_text, sid),

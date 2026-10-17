@@ -105,20 +105,20 @@ impl DirigentApp {
     /// Handle filesystem changes: rescan file tree, reload tabs, trigger agents.
     pub(super) fn handle_fs_changes(&mut self) {
         // Poll for background git status results
-        if let Ok((root, dirty_files, ahead)) = self.git_status_rx.try_recv() {
-            if root == self.project_root {
-                self.git.dirty_files = dirty_files;
-                self.git
-                    .selected_files
-                    .retain(|f| self.git.dirty_files.contains_key(f));
-                self.git.recompute_dirty_dirs(&self.project_root);
-                self.git.ahead_of_remote = ahead;
-                self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
-                    &self.settings.vcs_backend,
-                    &self.settings.jj_cli_path,
-                    &self.project_root,
-                );
-            }
+        if let Ok((root, dirty_files, ahead)) = self.git_status_rx.try_recv()
+            && root == self.project_root
+        {
+            self.git.dirty_files = dirty_files;
+            self.git
+                .selected_files
+                .retain(|f| self.git.dirty_files.contains_key(f));
+            self.git.recompute_dirty_dirs(&self.project_root);
+            self.git.ahead_of_remote = ahead;
+            self.git.diff_lines = super::vcs_dispatch::compute_diff_lines(
+                &self.settings.vcs_backend,
+                &self.settings.jj_cli_path,
+                &self.project_root,
+            );
         }
 
         // Poll for async PR detection result
@@ -196,11 +196,11 @@ impl DirigentApp {
         let mut seen: HashSet<&PathBuf> = HashSet::new();
         let mut problems: Vec<String> = Vec::new();
         for tab in tabs {
-            if !tab.file_path.is_file() {
-                if let Some(name) = tab.file_path.file_name() {
-                    seen.insert(&tab.file_path);
-                    problems.push(format!("{} (deleted)", name.to_string_lossy()));
-                }
+            if !tab.file_path.is_file()
+                && let Some(name) = tab.file_path.file_name()
+            {
+                seen.insert(&tab.file_path);
+                problems.push(format!("{} (deleted)", name.to_string_lossy()));
             }
         }
         for (path, err) in &result.failed {
@@ -268,10 +268,9 @@ impl DirigentApp {
                 if let Some(new_path) = find_rename_target(old, &appeared_files) {
                     remaps.push((old.clone(), new_path, false));
                 }
-            } else if tab_under_old {
-                if let Some(new_path) = find_rename_target(old, &appeared_dirs) {
-                    remaps.push((old.clone(), new_path, true));
-                }
+            } else if tab_under_old && let Some(new_path) = find_rename_target(old, &appeared_dirs)
+            {
+                remaps.push((old.clone(), new_path, true));
             }
         }
         for (old, new_path, is_dir) in remaps {
@@ -342,8 +341,8 @@ impl DirigentApp {
             self.search.in_files_results = results;
             self.search.in_files_searching = false;
         }
-        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
-            self.apply_goto_def_result(gen, file_path, target_line, msg);
+        if let Ok((generation, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
+            self.apply_goto_def_result(generation, file_path, target_line, msg);
         }
     }
 
@@ -372,10 +371,10 @@ impl DirigentApp {
             return;
         }
         // If definition completed with no result, fall back to regex
-        if !self.lsp.definition_pending {
-            if let Some(word) = self.lsp_goto_def_fallback_word.take() {
-                self.goto_definition(&word);
-            }
+        if !self.lsp.definition_pending
+            && let Some(word) = self.lsp_goto_def_fallback_word.take()
+        {
+            self.goto_definition(&word);
         }
     }
 
@@ -405,12 +404,12 @@ impl DirigentApp {
     /// Apply a go-to-definition result if it matches the current generation.
     pub(super) fn apply_goto_def_result(
         &mut self,
-        gen: u64,
+        generation: u64,
         file_path: PathBuf,
         target_line: usize,
         msg: String,
     ) {
-        if gen != self.goto_def_gen {
+        if generation != self.goto_def_gen {
             return;
         }
         if target_line > 0 {

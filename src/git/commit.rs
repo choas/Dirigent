@@ -45,10 +45,10 @@ fn commit_staged(
 
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
 
-    if let Some(ref parent_commit) = parent {
-        if parent_commit.tree_id() == tree_id {
-            return Err(DirigentError::GitCommand(nothing_msg.into()));
-        }
+    if let Some(ref parent_commit) = parent
+        && parent_commit.tree_id() == tree_id
+    {
+        return Err(DirigentError::GitCommand(nothing_msg.into()));
     }
 
     let parents: Vec<&git2::Commit> = parent.iter().collect();
@@ -393,10 +393,11 @@ fn strip_type_prefix(text: &str) -> &str {
         i += 1;
     }
     // optional scope in parens
-    if i < bytes.len() && bytes[i] == b'(' {
-        if let Some(close) = text[i..].find(')') {
-            i += close + 1;
-        }
+    if i < bytes.len()
+        && bytes[i] == b'('
+        && let Some(close) = text[i..].find(')')
+    {
+        i += close + 1;
     }
     // optional '!'
     if i < bytes.len() && bytes[i] == b'!' {
@@ -857,8 +858,11 @@ mod tests {
         let msg = generate_commit_message("add a button", Some(cli), true);
         assert!(msg.starts_with("feat: added new button component"));
         // Full CLI message (title + body) preserved in body section
-        assert!(msg
-            .contains("Added new button component\n\nThis adds a reusable button with variants."));
+        assert!(
+            msg.contains(
+                "Added new button component\n\nThis adds a reusable button with variants."
+            )
+        );
         assert!(msg.contains("Cue: add a button"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
     }

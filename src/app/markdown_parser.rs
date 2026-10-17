@@ -168,11 +168,7 @@ fn extract_code_language(kind: &CodeBlockKind) -> Option<String> {
     match kind {
         CodeBlockKind::Fenced(lang) => {
             let l = lang.to_string();
-            if l.is_empty() {
-                None
-            } else {
-                Some(l)
-            }
+            if l.is_empty() { None } else { Some(l) }
         }
         CodeBlockKind::Indented => None,
     }
@@ -548,9 +544,11 @@ mod tests {
     #[test]
     fn parse_markdown_thematic_break() {
         let blocks = parse_markdown("---");
-        assert!(blocks
-            .iter()
-            .any(|b| matches!(b, MarkdownBlock::ThematicBreak)));
+        assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, MarkdownBlock::ThematicBreak))
+        );
     }
 
     #[test]
@@ -580,9 +578,11 @@ mod tests {
     fn parse_markdown_table() {
         let md = "| A | B |\n|---|---|\n| 1 | 2 |";
         let blocks = parse_markdown(md);
-        assert!(blocks
-            .iter()
-            .any(|b| matches!(b, MarkdownBlock::Table { .. })));
+        assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, MarkdownBlock::Table { .. }))
+        );
     }
 
     #[test]
@@ -607,9 +607,11 @@ mod tests {
     #[test]
     fn parse_markdown_blockquote() {
         let blocks = parse_markdown("> quoted text");
-        assert!(blocks
-            .iter()
-            .any(|b| matches!(b, MarkdownBlock::BlockQuote { .. })));
+        assert!(
+            blocks
+                .iter()
+                .any(|b| matches!(b, MarkdownBlock::BlockQuote { .. }))
+        );
     }
 
     #[test]
@@ -617,9 +619,11 @@ mod tests {
         let blocks = parse_markdown("[click](https://example.com)");
         assert_eq!(blocks.len(), 1);
         if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
-            assert!(segments
-                .iter()
-                .any(|s| matches!(s, TextSegment::Link { .. })));
+            assert!(
+                segments
+                    .iter()
+                    .any(|s| matches!(s, TextSegment::Link { .. }))
+            );
         } else {
             panic!("expected Paragraph");
         }
@@ -630,9 +634,11 @@ mod tests {
         let blocks = parse_markdown("~~deleted~~");
         assert_eq!(blocks.len(), 1);
         if let MarkdownBlock::Paragraph { segments } = &blocks[0] {
-            assert!(segments
-                .iter()
-                .any(|s| matches!(s, TextSegment::Strikethrough(_))));
+            assert!(
+                segments
+                    .iter()
+                    .any(|s| matches!(s, TextSegment::Strikethrough(_)))
+            );
         } else {
             panic!("expected Paragraph");
         }

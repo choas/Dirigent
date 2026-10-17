@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use crate::app::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 use crate::settings;
 
 impl DirigentApp {

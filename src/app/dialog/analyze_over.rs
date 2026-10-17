@@ -12,10 +12,10 @@ impl DirigentApp {
         self.git.available_branches =
             crate::git::list_all_branches(&self.project_root).unwrap_or_default();
         // Default the head to the current branch when known.
-        if self.analyze_over_head.is_empty() {
-            if let Some(info) = self.git.info.as_ref() {
-                self.analyze_over_head = info.branch.clone();
-            }
+        if self.analyze_over_head.is_empty()
+            && let Some(info) = self.git.info.as_ref()
+        {
+            self.analyze_over_head = info.branch.clone();
         }
         self.dialogs.open(DialogId::AnalyzeOverPicker);
     }

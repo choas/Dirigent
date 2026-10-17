@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_SM};
+use crate::app::{DirigentApp, SPACE_SM, icon};
 use crate::settings::{self, default_playbook};
 
 impl DirigentApp {

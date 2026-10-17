@@ -219,10 +219,11 @@ fn find_untracked_files(repo_path: &Path) -> HashSet<String> {
     if let Some(statuses) = super::collect_statuses(&repo) {
         for entry in statuses.iter() {
             let s = entry.status();
-            if s.intersects(git2::Status::WT_NEW) && !s.intersects(git2::Status::INDEX_NEW) {
-                if let Some(p) = entry.path() {
-                    result.insert(p.to_string());
-                }
+            if s.intersects(git2::Status::WT_NEW)
+                && !s.intersects(git2::Status::INDEX_NEW)
+                && let Some(p) = entry.path()
+            {
+                result.insert(p.to_string());
             }
         }
     }

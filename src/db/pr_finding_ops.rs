@@ -9,8 +9,8 @@
 
 use anyhow::Result;
 
-use super::types::CueStatus;
 use super::Database;
+use super::types::CueStatus;
 use crate::sources::PrFinding;
 
 /// Outcome of importing a batch of findings.

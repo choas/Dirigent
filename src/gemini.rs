@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::ai_backend::{BackendError, BackendRequest, BackendResponse, SharedLog};
 use crate::ai_process;
@@ -220,10 +220,10 @@ fn handle_message_content(
         emit_text(text, final_result, on_log);
     } else if let Some(parts) = content.as_array() {
         for part in parts {
-            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                    emit_text(text, final_result, on_log);
-                }
+            if part.get("type").and_then(|t| t.as_str()) == Some("text")
+                && let Some(text) = part.get("text").and_then(|t| t.as_str())
+            {
+                emit_text(text, final_result, on_log);
             }
         }
     }

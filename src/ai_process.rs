@@ -129,15 +129,17 @@ pub(crate) fn spawn_cancel_watchdog(
     // and the main thread set `done` before this watchdog woke from sleep,
     // checking `done` first would let it exit without killing, leaving
     // `wait_for_child` to block on a still-running process.
-    std::thread::spawn(move || loop {
-        if cancel.load(Ordering::Relaxed) {
-            kill_child(&child);
-            return;
+    std::thread::spawn(move || {
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                kill_child(&child);
+                return;
+            }
+            if done.load(Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
         }
-        if done.load(Ordering::Relaxed) {
-            return;
-        }
-        std::thread::sleep(WATCHDOG_POLL_INTERVAL);
     })
 }
 
@@ -408,11 +410,7 @@ fn handle_hook_spawn_error(
     fail_on_error: bool,
 ) -> Result<(), std::io::Error> {
     on_log(&format!("\u{2717} {} script error: {}\n", label, error));
-    if fail_on_error {
-        Err(error)
-    } else {
-        Ok(())
-    }
+    if fail_on_error { Err(error) } else { Ok(()) }
 }
 
 pub(crate) fn stream_json_payload(line: &str) -> Option<&str> {

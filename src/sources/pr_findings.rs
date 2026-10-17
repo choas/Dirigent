@@ -4,7 +4,7 @@ use std::process::Command;
 use crate::error::DirigentError;
 use crate::git::forgejo::{self, RemoteInfo};
 
-use super::custom::{output_with_timeout, parse_paginated_json, SUBPROCESS_TIMEOUT_SECS};
+use super::custom::{SUBPROCESS_TIMEOUT_SECS, output_with_timeout, parse_paginated_json};
 use super::finding_text::extract_finding_text;
 use super::pr_comments::{
     extract_agent_prompt, extract_all_agent_prompts, is_auto_summary_comment,
@@ -62,11 +62,7 @@ fn should_skip_comment(body: &str) -> bool {
 /// Extract finding text from a comment body, preferring agent prompts.
 fn finding_text_from_body(body: &str) -> Option<String> {
     let text = extract_agent_prompt(body).unwrap_or_else(|| extract_finding_text(body));
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Process inline review comments into findings.

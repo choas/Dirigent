@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::super::{icon, CueAction, DirigentApp, SPACE_XS};
+use super::super::super::{CueAction, DirigentApp, SPACE_XS, icon};
 use crate::db::{Cue, CueStatus};
 
 impl DirigentApp {

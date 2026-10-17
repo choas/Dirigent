@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp};
+use super::super::{DirigentApp, icon};
 use crate::agents::AgentKind;
 use crate::db::AgentRunEntry;
 
@@ -154,11 +154,7 @@ impl DirigentApp {
             )
             .on_hover_text(command)
             .clicked();
-        if clicked {
-            Some(kind)
-        } else {
-            None
-        }
+        if clicked { Some(kind) } else { None }
     }
 
     /// Render a single agent run entry (status, command, output block).

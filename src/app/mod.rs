@@ -41,7 +41,7 @@ mod workflow_run;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 type LinesWithCuesCache = Option<(String, u64, Arc<HashMap<usize, bool>>)>;
@@ -128,8 +128,8 @@ struct InitialProjectState {
     worktrees: Vec<git::WorktreeInfo>,
 }
 use types::{
-    create_tab_state, CodeViewerState, ConnectionTest, CueAction, DiffReview, EditingCue, GitState,
-    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
+    CodeViewerState, ConnectionTest, CueAction, DiffReview, EditingCue, GitState, GitViewDiffMode,
+    NavigationHistory, PendingPlay, SearchState, StagingState, create_tab_state,
 };
 
 /// Set the macOS Dock label and menu bar title to the given project name.
@@ -637,16 +637,15 @@ fn start_fs_watcher(
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                use notify::event::ModifyKind;
                 use notify::EventKind;
+                use notify::event::ModifyKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) => {
-                        if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) {
-                            if let Ok(mut paths) = renames.lock() {
-                                if paths.len() < FS_RENAME_BUFFER_CAP {
-                                    paths.extend(event.paths.iter().cloned());
-                                }
-                            }
+                        if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))
+                            && let Ok(mut paths) = renames.lock()
+                            && paths.len() < FS_RENAME_BUFFER_CAP
+                        {
+                            paths.extend(event.paths.iter().cloned());
                         }
                         flag.store(true, Ordering::Relaxed);
                         if let Some(ctx) = ctx.get() {
@@ -786,10 +785,10 @@ impl DirigentApp {
         }) {
             // While the repo's settings await trust approval, skip the
             // write-back so the unapproved file is not clobbered.
-            if pending_trust.is_none() {
-                if let Err(e) = settings::save_settings(&project_root, &settings) {
-                    log::warn!("Failed to save migrated settings: {e}");
-                }
+            if pending_trust.is_none()
+                && let Err(e) = settings::save_settings(&project_root, &settings)
+            {
+                log::warn!("Failed to save migrated settings: {e}");
             }
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -854,11 +853,11 @@ impl DirigentApp {
             .collect();
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
-        if settings.lsp_enabled {
-            if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
-                log::error!("[lsp] Failed to start servers: {}", e);
-                lsp_manager.log(e);
-            }
+        if settings.lsp_enabled
+            && let Err(e) = lsp_manager.start_servers(&settings.lsp_servers)
+        {
+            log::error!("[lsp] Failed to start servers: {}", e);
+            lsp_manager.log(e);
         }
 
         let initial_diff_lines = if skip_scan {
@@ -1411,7 +1410,7 @@ impl DirigentApp {
         let ready: Vec<i64> = self
             .scheduled_runs
             .iter()
-            .filter(|(_, &when)| now >= when)
+            .filter(|&(_, &when)| now >= when)
             .map(|(&id, _)| id)
             .collect();
         for id in ready {

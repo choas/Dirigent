@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{
-    icon, DialogId, DirigentApp, SemanticColors, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH,
+    DialogId, DirigentApp, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH, SemanticColors, icon,
 };
 
 /// A confirmation dialog whose state lives in an `Option` field rather than in
@@ -144,18 +144,19 @@ impl DirigentApp {
         // dialog list, so every dialog gets dismissal for free. Suppressed
         // while a text edit has focus (Esc there releases focus instead).
         // `Option`-payload confirmations keep their own dedicated handlers.
-        if !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if let Some(id) = self.dialogs.top_modal() {
-                self.close_dialog(id);
-            }
+        if !ctx.text_edit_focused()
+            && ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            && let Some(id) = self.dialogs.top_modal()
+        {
+            self.close_dialog(id);
         }
 
         let suppress = ctx.text_edit_focused() || self.has_modal_open();
 
-        if command_key_pressed(ctx, suppress, egui::Key::N) {
-            if let Err(e) = crate::spawn_new_instance() {
-                self.set_status_message(e);
-            }
+        if command_key_pressed(ctx, suppress, egui::Key::N)
+            && let Err(e) = crate::spawn_new_instance()
+        {
+            self.set_status_message(e);
         }
         if command_key_pressed(ctx, suppress, egui::Key::W) {
             self.notify_lsp_for_active_tab_close();

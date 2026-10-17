@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::agents::{AgentKind, AgentStatus};
 use crate::db::AgentRunEntry;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 impl DirigentApp {
     /// Agent run log rendered in the central panel (replaces code viewer).

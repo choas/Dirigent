@@ -5,7 +5,7 @@ use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;
 
-use super::{detect_pr_number_from_branch, AsyncPoll, DialogId, DirigentApp};
+use super::{AsyncPoll, DialogId, DirigentApp, detect_pr_number_from_branch};
 use crate::db::PrImportCounts;
 
 /// Phrase the outcome of a PR-findings import for the status bar.
@@ -256,10 +256,10 @@ impl DirigentApp {
         // Pre-fill with current branch PR number if available
         if self.git.import_pr_number.is_empty() {
             // Try to detect PR number from current branch
-            if let Some(ref info) = self.git.info {
-                if let Some(num) = detect_pr_number_from_branch(&self.project_root, &info.branch) {
-                    self.git.import_pr_number = num.to_string();
-                }
+            if let Some(ref info) = self.git.info
+                && let Some(num) = detect_pr_number_from_branch(&self.project_root, &info.branch)
+            {
+                self.git.import_pr_number = num.to_string();
             }
         }
     }
@@ -1080,7 +1080,7 @@ impl DirigentApp {
                     match diff {
                         Some(d) => Some(d),
                         None => {
-                            return Err("No changes to commit for the selected files".to_string())
+                            return Err("No changes to commit for the selected files".to_string());
                         }
                     }
                 }

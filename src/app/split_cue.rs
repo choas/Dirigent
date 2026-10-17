@@ -176,12 +176,10 @@ pub(super) fn cleanup_stale_split_references(project_root: &Path, db: &crate::db
         if let Some(id_str) = name
             .strip_prefix("split-ref-")
             .and_then(|s| s.strip_suffix(".md"))
+            && let Ok(id) = id_str.parse::<i64>()
+            && !active_ids.contains(&id)
         {
-            if let Ok(id) = id_str.parse::<i64>() {
-                if !active_ids.contains(&id) {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }

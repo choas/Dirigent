@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::types::CodeLineActions;
-use crate::app::{icon, DirigentApp};
+use crate::app::{DirigentApp, icon};
 
 /// Render the cue input row (images + text field) after the last selected line.
 pub(crate) fn render_cue_input(
@@ -66,13 +66,12 @@ fn render_cue_text_input(
                 .monospace()
                 .color(app.semantic.success),
         );
-        if ui.button("+").on_hover_text("Attach images").clicked() {
-            if let Some(paths) = rfd::FileDialog::new()
+        if ui.button("+").on_hover_text("Attach images").clicked()
+            && let Some(paths) = rfd::FileDialog::new()
                 .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
                 .pick_files()
-            {
-                app.viewer.tabs[active_idx].cue_images.extend(paths);
-            }
+        {
+            app.viewer.tabs[active_idx].cue_images.extend(paths);
         }
         let input_response = ui.add(
             egui::TextEdit::singleline(&mut app.viewer.tabs[active_idx].cue_input)

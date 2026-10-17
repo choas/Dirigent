@@ -6,8 +6,8 @@
 //! background thread; the resulting PNG is decoded into an egui texture and
 //! cached, keyed by the diagram source plus the active light/dark theme.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc;
 

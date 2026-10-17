@@ -4,9 +4,9 @@ use rusqlite::params;
 
 use crate::settings::CliProvider;
 
+use super::Database;
 use super::converters::row_to_execution;
 use super::types::{Execution, ExecutionMetrics, ExecutionStatus};
-use super::Database;
 
 impl Database {
     // -- Execution CRUD --

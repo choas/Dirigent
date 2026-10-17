@@ -79,10 +79,10 @@ impl WorkflowPlan {
                     });
                 }
                 // Preserve pause_after only on the last sub-step.
-                if step.pause_after {
-                    if let Some(last) = new_steps.last_mut() {
-                        last.pause_after = true;
-                    }
+                if step.pause_after
+                    && let Some(last) = new_steps.last_mut()
+                {
+                    last.pause_after = true;
                 }
             }
         }
@@ -243,10 +243,10 @@ fn try_parse_workflow_json(response: &str) -> Option<Vec<LlmWorkflowStep>> {
     // Repair PTY word-wrap damage — collapse line breaks / carriage returns
     // inside JSON string values, then retry all strategies on the repaired text.
     let repaired = repair_pty_line_breaks(response);
-    if repaired != response {
-        if let Some(steps) = try_extract_strategies(&repaired) {
-            return Some(steps);
-        }
+    if repaired != response
+        && let Some(steps) = try_extract_strategies(&repaired)
+    {
+        return Some(steps);
     }
 
     let hash = {

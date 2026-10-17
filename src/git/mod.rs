@@ -47,33 +47,33 @@ fn collect_statuses(repo: &Repository) -> Option<Statuses<'_>> {
     repo.statuses(Some(&mut opts)).ok()
 }
 
-pub(crate) use archive::{archive_worktree_db, list_archived_dbs, ArchivedDb};
+pub(crate) use archive::{ArchivedDb, archive_worktree_db, list_archived_dbs};
 pub(crate) use commit::{
-    commit_all, commit_diff, commit_partial, detect_commit_type, generate_commit_message, git_pull,
-    git_push, move_to_new_branch, revert_files, PullStrategy, DIRIGENT_FOOTER,
+    DIRIGENT_FOOTER, PullStrategy, commit_all, commit_diff, commit_partial, detect_commit_type,
+    generate_commit_message, git_pull, git_push, move_to_new_branch, revert_files,
 };
 pub(crate) use diff::{
-    compare_folders, get_uncommitted_diff, get_working_diff, parse_diff_file_paths_for_repo,
-    try_get_range_diff, FolderCompare,
+    FolderCompare, compare_folders, get_uncommitted_diff, get_working_diff,
+    parse_diff_file_paths_for_repo, try_get_range_diff,
 };
 pub(crate) use history::{
-    count_commits, get_commit_diff, get_commit_message, read_commit_history, CommitInfo,
+    CommitInfo, count_commits, get_commit_diff, get_commit_message, read_commit_history,
 };
 pub(crate) use merge::{
-    detect_merge_operation, get_conflicted_files, merge_abort, merge_continue, rebase_abort,
-    rebase_continue, stage_files, MergeOperation,
+    MergeOperation, detect_merge_operation, get_conflicted_files, merge_abort, merge_continue,
+    rebase_abort, rebase_continue, stage_files,
 };
 pub(crate) use pr::{build_pr_body, create_pull_request, get_default_branch, main_worktree_path};
 pub(crate) use staging::{
-    build_hunk_patch, discard_hunk, get_staged_diff, match_hunk_header, partially_staged_files,
-    snapshot_for_undo, split_into_file_diffs, stage_hunk, unstage_hunk, FileRawDiff,
+    FileRawDiff, build_hunk_patch, discard_hunk, get_staged_diff, match_hunk_header,
+    partially_staged_files, snapshot_for_undo, split_into_file_diffs, stage_hunk, unstage_hunk,
 };
 pub(crate) use status::{
-    format_status_summary, get_ahead_of_remote, get_dirty_files, read_git_info, GitInfo,
+    GitInfo, format_status_summary, get_ahead_of_remote, get_dirty_files, read_git_info,
 };
 pub(crate) use worktree::{
-    checkout_branch, create_branch, create_worktree, list_all_branches, list_branches,
-    list_worktrees, own_branches, prune_worktrees, remove_worktree, WorktreeInfo,
+    WorktreeInfo, checkout_branch, create_branch, create_worktree, list_all_branches,
+    list_branches, list_worktrees, own_branches, prune_worktrees, remove_worktree,
 };
 
 #[cfg(test)]
