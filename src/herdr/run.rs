@@ -78,7 +78,7 @@ pub(crate) fn run_herdr_cli(
     }
     let pane_launch = PaneLaunch {
         cwd: req.project_root.to_string_lossy().into_owned(),
-        label: tab_label(req.prompt),
+        label: tab_label(req.cue_id),
         env,
         command: build_claude_command(&claude_bin, req.model, &args, req.skip_permissions),
         prompt: req.prompt.to_string(),
@@ -399,7 +399,7 @@ mod tests {
     fn pane_launch() -> PaneLaunch {
         PaneLaunch {
             cwd: "/repo".into(),
-            label: "Dirigent: fix".into(),
+            label: "Dirigent #7".into(),
             env: vec![("TOKEN".into(), "s3cret".into())],
             command: "'claude' '--session-id' 'abc'".into(),
             prompt: "fix the bug".into(),
@@ -699,6 +699,7 @@ mod tests {
         std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
         let req = BackendRequest {
             prompt: "p",
+            cue_id: None,
             project_root: dir.path(),
             model: "",
             cli_path: &fake_claude.to_string_lossy(),
@@ -813,6 +814,7 @@ mod tests {
         let req = BackendRequest {
             prompt: "Create a file named hello.txt containing exactly: hi\n\
                      Then reply with the single word: done",
+            cue_id: Some(1),
             project_root: &root,
             model: &model,
             cli_path: "",

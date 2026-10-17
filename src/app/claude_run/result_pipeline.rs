@@ -30,6 +30,7 @@ pub(super) fn run_provider(
     let backend = ai_backend::backend_for(&req.provider);
     let invocation = ai_backend::BackendRequest {
         prompt: req.prompt,
+        cue_id: Some(req.cue_id),
         project_root: req.project_root,
         model: &req.config.model,
         cli_path: &req.config.cli_path,

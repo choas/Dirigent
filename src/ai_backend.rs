@@ -146,6 +146,9 @@ impl std::fmt::Display for BackendError {
 /// apply to them (`extra_args_vec` and `use_pty` are Claude-only today).
 pub(crate) struct BackendRequest<'a> {
     pub prompt: &'a str,
+    /// The cue this run belongs to; `None` for analysis prompts. The Herdr
+    /// backend names its tab after it.
+    pub cue_id: Option<i64>,
     pub project_root: &'a Path,
     pub model: &'a str,
     pub cli_path: &'a str,
@@ -560,6 +563,7 @@ mod tests {
     fn request<'a>(root: &'a Path) -> BackendRequest<'a> {
         BackendRequest {
             prompt: "p",
+            cue_id: None,
             project_root: root,
             model: "",
             cli_path: "",

@@ -29,15 +29,11 @@ pub(crate) fn build_claude_command(
     command
 }
 
-/// Short tab label derived from the prompt.
-pub(crate) fn tab_label(prompt: &str) -> String {
-    const MAX_CHARS: usize = 24;
-    let summary = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
-    let truncated: String = summary.chars().take(MAX_CHARS).collect();
-    if summary.chars().count() > MAX_CHARS {
-        format!("Dirigent: {truncated}\u{2026}")
-    } else {
-        format!("Dirigent: {truncated}")
+/// herdr tab label: `Dirigent #<cue id>`, matching the id on the cue card.
+pub(crate) fn tab_label(cue_id: Option<i64>) -> String {
+    match cue_id {
+        Some(id) => format!("Dirigent #{id}"),
+        None => "Dirigent".to_string(),
     }
 }
 
@@ -85,17 +81,8 @@ mod tests {
     }
 
     #[test]
-    fn tab_label_collapses_whitespace_and_truncates_on_chars() {
-        assert_eq!(tab_label("fix\n  the   bug"), "Dirigent: fix the bug");
-        let long = "ä".repeat(30);
-        assert_eq!(
-            tab_label(&long),
-            format!("Dirigent: {}\u{2026}", "ä".repeat(24))
-        );
-        // Exactly at the limit: no ellipsis, even for multi-byte text.
-        assert_eq!(
-            tab_label(&"ü".repeat(24)),
-            format!("Dirigent: {}", "ü".repeat(24))
-        );
+    fn tab_label_names_the_cue() {
+        assert_eq!(tab_label(Some(42)), "Dirigent #42");
+        assert_eq!(tab_label(None), "Dirigent");
     }
 }

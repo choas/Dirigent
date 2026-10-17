@@ -63,6 +63,7 @@ pub(crate) fn summarize_commit_message_via_cli(
 
     let req = BackendRequest {
         prompt: &prompt,
+        cue_id: None,
         project_root,
         model,
         cli_path,

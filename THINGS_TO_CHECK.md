@@ -12,7 +12,8 @@ in the prompt field.
 
 1. **Test Connection** shows a ✓ reply. (Only if nothing else is running in
    herdr: with its server stopped, Test Connection says it is not running.)
-2. **Happy path**: a cue that edits a file. A new herdr tab opens and focuses,
+2. **Happy path**: a cue that edits a file. A new herdr tab named
+   `Dirigent #<cue id>` (the id on the cue card) opens and focuses,
    Claude starts, the prompt arrives as one message (multi-line too), Claude
    works. When it stops, the cue moves to Review with the diff, and the
    conversation shows `You: … / Claude: …` with the trailing
