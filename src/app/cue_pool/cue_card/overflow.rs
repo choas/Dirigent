@@ -107,7 +107,7 @@ impl DirigentApp {
             .map(|i| i.branch == "main" || i.branch == "master")
             .unwrap_or(true);
         if !is_default_branch
-            && !self.git.pr_create_op.in_flight()
+            && !self.git.pr.create_op.in_flight()
             && ui.button("Create PR").clicked()
         {
             actions.push((cue.id, CueAction::CreatePR));

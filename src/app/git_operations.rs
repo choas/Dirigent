@@ -158,17 +158,17 @@ impl DirigentApp {
             .unwrap_or_default();
         // Use branch name as default title (replace hyphens/underscores with spaces)
         let title = branch.replace(['-', '_'], " ");
-        self.git.pr_title = title;
-        self.git.pr_body = String::new();
-        self.git.pr_base = "main".to_string();
-        self.git.pr_draft = false;
+        self.git.pr.title = title;
+        self.git.pr.body = String::new();
+        self.git.pr.base = "main".to_string();
+        self.git.pr.draft = false;
         self.dialogs.open(DialogId::CreatePr);
 
         let root = self.project_root.clone();
         let ctx = std::sync::Arc::clone(&self.egui_ctx);
         // A reopened dialog supersedes any prefill still in flight.
-        self.git.pr_prefill_op.cancel();
-        self.git.pr_prefill_op.spawn_then(
+        self.git.pr.prefill_op.cancel();
+        self.git.pr.prefill_op.spawn_then(
             move || {
                 let base = git::get_default_branch(&root);
                 let body = git::build_pr_body(&root, &base);
@@ -185,31 +185,31 @@ impl DirigentApp {
     /// Apply the async Create PR prefill once it arrives. Fields the user has
     /// already edited in the meantime are left untouched.
     pub(super) fn process_pr_prefill_result(&mut self) {
-        let (base, body) = match self.git.pr_prefill_op.poll() {
+        let (base, body) = match self.git.pr.prefill_op.poll() {
             AsyncPoll::Ready(r) => r,
             _ => return,
         };
         if !self.dialogs.is_open(DialogId::CreatePr) {
             return;
         }
-        if self.git.pr_base == "main" {
-            self.git.pr_base = base;
+        if self.git.pr.base == "main" {
+            self.git.pr.base = base;
         }
-        if self.git.pr_body.is_empty() {
-            self.git.pr_body = body;
+        if self.git.pr.body.is_empty() {
+            self.git.pr.body = body;
         }
     }
 
     /// Start an async PR creation (pushes first, then creates the PR).
     pub(super) fn start_create_pr(&mut self) {
         let root = self.project_root.clone();
-        let title = self.git.pr_title.clone();
-        let body = self.git.pr_body.clone();
-        let base = self.git.pr_base.clone();
-        let draft = self.git.pr_draft;
+        let title = self.git.pr.title.clone();
+        let body = self.git.pr.body.clone();
+        let base = self.git.pr.base.clone();
+        let draft = self.git.pr.draft;
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
-        let started = self.git.pr_create_op.spawn(move || {
+        let started = self.git.pr.create_op.spawn(move || {
             // Push first so the remote branch exists
             let push_result = match backend {
                 VcsBackend::Jj => jj::jj_push(&root, &jj_path),
@@ -229,7 +229,7 @@ impl DirigentApp {
 
     /// Check for completed PR creation.
     pub(super) fn process_pr_result(&mut self) {
-        let result = match self.git.pr_create_op.poll() {
+        let result = match self.git.pr.create_op.poll() {
             AsyncPoll::Idle | AsyncPoll::Pending => return,
             AsyncPoll::Failed => {
                 self.set_status_message("PR creation failed unexpectedly".into());
@@ -244,7 +244,7 @@ impl DirigentApp {
                 self.reload_commit_history();
             }
             Err(e) => {
-                self.git.pr_error_message = e;
+                self.git.pr.error_message = e;
                 self.dialogs.open(DialogId::PrError);
                 self.set_status_message("PR creation failed — see dialog".to_string());
             }
@@ -254,23 +254,23 @@ impl DirigentApp {
     pub(super) fn open_import_pr_dialog(&mut self) {
         self.dialogs.open(DialogId::ImportPr);
         // Pre-fill with current branch PR number if available
-        if self.git.import_pr_number.is_empty() {
+        if self.git.pr.import_number.is_empty() {
             // Try to detect PR number from current branch
             if let Some(ref info) = self.git.info
                 && let Some(num) = detect_pr_number_from_branch(&self.project_root, &info.branch)
             {
-                self.git.import_pr_number = num.to_string();
+                self.git.pr.import_number = num.to_string();
             }
         }
     }
 
     pub(super) fn start_import_pr_findings(&mut self) {
-        if self.git.import_pr_op.in_flight() {
+        if self.git.pr.import_op.in_flight() {
             self.set_status_message("PR import already in progress".to_string());
             return;
         }
 
-        let pr_number: u32 = match self.git.import_pr_number.trim().parse() {
+        let pr_number: u32 = match self.git.pr.import_number.trim().parse() {
             Ok(n) if n > 0 => n,
             _ => {
                 self.set_status_message("Invalid PR number".to_string());
@@ -278,34 +278,34 @@ impl DirigentApp {
             }
         };
 
-        self.git.importing_pr_start = Some(Instant::now());
+        self.git.pr.import_start = Some(Instant::now());
         self.close_dialog(DialogId::ImportPr);
         self.set_status_message(format!("Refreshing PR #{}…", pr_number));
         let project_root = self.project_root.clone();
-        self.git.import_pr_op.spawn(move || {
+        self.git.pr.import_op.spawn(move || {
             crate::sources::fetch_pr_findings(&project_root, pr_number).map_err(|e| e.to_string())
         });
     }
 
     pub(super) fn process_import_pr_result(&mut self) {
-        let result = match self.git.import_pr_op.poll() {
+        let result = match self.git.pr.import_op.poll() {
             AsyncPoll::Idle => return,
             AsyncPoll::Pending => {
-                if let Some(start) = self.git.importing_pr_start {
+                if let Some(start) = self.git.pr.import_start {
                     let secs = start.elapsed().as_secs();
-                    let pr = self.git.import_pr_number.trim();
+                    let pr = self.git.pr.import_number.trim();
                     self.set_status_message(format!("Refreshing PR #{}… ({}s)", pr, secs));
                 }
                 return;
             }
             AsyncPoll::Failed => {
-                self.git.importing_pr_start = None;
+                self.git.pr.import_start = None;
                 self.set_status_message("PR import failed unexpectedly".into());
                 return;
             }
             AsyncPoll::Ready(result) => result,
         };
-        self.git.importing_pr_start = None;
+        self.git.pr.import_start = None;
 
         let findings = match result {
             Ok(f) => f,
@@ -334,9 +334,9 @@ impl DirigentApp {
             new_findings.len(),
             skip_note
         ));
-        self.git.pr_findings_pending = new_findings;
-        self.git.pr_findings_excluded.clear();
-        self.git.pr_filter_patterns_page = false;
+        self.git.pr.findings_pending = new_findings;
+        self.git.pr.findings_excluded.clear();
+        self.git.pr.filter_patterns_page = false;
 
         self.auto_exclude_by_patterns();
 
@@ -357,9 +357,9 @@ impl DirigentApp {
 
     /// Load filter patterns and auto-exclude matching findings.
     fn auto_exclude_by_patterns(&mut self) {
-        self.git.pr_filter_patterns = self.db.list_pr_filter_patterns().unwrap_or_default();
-        for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
-            let dominated = self.git.pr_filter_patterns.iter().any(|pat| {
+        self.git.pr.filter_patterns = self.db.list_pr_filter_patterns().unwrap_or_default();
+        for (idx, finding) in self.git.pr.findings_pending.iter().enumerate() {
+            let dominated = self.git.pr.filter_patterns.iter().any(|pat| {
                 let haystack = match pat.match_field.as_str() {
                     "file_path" => &finding.file_path,
                     _ => &finding.text,
@@ -369,7 +369,7 @@ impl DirigentApp {
                     .contains(&pat.pattern.to_lowercase())
             });
             if dominated {
-                self.git.pr_findings_excluded.insert(idx);
+                self.git.pr.findings_excluded.insert(idx);
             }
         }
     }
@@ -380,7 +380,7 @@ impl DirigentApp {
             self.set_status_message("No actionable findings found in PR".to_string());
             return;
         }
-        let pr_number = self.git.import_pr_number.trim().to_string();
+        let pr_number = self.git.pr.import_number.trim().to_string();
         let tag = format!("PR{}", pr_number);
         let counts = self.db.import_pr_findings(&findings, &tag);
         self.reload_cues();
@@ -389,7 +389,7 @@ impl DirigentApp {
 
     /// Notify a single PR comment that a finding was fixed.
     pub(super) fn start_notify_pr_single(&mut self, cue_id: i64) {
-        if self.git.pr_notify_op.in_flight() {
+        if self.git.pr.notify_op.in_flight() {
             self.set_status_message("PR notification already in progress".to_string());
             return;
         }
@@ -421,7 +421,7 @@ impl DirigentApp {
             .unwrap_or_else(|| "latest commit".to_string());
 
         let project_root = self.project_root.clone();
-        self.git.pr_notify_op.spawn(move || {
+        self.git.pr.notify_op.spawn(move || {
             let result =
                 crate::sources::notify_pr_finding_fixed(&project_root, &source_ref, &commit_hash);
             match result {
@@ -434,7 +434,7 @@ impl DirigentApp {
 
     /// Push and notify all Done PR-sourced cues.
     pub(super) fn start_push_and_notify_pr(&mut self) {
-        if self.git.pr_notify_op.in_flight() {
+        if self.git.pr.notify_op.in_flight() {
             self.set_status_message("PR notification already in progress".to_string());
             return;
         }
@@ -450,7 +450,7 @@ impl DirigentApp {
         let backend = self.settings.vcs_backend.clone();
         let jj_path = self.settings.jj_cli_path.clone();
 
-        self.git.pr_notify_op.spawn(move || {
+        self.git.pr.notify_op.spawn(move || {
             // First push
             let push_result = match backend {
                 VcsBackend::Jj => crate::jj::jj_push(&project_root, &jj_path),
@@ -528,7 +528,7 @@ impl DirigentApp {
     }
 
     pub(super) fn process_pr_notify_result(&mut self) {
-        let result = match self.git.pr_notify_op.poll() {
+        let result = match self.git.pr.notify_op.poll() {
             AsyncPoll::Idle | AsyncPoll::Pending => return,
             AsyncPoll::Failed => {
                 self.set_status_message("PR notify failed unexpectedly".into());

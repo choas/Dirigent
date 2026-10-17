@@ -120,11 +120,11 @@ impl DirigentApp {
         self.dialogs.close(id);
         match id {
             DialogId::PushError => self.git.push_error_message.clear(),
-            DialogId::PrError => self.git.pr_error_message.clear(),
+            DialogId::PrError => self.git.pr.error_message.clear(),
             DialogId::MoveToBranchError => self.git.move_to_branch_error_message.clear(),
             DialogId::PrFilter => {
-                self.git.pr_findings_pending.clear();
-                self.git.pr_findings_excluded.clear();
+                self.git.pr.findings_pending.clear();
+                self.git.pr.findings_excluded.clear();
             }
             DialogId::Commit => self.git.reset_commit_dialog_state(),
             DialogId::RepoPicker => self.cached_existing_repos.clear(),

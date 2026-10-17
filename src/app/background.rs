@@ -461,11 +461,11 @@ impl DirigentApp {
         if !self.scheduled_runs.is_empty() {
             ctx.request_repaint_after(ELAPSED_REPAINT);
         }
-        let has_async_git = self.git.import_pr_op.in_flight()
+        let has_async_git = self.git.pr.import_op.in_flight()
             || self.git.push_op.in_flight()
             || self.git.pull_op.in_flight()
-            || self.git.pr_create_op.in_flight()
-            || self.git.pr_notify_op.in_flight();
+            || self.git.pr.create_op.in_flight()
+            || self.git.pr.notify_op.in_flight();
         if has_async_git {
             ctx.request_repaint_after(REPAINT_SLOW);
         }

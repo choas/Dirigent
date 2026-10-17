@@ -206,7 +206,7 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         actions: &mut Vec<(i64, CueAction)>,
     ) {
-        if !self.git.pr_notify_op.in_flight() && !self.git.push_op.in_flight() {
+        if !self.git.pr.notify_op.in_flight() && !self.git.push_op.in_flight() {
             let btn = egui::Button::new(
                 icon("\u{2191} Push & Notify PR", self.settings.font_size)
                     .color(self.semantic.badge_text),
@@ -219,7 +219,7 @@ impl DirigentApp {
             {
                 actions.push((0, CueAction::PushAndNotifyPR));
             }
-        } else if self.git.pr_notify_op.in_flight() {
+        } else if self.git.pr.notify_op.in_flight() {
             ui.label(
                 egui::RichText::new("Notifying PR...")
                     .small()
@@ -276,7 +276,7 @@ impl DirigentApp {
     }
 
     fn render_refresh_pr_button(&self, ui: &mut egui::Ui, actions: &mut Vec<(i64, CueAction)>) {
-        if self.git.import_pr_op.in_flight() {
+        if self.git.pr.import_op.in_flight() {
             ui.label(
                 egui::RichText::new("Refreshing PR\u{2026}")
                     .small()

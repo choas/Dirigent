@@ -51,8 +51,8 @@ impl DirigentApp {
             return;
         }
 
-        let total = self.git.pr_findings_pending.len();
-        let excluded = self.git.pr_findings_excluded.len();
+        let total = self.git.pr.findings_pending.len();
+        let excluded = self.git.pr.findings_excluded.len();
         let included = total - excluded;
 
         let mut do_import = false;
@@ -71,23 +71,23 @@ impl DirigentApp {
                 ui.horizontal(|ui| {
                     let findings_label = format!("Findings ({})", total);
                     if ui
-                        .selectable_label(!self.git.pr_filter_patterns_page, &findings_label)
+                        .selectable_label(!self.git.pr.filter_patterns_page, &findings_label)
                         .clicked()
                     {
-                        self.git.pr_filter_patterns_page = false;
+                        self.git.pr.filter_patterns_page = false;
                     }
                     let patterns_label =
-                        format!("Ignore Patterns ({})", self.git.pr_filter_patterns.len());
+                        format!("Ignore Patterns ({})", self.git.pr.filter_patterns.len());
                     if ui
-                        .selectable_label(self.git.pr_filter_patterns_page, &patterns_label)
+                        .selectable_label(self.git.pr.filter_patterns_page, &patterns_label)
                         .clicked()
                     {
-                        self.git.pr_filter_patterns_page = true;
+                        self.git.pr.filter_patterns_page = true;
                     }
                 });
                 ui.separator();
 
-                if self.git.pr_filter_patterns_page {
+                if self.git.pr.filter_patterns_page {
                     self.render_patterns_page(ui);
                 } else {
                     self.render_findings_page(
@@ -120,7 +120,7 @@ impl DirigentApp {
         ui.label(format!(
             "Review {} new findings from PR #{}. Exclude items you don't want imported.",
             total,
-            self.git.import_pr_number.trim()
+            self.git.pr.import_number.trim()
         ));
         ui.add_space(SPACE_XS);
 
@@ -134,9 +134,9 @@ impl DirigentApp {
         let create_pattern_from = self.render_findings_list(ui);
 
         if let Some((snippet, field)) = create_pattern_from {
-            self.git.new_pattern_text = snippet;
-            self.git.new_pattern_field = field;
-            self.git.pr_filter_patterns_page = true;
+            self.git.pr.new_pattern_text = snippet;
+            self.git.pr.new_pattern_field = field;
+            self.git.pr.filter_patterns_page = true;
         }
 
         ui.add_space(SPACE_SM);
@@ -161,7 +161,8 @@ impl DirigentApp {
 
         let findings: Vec<(usize, crate::sources::PrFinding)> = self
             .git
-            .pr_findings_pending
+            .pr
+            .findings_pending
             .iter()
             .enumerate()
             .map(|(i, f)| (i, f.clone()))
@@ -186,7 +187,7 @@ impl DirigentApp {
         idx: usize,
         finding: &crate::sources::PrFinding,
     ) -> Option<(String, String)> {
-        let is_excluded = self.git.pr_findings_excluded.contains(&idx);
+        let is_excluded = self.git.pr.findings_excluded.contains(&idx);
         let (card_bg, card_bg_excluded) = self.card_backgrounds();
         let fill = if is_excluded {
             card_bg_excluded
@@ -227,14 +228,14 @@ impl DirigentApp {
                 .on_hover_text("Include this finding")
                 .clicked()
             {
-                self.git.pr_findings_excluded.remove(&idx);
+                self.git.pr.findings_excluded.remove(&idx);
             }
         } else if ui
             .button(egui::RichText::new("\u{2796}").color(self.semantic.danger))
             .on_hover_text("Exclude this finding")
             .clicked()
         {
-            self.git.pr_findings_excluded.insert(idx);
+            self.git.pr.findings_excluded.insert(idx);
         }
     }
 
@@ -304,12 +305,12 @@ impl DirigentApp {
             }
 
             if ui.button("Exclude All").clicked() {
-                for i in 0..self.git.pr_findings_pending.len() {
-                    self.git.pr_findings_excluded.insert(i);
+                for i in 0..self.git.pr.findings_pending.len() {
+                    self.git.pr.findings_excluded.insert(i);
                 }
             }
             if ui.button("Include All").clicked() {
-                self.git.pr_findings_excluded.clear();
+                self.git.pr.findings_excluded.clear();
             }
 
             if ui.button("Cancel").clicked() {
@@ -338,25 +339,26 @@ impl DirigentApp {
     fn render_add_pattern_form(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Pattern:");
-            let te = egui::TextEdit::singleline(&mut self.git.new_pattern_text)
+            let te = egui::TextEdit::singleline(&mut self.git.pr.new_pattern_text)
                 .desired_width(280.0)
                 .hint_text("substring to match…");
             ui.add(te);
             ui.label("in");
-            field_combo(ui, "new_pattern_field", &mut self.git.new_pattern_field);
-            let can_add = !self.git.new_pattern_text.trim().is_empty();
+            field_combo(ui, "new_pattern_field", &mut self.git.pr.new_pattern_field);
+            let can_add = !self.git.pr.new_pattern_text.trim().is_empty();
             if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
-                let pat = self.git.new_pattern_text.trim().to_string();
-                let field = self.git.new_pattern_field.clone();
+                let pat = self.git.pr.new_pattern_text.trim().to_string();
+                let field = self.git.pr.new_pattern_field.clone();
                 if let Ok(id) = self.db.insert_pr_filter_pattern(&pat, &field) {
                     self.git
-                        .pr_filter_patterns
+                        .pr
+                        .filter_patterns
                         .push(crate::db::PrFilterPattern {
                             id,
                             pattern: pat,
                             match_field: field,
                         });
-                    self.git.new_pattern_text.clear();
+                    self.git.pr.new_pattern_text.clear();
                     self.reapply_pr_filter_patterns();
                 }
             }
@@ -375,7 +377,7 @@ impl DirigentApp {
         egui::ScrollArea::vertical()
             .max_height(available.max(100.0))
             .show(ui, |ui| {
-                if self.git.pr_filter_patterns.is_empty() {
+                if self.git.pr.filter_patterns.is_empty() {
                     ui.label(
                         egui::RichText::new("No patterns yet. Add one above or click \"Ignore\" on an excluded finding.")
                             .small()
@@ -386,7 +388,7 @@ impl DirigentApp {
 
                 let patterns: Vec<(i64, String, String)> = self
                     .git
-                    .pr_filter_patterns
+                    .pr.filter_patterns
                     .iter()
                     .map(|p| (p.id, p.pattern.clone(), p.match_field.clone()))
                     .collect();
@@ -426,6 +428,7 @@ impl DirigentApp {
                 .show(ui, |ui| {
                     let is_editing = self
                         .git
+                        .pr
                         .editing_pattern
                         .as_ref()
                         .is_some_and(|(eid, _, _)| *eid == id);
@@ -446,7 +449,7 @@ impl DirigentApp {
         ui: &mut egui::Ui,
         id: i64,
     ) -> Option<(i64, String, String)> {
-        let (_, text, field) = self.git.editing_pattern.as_ref()?;
+        let (_, text, field) = self.git.pr.editing_pattern.as_ref()?;
         let mut edit_text = text.clone();
         let mut edit_field = field.clone();
         let mut cancel = false;
@@ -464,9 +467,9 @@ impl DirigentApp {
         });
 
         if cancel {
-            self.git.editing_pattern = None;
+            self.git.pr.editing_pattern = None;
         } else {
-            self.git.editing_pattern = Some((id, edit_text, edit_field));
+            self.git.pr.editing_pattern = Some((id, edit_text, edit_field));
         }
         save
     }
@@ -502,7 +505,7 @@ impl DirigentApp {
                     .on_hover_text("Edit pattern")
                     .clicked()
                 {
-                    self.git.editing_pattern =
+                    self.git.pr.editing_pattern =
                         Some((id, pattern.to_string(), match_field.to_string()));
                 }
             });
@@ -513,7 +516,7 @@ impl DirigentApp {
     fn handle_pattern_delete(&mut self, id: i64) {
         match self.db.delete_pr_filter_pattern(id) {
             Ok(()) => {
-                self.git.pr_filter_patterns.retain(|p| p.id != id);
+                self.git.pr.filter_patterns.retain(|p| p.id != id);
                 self.reapply_pr_filter_patterns();
             }
             Err(e) => {
@@ -526,17 +529,17 @@ impl DirigentApp {
     fn handle_pattern_save(&mut self, id: i64, text: String, field: String) {
         let trimmed = text.trim().to_string();
         if trimmed.is_empty() {
-            self.git.editing_pattern = None;
+            self.git.pr.editing_pattern = None;
             return;
         }
         match self.db.update_pr_filter_pattern(id, &trimmed, &field) {
             Ok(()) => {
-                if let Some(p) = self.git.pr_filter_patterns.iter_mut().find(|p| p.id == id) {
+                if let Some(p) = self.git.pr.filter_patterns.iter_mut().find(|p| p.id == id) {
                     p.pattern = trimmed;
                     p.match_field = field;
                 }
                 self.reapply_pr_filter_patterns();
-                self.git.editing_pattern = None;
+                self.git.pr.editing_pattern = None;
             }
             Err(e) => {
                 log::error!("Failed to update PR filter pattern {}: {}", id, e);
@@ -547,9 +550,9 @@ impl DirigentApp {
 
     /// Re-apply all patterns to the pending findings, updating the excluded set.
     fn reapply_pr_filter_patterns(&mut self) {
-        self.git.pr_findings_excluded.clear();
-        for (idx, finding) in self.git.pr_findings_pending.iter().enumerate() {
-            for pat in &self.git.pr_filter_patterns {
+        self.git.pr.findings_excluded.clear();
+        for (idx, finding) in self.git.pr.findings_pending.iter().enumerate() {
+            for pat in &self.git.pr.filter_patterns {
                 let haystack = match pat.match_field.as_str() {
                     "file_path" => &finding.file_path,
                     _ => &finding.text,
@@ -558,7 +561,7 @@ impl DirigentApp {
                     .to_lowercase()
                     .contains(&pat.pattern.to_lowercase())
                 {
-                    self.git.pr_findings_excluded.insert(idx);
+                    self.git.pr.findings_excluded.insert(idx);
                     break;
                 }
             }
@@ -568,10 +571,11 @@ impl DirigentApp {
     fn import_filtered_pr_findings(&mut self) {
         let findings: Vec<crate::sources::PrFinding> = self
             .git
-            .pr_findings_pending
+            .pr
+            .findings_pending
             .iter()
             .enumerate()
-            .filter(|(i, _)| !self.git.pr_findings_excluded.contains(i))
+            .filter(|(i, _)| !self.git.pr.findings_excluded.contains(i))
             .map(|(_, f)| f.clone())
             .collect();
 

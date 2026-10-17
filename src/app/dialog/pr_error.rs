@@ -15,7 +15,7 @@ impl DirigentApp {
             ErrorDialogSpec {
                 title: "PR Creation Failed",
                 intro: "Pull request creation failed with the following error:",
-                error_message: &self.git.pr_error_message,
+                error_message: &self.git.pr.error_message,
                 error_max_height: 200.0,
                 create_button: "Create Cue",
                 create_tooltip: "Create a cue for Claude to diagnose and fix the PR creation failure",
@@ -28,7 +28,7 @@ impl DirigentApp {
         if actions.create_cue {
             let cue_text = format!(
                 "PR creation failed. Diagnose and fix the issue so the PR can be created.\n\nError:\n{}",
-                self.git.pr_error_message
+                self.git.pr.error_message
             );
             create_global_error_cue(self, &cue_text, "Created PR error cue in Inbox");
             self.close_pr_error_dialog();

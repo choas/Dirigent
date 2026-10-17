@@ -253,12 +253,12 @@ impl DirigentApp {
             .as_ref()
             .map(|i| i.branch == "main" || i.branch == "master")
             .unwrap_or(true);
-        let pr_label = if self.git.pr_create_op.in_flight() {
+        let pr_label = if self.git.pr.create_op.in_flight() {
             "Creating PR..."
         } else {
             "Create Pull Request"
         };
-        let pr_enabled = !self.git.pr_create_op.in_flight() && !is_default_branch;
+        let pr_enabled = !self.git.pr.create_op.in_flight() && !is_default_branch;
         if ui
             .add_enabled(pr_enabled, egui::Button::new(pr_label))
             .clicked()
@@ -267,14 +267,14 @@ impl DirigentApp {
             ui.close();
         }
 
-        let import_label = if self.git.import_pr_op.in_flight() {
+        let import_label = if self.git.pr.import_op.in_flight() {
             "Importing PR..."
         } else {
             "Import PR Findings"
         };
         if ui
             .add_enabled(
-                !self.git.import_pr_op.in_flight(),
+                !self.git.pr.import_op.in_flight(),
                 egui::Button::new(import_label),
             )
             .clicked()
