@@ -1,5 +1,6 @@
 mod agents;
 mod commands;
+mod connection_test;
 mod general;
 mod lsp;
 mod playbook;
@@ -357,7 +358,7 @@ impl DirigentApp {
                     self.gemini_models.clear();
                     self.spawn_gemini_models_fetch();
                 }
-                CliProvider::Claude | CliProvider::Codex => {}
+                CliProvider::Claude | CliProvider::Codex | CliProvider::Acp => {}
             }
         }
         if let Some(idx) = fetch_idx {

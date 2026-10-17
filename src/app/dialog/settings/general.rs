@@ -33,6 +33,7 @@ impl DirigentApp {
                 self.render_settings_provider_row(ui);
                 self.render_settings_model_row(ui, refresh_models);
                 self.render_settings_cli_paths_row(ui);
+                self.render_connection_test_row(ui);
                 self.render_settings_misc_rows(ui);
             });
     }
@@ -126,6 +127,9 @@ impl DirigentApp {
             CliProvider::OpenCode => self.render_opencode_model_combo(ui, refresh_models),
             CliProvider::Gemini => self.render_gemini_model_combo(ui, refresh_models),
             CliProvider::Codex => self.render_codex_model_combo(ui),
+            CliProvider::Acp => {
+                ui.label(egui::RichText::new("chosen by the agent").weak());
+            }
         }
         ui.end_row();
     }
@@ -234,6 +238,9 @@ impl DirigentApp {
             }
             CliProvider::Codex => {
                 self.render_settings_codex_cli_fields(ui);
+            }
+            CliProvider::Acp => {
+                self.render_settings_acp_cli_fields(ui);
             }
         }
     }
@@ -433,6 +440,60 @@ impl DirigentApp {
             ui,
             "Post-run Script:",
             &mut self.settings.codex_post_run_script,
+            "shell command after run",
+        );
+    }
+
+    fn render_settings_acp_cli_fields(&mut self, ui: &mut egui::Ui) {
+        cli_field(
+            ui,
+            "Agent Command:",
+            &mut self.settings.acp_cli_path,
+            "e.g. npx, opencode, gemini, goose",
+        );
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.acp_extra_args,
+            "e.g. --experimental-acp (gemini), acp (goose)",
+        );
+        ui.label("Protocol:");
+        ui.label(
+            egui::RichText::new("ACP v1 \u{2014} JSON-RPC over stdio, one session per run")
+                .monospace()
+                .weak(),
+        );
+        ui.end_row();
+
+        ui.label("Permissions:");
+        ui.checkbox(
+            &mut self.settings.allow_dangerous_skip_permissions,
+            "Auto-approve the agent's permission requests",
+        )
+        .on_hover_text(
+            "Shared with Claude's --dangerously-skip-permissions setting. When off, \
+             every permission request (edits, commands) is rejected, so the agent \
+             can only work with tools it runs without asking. File access is always \
+             confined to the project root.",
+        );
+        ui.end_row();
+
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.acp_pre_run_script,
+            "shell command before run",
+        );
+        cli_field(
+            ui,
+            "Env Variables:",
+            &mut self.settings.acp_env_vars,
+            "KEY=VAL, one per line",
+        );
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.acp_post_run_script,
             "shell command after run",
         );
     }

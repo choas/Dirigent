@@ -33,6 +33,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 - **Cue system** — Select lines in the code viewer and create cues describing what you want changed; each cue carries a file path, line range, and natural-language prompt
 - **Cue pool (kanban)** — Track cues through stages: Inbox → Ready → Review → Done → Archived, with a Backlog column for long-term items; bulk actions on Review and Done columns
 - **Claude Code integration** — Spawns Claude Code under a real PTY (via the `claude_pty` crate), auto-accepts tool confirmations, and streams progress as typed events in real time; configurable model (Opus 4.6, Sonnet 4.6), CLI path, and extra arguments; graceful shutdown with idle-timeout detection
+- **ACP agents** — Run cues through any [Agent Client Protocol](https://agentclientprotocol.com) agent (OpenCode, Gemini CLI, Goose, Claude Code/Codex adapters, …) via the "ACP Agent" provider; see [docs/How_to_ACP.md](docs/How_to_ACP.md)
 - **OpenCode support** — Alternative CLI backend supporting multiple providers: OpenAI (o3, o3-mini), Anthropic (Sonnet/Opus), and Google (Gemini 2.5 Pro/Flash)
 - **Conversation history** — View the full conversation log for each cue, including all past executions and live streaming output; rendered with full Markdown support (code blocks, tables, lists, blockquotes); searchable prompt history for reuse
 - **Reply workflow** — Send follow-up feedback on diffs for iterative refinement without creating a new cue
@@ -313,6 +314,7 @@ src/
 │   └── types.rs              — Source data types
 ├── syntax.rs                 — Extended syntax highlighting (Kotlin, Dart)
 ├── opencode.rs               — OpenCode CLI support (multi-provider backend)
+├── acp/                      — Agent Client Protocol client (ACP Agent provider)
 ├── diff_view.rs              — Unified diff parsing, inline and side-by-side rendering
 ├── error.rs                  — Unified error types (DirigentError, Result alias)
 ├── file_tree.rs              — Recursive directory scanning with ignore patterns
