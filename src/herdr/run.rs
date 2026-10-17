@@ -796,4 +796,54 @@ mod tests {
         assert_eq!(from_pane.stdout, "pane says hi");
         assert_eq!(from_pane.num_turns, None, "unknown, not zero");
     }
+
+    /// End-to-end against a running herdr and a real Claude Code (costs a few
+    /// tokens, opens a herdr tab):
+    /// `cargo test herdr_smoke -- --ignored --nocapture`
+    /// `HERDR_SMOKE_MODEL` overrides the model (default `haiku`). It runs in a
+    /// fresh temp dir, so Claude asks whether to trust the folder: answer
+    /// "Yes" in the herdr tab and the run continues.
+    #[test]
+    #[ignore]
+    fn herdr_smoke_real_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let model = std::env::var("HERDR_SMOKE_MODEL").unwrap_or_else(|_| "haiku".into());
+        let session = vec!["--session-id".to_string(), uuid::Uuid::new_v4().to_string()];
+        let req = BackendRequest {
+            prompt: "Create a file named hello.txt containing exactly: hi\n\
+                     Then reply with the single word: done",
+            project_root: &root,
+            model: &model,
+            cli_path: "",
+            herdr_cli_path: "",
+            extra_args: "",
+            extra_args_vec: &session,
+            env_vars: "",
+            pre_run_script: "",
+            post_run_script: "",
+            hook_trust: crate::ai_backend::HookScriptTrust::Trusted,
+            skip_permissions: true,
+            use_pty: true,
+            read_only: false,
+        };
+        let response = run_herdr_cli(
+            &req,
+            &mut |s| eprint!("{s}"),
+            &Arc::new(AtomicBool::new(false)),
+        )
+        .expect("herdr run");
+        eprintln!(
+            "--- response ---\n{}\n--- {:?} turns",
+            response.stdout, response.num_turns
+        );
+        assert!(response.stdout.contains("done"), "{}", response.stdout);
+        assert_eq!(
+            std::fs::read_to_string(root.join("hello.txt"))
+                .unwrap()
+                .trim(),
+            "hi"
+        );
+        assert!(response.num_turns.unwrap_or(0) >= 1);
+    }
 }
