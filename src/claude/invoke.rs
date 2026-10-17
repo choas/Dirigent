@@ -66,6 +66,7 @@ pub(crate) fn summarize_commit_message_via_cli(
         project_root,
         model,
         cli_path,
+        herdr_cli_path: "",
         extra_args,
         extra_args_vec: &[],
         env_vars,

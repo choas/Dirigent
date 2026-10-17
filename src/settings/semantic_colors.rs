@@ -190,6 +190,16 @@ impl SemanticColors {
             CliProvider::Gemini => self.gemini_color(),
             CliProvider::Codex => self.codex_color(),
             CliProvider::Acp => self.acp_color(),
+            CliProvider::Herdr => self.herdr_color(),
+        }
+    }
+
+    /// Coral, distinct from Claude's tan even though Herdr runs Claude Code.
+    pub fn herdr_color(&self) -> egui::Color32 {
+        if self.is_dark {
+            egui::Color32::from_rgb(240, 135, 115)
+        } else {
+            egui::Color32::from_rgb(175, 70, 50)
         }
     }
 

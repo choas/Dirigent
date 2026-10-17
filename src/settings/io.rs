@@ -309,6 +309,7 @@ fn detect_cli_paths(settings: &mut Settings) {
     fill_cli_path(&mut settings.claude_cli_path, "claude");
     fill_cli_path(&mut settings.opencode_cli_path, "opencode");
     fill_cli_path(&mut settings.codex_cli_path, "codex");
+    fill_cli_path(&mut settings.herdr_cli_path, "herdr");
     fill_cli_path(&mut settings.jj_cli_path, "jj");
 }
 

@@ -58,6 +58,9 @@ pub(crate) enum CliProvider {
     Gemini,
     Codex,
     Acp,
+    /// Native, interactive Claude Code in a herdr pane: Dirigent hands over
+    /// the prompt and collects the diff, transcript and metrics.
+    Herdr,
 }
 
 impl CliProvider {
@@ -68,6 +71,7 @@ impl CliProvider {
             CliProvider::Gemini => "Gemini",
             CliProvider::Codex => "Codex",
             CliProvider::Acp => "ACP Agent",
+            CliProvider::Herdr => "Herdr",
         }
     }
 
@@ -78,6 +82,7 @@ impl CliProvider {
             CliProvider::Gemini,
             CliProvider::Codex,
             CliProvider::Acp,
+            CliProvider::Herdr,
         ]
     }
 }

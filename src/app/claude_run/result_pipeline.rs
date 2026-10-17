@@ -33,6 +33,7 @@ pub(super) fn run_provider(
         project_root: req.project_root,
         model: &req.config.model,
         cli_path: &req.config.cli_path,
+        herdr_cli_path: &req.config.herdr_cli_path,
         extra_args: &req.config.extra_args,
         extra_args_vec: &req.config.extra_args_vec,
         env_vars: &req.config.env_vars,

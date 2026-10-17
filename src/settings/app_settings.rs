@@ -234,6 +234,11 @@ pub(crate) struct Settings {
     pub acp_pre_run_script: String,
     #[serde(default)]
     pub acp_post_run_script: String,
+    /// Path to the `herdr` CLI (auto-detected on first launch). The Herdr
+    /// provider runs Claude Code in a herdr pane and otherwise uses the
+    /// Claude settings above (CLI path, model, args, env vars, scripts).
+    #[serde(default)]
+    pub herdr_cli_path: String,
     pub recent_repos: Vec<String>,
     #[serde(default = "default_true")]
     pub notify_sound: bool,
@@ -428,6 +433,16 @@ impl Settings {
                 pre_run_script: &self.acp_pre_run_script,
                 post_run_script: &self.acp_post_run_script,
             },
+            // Herdr runs Claude Code itself, in a herdr pane, so the agent
+            // fields are Claude's; the herdr binary is `herdr_cli_path`.
+            CliProvider::Herdr => ProviderFields {
+                model: &self.claude_model,
+                cli_path: &self.claude_cli_path,
+                extra_args: &self.claude_extra_args,
+                env_vars: &self.claude_env_vars,
+                pre_run_script: &self.claude_pre_run_script,
+                post_run_script: &self.claude_post_run_script,
+            },
         }
     }
 }
@@ -497,6 +512,7 @@ impl Default for Settings {
             acp_env_vars: String::new(),
             acp_pre_run_script: String::new(),
             acp_post_run_script: String::new(),
+            herdr_cli_path: String::new(),
             recent_repos: Vec::new(),
             notify_sound: true,
             notify_popup: true,

@@ -129,6 +129,8 @@ impl DirigentApp {
             CliProvider::Acp => {
                 ui.label(egui::RichText::new("chosen by the agent").weak());
             }
+            // Herdr runs Claude Code, with Claude's model setting.
+            CliProvider::Herdr => self.render_claude_model_combo(ui),
         }
         ui.end_row();
     }
@@ -241,7 +243,67 @@ impl DirigentApp {
             CliProvider::Acp => {
                 self.render_settings_acp_cli_fields(ui);
             }
+            CliProvider::Herdr => {
+                self.render_settings_herdr_cli_fields(ui);
+            }
         }
+    }
+
+    fn render_settings_herdr_cli_fields(&mut self, ui: &mut egui::Ui) {
+        cli_field(
+            ui,
+            "Herdr CLI Path:",
+            &mut self.settings.herdr_cli_path,
+            "not found \u{2014} enter path to herdr",
+        );
+        cli_field(
+            ui,
+            "Claude CLI Path:",
+            &mut self.settings.claude_cli_path,
+            "not found \u{2014} enter path to claude",
+        );
+        cli_field(
+            ui,
+            "Extra Arguments:",
+            &mut self.settings.claude_extra_args,
+            "shared with Claude, e.g. --max-turns 10",
+        );
+
+        ui.label("Behavior:");
+        ui.label(
+            egui::RichText::new(
+                "experimental \u{2014} interactive Claude Code in a new herdr tab you can \
+                 watch and type into; the cue moves to Review when Claude's turn ends",
+            )
+            .weak(),
+        )
+        .on_hover_text(
+            "Needs a running herdr server. Settings env vars and .Dirigent/.env are \
+             passed to the tab's shell through the herdr socket, not on a command \
+             line; the shell's own startup files can still override them. Cancel \
+             interrupts Claude in the pane and closes the pane if it does not exit.",
+        );
+        ui.end_row();
+
+        ui.label("Yolo:");
+        ui.checkbox(
+            &mut self.settings.allow_dangerous_skip_permissions,
+            "Append --dangerously-skip-permissions",
+        );
+        ui.end_row();
+
+        cli_field(
+            ui,
+            "Pre-run Script:",
+            &mut self.settings.claude_pre_run_script,
+            "shared with Claude",
+        );
+        cli_field(
+            ui,
+            "Post-run Script:",
+            &mut self.settings.claude_post_run_script,
+            "shared with Claude",
+        );
     }
 
     fn render_settings_claude_cli_fields(&mut self, ui: &mut egui::Ui) {

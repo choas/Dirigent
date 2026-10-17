@@ -76,6 +76,7 @@ pub(super) fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Executio
         "Gemini" => CliProvider::Gemini,
         "Codex" => CliProvider::Codex,
         "ACP Agent" => CliProvider::Acp,
+        "Herdr" => CliProvider::Herdr,
         _ => CliProvider::Claude,
     };
     let duration_raw: Option<i64> = row.get(9)?;

@@ -131,9 +131,20 @@ pub(super) fn resolve_env_pairs_with(
 
 /// The environment a Claude run gets on top of the inherited one, in
 /// precedence order: Settings `env_vars` (resolved from Dirigent's own
-/// environment via `lookup`), then `.Dirigent/.env`. Later entries win on
-/// duplicate keys, matching `Command::env` and
-/// `portable_pty::CommandBuilder::env`.
+/// environment), then `.Dirigent/.env`. Later entries win on duplicate keys,
+/// matching `Command::env` and `portable_pty::CommandBuilder::env`.
+pub(crate) fn compose_run_envs(
+    env_vars: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+) -> Vec<(String, String)> {
+    compose_run_envs_with(env_vars, project_root, on_log, |name| {
+        std::env::var(name).ok()
+    })
+}
+
+/// [`compose_run_envs`] with an injectable lookup for the Settings `env_vars`
+/// names, so tests don't have to mutate the process environment.
 pub(crate) fn compose_run_envs_with(
     env_vars: &str,
     project_root: &Path,

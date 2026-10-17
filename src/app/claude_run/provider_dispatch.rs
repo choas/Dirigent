@@ -10,6 +10,9 @@ use crate::settings::{self, CliProvider, CueCommand};
 pub(super) struct ProviderConfig {
     pub(super) model: String,
     pub(super) cli_path: String,
+    /// The `herdr` binary; only the Herdr provider uses it (its `cli_path` is
+    /// the Claude CLI launched inside the pane).
+    pub(super) herdr_cli_path: String,
     pub(super) extra_args: String,
     /// Structured args that must not go through shlex::split (e.g. --mcp-config
     /// paths). Passed directly as individual Command::arg entries.
@@ -92,6 +95,7 @@ pub(super) fn build_provider_config(
     ProviderConfig {
         model,
         cli_path,
+        herdr_cli_path: settings.herdr_cli_path.clone(),
         extra_args,
         extra_args_vec,
         env_vars,
