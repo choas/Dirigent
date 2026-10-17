@@ -176,6 +176,8 @@ pub(crate) struct BackendResponse {
     pub cost_usd: Option<f64>,
     pub duration_ms: Option<u64>,
     pub num_turns: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
     pub metadata: Option<ClaudeRunMetadata>,
 }
 
@@ -297,7 +299,8 @@ pub(crate) trait AiBackend: Sync {
                 cost_usd: response.cost_usd,
                 duration_ms: response.duration_ms.unwrap_or(elapsed_ms),
                 num_turns: response.num_turns,
-                ..RunMetrics::default()
+                input_tokens: response.input_tokens,
+                output_tokens: response.output_tokens,
             },
             metadata: response.metadata,
             parse_diff: self.parse_diff_fn(),
@@ -597,8 +600,30 @@ mod tests {
             "a backend that reports no cost must not record zero"
         );
         assert_eq!(outcome.metrics.num_turns, Some(3));
+        assert_eq!(outcome.metrics.input_tokens, None);
+        assert_eq!(outcome.metrics.output_tokens, None);
         // duration_ms is the measured wall clock — tiny but always stamped.
         assert!(outcome.metrics.duration_ms < 60_000);
+    }
+
+    #[test]
+    fn reported_token_counts_reach_the_metrics() {
+        let backend = StubBackend::new(|| {
+            Ok(BackendResponse {
+                input_tokens: Some(1200),
+                output_tokens: Some(34),
+                ..BackendResponse::default()
+            })
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let outcome = backend
+            .invoke(&request(tmp.path()), Box::new(|_| {}), cancel)
+            .expect("run should succeed");
+
+        assert_eq!(outcome.metrics.input_tokens, Some(1200));
+        assert_eq!(outcome.metrics.output_tokens, Some(34));
     }
 
     #[test]
