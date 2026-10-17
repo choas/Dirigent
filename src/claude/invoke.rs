@@ -6,9 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use claude_pty::ClaudeCode;
 
-use super::cli::{
-    apply_dirigent_env, apply_env_vars, load_dirigent_env_pairs, resolve_env_pairs_with,
-};
+use super::cli::{apply_dirigent_env, apply_env_vars, compose_run_envs_with, split_extra_args};
 use super::done_hook::DoneHook;
 use super::stream::consume_pty_events;
 use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
@@ -124,15 +122,7 @@ fn invoke_pty(
     if !req.model.is_empty() {
         builder = builder.model(req.model);
     }
-    let mut all_args: Vec<String> = Vec::new();
-    if !req.extra_args.is_empty() {
-        all_args = shlex::split(req.extra_args).unwrap_or_else(|| {
-            req.extra_args
-                .split_whitespace()
-                .map(String::from)
-                .collect()
-        });
-    }
+    let mut all_args = split_extra_args(req.extra_args);
     all_args.extend_from_slice(req.extra_args_vec);
     // Read the session id from the *full* argv: `--session-id`/`--resume` may
     // arrive via the parsed `extra_args` string, not just `extra_args_vec`. If
@@ -212,7 +202,7 @@ fn invoke_pty(
 /// may appear, regardless of whether it came from the parsed `extra_args`
 /// string or `extra_args_vec`; this returns the value following whichever flag
 /// appears first so the hook and live log see the same session as the PTY.
-fn extract_session_id(args: &[String]) -> Option<String> {
+pub(crate) fn extract_session_id(args: &[String]) -> Option<String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--session-id" || arg == "--resume" {
@@ -229,7 +219,7 @@ fn extract_session_id(args: &[String]) -> Option<String> {
 /// `claude` from PATH so the run still works. Only when nothing resolves do we
 /// return [`BackendError::NotFound`], which surfaces a clear "configure path
 /// in Settings" message instead of a cryptic spawn ENOENT.
-fn resolve_claude_binary(cli_path: &str) -> Result<String, BackendError> {
+pub(crate) fn resolve_claude_binary(cli_path: &str) -> Result<String, BackendError> {
     if !cli_path.is_empty()
         && let Some(path) = crate::settings::resolve_in_path(cli_path)
     {
@@ -255,17 +245,9 @@ fn invoke_headless(
     if !req.model.is_empty() {
         cmd.arg("--model").arg(req.model);
     }
-    if !req.extra_args.is_empty() {
-        let args = shlex::split(req.extra_args).unwrap_or_else(|| {
-            req.extra_args
-                .split_whitespace()
-                .map(String::from)
-                .collect()
-        });
-        for arg in args {
-            if !arg.is_empty() {
-                cmd.arg(arg);
-            }
+    for arg in split_extra_args(req.extra_args) {
+        if !arg.is_empty() {
+            cmd.arg(arg);
         }
     }
     for arg in req.extra_args_vec {
@@ -378,8 +360,12 @@ fn compose_pty_envs_with(
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Vec<(String, String)> {
     let mut envs: Vec<(String, String)> = vec![("FORCE_COLOR".to_string(), "1".to_string())];
-    envs.extend(resolve_env_pairs_with(env_vars, on_log, lookup));
-    envs.extend(load_dirigent_env_pairs(project_root, on_log));
+    envs.extend(compose_run_envs_with(
+        env_vars,
+        project_root,
+        on_log,
+        lookup,
+    ));
     envs
 }
 

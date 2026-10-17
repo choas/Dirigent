@@ -15,7 +15,7 @@ fn settings_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub(super) struct DoneHook {
+pub(crate) struct DoneHook {
     sentinel: PathBuf,
     payload: PathBuf,
     settings_path: PathBuf,
