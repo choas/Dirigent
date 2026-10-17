@@ -552,6 +552,21 @@ fn update_codex_metrics(event: &serde_json::Value, metrics: &mut StreamMetrics) 
     }
 }
 
+/// Last few stderr lines, for exits that happen before any JSON event (e.g.
+/// rejected arguments).
+fn stderr_tail(stderr: &str) -> Option<String> {
+    const MAX_LINES: usize = 3;
+    const MAX_CHARS: usize = 500;
+    let lines: Vec<&str> = stderr.trim().lines().collect();
+    let tail = lines[lines.len().saturating_sub(MAX_LINES)..].join("\n");
+    let char_count = tail.chars().count();
+    let tail: String = tail
+        .chars()
+        .skip(char_count.saturating_sub(MAX_CHARS))
+        .collect();
+    (!tail.is_empty()).then_some(tail)
+}
+
 fn stream_stderr(
     stderr_handle: impl std::io::Read,
     cancel: Arc<AtomicBool>,
@@ -689,7 +704,8 @@ pub(crate) fn invoke_codex_streaming(
         return Err(CodexError::Cancelled);
     }
     if !status.success() {
-        return Err(CodexError::NonZeroExit(status, state.last_error));
+        let reason = state.last_error.or_else(|| stderr_tail(&stderr));
+        return Err(CodexError::NonZeroExit(status, reason));
     }
 
     Ok(CodexResponse {
@@ -812,6 +828,16 @@ mod tests {
         assert_eq!(state.metrics.cost_usd, Some(0.0));
         assert_eq!(state.metrics.duration_ms, Some(0));
         assert_eq!(state.metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn stderr_tail_keeps_the_last_lines() {
+        assert_eq!(stderr_tail("  \n"), None);
+        assert_eq!(
+            stderr_tail("a\nb\nc\nerror: unexpected argument '--foo'\n").as_deref(),
+            Some("b\nc\nerror: unexpected argument '--foo'")
+        );
+        assert_eq!(stderr_tail(&"x".repeat(900)).unwrap().len(), 500);
     }
 
     #[test]

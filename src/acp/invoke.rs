@@ -280,6 +280,51 @@ echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Authentication r
         );
     }
 
+    /// Like `npx`: the leader exits on EOF but leaves a child that ignores
+    /// SIGTERM. Shutdown must still clear the process group.
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_children_left_by_the_leader() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let script = write_script(
+            &root,
+            r#"
+sh -c 'trap "" TERM; while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &
+echo $! > child.pid
+read -r init
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read -r new
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1"}}'
+read -r prompt
+echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
+"#,
+        );
+        invoke_acp_streaming(
+            "x",
+            &root,
+            &config(&script, false),
+            |_| {},
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+
+        let pid: i32 = std::fs::read_to_string(root.join("child.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The orphan is reparented to init, which reaps it shortly after SIGKILL.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child {pid} survived shutdown"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     #[test]
     fn cancel_sends_session_cancel_and_stops() {
         let dir = tempfile::tempdir().unwrap();

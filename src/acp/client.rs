@@ -446,13 +446,14 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     /// ACP v1 has no session teardown request: closing stdin is the signal.
-    /// Agents that ignore it get SIGTERM, then SIGKILL, on their process group.
+    /// Whatever is left of the process group afterwards gets SIGTERM, then
+    /// SIGKILL.
     fn drop(&mut self) {
         self.stdin.take();
         let deadline = Instant::now() + EXIT_GRACE;
         while Instant::now() < deadline {
             if matches!(self.child.try_wait(), Ok(Some(_))) {
-                return;
+                break;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -460,16 +461,26 @@ impl Drop for AcpConnection {
     }
 }
 
+/// Signal the agent's whole process group, not just the leader: a wrapper
+/// such as `npx` can exit on EOF while the adapter it started keeps running.
 fn terminate_process_group(child: &mut Child) {
     #[cfg(unix)]
     {
         let pgid = child.id() as i32;
+        // Reap the leader first so a zombie doesn't count as a live member.
+        let group_alive = |child: &mut Child| {
+            let _ = child.try_wait();
+            unsafe { libc::kill(-pgid, 0) == 0 }
+        };
+        if !group_alive(child) {
+            return;
+        }
         unsafe {
             libc::kill(-pgid, libc::SIGTERM);
         }
         let deadline = Instant::now() + EXIT_GRACE;
         while Instant::now() < deadline {
-            if matches!(child.try_wait(), Ok(Some(_))) {
+            if !group_alive(child) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
