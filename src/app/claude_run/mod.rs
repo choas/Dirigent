@@ -296,6 +296,13 @@ impl DirigentApp {
     }
 
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
+        let provider = self.settings.cli_provider.clone();
+        self.trigger_run_with_provider(cue_id, provider);
+    }
+
+    /// Run a cue with `provider` instead of the configured one (the prompt
+    /// field's experimental herdr button).
+    pub(super) fn trigger_run_with_provider(&mut self, cue_id: i64, provider: CliProvider) {
         if let Err(e) = settings::sync_home_guard_hook(
             &self.project_root,
             self.settings.allow_home_folder_access,
@@ -306,7 +313,6 @@ impl DirigentApp {
 
         // Start tracking immediately so the timer appears in the UI while
         // we build the prompt (which may involve blocking I/O for auto-context).
-        let provider = self.settings.cli_provider.clone();
         self.claude
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
