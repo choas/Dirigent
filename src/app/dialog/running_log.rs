@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 /// Width reserved for the send button and its surrounding padding.
 const SEND_BUTTON_RESERVED_WIDTH: f32 = 44.0;

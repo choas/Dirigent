@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Local;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 /// Validate that a string is a safe SQL identifier (letters, digits, underscores).

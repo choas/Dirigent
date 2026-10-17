@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon_small, vcs_dispatch, DialogId, DirigentApp};
+use super::super::{DialogId, DirigentApp, icon_small, vcs_dispatch};
 
 impl DirigentApp {
     // Feature 4: Repo bar at top

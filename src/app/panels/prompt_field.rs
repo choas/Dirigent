@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 use crate::db::CueStatus;
 use crate::prompt_hints;
 use crate::prompt_suggestions;

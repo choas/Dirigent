@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{DialogId, DirigentApp};
-use super::error_dialog::{create_global_error_cue, render_error_dialog, ErrorDialogSpec};
+use super::error_dialog::{ErrorDialogSpec, create_global_error_cue, render_error_dialog};
 
 impl DirigentApp {
     pub(in crate::app) fn render_pr_error_dialog(&mut self, ctx: &egui::Context) {
@@ -18,8 +18,7 @@ impl DirigentApp {
                 error_message: &self.git.pr_error_message,
                 error_max_height: 200.0,
                 create_button: "Create Cue",
-                create_tooltip:
-                    "Create a cue for Claude to diagnose and fix the PR creation failure",
+                create_tooltip: "Create a cue for Claude to diagnose and fix the PR creation failure",
                 try_again_tooltip: None,
                 suggestion: None,
                 suggestion_color: self.semantic.tertiary_text,

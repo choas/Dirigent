@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use crate::Error;
 use crate::session::RecordingConfig;
 use crate::session::Session;
-use crate::Error;
 
 #[derive(Debug, Clone, Copy)]
 pub enum PermissionMode {

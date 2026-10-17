@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+use super::DirigentApp;
 use super::notifications::send_macos_notification;
 use super::tasks::TaskHandle;
-use super::DirigentApp;
 use crate::agents::AgentTrigger;
 use crate::ai_backend::ProviderRunOutcome;
 use crate::claude;
@@ -21,7 +21,7 @@ mod result_pipeline;
 mod run_diff;
 
 use provider_dispatch::{
-    build_pr_hint_text, build_provider_config, resolve_command_prefix, ProviderConfig,
+    ProviderConfig, build_pr_hint_text, build_provider_config, resolve_command_prefix,
 };
 use result_pipeline::run_provider;
 

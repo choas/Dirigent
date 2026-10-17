@@ -1,8 +1,8 @@
 use eframe::egui;
 
-use crate::app::{icon, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS, icon};
 use crate::lsp::{
-    default_lsp_servers, lsp_install_hint, lsp_servers_for_language, LspLanguage, LspServerConfig,
+    LspLanguage, LspServerConfig, default_lsp_servers, lsp_install_hint, lsp_servers_for_language,
 };
 
 struct LspServerStatus {

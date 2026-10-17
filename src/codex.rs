@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
@@ -40,15 +40,17 @@ fn spawn_child_waiter(
     cancel: Arc<AtomicBool>,
     terminate: Arc<AtomicBool>,
 ) -> std::thread::JoinHandle<std::io::Result<ExitStatus>> {
-    std::thread::spawn(move || loop {
-        if cancel.load(Ordering::Relaxed) || terminate.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            return child.wait();
+    std::thread::spawn(move || {
+        loop {
+            if cancel.load(Ordering::Relaxed) || terminate.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                return child.wait();
+            }
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(WATCHDOG_POLL_INTERVAL);
         }
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        std::thread::sleep(WATCHDOG_POLL_INTERVAL);
     })
 }
 

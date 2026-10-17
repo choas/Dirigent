@@ -176,11 +176,7 @@ fn build_single_cue_subject(cue: &Cue) -> String {
     let trimmed = first_line.trim();
     let trimmed = if trimmed.is_empty() {
         let fallback = cue.text.trim();
-        if fallback.is_empty() {
-            ""
-        } else {
-            fallback
-        }
+        if fallback.is_empty() { "" } else { fallback }
     } else {
         trimmed
     };

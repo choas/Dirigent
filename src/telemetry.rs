@@ -7,7 +7,7 @@
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 static CLIENT: OnceLock<Option<Inner>> = OnceLock::new();
 

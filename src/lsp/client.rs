@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 
 use std::process::ChildStderr;
@@ -997,7 +997,7 @@ fn language_id_from_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_arg, is_safe_command_name, is_safe_env_name, LspClient};
+    use super::{LspClient, is_safe_arg, is_safe_command_name, is_safe_env_name};
 
     #[test]
     fn rejects_command_names_with_shell_metacharacters() {

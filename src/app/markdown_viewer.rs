@@ -813,11 +813,7 @@ fn render_checkbox(ui: &mut egui::Ui, checked: bool, segments: &[TextSegment], c
 // ---------------------------------------------------------------------------
 
 fn checkbox_icon(checked: bool) -> &'static str {
-    if checked {
-        "\u{2611}"
-    } else {
-        "\u{2610}"
-    }
+    if checked { "\u{2611}" } else { "\u{2610}" }
 }
 
 fn checkbox_color(checked: bool, semantic: &crate::settings::SemanticColors) -> egui::Color32 {

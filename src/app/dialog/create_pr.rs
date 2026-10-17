@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DialogId, DirigentApp, SPACE_SM, SPACE_XS};
+use super::super::{DialogId, DirigentApp, SPACE_SM, SPACE_XS, icon};
 
 impl DirigentApp {
     pub(in crate::app) fn render_create_pr_dialog(&mut self, ctx: &egui::Context) {

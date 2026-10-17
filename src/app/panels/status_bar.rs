@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon_small, DirigentApp};
+use super::super::{DirigentApp, icon_small};
 use crate::agents::{AgentKind, AgentStatus};
 use crate::git;
 use crate::settings::VcsBackend;

@@ -412,11 +412,7 @@ pub(crate) fn extract_commit_message(response: &str) -> Option<String> {
     let end = rest.find(end_tag)?;
     let msg = rest[..end].replace("\\n", "\n");
     let msg = reflow_commit_message(msg.trim());
-    if msg.is_empty() {
-        None
-    } else {
-        Some(msg)
-    }
+    if msg.is_empty() { None } else { Some(msg) }
 }
 
 /// Undo the soft word-wrapping the Claude TUI applies when it renders prose to

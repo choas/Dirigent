@@ -4,7 +4,7 @@ use std::process::Command;
 use crate::error::DirigentError;
 use crate::git::forgejo::{self, RemoteInfo};
 
-use super::custom::{output_with_timeout, SUBPROCESS_TIMEOUT_SECS};
+use super::custom::{SUBPROCESS_TIMEOUT_SECS, output_with_timeout};
 
 /// Parse a PR source_ref to extract (pr_number, comment_type, comment_id).
 /// Formats: "pr<N>:comment:<ID>", "pr<N>:issue_comment:<ID>",
@@ -16,7 +16,7 @@ fn parse_pr_source_ref(source_ref: &str) -> Option<(u32, &str, u64)> {
     }
     let pr_num = parts[0].strip_prefix("pr")?.parse().ok()?;
     let comment_type = parts[1]; // "comment", "issue_comment", or "review"
-                                 // Strip the "_<sub>" suffix for review findings (e.g. "123_0" → "123")
+    // Strip the "_<sub>" suffix for review findings (e.g. "123_0" → "123")
     let id_str = parts[2].split('_').next().unwrap_or(parts[2]);
     let comment_id = id_str.parse().ok()?;
     Some((pr_num, comment_type, comment_id))

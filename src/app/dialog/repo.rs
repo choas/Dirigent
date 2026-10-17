@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use super::super::{icon, DialogId, DirigentApp, SPACE_SM};
+use super::super::{DialogId, DirigentApp, SPACE_SM, icon};
 use crate::app::util::expand_tilde;
 use crate::git;
 use crate::jj;
@@ -76,11 +76,7 @@ fn branch_push_status_label(branch: &str, status: Option<&jj::BookmarkPushStatus
 
 fn branch_label_text(label: &str, is_own: bool, accent: egui::Color32) -> egui::RichText {
     let text = egui::RichText::new(label).monospace();
-    if is_own {
-        text.color(accent)
-    } else {
-        text
-    }
+    if is_own { text.color(accent) } else { text }
 }
 
 fn render_checked_out_branch_label(ui: &mut egui::Ui, branch: &str, color: egui::Color32) {

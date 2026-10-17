@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{
-    icon, DialogId, DirigentApp, SemanticColors, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH,
+    DialogId, DirigentApp, SEARCH_PANEL_DEFAULT_WIDTH, SEARCH_PANEL_MIN_WIDTH, SemanticColors, icon,
 };
 
 /// A confirmation dialog whose state lives in an `Option` field rather than in

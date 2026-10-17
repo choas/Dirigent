@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use eframe::egui;
 
-use super::{CueAction, DirigentApp, PendingPlay, FONT_SCALE_SUBHEADING};
+use super::{CueAction, DirigentApp, FONT_SCALE_SUBHEADING, PendingPlay};
 use crate::db::{Cue, CueStatus};
 
 /// (text, file_path, line_number, line_number_end, attached_images)

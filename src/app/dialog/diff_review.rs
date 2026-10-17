@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::{icon, DialogId, DirigentApp, SPACE_LG};
+use super::super::{DialogId, DirigentApp, SPACE_LG, icon};
 use crate::agents::AgentTrigger;
 use crate::claude;
 use crate::db::CueStatus;

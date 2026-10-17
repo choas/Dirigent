@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use super::client::{AcpConnection, ClientPolicy, Turn};
 use super::types::{AcpError, StopReason};

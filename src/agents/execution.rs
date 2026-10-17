@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::diagnostics::{parse_cargo_diagnostics, parse_generic_diagnostics, Diagnostic};
+use super::diagnostics::{Diagnostic, parse_cargo_diagnostics, parse_generic_diagnostics};
 use super::types::{AgentConfig, AgentKind, AgentStatus};
 use crate::sources::{collect_drained, drain_child_pipes};
 
@@ -360,7 +360,7 @@ fn kill_process_tree(child: &std::process::Child) {
     #[cfg(not(unix))]
     {
         let _ = pid; // suppress unused warning
-                     // On non-Unix, just kill the direct child (best effort)
-                     // child.kill() requires &mut, so we can't call it here
+        // On non-Unix, just kill the direct child (best effort)
+        // child.kill() requires &mut, so we can't call it here
     }
 }

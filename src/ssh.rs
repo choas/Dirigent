@@ -96,10 +96,7 @@ fn verify_host_key(session: &Session, host: &str, port: u16) -> Result<(), Strin
             "HOST KEY MISMATCH for '{}' — the server's key does not match known_hosts (possible MITM attack)",
             host
         )),
-        CheckResult::Failure => Err(format!(
-            "failed to verify host key for '{}'",
-            host
-        )),
+        CheckResult::Failure => Err(format!("failed to verify host key for '{}'", host)),
     }
 }
 

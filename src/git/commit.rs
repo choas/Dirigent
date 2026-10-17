@@ -858,8 +858,11 @@ mod tests {
         let msg = generate_commit_message("add a button", Some(cli), true);
         assert!(msg.starts_with("feat: added new button component"));
         // Full CLI message (title + body) preserved in body section
-        assert!(msg
-            .contains("Added new button component\n\nThis adds a reusable button with variants."));
+        assert!(
+            msg.contains(
+                "Added new button component\n\nThis adds a reusable button with variants."
+            )
+        );
         assert!(msg.contains("Cue: add a button"));
         assert!(msg.ends_with(DIRIGENT_FOOTER));
     }

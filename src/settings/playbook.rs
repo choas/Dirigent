@@ -93,17 +93,50 @@ pub(crate) fn substitute_play_variables(
 
 pub(crate) fn default_playbook() -> Vec<Play> {
     vec![
-        Play::new("Documentation (Diataxis)", "Update or generate documentation following the Diataxis framework: tutorials (learning-oriented), how-to guides (task-oriented), reference (information-oriented), and explanation (understanding-oriented). Update README.md to accurately reflect the current state: features, setup instructions, and usage."),
-        Play::new("Verify architecture", "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes."),
-        Play::new("Git Pull", "Run `git pull` to fetch and merge upstream changes. If there are merge conflicts, resolve every conflict thoughtfully — prefer the intent of both sides where possible, and document each decision. After resolving, ensure the project builds and tests pass. Finally, create a file named pull_report_<YYYYMMDD_HHMMSS>.md summarizing: which files had conflicts, what each conflict was, and how you resolved it. If `pull_report_*` is not already listed in .gitignore, add it."),
-        Play::new("Create release", "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`."),
-        Play::new("Security audit", "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings."),
-        Play::new("Check dead code", "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything."),
-        Play::new("Add tests", "Identify untested code paths and write comprehensive tests for the most critical and least covered areas."),
-        Play::new("Fix all warnings", "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them."),
-        Play::new("Commit changes", "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit."),
-        Play::new("Zero day test", "Somebody told me there is an RCE 0-day when this project opens a file. Find it."),
-        Play::with_command("Pin dependency versions", "Detect the project type and its dependency file (e.g. Cargo.toml, package.json, go.mod, requirements.txt, pyproject.toml, pom.xml, build.gradle, Gemfile, etc.). For every dependency that uses a version range, caret (^), tilde (~), wildcard (*), or any specifier that allows automatic minor or patch updates, resolve it to the exact latest version available and pin it (e.g. change ^1.2.3 or ~1.2 to the exact latest version like 1.4.0). This protects against supply-chain attacks where a hijacked package publishes a malicious minor or patch release that gets pulled in automatically. Do not change dependencies that are already pinned to an exact version. IMPORTANT: Only pin a version if it was released more than 24 hours ago. Skip any dependency whose latest version was published within the last 24 hours — a freshly published version has not had time for community vetting and could be a supply-chain attack. After updating, verify the project still builds.",
-            "if [ -f Cargo.toml ]; then awk '/^\\[.*dependencies/{f=1;next} /^\\[/{f=0} f' Cargo.toml | grep -E '=\\s*\"' | grep -v '\"=' || echo 'All Cargo.toml versions are exact pins (=x.y.z)'; elif [ -f package.json ]; then grep -nE '\"[~^>=<*]' package.json || echo 'All package.json versions are exact pins'; elif [ -f requirements.txt ]; then grep -nE '(>=|<=|~=|!=|>|<)' requirements.txt || echo 'All requirements.txt versions are exact pins'; elif [ -f go.mod ]; then cat go.mod; else echo 'No recognized dependency file found'; fi"),
+        Play::new(
+            "Documentation (Diataxis)",
+            "Update or generate documentation following the Diataxis framework: tutorials (learning-oriented), how-to guides (task-oriented), reference (information-oriented), and explanation (understanding-oriented). Update README.md to accurately reflect the current state: features, setup instructions, and usage.",
+        ),
+        Play::new(
+            "Verify architecture",
+            "Analyze the project architecture. Check for structural issues, circular dependencies, inconsistent patterns. Report findings without making changes.",
+        ),
+        Play::new(
+            "Git Pull",
+            "Run `git pull` to fetch and merge upstream changes. If there are merge conflicts, resolve every conflict thoughtfully — prefer the intent of both sides where possible, and document each decision. After resolving, ensure the project builds and tests pass. Finally, create a file named pull_report_<YYYYMMDD_HHMMSS>.md summarizing: which files had conflicts, what each conflict was, and how you resolved it. If `pull_report_*` is not already listed in .gitignore, add it.",
+        ),
+        Play::new(
+            "Create release",
+            "Prepare a release for version {VERSION}: update version numbers to {VERSION}, ensure CHANGELOG is current, verify tests pass, ensure LICENSE file ({LICENSE:MIT,Apache 2.0,BSD 2-Clause,BSD 3-Clause,ISC,MPL 2.0,Unlicense}) is present, create a release commit, create a git tag v{VERSION}, and run `git push && git push --tags`.",
+        ),
+        Play::new(
+            "Security audit",
+            "Check for hardcoded secrets, insecure dependencies, injection vulnerabilities, unsafe code patterns. Report findings.",
+        ),
+        Play::new(
+            "Check dead code",
+            "Find unused functions, unreachable branches, unused imports, stale modules. Report findings without removing anything.",
+        ),
+        Play::new(
+            "Add tests",
+            "Identify untested code paths and write comprehensive tests for the most critical and least covered areas.",
+        ),
+        Play::new(
+            "Fix all warnings",
+            "Detect the project type (e.g. Cargo.toml for Rust, package.json for JS/TS, go.mod for Go, etc.), run the appropriate check/lint command, collect all warnings, and fix every one of them.",
+        ),
+        Play::new(
+            "Commit changes",
+            "Commit all current changes. Open the SQLite database (find the .db file in the repo) and query the cues table for rows with status 'done' or 'review'. Use their titles to write a meaningful commit message summarizing what was accomplished. Then UPDATE any cues with status='review' to status='done'. Finally, stage all changes with git and create the commit.",
+        ),
+        Play::new(
+            "Zero day test",
+            "Somebody told me there is an RCE 0-day when this project opens a file. Find it.",
+        ),
+        Play::with_command(
+            "Pin dependency versions",
+            "Detect the project type and its dependency file (e.g. Cargo.toml, package.json, go.mod, requirements.txt, pyproject.toml, pom.xml, build.gradle, Gemfile, etc.). For every dependency that uses a version range, caret (^), tilde (~), wildcard (*), or any specifier that allows automatic minor or patch updates, resolve it to the exact latest version available and pin it (e.g. change ^1.2.3 or ~1.2 to the exact latest version like 1.4.0). This protects against supply-chain attacks where a hijacked package publishes a malicious minor or patch release that gets pulled in automatically. Do not change dependencies that are already pinned to an exact version. IMPORTANT: Only pin a version if it was released more than 24 hours ago. Skip any dependency whose latest version was published within the last 24 hours — a freshly published version has not had time for community vetting and could be a supply-chain attack. After updating, verify the project still builds.",
+            "if [ -f Cargo.toml ]; then awk '/^\\[.*dependencies/{f=1;next} /^\\[/{f=0} f' Cargo.toml | grep -E '=\\s*\"' | grep -v '\"=' || echo 'All Cargo.toml versions are exact pins (=x.y.z)'; elif [ -f package.json ]; then grep -nE '\"[~^>=<*]' package.json || echo 'All package.json versions are exact pins'; elif [ -f requirements.txt ]; then grep -nE '(>=|<=|~=|!=|>|<)' requirements.txt || echo 'All requirements.txt versions are exact pins'; elif [ -f go.mod ]; then cat go.mod; else echo 'No recognized dependency file found'; fi",
+        ),
     ]
 }

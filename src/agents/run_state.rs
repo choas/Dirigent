@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::Instant;
 
 use super::diagnostics::Diagnostic;

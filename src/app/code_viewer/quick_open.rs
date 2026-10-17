@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::goto_definition::collect_file_paths;
-use crate::app::{icon, DirigentApp, SPACE_MD};
+use crate::app::{DirigentApp, SPACE_MD, icon};
 
 impl DirigentApp {
     /// Quick-open file overlay (Cmd+P).

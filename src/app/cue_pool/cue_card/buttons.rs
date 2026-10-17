@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::super::super::{icon, CueAction, DirigentApp};
+use super::super::super::{CueAction, DirigentApp, icon};
 use super::utils::{format_queue_label, toggle_reply_input};
 use crate::db::{Cue, CueStatus};
 use crate::settings::{SourceKind, VcsBackend};

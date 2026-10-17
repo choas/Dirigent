@@ -16,8 +16,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::fast_llm::ChangeSetGroupRaw;
 use crate::git::FileRawDiff;

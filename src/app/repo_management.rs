@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use super::{start_fs_watcher, DirigentApp, NavigationHistory};
+use super::{DirigentApp, NavigationHistory, start_fs_watcher};
 use crate::db::Database;
 use crate::file_tree::FileTree;
 use crate::git;

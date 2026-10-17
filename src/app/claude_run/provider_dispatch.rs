@@ -55,9 +55,9 @@ pub(super) fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String
             .and_then(|n| n.parse::<u64>().ok())
     {
         return format!(
-                "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
-                text, pr_num,
-            );
+            "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
+            text, pr_num,
+        );
     }
     text.to_string()
 }

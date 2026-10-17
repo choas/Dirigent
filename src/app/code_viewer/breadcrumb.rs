@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::line_rendering::path_matches_diagnostic;
 use super::types::BreadcrumbAction;
-use crate::app::{icon, symbols, DirigentApp, FONT_SCALE_SMALL, FONT_SCALE_SUBHEADING};
+use crate::app::{DirigentApp, FONT_SCALE_SMALL, FONT_SCALE_SUBHEADING, icon, symbols};
 
 impl DirigentApp {
     /// Render the breadcrumb navigation bar and the right-side controls.

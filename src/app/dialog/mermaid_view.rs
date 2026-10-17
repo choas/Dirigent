@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use super::super::mermaid::{self, MermaidState};
 use super::super::DirigentApp;
+use super::super::mermaid::{self, MermaidState};
 
 impl DirigentApp {
     /// Render the enlarged Mermaid diagram viewer: zoomable image plus PNG/SVG

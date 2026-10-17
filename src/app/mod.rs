@@ -41,7 +41,7 @@ mod workflow_run;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 type LinesWithCuesCache = Option<(String, u64, Arc<HashMap<usize, bool>>)>;
@@ -128,8 +128,8 @@ struct InitialProjectState {
     worktrees: Vec<git::WorktreeInfo>,
 }
 use types::{
-    create_tab_state, CodeViewerState, ConnectionTest, CueAction, DiffReview, EditingCue, GitState,
-    GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
+    CodeViewerState, ConnectionTest, CueAction, DiffReview, EditingCue, GitState, GitViewDiffMode,
+    NavigationHistory, PendingPlay, SearchState, StagingState, create_tab_state,
 };
 
 /// Set the macOS Dock label and menu bar title to the given project name.
@@ -637,8 +637,8 @@ fn start_fs_watcher(
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                use notify::event::ModifyKind;
                 use notify::EventKind;
+                use notify::event::ModifyKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) => {
                         if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))

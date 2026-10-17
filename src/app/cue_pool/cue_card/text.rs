@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use eframe::egui;
 use regex::Regex;
 
-use super::super::super::{icon, CueAction, DirigentApp};
+use super::super::super::{CueAction, DirigentApp, icon};
 use super::utils::compute_display_text;
 use crate::db::{Cue, CueStatus};
 

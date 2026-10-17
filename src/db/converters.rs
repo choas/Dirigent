@@ -40,8 +40,7 @@ const COL_WORKFLOW: usize = 13;
 const COL_AUTO_COMMIT: usize = 14;
 
 /// Column list for SELECT queries that feed into [`row_to_cue`].
-pub(super) const CUE_COLUMNS: &str =
-    "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path, has_question, workflow, auto_commit";
+pub(super) const CUE_COLUMNS: &str = "id, text, file_path, line_number, line_number_end, status, source_label, source_id, source_ref, attached_images, tag, plan_path, has_question, workflow, auto_commit";
 
 pub(super) fn row_to_cue(row: &rusqlite::Row) -> rusqlite::Result<Cue> {
     let status_str: String = row.get(COL_STATUS)?;

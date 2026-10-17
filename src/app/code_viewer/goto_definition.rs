@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::app::{symbols, DirigentApp};
+use crate::app::{DirigentApp, symbols};
 use crate::file_tree::FileEntry;
 
 impl DirigentApp {

@@ -11,7 +11,7 @@ use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::{icon, DialogId, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::app::{DialogId, DirigentApp, SPACE_MD, SPACE_SM, SPACE_XS, icon};
 use crate::gemini;
 use crate::opencode;
 use crate::settings;

@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::types::CodeLineActions;
-use crate::app::{icon, DirigentApp};
+use crate::app::{DirigentApp, icon};
 
 /// Render the cue input row (images + text field) after the last selected line.
 pub(crate) fn render_cue_input(

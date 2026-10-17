@@ -321,11 +321,7 @@ pub(crate) fn get_staged_diff(repo_path: &Path, files: &[String]) -> Option<Stri
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).to_string();
-    if s.trim().is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.trim().is_empty() { None } else { Some(s) }
 }
 
 /// Every path that is partially staged — it has both staged (index vs HEAD)

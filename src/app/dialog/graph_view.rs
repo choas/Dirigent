@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use super::super::graph_helpers::{self, GraphPaintCtx};
 use super::super::DirigentApp;
+use super::super::graph_helpers::{self, GraphPaintCtx};
 use crate::settings::VcsBackend;
 
 #[derive(Default)]

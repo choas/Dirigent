@@ -2,9 +2,9 @@ use anyhow::Result;
 use chrono::Local;
 use rusqlite::params;
 
-use super::converters::{row_to_cue, CUE_COLUMNS};
-use super::types::{Cue, CueStatus};
 use super::Database;
+use super::converters::{CUE_COLUMNS, row_to_cue};
+use super::types::{Cue, CueStatus};
 
 impl Database {
     // -- Cue CRUD --

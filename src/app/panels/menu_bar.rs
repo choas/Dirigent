@@ -214,11 +214,7 @@ impl DirigentApp {
     fn render_git_menu_pull_push(&self, ui: &mut egui::Ui, actions: &mut MenuBarActions) {
         let is_jj = self.settings.vcs_backend == VcsBackend::Jj;
         let pull_label = if self.git.pull_op.in_flight() {
-            if is_jj {
-                "Fetching..."
-            } else {
-                "Pulling..."
-            }
+            if is_jj { "Fetching..." } else { "Pulling..." }
         } else if is_jj {
             "Fetch"
         } else {

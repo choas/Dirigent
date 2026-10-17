@@ -7,7 +7,7 @@ use super::cue_input::render_cue_input;
 use super::types::{CodeLineActions, CodeLineContext, LineHighlight};
 use crate::agents::Severity;
 use crate::app::types::DiffLineKind;
-use crate::app::{icon, symbols, DirigentApp, FONT_SCALE_LINE_NUM};
+use crate::app::{DirigentApp, FONT_SCALE_LINE_NUM, icon, symbols};
 
 /// Check whether a relative path matches a diagnostic file path.
 pub(crate) fn path_matches_diagnostic(rel_path: &str, diag_file: &str) -> bool {

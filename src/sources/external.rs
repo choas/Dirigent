@@ -87,11 +87,7 @@ pub(super) fn token_or_env(value: &str, env: &str) -> String {
 
 /// Return `value` if non-empty, otherwise a literal placeholder.
 pub(super) fn nonempty_or<'a>(value: &'a str, placeholder: &'a str) -> &'a str {
-    if value.is_empty() {
-        placeholder
-    } else {
-        value
-    }
+    if value.is_empty() { placeholder } else { value }
 }
 
 /// Build a copy-pasteable shell command that reproduces the request this

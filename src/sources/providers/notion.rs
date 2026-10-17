@@ -33,13 +33,7 @@ pub(crate) fn fetch_notion_objects(
 }
 fn sort_notion_objects(objects: &mut [super::super::types::NotionObject]) {
     objects.sort_by(|a, b| {
-        let type_order = |t: &str| -> u8 {
-            if t == "database" {
-                0
-            } else {
-                1
-            }
-        };
+        let type_order = |t: &str| -> u8 { if t == "database" { 0 } else { 1 } };
         type_order(&a.object_type)
             .cmp(&type_order(&b.object_type))
             .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))

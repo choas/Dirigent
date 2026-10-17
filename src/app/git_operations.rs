@@ -5,7 +5,7 @@ use crate::git;
 use crate::jj;
 use crate::settings::VcsBackend;
 
-use super::{detect_pr_number_from_branch, AsyncPoll, DialogId, DirigentApp};
+use super::{AsyncPoll, DialogId, DirigentApp, detect_pr_number_from_branch};
 use crate::db::PrImportCounts;
 
 /// Phrase the outcome of a PR-findings import for the status bar.
@@ -1080,7 +1080,7 @@ impl DirigentApp {
                     match diff {
                         Some(d) => Some(d),
                         None => {
-                            return Err("No changes to commit for the selected files".to_string())
+                            return Err("No changes to commit for the selected files".to_string());
                         }
                     }
                 }

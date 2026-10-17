@@ -4,13 +4,13 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::app::types::ConnectionTest;
 use crate::app::DirigentApp;
+use crate::app::types::ConnectionTest;
 use crate::settings::{CliProvider, Settings};
 
 const TEST_PROMPT: &str = "hello";

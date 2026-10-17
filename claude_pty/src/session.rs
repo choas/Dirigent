@@ -7,18 +7,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{
-    native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtyPair, PtySize,
+    Child as PtyChild, CommandBuilder, MasterPty, PtyPair, PtySize, native_pty_system,
 };
 use regex::Regex;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::Error;
 use crate::builder::ResolvedSpec;
 use crate::event::{
     ActivitySource, Event, LineSource, PermissionDialog, PermissionDialogKind, PollEvent,
     SessionState, TerminalMode,
 };
-use crate::Error;
 
 #[derive(Debug, Clone)]
 pub struct RecordingConfig {
@@ -1959,9 +1959,11 @@ mod tests {
             ],
         );
         assert!(events.iter().any(|e| matches!(e, Event::TuiPrompt)));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, Event::ProcessExited { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ProcessExited { .. }))
+        );
         assert!(events.iter().any(|e| matches!(e, Event::LibDone)));
         let lines: Vec<&str> = events
             .iter()

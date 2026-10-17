@@ -472,16 +472,20 @@ mod tests {
         init(p);
         let wt = create_worktree(p, "feat").unwrap();
         // Live worktree: not orphaned.
-        assert!(list_worktrees(p)
-            .unwrap()
-            .iter()
-            .any(|w| w.name == "feat" && !w.orphaned));
+        assert!(
+            list_worktrees(p)
+                .unwrap()
+                .iter()
+                .any(|w| w.name == "feat" && !w.orphaned)
+        );
         // Delete the folder by hand -> orphaned, still listed by git.
         std::fs::remove_dir_all(&wt).unwrap();
-        assert!(list_worktrees(p)
-            .unwrap()
-            .iter()
-            .any(|w| w.name == "feat" && w.orphaned));
+        assert!(
+            list_worktrees(p)
+                .unwrap()
+                .iter()
+                .any(|w| w.name == "feat" && w.orphaned)
+        );
         // Prune removes the stale registration.
         prune_worktrees(p).unwrap();
         assert!(!list_worktrees(p).unwrap().iter().any(|w| w.name == "feat"));
