@@ -188,22 +188,21 @@ impl DirigentApp {
             None => return,
         };
         let mut removed_theme_info = None;
-        if let Some(idx) = edit.editing_index {
-            if idx < self.settings.custom_themes.len() {
-                let ct = &self.settings.custom_themes[idx];
-                removed_theme_info = Some((ct.name.clone(), ct.is_dark));
-                self.settings.custom_themes.remove(idx);
-            }
+        if let Some(idx) = edit.editing_index
+            && idx < self.settings.custom_themes.len()
+        {
+            let ct = &self.settings.custom_themes[idx];
+            removed_theme_info = Some((ct.name.clone(), ct.is_dark));
+            self.settings.custom_themes.remove(idx);
         }
-        if let Some((name, was_dark)) = removed_theme_info {
-            if matches!(&self.settings.theme, crate::settings::ThemeChoice::Custom(ct) if ct.name == name)
-            {
-                self.settings.theme = if was_dark {
-                    crate::settings::ThemeChoice::Dark
-                } else {
-                    crate::settings::ThemeChoice::Light
-                };
-            }
+        if let Some((name, was_dark)) = removed_theme_info
+            && matches!(&self.settings.theme, crate::settings::ThemeChoice::Custom(ct) if ct.name == name)
+        {
+            self.settings.theme = if was_dark {
+                crate::settings::ThemeChoice::Dark
+            } else {
+                crate::settings::ThemeChoice::Light
+            };
         }
         if let Err(e) = crate::settings::save_settings(&self.project_root, &self.settings) {
             self.set_status_message(format!("Failed to save settings: {e}"));

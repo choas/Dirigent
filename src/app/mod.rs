@@ -641,12 +641,11 @@ fn start_fs_watcher(
                 use notify::EventKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_) => {
-                        if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) {
-                            if let Ok(mut paths) = renames.lock() {
-                                if paths.len() < FS_RENAME_BUFFER_CAP {
-                                    paths.extend(event.paths.iter().cloned());
-                                }
-                            }
+                        if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))
+                            && let Ok(mut paths) = renames.lock()
+                            && paths.len() < FS_RENAME_BUFFER_CAP
+                        {
+                            paths.extend(event.paths.iter().cloned());
                         }
                         flag.store(true, Ordering::Relaxed);
                         if let Some(ctx) = ctx.get() {
@@ -786,10 +785,10 @@ impl DirigentApp {
         }) {
             // While the repo's settings await trust approval, skip the
             // write-back so the unapproved file is not clobbered.
-            if pending_trust.is_none() {
-                if let Err(e) = settings::save_settings(&project_root, &settings) {
-                    log::warn!("Failed to save migrated settings: {e}");
-                }
+            if pending_trust.is_none()
+                && let Err(e) = settings::save_settings(&project_root, &settings)
+            {
+                log::warn!("Failed to save migrated settings: {e}");
             }
         }
         // Seed the in-session recent_repos from the global list so the repo
@@ -854,11 +853,11 @@ impl DirigentApp {
             .collect();
 
         let mut lsp_manager = LspManager::new(project_root.clone(), &settings.agent_shell_init);
-        if settings.lsp_enabled {
-            if let Err(e) = lsp_manager.start_servers(&settings.lsp_servers) {
-                log::error!("[lsp] Failed to start servers: {}", e);
-                lsp_manager.log(e);
-            }
+        if settings.lsp_enabled
+            && let Err(e) = lsp_manager.start_servers(&settings.lsp_servers)
+        {
+            log::error!("[lsp] Failed to start servers: {}", e);
+            lsp_manager.log(e);
         }
 
         let initial_diff_lines = if skip_scan {

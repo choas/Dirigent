@@ -70,13 +70,11 @@ impl DirigentApp {
                 .button(icon("+", self.settings.font_size))
                 .on_hover_text("Attach files (or drag & drop)")
                 .clicked()
-            {
-                if let Some(paths) = rfd::FileDialog::new()
+                && let Some(paths) = rfd::FileDialog::new()
                     .add_filter("All files", &["*"])
                     .pick_files()
-                {
-                    self.global_prompt_images.extend(paths);
-                }
+            {
+                self.global_prompt_images.extend(paths);
             }
             let input_response = ui.add(
                 egui::TextEdit::multiline(&mut self.global_prompt_input)

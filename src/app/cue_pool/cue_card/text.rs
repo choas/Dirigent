@@ -86,10 +86,10 @@ impl DirigentApp {
         };
         let response = ui.text_edit_multiline(&mut editing.text);
         ui.horizontal(|ui| {
-            if ui.small_button(icon("\u{2713} Save", fs)).clicked() {
-                if let Some(ref editing) = self.editing_cue {
-                    actions.push((cue.id, CueAction::SaveEdit(editing.text.clone())));
-                }
+            if ui.small_button(icon("\u{2713} Save", fs)).clicked()
+                && let Some(ref editing) = self.editing_cue
+            {
+                actions.push((cue.id, CueAction::SaveEdit(editing.text.clone())));
             }
             if ui.small_button(icon("\u{2715} Cancel", fs)).clicked() {
                 actions.push((cue.id, CueAction::CancelEdit));

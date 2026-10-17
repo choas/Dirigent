@@ -205,14 +205,14 @@ impl LspManager {
         }
         // Check for conflicts before inserting
         for ext in &cfg.extensions {
-            if let Some(existing_id) = self.extension_map.get(ext) {
-                if existing_id != &cfg.id {
-                    return Err(format!(
-                        "Extension \".{}\" is already claimed by server \"{}\"; \
+            if let Some(existing_id) = self.extension_map.get(ext)
+                && existing_id != &cfg.id
+            {
+                return Err(format!(
+                    "Extension \".{}\" is already claimed by server \"{}\"; \
                          cannot start \"{}\" with the same extension",
-                        ext, existing_id, cfg.id,
-                    ));
-                }
+                    ext, existing_id, cfg.id,
+                ));
             }
         }
         // Add this server's extensions to the map (don't clear others)
@@ -478,11 +478,11 @@ impl LspManager {
         error: &Option<serde_json::Value>,
     ) {
         // Check if this is a shutdown response
-        if let Some((shutdown_id, _)) = self.pending_shutdowns.get(server_name) {
-            if id == shutdown_id {
-                self.finish_shutdown(server_name);
-                return;
-            }
+        if let Some((shutdown_id, _)) = self.pending_shutdowns.get(server_name)
+            && id == shutdown_id
+        {
+            self.finish_shutdown(server_name);
+            return;
         }
 
         // Check if this is an initialize response
@@ -491,11 +491,11 @@ impl LspManager {
         }
 
         // Route tracked responses to shared state
-        if let Some(server_map) = self.pending_requests.get_mut(server_name) {
-            if let Some(kind) = server_map.remove(id) {
-                self.handle_tracked_response(kind, result, error);
-                return;
-            }
+        if let Some(server_map) = self.pending_requests.get_mut(server_name)
+            && let Some(kind) = server_map.remove(id)
+        {
+            self.handle_tracked_response(kind, result, error);
+            return;
         }
 
         self.forward_event(server_name, msg);
@@ -543,10 +543,9 @@ impl LspManager {
         if let Some(caps) = result
             .as_ref()
             .and_then(|v| serde_json::from_value::<lsp_types::InitializeResult>(v.clone()).ok())
+            && let Some(client) = self.clients.get_mut(server_name)
         {
-            if let Some(client) = self.clients.get_mut(server_name) {
-                client.capabilities = Some(caps.capabilities);
-            }
+            client.capabilities = Some(caps.capabilities);
         }
         if let Some(client) = self.clients.get(server_name) {
             client.initialized();
@@ -649,17 +648,17 @@ impl LspManager {
         if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(val.clone()) {
             return Self::location_to_path_line(&loc);
         }
-        if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(val.clone()) {
-            if let Some(loc) = locs.first() {
-                return Self::location_to_path_line(loc);
-            }
+        if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(val.clone())
+            && let Some(loc) = locs.first()
+        {
+            return Self::location_to_path_line(loc);
         }
-        if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(val.clone()) {
-            if let Some(link) = links.first() {
-                let path = uri_to_path(&link.target_uri)?;
-                let line = link.target_selection_range.start.line as usize + 1;
-                return Some((path, line));
-            }
+        if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(val.clone())
+            && let Some(link) = links.first()
+        {
+            let path = uri_to_path(&link.target_uri)?;
+            let line = link.target_selection_range.start.line as usize + 1;
+            return Some((path, line));
         }
         None
     }
@@ -782,39 +781,36 @@ impl LspManager {
 
     /// Notify the appropriate server that a file was opened.
     pub fn notify_file_opened(&mut self, file_path: &Path) {
-        if let Some(server_name) = self.server_for_file(file_path) {
-            if self.initialized.get(&server_name) == Some(&true) {
-                if let Some(client) = self.clients.get_mut(&server_name) {
-                    client.did_open(file_path);
-                    let short = file_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    log::debug!("[lsp:{}] didOpen: {}", server_name, short);
-                }
-            }
+        if let Some(server_name) = self.server_for_file(file_path)
+            && self.initialized.get(&server_name) == Some(&true)
+            && let Some(client) = self.clients.get_mut(&server_name)
+        {
+            client.did_open(file_path);
+            let short = file_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            log::debug!("[lsp:{}] didOpen: {}", server_name, short);
         }
     }
 
     /// Notify the appropriate server that a file was closed.
     pub fn notify_file_closed(&mut self, file_path: &Path) {
-        if let Some(server_name) = self.server_for_file(file_path) {
-            if self.initialized.get(&server_name) == Some(&true) {
-                if let Some(client) = self.clients.get_mut(&server_name) {
-                    client.did_close(file_path);
-                }
-            }
+        if let Some(server_name) = self.server_for_file(file_path)
+            && self.initialized.get(&server_name) == Some(&true)
+            && let Some(client) = self.clients.get_mut(&server_name)
+        {
+            client.did_close(file_path);
         }
     }
 
     /// Notify the appropriate server that a file changed on disk.
     pub fn notify_file_changed(&mut self, file_path: &Path) {
-        if let Some(server_name) = self.server_for_file(file_path) {
-            if self.initialized.get(&server_name) == Some(&true) {
-                if let Some(client) = self.clients.get_mut(&server_name) {
-                    client.did_change(file_path);
-                }
-            }
+        if let Some(server_name) = self.server_for_file(file_path)
+            && self.initialized.get(&server_name) == Some(&true)
+            && let Some(client) = self.clients.get_mut(&server_name)
+        {
+            client.did_change(file_path);
         }
     }
 

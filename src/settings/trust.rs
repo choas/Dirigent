@@ -114,10 +114,10 @@ fn save_store(path: &Path, store: &TrustStore) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(json) = serde_json::to_string_pretty(store) {
-        if let Err(e) = std::fs::write(path, json) {
-            log::warn!("[trust] failed to write trust store: {e}");
-        }
+    if let Ok(json) = serde_json::to_string_pretty(store)
+        && let Err(e) = std::fs::write(path, json)
+    {
+        log::warn!("[trust] failed to write trust store: {e}");
     }
 }
 
@@ -326,10 +326,10 @@ fn approve_fast_llm_key_host_at(store_path: &Path, api_key: &str, origin: &str) 
     if let Some(parent) = store_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(json) = serde_json::to_string_pretty(&store) {
-        if let Err(e) = std::fs::write(store_path, json) {
-            log::warn!("[trust] failed to write fast-llm key-host store: {e}");
-        }
+    if let Ok(json) = serde_json::to_string_pretty(&store)
+        && let Err(e) = std::fs::write(store_path, json)
+    {
+        log::warn!("[trust] failed to write fast-llm key-host store: {e}");
     }
 }
 

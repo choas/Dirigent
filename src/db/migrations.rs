@@ -390,14 +390,12 @@ impl Database {
                 .playbook
                 .iter_mut()
                 .find(|p| p.name == "Create release" && p.prompt.starts_with(old_prefix))
-            {
-                if let Some(new_play) = crate::settings::default_playbook()
+                && let Some(new_play) = crate::settings::default_playbook()
                     .into_iter()
                     .find(|p| p.name == "Create release")
-                {
-                    play.prompt = new_play.prompt;
-                    changed = true;
-                }
+            {
+                play.prompt = new_play.prompt;
+                changed = true;
             }
             self.record_settings_migration("create_release_version_var");
         }
@@ -409,14 +407,12 @@ impl Database {
                 .playbook
                 .iter_mut()
                 .find(|p| p.name == "Create release" && p.prompt.ends_with(old_suffix))
-            {
-                if let Some(new_play) = crate::settings::default_playbook()
+                && let Some(new_play) = crate::settings::default_playbook()
                     .into_iter()
                     .find(|p| p.name == "Create release")
-                {
-                    play.prompt = new_play.prompt;
-                    changed = true;
-                }
+            {
+                play.prompt = new_play.prompt;
+                changed = true;
             }
             self.record_settings_migration("create_release_git_push");
         }

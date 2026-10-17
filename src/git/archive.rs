@@ -106,20 +106,20 @@ pub(crate) fn list_archived_dbs(main_repo_path: &Path) -> Vec<ArchivedDb> {
     let mut result = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("db") {
-            if let Ok(meta) = entry.metadata() {
-                let name = path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-                result.push(ArchivedDb {
-                    name,
-                    path,
-                    size_bytes: meta.len(),
-                    modified,
-                });
-            }
+        if path.extension().and_then(|e| e.to_str()) == Some("db")
+            && let Ok(meta) = entry.metadata()
+        {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            result.push(ArchivedDb {
+                name,
+                path,
+                size_bytes: meta.len(),
+                modified,
+            });
         }
     }
     // Sort by modified time, newest first

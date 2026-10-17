@@ -81,14 +81,14 @@ fn process_tool_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str)) 
         new_edited_file = ai_process::extract_file_path_from_input(&input);
         if new_edited_file.is_none() {
             // Log bash commands when no file path is found
-            if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-                if name.eq_ignore_ascii_case("bash") {
-                    on_log(&format!(
-                        "\u{2192} {} {}\n",
-                        name,
-                        command.lines().next().unwrap_or("")
-                    ));
-                }
+            if let Some(command) = input.get("command").and_then(|c| c.as_str())
+                && name.eq_ignore_ascii_case("bash")
+            {
+                on_log(&format!(
+                    "\u{2192} {} {}\n",
+                    name,
+                    command.lines().next().unwrap_or("")
+                ));
             }
         }
     }
@@ -160,10 +160,10 @@ fn process_error_event(event: &serde_json::Value, on_log: &mut impl FnMut(&str))
 /// `.app` bundles need) so the run still works. Only when nothing resolves do
 /// we return [`BackendError::NotFound`].
 fn resolve_opencode_bin(cli_path: &str) -> Result<PathBuf, BackendError> {
-    if !cli_path.is_empty() {
-        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
-            return Ok(PathBuf::from(path));
-        }
+    if !cli_path.is_empty()
+        && let Some(path) = crate::settings::resolve_in_path(cli_path)
+    {
+        return Ok(PathBuf::from(path));
     }
     crate::settings::resolve_in_path("opencode")
         .map(PathBuf::from)
@@ -288,10 +288,10 @@ fn dispatch_event(
                 }
                 metrics.num_turns += 1;
             }
-            if let Some(text) = process_step_finish_event(event, on_log) {
-                if !text.is_empty() {
-                    *final_result = text;
-                }
+            if let Some(text) = process_step_finish_event(event, on_log)
+                && !text.is_empty()
+            {
+                *final_result = text;
             }
         }
         "error" => process_error_event(event, on_log),

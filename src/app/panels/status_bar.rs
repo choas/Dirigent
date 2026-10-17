@@ -150,10 +150,10 @@ impl DirigentApp {
             )
             .sense(egui::Sense::click()),
         );
-        if resp.clicked() {
-            if let Some(ref url) = self.git.pr_url {
-                let _ = std::process::Command::new("open").arg(url).spawn();
-            }
+        if resp.clicked()
+            && let Some(ref url) = self.git.pr_url
+        {
+            let _ = std::process::Command::new("open").arg(url).spawn();
         }
         resp.on_hover_text("Open pull request in browser");
     }

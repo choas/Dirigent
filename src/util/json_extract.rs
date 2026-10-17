@@ -49,10 +49,10 @@ fn extract_last_balanced_with_pos(
 
     let mut search_from = bytes.len();
     while let Some(end) = bytes[..search_from].iter().rposition(|&b| b == close_b) {
-        if let Some(s_pos) = scan_back_for_open(bytes, end, open_b, close_b) {
-            if end > s_pos {
-                return Some((s_pos, end, s[s_pos..=end].to_string()));
-            }
+        if let Some(s_pos) = scan_back_for_open(bytes, end, open_b, close_b)
+            && end > s_pos
+        {
+            return Some((s_pos, end, s[s_pos..=end].to_string()));
         }
         search_from = end;
     }

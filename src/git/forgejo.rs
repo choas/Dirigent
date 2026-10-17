@@ -43,10 +43,10 @@ pub(crate) const TOKEN_HELP: &str = "Codeberg requires an access token. Create o
 
 /// Read the URL of the `origin` remote (falling back to the first configured remote).
 fn origin_remote_url(repo: &Repository) -> Option<String> {
-    if let Ok(remote) = repo.find_remote("origin") {
-        if let Some(url) = remote.url() {
-            return Some(url.to_string());
-        }
+    if let Ok(remote) = repo.find_remote("origin")
+        && let Some(url) = remote.url()
+    {
+        return Some(url.to_string());
     }
     let remotes = repo.remotes().ok()?;
     let name = remotes.iter().flatten().next()?;

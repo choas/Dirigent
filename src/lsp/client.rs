@@ -499,21 +499,21 @@ impl LspClient {
     /// Language servers routinely spawn helpers (rust-analyzer's proc-macro
     /// server, tsserver workers), so the whole process group is signalled.
     pub fn kill(&self) {
-        if let Ok(mut guard) = self.process.lock() {
-            if let Some(ref mut child) = *guard {
-                kill_process_group(child.id());
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        if let Ok(mut guard) = self.process.lock()
+            && let Some(ref mut child) = *guard
+        {
+            kill_process_group(child.id());
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 
     /// Check if the server process is still running.
     pub fn is_alive(&self) -> bool {
-        if let Ok(mut guard) = self.process.lock() {
-            if let Some(ref mut child) = *guard {
-                return child.try_wait().ok().flatten().is_none();
-            }
+        if let Ok(mut guard) = self.process.lock()
+            && let Some(ref mut child) = *guard
+        {
+            return child.try_wait().ok().flatten().is_none();
         }
         false
     }
@@ -887,10 +887,10 @@ fn is_safe_env_name(name: &str) -> bool {
 fn composed_path(resolved_cmd: &str) -> Option<OsString> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(parent) = Path::new(resolved_cmd).parent() {
-        if !parent.as_os_str().is_empty() {
-            dirs.push(parent.to_path_buf());
-        }
+    if let Some(parent) = Path::new(resolved_cmd).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        dirs.push(parent.to_path_buf());
     }
     for dir in std::env::split_paths(&inherited) {
         if !dirs.contains(&dir) {

@@ -130,12 +130,12 @@ fn collect_edited_paths(event: &serde_json::Value, edited_files: &mut Vec<String
         append_unique_path(edited_files, path.to_string());
     }
 
-    if item.get("type").and_then(|t| t.as_str()) == Some("file_change") {
-        if let Some(changes) = item.get("changes").and_then(|c| c.as_array()) {
-            for change in changes {
-                if let Some(path) = change.get("path").and_then(|p| p.as_str()) {
-                    append_unique_path(edited_files, path.to_string());
-                }
+    if item.get("type").and_then(|t| t.as_str()) == Some("file_change")
+        && let Some(changes) = item.get("changes").and_then(|c| c.as_array())
+    {
+        for change in changes {
+            if let Some(path) = change.get("path").and_then(|p| p.as_str()) {
+                append_unique_path(edited_files, path.to_string());
             }
         }
     }

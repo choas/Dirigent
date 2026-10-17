@@ -205,13 +205,13 @@ impl SshConnection {
         let stat = sftp
             .stat(Path::new(&resolved))
             .map_err(|e| format!("stat '{}': {}", resolved, e))?;
-        if let Some(size) = stat.size {
-            if size > MAX_FILE_SIZE {
-                return Err(format!(
-                    "file too large: '{}' is {} bytes (limit: {} bytes)",
-                    resolved, size, MAX_FILE_SIZE
-                ));
-            }
+        if let Some(size) = stat.size
+            && size > MAX_FILE_SIZE
+        {
+            return Err(format!(
+                "file too large: '{}' is {} bytes (limit: {} bytes)",
+                resolved, size, MAX_FILE_SIZE
+            ));
         }
 
         let file = sftp

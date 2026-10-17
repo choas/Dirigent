@@ -590,10 +590,10 @@ impl DirigentApp {
         ui.add_space(SPACE_SM);
         ui.label("Create new worktree:");
 
-        if !self.git.available_branches.is_empty() {
-            if let Some(branch) = self.render_worktree_branch_picker(ui) {
-                self.git.new_worktree_name = branch;
-            }
+        if !self.git.available_branches.is_empty()
+            && let Some(branch) = self.render_worktree_branch_picker(ui)
+        {
+            self.git.new_worktree_name = branch;
         }
 
         self.render_worktree_name_input(ui, actions);

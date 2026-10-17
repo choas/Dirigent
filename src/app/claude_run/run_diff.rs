@@ -46,10 +46,10 @@ pub(super) fn resolve_run_diff(
     baseline: &HashMap<String, Option<u64>>,
     outcome: &ProviderRunOutcome,
 ) -> Option<String> {
-    if !outcome.edited_files.is_empty() {
-        if let Some(d) = vcs_get_working_diff(req, &outcome.edited_files) {
-            return Some(d);
-        }
+    if !outcome.edited_files.is_empty()
+        && let Some(d) = vcs_get_working_diff(req, &outcome.edited_files)
+    {
+        return Some(d);
     }
     scoped_working_diff(req, baseline).or_else(|| (outcome.parse_diff)(&outcome.stdout))
 }
@@ -75,10 +75,10 @@ fn hash_file_bytes(path: &Path) -> Option<u64> {
     let mut hasher = DefaultHasher::new();
     if size > HASH_CONTENT_CAP_BYTES {
         size.hash(&mut hasher);
-        if let Ok(mt) = meta.modified() {
-            if let Ok(d) = mt.duration_since(std::time::UNIX_EPOCH) {
-                d.as_nanos().hash(&mut hasher);
-            }
+        if let Ok(mt) = meta.modified()
+            && let Ok(d) = mt.duration_since(std::time::UNIX_EPOCH)
+        {
+            d.as_nanos().hash(&mut hasher);
         }
         return Some(hasher.finish());
     }

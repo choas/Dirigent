@@ -149,10 +149,10 @@ fn build_branch_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
     if let Ok(branches) = repo.branches(None) {
         for branch in branches.flatten() {
             let (branch_ref, _branch_type) = branch;
-            if let Some(name) = branch_ref.name().ok().flatten() {
-                if let Ok(commit) = branch_ref.get().peel_to_commit() {
-                    map.entry(commit.id()).or_default().push(name.to_string());
-                }
+            if let Some(name) = branch_ref.name().ok().flatten()
+                && let Ok(commit) = branch_ref.get().peel_to_commit()
+            {
+                map.entry(commit.id()).or_default().push(name.to_string());
             }
         }
     }
@@ -190,10 +190,10 @@ pub(crate) fn count_commits(path: &Path) -> usize {
     // Previously this walked all references (including remote-tracking branches,
     // tags, stash, notes), causing the total count to diverge from the history
     // that is actually displayed.
-    if let Ok(head) = repo.head() {
-        if let Ok(commit) = head.peel_to_commit() {
-            revwalk.push(commit.id()).ok();
-        }
+    if let Ok(head) = repo.head()
+        && let Ok(commit) = head.peel_to_commit()
+    {
+        revwalk.push(commit.id()).ok();
     }
     if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
         for branch in branches.flatten() {

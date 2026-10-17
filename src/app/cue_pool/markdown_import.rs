@@ -24,11 +24,11 @@ pub(super) fn parse_markdown_sections(content: &str) -> Vec<ImportedSection> {
             }
             // Parse "N. Title" pattern
             let heading = heading.trim();
-            if let Some(dot_pos) = heading.find(". ") {
-                if let Ok(num) = heading[..dot_pos].parse::<usize>() {
-                    current_title = Some((num, heading[dot_pos + 2..].to_string()));
-                    continue;
-                }
+            if let Some(dot_pos) = heading.find(". ")
+                && let Ok(num) = heading[..dot_pos].parse::<usize>()
+            {
+                current_title = Some((num, heading[dot_pos + 2..].to_string()));
+                continue;
             }
             // Fallback: no number
             current_title = Some((sections.len() + 1, heading.to_string()));

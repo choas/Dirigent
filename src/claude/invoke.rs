@@ -220,10 +220,10 @@ fn extract_session_id(args: &[String]) -> Option<String> {
 /// return [`BackendError::NotFound`], which surfaces a clear "configure path
 /// in Settings" message instead of a cryptic spawn ENOENT.
 fn resolve_claude_binary(cli_path: &str) -> Result<String, BackendError> {
-    if !cli_path.is_empty() {
-        if let Some(path) = crate::settings::resolve_in_path(cli_path) {
-            return Ok(path);
-        }
+    if !cli_path.is_empty()
+        && let Some(path) = crate::settings::resolve_in_path(cli_path)
+    {
+        return Ok(path);
     }
     crate::settings::resolve_in_path("claude").ok_or(BackendError::NotFound { backend: "claude" })
 }

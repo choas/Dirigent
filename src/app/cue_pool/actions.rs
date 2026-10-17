@@ -334,11 +334,10 @@ impl DirigentApp {
         if let (Ok(canon_root), Ok(canon_path)) = (
             std::fs::canonicalize(&self.project_root),
             std::fs::canonicalize(&full_path),
-        ) {
-            if !canon_path.starts_with(&canon_root) {
-                self.set_status_message("Cannot navigate: path is outside the project".into());
-                return;
-            }
+        ) && !canon_path.starts_with(&canon_root)
+        {
+            self.set_status_message("Cannot navigate: path is outside the project".into());
+            return;
         }
         if self.viewer.current_file() != Some(&full_path) {
             self.load_file(full_path);
@@ -673,12 +672,10 @@ impl DirigentApp {
             Ok(execs) => {
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     self.claude.running_logs.entry(cue_id)
+                    && let Some(last) = execs.last()
+                    && let Some(ref log_text) = last.log
                 {
-                    if let Some(last) = execs.last() {
-                        if let Some(ref log_text) = last.log {
-                            e.insert((log_text.clone(), last.provider.clone()));
-                        }
-                    }
+                    e.insert((log_text.clone(), last.provider.clone()));
                 }
                 self.claude.conversation_history = execs;
             }
@@ -980,10 +977,10 @@ impl DirigentApp {
                 .project_root
                 .join(".Dirigent")
                 .join(format!("split-ref-{}.md", cue_id));
-            if let Err(e) = std::fs::remove_file(&path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::error!("Failed to remove {}: {e}", path.display());
-                }
+            if let Err(e) = std::fs::remove_file(&path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                log::error!("Failed to remove {}: {e}", path.display());
             }
         }
         let plural = if total == 1 { "" } else { "s" };

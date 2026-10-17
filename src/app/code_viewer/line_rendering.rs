@@ -160,33 +160,32 @@ pub(crate) fn render_code_line(
     }
 
     // LSP hover: track hovered position for tooltip requests
-    if line_response.hovered() && !ctx.cmd_held {
-        if let Some(pos) = ui.ctx().pointer_latest_pos() {
-            let x_offset = (pos.x - code_resp.rect.left()).max(0.0);
-            let approx_char_width = app.settings.font_size * 0.6;
-            let byte_offset = compute_byte_offset(line_text, x_offset, approx_char_width);
-            // Convert byte offset to character column (0-based)
-            let character = line_text[..byte_offset.min(line_text.len())]
-                .chars()
-                .count() as u32;
-            actions.lsp_hover_position = Some((line_idx as u32, character));
-        }
+    if line_response.hovered()
+        && !ctx.cmd_held
+        && let Some(pos) = ui.ctx().pointer_latest_pos()
+    {
+        let x_offset = (pos.x - code_resp.rect.left()).max(0.0);
+        let approx_char_width = app.settings.font_size * 0.6;
+        let byte_offset = compute_byte_offset(line_text, x_offset, approx_char_width);
+        // Convert byte offset to character column (0-based)
+        let character = line_text[..byte_offset.min(line_text.len())]
+            .chars()
+            .count() as u32;
+        actions.lsp_hover_position = Some((line_idx as u32, character));
     }
 
     // Show LSP hover tooltip if available for this line
-    if line_response.hovered() {
-        if let Some(ref hover_text) = app.lsp.hover_result {
-            if app
-                .lsp
-                .hover_file
-                .as_ref()
-                .and_then(|f| app.viewer.active().map(|t| t.file_path == *f))
-                .unwrap_or(false)
-                && app.lsp.hover_line == line_idx as u32
-            {
-                line_response.on_hover_text(hover_text);
-            }
-        }
+    if line_response.hovered()
+        && let Some(ref hover_text) = app.lsp.hover_result
+        && app
+            .lsp
+            .hover_file
+            .as_ref()
+            .and_then(|f| app.viewer.active().map(|t| t.file_path == *f))
+            .unwrap_or(false)
+        && app.lsp.hover_line == line_idx as u32
+    {
+        line_response.on_hover_text(hover_text);
     }
 
     if is_selection_end {

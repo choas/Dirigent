@@ -559,10 +559,10 @@ impl CodeViewerState {
         if idx + 1 < self.tabs.len() {
             self.tabs.truncate(idx + 1);
         }
-        if let Some(active) = self.active_tab {
-            if active > idx {
-                self.active_tab = Some(idx);
-            }
+        if let Some(active) = self.active_tab
+            && active > idx
+        {
+            self.active_tab = Some(idx);
         }
     }
 }

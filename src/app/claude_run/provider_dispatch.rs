@@ -48,17 +48,16 @@ pub(super) fn resolve_command_prefix(
 /// The hint is added at prompt time (not stored in cue text) to avoid
 /// triggering spurious text-changed updates on existing cues.
 pub(super) fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String {
-    if let Some(sref) = source_ref {
-        if let Some(pr_num) = sref
+    if let Some(sref) = source_ref
+        && let Some(pr_num) = sref
             .strip_prefix("pr")
             .and_then(|s| s.split(':').next())
             .and_then(|n| n.parse::<u64>().ok())
-        {
-            return format!(
+    {
+        return format!(
                 "{}\n\n[Hint: use `gh pr view {} --comments` to read the full PR discussion for additional context.]",
                 text, pr_num,
             );
-        }
     }
     text.to_string()
 }

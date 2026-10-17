@@ -102,16 +102,16 @@ pub(crate) fn list_worktrees(repo_path: &Path) -> crate::error::Result<Vec<Workt
 
     for line in stdout.lines().chain(std::iter::once("")) {
         if line.is_empty() {
-            if let Some(p) = wt_path.take() {
-                if !is_bare {
-                    worktrees.push(build_worktree_info(
-                        p,
-                        branch.take(),
-                        is_locked,
-                        worktrees.is_empty(),
-                        &current,
-                    ));
-                }
+            if let Some(p) = wt_path.take()
+                && !is_bare
+            {
+                worktrees.push(build_worktree_info(
+                    p,
+                    branch.take(),
+                    is_locked,
+                    worktrees.is_empty(),
+                    &current,
+                ));
             }
             is_bare = false;
             is_locked = false;
@@ -277,10 +277,10 @@ fn collect_gone_branches(repo_path: &Path) -> std::collections::HashSet<String> 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         // The format is "branchname [gone]" — match the trailing tracking status,
         // not an arbitrary substring (avoids false positives on branch names).
-        if line.trim_end().ends_with("[gone]") {
-            if let Some(name) = line.split_whitespace().next() {
-                gone.insert(name.to_string());
-            }
+        if line.trim_end().ends_with("[gone]")
+            && let Some(name) = line.split_whitespace().next()
+        {
+            gone.insert(name.to_string());
         }
     }
     gone

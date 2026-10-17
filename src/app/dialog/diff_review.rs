@@ -643,27 +643,27 @@ impl DirigentApp {
     }
 
     fn apply_diff_review_state_updates(&mut self, actions: &DiffReviewActions) {
-        if let Some(mode) = actions.toggle_mode {
-            if let Some(ref mut review) = self.diff_review {
-                review.view_mode = mode;
-            }
+        if let Some(mode) = actions.toggle_mode
+            && let Some(ref mut review) = self.diff_review
+        {
+            review.view_mode = mode;
         }
-        if actions.toggle_prompt {
-            if let Some(ref mut review) = self.diff_review {
-                review.prompt_expanded = !review.prompt_expanded;
-            }
+        if actions.toggle_prompt
+            && let Some(ref mut review) = self.diff_review
+        {
+            review.prompt_expanded = !review.prompt_expanded;
         }
     }
 
     fn apply_diff_search_actions(&mut self, actions: &DiffReviewActions) {
-        if actions.search_changed {
-            if let Some(ref mut review) = self.diff_review {
-                crate::app::search::update_diff_search_matches(review);
-                if let Some(idx) = review.search_current {
-                    if let Some(&(file_idx, _, _)) = review.search_matches.get(idx) {
-                        review.collapsed_files.remove(&file_idx);
-                    }
-                }
+        if actions.search_changed
+            && let Some(ref mut review) = self.diff_review
+        {
+            crate::app::search::update_diff_search_matches(review);
+            if let Some(idx) = review.search_current
+                && let Some(&(file_idx, _, _)) = review.search_matches.get(idx)
+            {
+                review.collapsed_files.remove(&file_idx);
             }
         }
         if actions.search_next {
@@ -672,42 +672,42 @@ impl DirigentApp {
         if actions.search_prev {
             self.diff_search_navigate_prev();
         }
-        if actions.search_close {
-            if let Some(ref mut review) = self.diff_review {
-                review.search_active = false;
-                review.search_query.clear();
-                review.search_matches.clear();
-                review.search_current = None;
-            }
+        if actions.search_close
+            && let Some(ref mut review) = self.diff_review
+        {
+            review.search_active = false;
+            review.search_query.clear();
+            review.search_matches.clear();
+            review.search_current = None;
         }
     }
 
     fn diff_search_navigate_next(&mut self) {
-        if let Some(ref mut review) = self.diff_review {
-            if !review.search_matches.is_empty() {
-                let next = match review.search_current {
-                    Some(i) => (i + 1) % review.search_matches.len(),
-                    None => 0,
-                };
-                review.search_current = Some(next);
-                let (file_idx, _, _) = review.search_matches[next];
-                review.collapsed_files.remove(&file_idx);
-            }
+        if let Some(ref mut review) = self.diff_review
+            && !review.search_matches.is_empty()
+        {
+            let next = match review.search_current {
+                Some(i) => (i + 1) % review.search_matches.len(),
+                None => 0,
+            };
+            review.search_current = Some(next);
+            let (file_idx, _, _) = review.search_matches[next];
+            review.collapsed_files.remove(&file_idx);
         }
     }
 
     fn diff_search_navigate_prev(&mut self) {
-        if let Some(ref mut review) = self.diff_review {
-            if !review.search_matches.is_empty() {
-                let prev = match review.search_current {
-                    Some(0) => review.search_matches.len() - 1,
-                    Some(i) => i - 1,
-                    None => 0,
-                };
-                review.search_current = Some(prev);
-                let (file_idx, _, _) = review.search_matches[prev];
-                review.collapsed_files.remove(&file_idx);
-            }
+        if let Some(ref mut review) = self.diff_review
+            && !review.search_matches.is_empty()
+        {
+            let prev = match review.search_current {
+                Some(0) => review.search_matches.len() - 1,
+                Some(i) => i - 1,
+                None => 0,
+            };
+            review.search_current = Some(prev);
+            let (file_idx, _, _) = review.search_matches[prev];
+            review.collapsed_files.remove(&file_idx);
         }
     }
 

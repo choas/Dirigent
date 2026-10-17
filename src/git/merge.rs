@@ -41,10 +41,10 @@ pub(crate) fn get_conflicted_files(repo_path: &Path) -> Vec<String> {
     };
     let mut files = Vec::new();
     for entry in statuses.iter() {
-        if entry.status().is_conflicted() {
-            if let Some(p) = entry.path() {
-                files.push(p.to_string());
-            }
+        if entry.status().is_conflicted()
+            && let Some(p) = entry.path()
+        {
+            files.push(p.to_string());
         }
     }
     files

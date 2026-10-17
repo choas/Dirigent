@@ -225,17 +225,17 @@ impl DirigentApp {
 
     /// Lazily create the texture from the stored ColorImage.
     fn ensure_image_texture(&mut self, ui: &egui::Ui, tab_idx: usize) {
-        if self.viewer.tabs[tab_idx].image_texture.is_none() {
-            if let Some(color_image) = self.viewer.tabs[tab_idx].image_data.take() {
-                let name = self.viewer.tabs[tab_idx]
-                    .file_path
-                    .to_string_lossy()
-                    .to_string();
-                let texture =
-                    ui.ctx()
-                        .load_texture(name, color_image, egui::TextureOptions::LINEAR);
-                self.viewer.tabs[tab_idx].image_texture = Some(texture);
-            }
+        if self.viewer.tabs[tab_idx].image_texture.is_none()
+            && let Some(color_image) = self.viewer.tabs[tab_idx].image_data.take()
+        {
+            let name = self.viewer.tabs[tab_idx]
+                .file_path
+                .to_string_lossy()
+                .to_string();
+            let texture = ui
+                .ctx()
+                .load_texture(name, color_image, egui::TextureOptions::LINEAR);
+            self.viewer.tabs[tab_idx].image_texture = Some(texture);
         }
     }
 
@@ -419,10 +419,10 @@ impl DirigentApp {
         self.apply_goto_definition_action(actions, file_path);
 
         // LSP hover: request hover info for the hovered position
-        if let Some((line, character)) = actions.lsp_hover_position {
-            if self.settings.lsp_enabled {
-                self.lsp.hover(file_path, line, character);
-            }
+        if let Some((line, character)) = actions.lsp_hover_position
+            && self.settings.lsp_enabled
+        {
+            self.lsp.hover(file_path, line, character);
         }
     }
 
