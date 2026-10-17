@@ -88,6 +88,17 @@ pub(super) fn resolve_env_pairs(
     env_vars: &str,
     on_log: &mut dyn FnMut(&str),
 ) -> Vec<(String, String)> {
+    resolve_env_pairs_with(env_vars, on_log, |name| std::env::var(name).ok())
+}
+
+/// [`resolve_env_pairs`] with an injectable lookup, so tests can supply
+/// values without mutating the process environment (`set_var` is unsafe
+/// while other test threads may be reading it).
+fn resolve_env_pairs_with(
+    env_vars: &str,
+    on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     for line in env_vars.lines() {
         let line = line.trim();
@@ -101,9 +112,9 @@ pub(super) fn resolve_env_pairs(
         if name.is_empty() {
             continue;
         }
-        match std::env::var(name) {
-            Ok(value) => pairs.push((name.to_string(), value)),
-            Err(_) => {
+        match lookup(name) {
+            Some(value) => pairs.push((name.to_string(), value)),
+            None => {
                 log::warn!("env var '{}' not found in environment, skipping", name);
                 on_log(&format!(
                     "\u{26A0} env var '{}' not found in environment, skipping\n",
@@ -275,20 +286,26 @@ mod tests {
         );
     }
 
+    /// Lookup over a fixed set of variables, standing in for the process env.
+    fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let vars: std::collections::HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| vars.get(name).cloned()
+    }
+
     #[test]
-    fn resolve_env_pairs_resolves_names_from_process_env() {
-        // Use a name that is overwhelmingly likely to be set on dev machines.
+    fn resolve_env_pairs_resolves_known_names_and_reports_missing() {
         // We assert that the helper round-trips known-present names, drops
         // unknown ones, and forwards a warning about missing names to on_log.
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123") };
+        let env = fake_env(&[("DIRIGENT_TEST_ENV_VAR", "test_value_123")]);
         let mut log_buf = String::new();
-        let pairs = resolve_env_pairs(
+        let pairs = resolve_env_pairs_with(
             "DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n",
             &mut |s| log_buf.push_str(s),
+            env,
         );
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("DIRIGENT_TEST_ENV_VAR") };
         assert_eq!(
             pairs,
             vec![(
@@ -308,11 +325,9 @@ mod tests {
 
     #[test]
     fn resolve_env_pairs_strips_legacy_key_equals_value_suffix() {
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value") };
-        let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {});
-        // FIXME: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var("DIRIGENT_LEGACY_VAR") };
+        let env = fake_env(&[("DIRIGENT_LEGACY_VAR", "real_value")]);
+        let pairs =
+            resolve_env_pairs_with("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {}, env);
         assert_eq!(
             pairs,
             vec![("DIRIGENT_LEGACY_VAR".to_string(), "real_value".to_string())]
