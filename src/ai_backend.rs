@@ -1,6 +1,6 @@
-//! The seam between the app and the four AI CLI backends.
+//! The seam between the app and the AI CLI backends.
 //!
-//! Every backend (Claude, Gemini, OpenCode, Codex) is invoked through the
+//! Every backend (Claude, Gemini, OpenCode, Codex, ACP agents) is invoked through the
 //! [`AiBackend`] trait, whose provided [`AiBackend::invoke`] method runs the
 //! one canonical sequence:
 //!
@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::acp;
 use crate::ai_process;
 use crate::claude::{self, ClaudeRunMetadata, RunMetrics};
 use crate::codex;
@@ -87,10 +88,17 @@ pub(crate) enum BackendError {
     NonZeroExit {
         backend: &'static str,
         status: std::process::ExitStatus,
+        /// Readable cause when the CLI reported one (stream error, stderr tail).
+        reason: Option<String>,
     },
     InvalidExtraArgs {
         backend: &'static str,
         args: String,
+    },
+    /// Backend-specific failure that already carries a readable message
+    /// (ACP protocol errors, authentication, refusals, …).
+    Failed {
+        message: String,
     },
 }
 
@@ -112,15 +120,23 @@ impl std::fmt::Display for BackendError {
                 write!(f, "failed to wait for {backend}: {source}")
             }
             BackendError::Cancelled => write!(f, "cancelled"),
-            BackendError::NonZeroExit { backend, status } => {
-                write!(f, "{backend} exited with {status}")
-            }
+            BackendError::NonZeroExit {
+                backend,
+                status,
+                reason: None,
+            } => write!(f, "{backend} exited with {status}"),
+            BackendError::NonZeroExit {
+                backend,
+                status,
+                reason: Some(reason),
+            } => write!(f, "{backend} exited with {status}: {reason}"),
             BackendError::InvalidExtraArgs { backend, args } => {
                 write!(
                     f,
                     "failed to parse {backend} extra_args (unmatched quote?): {args}"
                 )
             }
+            BackendError::Failed { message } => write!(f, "{message}"),
         }
     }
 }
@@ -144,6 +160,9 @@ pub(crate) struct BackendRequest<'a> {
     pub hook_trust: HookScriptTrust,
     pub skip_permissions: bool,
     pub use_pty: bool,
+    /// Analysis prompts that must not change the project. Only the ACP backend
+    /// can enforce this today (it refuses writes and non-read permissions).
+    pub read_only: bool,
 }
 
 /// Raw result of one CLI invocation, before normalization. Metric fields are
@@ -293,6 +312,7 @@ pub(crate) fn backend_for(provider: &CliProvider) -> &'static dyn AiBackend {
         CliProvider::Gemini => &GeminiBackend,
         CliProvider::OpenCode => &OpenCodeBackend,
         CliProvider::Codex => &CodexBackend,
+        CliProvider::Acp => &AcpBackend,
     }
 }
 
@@ -408,6 +428,35 @@ impl AiBackend for CodexBackend {
     }
 }
 
+pub(crate) struct AcpBackend;
+
+impl AiBackend for AcpBackend {
+    fn name(&self) -> &'static str {
+        "ACP Agent"
+    }
+
+    fn cli_name(&self) -> &'static str {
+        "ACP agent"
+    }
+
+    fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
+        claude::parse_diff_from_response
+    }
+
+    fn invoke_cli(
+        &self,
+        req: &BackendRequest<'_>,
+        on_log: &SharedLog,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<BackendResponse, BackendError> {
+        // The ACP reader and stderr threads never log, so the invoking thread
+        // can hold the lock for the whole turn.
+        ai_process::with_locked_log(on_log, "acp run", |log| {
+            acp::run_acp_cli(req, &mut **log, cancel)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +532,7 @@ mod tests {
             hook_trust: HookScriptTrust::Trusted,
             skip_permissions: false,
             use_pty: false,
+            read_only: false,
         }
     }
 
@@ -492,6 +542,7 @@ mod tests {
             Err(BackendError::NonZeroExit {
                 backend: "stub",
                 status: std::process::ExitStatus::default(),
+                reason: None,
             })
         });
         let tmp = tempfile::tempdir().unwrap();

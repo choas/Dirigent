@@ -57,6 +57,7 @@ pub(crate) enum CliProvider {
     OpenCode,
     Gemini,
     Codex,
+    Acp,
 }
 
 impl CliProvider {
@@ -66,6 +67,7 @@ impl CliProvider {
             CliProvider::OpenCode => "OpenCode",
             CliProvider::Gemini => "Gemini",
             CliProvider::Codex => "Codex",
+            CliProvider::Acp => "ACP Agent",
         }
     }
 
@@ -75,6 +77,7 @@ impl CliProvider {
             CliProvider::OpenCode,
             CliProvider::Gemini,
             CliProvider::Codex,
+            CliProvider::Acp,
         ]
     }
 }

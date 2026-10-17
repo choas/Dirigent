@@ -18,6 +18,7 @@ Task-oriented recipes for common Dirigent workflows. Each section is self-contai
 - [Use workflow planning for multiple cues](#use-workflow-planning-for-multiple-cues)
 - [Work with Git worktrees](#work-with-git-worktrees)
 - [Switch the AI backend to OpenCode](#switch-the-ai-backend-to-opencode)
+- [Run an ACP agent (Goose, Gemini CLI, …)](How_to_ACP.md)
 - [Configure LSP for code intelligence](#configure-lsp-for-code-intelligence)
 - [Split a large cue into smaller ones](#split-a-large-cue-into-smaller-ones)
 - [Read history in the graph view](#read-history-in-the-graph-view)
@@ -179,6 +180,7 @@ Dirigent supports OpenCode as an alternative to Claude Code, enabling models fro
 2. Change **CLI Provider** from Claude to OpenCode
 3. Configure the OpenCode model (e.g. `openai/o3`, `google/gemini-2.5-pro`)
 4. Set the CLI path if `opencode` is not on your PATH
+5. Click **Test Connection** to check that OpenCode starts and answers. This works for every provider.
 
 The rest of the workflow (cues, diffs, review) works the same regardless of provider.
 

@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)]
 
+mod acp;
 mod agents;
 mod ai_backend;
 mod ai_process;

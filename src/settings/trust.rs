@@ -377,6 +377,10 @@ mod tests {
             "claude_cli_path",
             "external_diff_tool",
             "dirigent_mcp_server_path",
+            "acp_cli_path",
+            "acp_extra_args",
+            "acp_env_vars",
+            "acp_pre_run_script",
         ] {
             assert!(!is_repo_safe_field(gated), "{gated} must be gated");
         }

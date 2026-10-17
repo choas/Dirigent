@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::db::CueStatus;
 use crate::diff_view::{DiffViewMode, ParsedDiff};
 use crate::git;
-use crate::settings::PlayVariable;
+use crate::settings::{CliProvider, PlayVariable};
 
 /// Display mode for the git view panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +34,23 @@ pub(super) struct TabReloadResult {
     #[allow(dead_code)]
     pub(super) changed: Vec<PathBuf>,
     pub(super) failed: Vec<(PathBuf, String)>,
+}
+
+/// A Settings "Test Connection" probe of one CLI provider.
+pub(super) struct ConnectionTest {
+    pub(super) provider: CliProvider,
+    pub(super) started: Instant,
+    pub(super) rx: mpsc::Receiver<Result<String, String>>,
+    pub(super) cancel: Arc<AtomicBool>,
+    /// Trimmed reply (or error) and how long it took; `None` while running.
+    pub(super) outcome: Option<(Result<String, String>, Duration)>,
+}
+
+impl Drop for ConnectionTest {
+    /// Replacing or dropping a running probe stops its CLI process.
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// State for a play that has template variables requiring user input.

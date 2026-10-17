@@ -128,7 +128,7 @@ struct InitialProjectState {
     worktrees: Vec<git::WorktreeInfo>,
 }
 use types::{
-    create_tab_state, CodeViewerState, CueAction, DiffReview, EditingCue, GitState,
+    create_tab_state, CodeViewerState, ConnectionTest, CueAction, DiffReview, EditingCue, GitState,
     GitViewDiffMode, NavigationHistory, PendingPlay, SearchState, StagingState,
 };
 
@@ -519,6 +519,9 @@ pub struct DirigentApp {
 
     // Custom theme editor dialog
     custom_theme_edit: Option<CustomThemeEdit>,
+
+    // Settings "Test Connection" probe of the selected CLI provider
+    connection_test: Option<ConnectionTest>,
 
     // Deferred auto-commit: cue IDs waiting for AfterRun agents to finish
     pending_auto_commits: Vec<i64>,
@@ -1135,6 +1138,7 @@ impl DirigentApp {
             folder_compare_rx: None,
 
             custom_theme_edit: None,
+            connection_test: None,
 
             pending_auto_commits: Vec::new(),
             user_reviewed_auto_commits: HashSet::new(),

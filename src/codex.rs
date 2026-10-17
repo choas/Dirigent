@@ -22,6 +22,8 @@ struct CodexStreamState {
     edited_files: Vec<String>,
     metrics: StreamMetrics,
     logged_tool_item_ids: Vec<String>,
+    /// Last error the CLI reported in the stream (e.g. an unsupported model).
+    last_error: Option<String>,
 }
 
 fn resolve_codex_bin(cli_path: &str) -> Result<PathBuf, BackendError> {
@@ -270,7 +272,7 @@ fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
     on_log: &mut impl FnMut(&str),
-) -> Result<(String, Vec<String>, StreamMetrics), std::io::Error> {
+) -> Result<CodexStreamState, std::io::Error> {
     let reader = std::io::BufReader::new(stdout_handle);
     let mut state = CodexStreamState::default();
 
@@ -287,7 +289,7 @@ fn process_event_stream(
         process_codex_stream_line(line, on_log, &mut state);
     }
 
-    Ok((state.final_result, state.edited_files, state.metrics))
+    Ok(state)
 }
 
 fn process_codex_stream_line(
@@ -310,6 +312,24 @@ fn process_codex_json_event(
     append_codex_text_event(event, on_log, &mut state.final_result);
     collect_edited_paths(event, &mut state.edited_files);
     update_codex_metrics(event, &mut state.metrics);
+    if let Some(message) = extract_error_message(event) {
+        state.last_error = Some(message);
+    }
+}
+
+/// Message of an `error` or `turn.failed` event. API errors arrive as a JSON
+/// string; their nested `error.message` is the readable part.
+fn extract_error_message(event: &serde_json::Value) -> Option<String> {
+    let message = match event.get("type").and_then(|t| t.as_str())? {
+        "error" => event.get("message"),
+        "turn.failed" => event.get("error").and_then(|e| e.get("message")),
+        _ => None,
+    }?
+    .as_str()?;
+    let nested = serde_json::from_str::<serde_json::Value>(message)
+        .ok()
+        .and_then(|v| v.pointer("/error/message")?.as_str().map(str::to_string));
+    Some(nested.unwrap_or_else(|| message.to_string()))
 }
 
 fn log_codex_tool_event(
@@ -362,6 +382,21 @@ fn update_codex_metrics(event: &serde_json::Value, metrics: &mut StreamMetrics) 
     if is_turn_complete_event(event) {
         metrics.num_turns = Some(metrics.num_turns.unwrap_or(0).saturating_add(1));
     }
+}
+
+/// Last few stderr lines, for exits that happen before any JSON event (e.g.
+/// rejected arguments).
+fn stderr_tail(stderr: &str) -> Option<String> {
+    const MAX_LINES: usize = 3;
+    const MAX_CHARS: usize = 500;
+    let lines: Vec<&str> = stderr.trim().lines().collect();
+    let tail = lines[lines.len().saturating_sub(MAX_LINES)..].join("\n");
+    let char_count = tail.chars().count();
+    let tail: String = tail
+        .chars()
+        .skip(char_count.saturating_sub(MAX_CHARS))
+        .collect();
+    (!tail.is_empty()).then_some(tail)
 }
 
 fn stream_stderr(
@@ -467,11 +502,10 @@ pub(crate) fn run_codex_cli(
             backend: "codex",
             source,
         })?;
-    let (final_result, edited_files, metrics) =
-        stream_result.map_err(|source| BackendError::StreamReadError {
-            backend: "codex",
-            source,
-        })?;
+    let state = stream_result.map_err(|source| BackendError::StreamReadError {
+        backend: "codex",
+        source,
+    })?;
 
     if !stderr.is_empty() {
         on_log(&stderr);
@@ -486,15 +520,16 @@ pub(crate) fn run_codex_cli(
         return Err(BackendError::NonZeroExit {
             backend: "codex",
             status,
+            reason: state.last_error.or_else(|| stderr_tail(&stderr)),
         });
     }
 
     Ok(BackendResponse {
-        stdout: final_result,
-        edited_files,
-        cost_usd: metrics.cost_usd,
-        duration_ms: metrics.duration_ms,
-        num_turns: metrics.num_turns,
+        stdout: state.final_result,
+        edited_files: state.edited_files,
+        cost_usd: state.metrics.cost_usd,
+        duration_ms: state.metrics.duration_ms,
+        num_turns: state.metrics.num_turns,
         metadata: None,
     })
 }
@@ -537,16 +572,15 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (final_result, edited_files, metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(final_result, "first\nsecond\n");
+        assert_eq!(state.final_result, "first\nsecond\n");
         assert_eq!(log, "first\nsecond\n");
-        assert!(edited_files.is_empty());
-        assert_eq!(metrics.cost_usd, None);
-        assert_eq!(metrics.duration_ms, None);
-        assert_eq!(metrics.num_turns, Some(1));
+        assert!(state.edited_files.is_empty());
+        assert_eq!(state.metrics.cost_usd, None);
+        assert_eq!(state.metrics.duration_ms, None);
+        assert_eq!(state.metrics.num_turns, Some(1));
     }
 
     #[test]
@@ -559,13 +593,12 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (final_result, edited_files, _metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(final_result, "done\n");
+        assert_eq!(state.final_result, "done\n");
         assert_eq!(log, "\u{2192} Bash $ /bin/zsh -lc 'printf probe'\ndone\n");
-        assert!(edited_files.is_empty());
+        assert!(state.edited_files.is_empty());
     }
 
     #[test]
@@ -577,12 +610,11 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (_final_result, edited_files, _metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
         assert_eq!(log, "\u{2192} FileChange modify src/codex.rs\n");
-        assert_eq!(edited_files, vec!["src/codex.rs".to_string()]);
+        assert_eq!(state.edited_files, vec!["src/codex.rs".to_string()]);
     }
 
     #[test]
@@ -603,12 +635,41 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (_final_result, _edited_files, metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(metrics.cost_usd, Some(0.0));
-        assert_eq!(metrics.duration_ms, Some(0));
-        assert_eq!(metrics.num_turns, Some(1));
+        assert_eq!(state.metrics.cost_usd, Some(0.0));
+        assert_eq!(state.metrics.duration_ms, Some(0));
+        assert_eq!(state.metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn stderr_tail_keeps_the_last_lines() {
+        assert_eq!(stderr_tail("  \n"), None);
+        assert_eq!(
+            stderr_tail("a\nb\nc\nerror: unexpected argument '--foo'\n").as_deref(),
+            Some("b\nc\nerror: unexpected argument '--foo'")
+        );
+        assert_eq!(stderr_tail(&"x".repeat(900)).unwrap().len(), 500);
+    }
+
+    #[test]
+    fn process_event_stream_keeps_the_last_api_error() {
+        let input = concat!(
+            "{\"type\":\"error\",\"message\":\"{\\\"type\\\":\\\"error\\\",\\\"status\\\":400,\\\"error\\\":{\\\"message\\\":\\\"model not supported\\\"}}\"}\n",
+            "{\"type\":\"turn.failed\",\"error\":{\"message\":\"plain failure\"}}\n",
+        );
+        let cancel = AtomicBool::new(false);
+
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |_| {})
+            .expect("stream should parse");
+
+        assert_eq!(state.last_error.as_deref(), Some("plain failure"));
+        let api_error: serde_json::Value =
+            serde_json::from_str(input.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            extract_error_message(&api_error).as_deref(),
+            Some("model not supported")
+        );
     }
 }

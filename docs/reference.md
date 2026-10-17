@@ -104,7 +104,8 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, or `Codex` |
+| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, or `ACP Agent` |
+| Test Connection | button | — | Sends `hello` to the selected provider with the current (unsaved) settings and shows the reply or error; pre/post-run scripts are skipped ([How_to_ACP.md](How_to_ACP.md#testing-the-connection)) |
 | Claude model | string | claude-opus-4-8 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
 | Claude CLI path | string | (auto-detect) | Path to `claude` binary; auto-detected via `which` |
@@ -124,6 +125,10 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 | Codex model | string | gpt-5-codex | Model for the Codex provider |
 | Codex CLI path | string | (auto-detect) | Path to `codex` binary |
 | Codex extra args / env vars / pre-run / post-run | string | empty | As for Claude, per provider |
+| ACP agent command | string | empty | ACP agent executable, e.g. `opencode`, `gemini`, `goose` ([How_to_ACP.md](How_to_ACP.md)) |
+| ACP extra args | string | empty | Arguments that start the agent in ACP mode, e.g. `acp`, `--experimental-acp` |
+| ACP env vars | string | empty | `KEY=VAL` lines set on the agent process |
+| ACP pre-/post-run script | string | empty | Shell scripts executed around each ACP run |
 | Auto-continue | bool | false | Re-prompt a run that stopped with unfinished work |
 | Auto-continue max | int | 3 | Cap on consecutive auto-continues per cue |
 

@@ -338,6 +338,7 @@ fn check_exit_status(
     Err(BackendError::NonZeroExit {
         backend: "gemini",
         status,
+        reason: None,
     })
 }
 

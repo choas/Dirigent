@@ -314,6 +314,7 @@ pub(super) fn run_cli_prompt(
         skip_permissions: false,
         // Force headless: PTY line-deduplication corrupts multi-line JSON.
         use_pty: false,
+        read_only: true,
     };
     backend
         .invoke(&req, Box::new(|_| {}), cancel)

@@ -316,6 +316,7 @@ fn check_exit_status(
     Err(BackendError::NonZeroExit {
         backend: "opencode",
         status: exit_status,
+        reason: None,
     })
 }
 

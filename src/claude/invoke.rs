@@ -75,6 +75,7 @@ pub(crate) fn summarize_commit_message_via_cli(
         hook_trust: crate::ai_backend::HookScriptTrust::Trusted,
         skip_permissions: false,
         use_pty: false,
+        read_only: true,
     };
     let response = run_claude_cli(&req, &mut |_| {}, cancel.clone())
         .map_err(|e| e.to_string())?

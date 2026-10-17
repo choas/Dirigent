@@ -41,6 +41,7 @@ pub(super) fn run_provider(
         hook_trust: req.config.hook_trust,
         skip_permissions: req.config.skip_permissions,
         use_pty: req.config.use_pty,
+        read_only: false,
     };
     let res = backend.invoke(&invocation, Box::new(on_log), cancel);
     finalize_run(req, &baseline, res)
