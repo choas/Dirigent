@@ -2,6 +2,7 @@
 name = "claude_pty"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.99"
 license = "MIT OR Apache-2.0"
 description = "Rust library that wraps the interactive Claude Code TUI under a PTY and streams its output as typed events."
 

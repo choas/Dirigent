@@ -1,0 +1,7 @@
+# The one place the Rust version is set: rustup uses it locally, and CI
+# installs it with `rustup toolchain install`. Bump deliberately — a new
+# stable often brings new clippy lints, which CI treats as errors.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

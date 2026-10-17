@@ -66,7 +66,7 @@ The name comes from the German word for *conductor*: you direct, the AI performs
 
 ## Prerequisites
 
-- **Rust** (1.92+ required by the pinned egui/eframe 0.34) — [rustup.rs](https://rustup.rs)
+- **Rust** 1.99 — [rustup.rs](https://rustup.rs) installs it automatically from `rust-toolchain.toml` on the first `cargo` command
 - **Claude Code CLI** — Must be installed and available on your `PATH` (or configured via Settings). See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code).
 - **`merman-cli`** _(optional)_ — Enables rendering of `mermaid` code blocks as diagrams in the Markdown viewer. Install with `cargo install merman-cli`; without it, Mermaid blocks fall back to showing their source.
 - **System dependencies** for your platform:

@@ -20,6 +20,7 @@ All notable changes to Dirigent are documented in this file.
 - Settings → General → **Test Connection**: sends `hello` to the selected CLI provider (Claude, OpenCode, Gemini, Codex or ACP agent) with the current settings and shows the reply or the error
 
 ### Changed
+- Rust is pinned to 1.99.1 in `rust-toolchain.toml` (also `rust-version` in both crates); CI and the release build install that version instead of whatever is the latest stable, so a new Rust release can no longer break CI without a code change
 - All AI CLI backends (Claude, Gemini, OpenCode, Codex, and the new ACP agent provider) now run through a single `AiBackend` trait with one canonical sequence — pre-run hook, CLI invocation, post-run hook (always executed, even on error or cancel), cancellation winning over the CLI result — and one shared metrics mapping, error type, and request/response shape
 - Conversation view groups each CLI run under a foldable header (run number, provider, prompt preview, and duration/cost) — the latest and in-flight runs stay expanded while earlier runs collapse for easier scanning of long conversations
 - Commit flows include staged changes, and staged queue groups stay queued until they are committed
