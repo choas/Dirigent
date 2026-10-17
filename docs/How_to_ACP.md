@@ -23,20 +23,23 @@ Background and design: [acp-concept.md](acp-concept.md). The reverse direction, 
 | Pre-run / Post-run Script | Shell commands around each run, like the other providers | `cargo fmt` |
 | Env Variables | `KEY=VAL`, one per line; `.Dirigent/.env` is applied too | `GOOSE_PROVIDER=anthropic` |
 
-4. Create a cue and run it. The running log shows `[ACP: <agent name> <version>]`, then streamed text, `→ <tool>` lines, plan checklists and `✗` lines for failed tools or denied permissions.
+4. Click **Test Connection**. Dirigent sends `hello` to the agent and shows its reply (or the error) next to the button. See [Testing the connection](#testing-the-connection).
+5. Create a cue and run it. The running log shows `[ACP: <agent name> <version>]`, then streamed text, `→ <tool>` lines, plan checklists and `✗` lines for failed tools or denied permissions.
 
 ## Agents
 
-| Agent | Agent Command | Extra Arguments | Notes |
-|---|---|---|---|
-| OpenCode | `opencode` | `acp` | Verified against OpenCode 1.18.30 |
-| Gemini CLI | `gemini` | `--experimental-acp` | `npm i -g @google/gemini-cli` |
-| Goose | `goose` | `acp` | |
-| Claude Code | `claude-code-acp` | | Zed's adapter (`npm i -g @zed-industries/claude-code-acp`); newer releases may be named `claude-agent-acp` |
-| Codex | `codex-acp` | | Zed's adapter for Codex CLI |
-| Anything else | path to the binary | as documented by the agent | Must speak ACP v1 on stdin/stdout |
+| Agent | Agent Command | Extra Arguments | Status | Notes |
+|---|---|---|---|---|
+| Claude Code | `npx` | `-y @agentclientprotocol/claude-agent-acp@0.90.0` | ✅ verified (0.90.0) | Uses your existing `claude` login. Formerly `@zed-industries/claude-code-acp`, which is no longer updated. Pin a version; with a global install (`npm i -g @agentclientprotocol/claude-agent-acp`) the command is `claude-agent-acp` with no arguments |
+| OpenCode | `opencode` | `acp` | ✅ verified (1.18.30) | Uses OpenCode's own provider login and model |
+| Codex | `npx` | `-y @zed-industries/codex-acp@0.16.0` | ⚠️ connects, prompts fail | 0.16.0 (June 2026) bundles an older Codex core and rejects newer models from `~/.codex/config.toml` (e.g. `gpt-6-luna`) with `-32603 Internal error`. Starts sessions in read-only mode, so edits need **Permissions** on |
+| Gemini CLI | `gemini` | `--experimental-acp` | not verified | `npm i -g @google/gemini-cli`, then run `gemini` once to log in |
+| Goose | `goose` | `acp` | not verified | Needs a provider key in **Env Variables**, e.g. `GOOSE_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=…` |
+| Anything else | path to the binary | as documented by the agent | | Must speak ACP v1 on stdin/stdout |
 
-Flags and package names change quickly; check the agent's own docs or the registry at <https://agentclientprotocol.com> if one does not start. Only OpenCode was verified end to end when this page was written. The smoke test below lets you check any other agent the same way.
+"Verified" means both smoke tests below passed on 2026-10-17. Flags and package names change quickly; check the agent's own docs or the registry at <https://agentclientprotocol.com> if one does not start.
+
+Running an agent through `npx` downloads it on first use, so the first run (or connection test) can take a while. If your npm config sets a minimum release age, npm refuses versions newer than that; pick an older version if the pinned one is too new.
 
 ## What happens during a run
 
@@ -77,12 +80,29 @@ File access through `fs/*` is confined to the project root regardless of these s
 - No MCP forwarding and no client-hosted terminals.
 - Agents that need interactive authentication fail with "requires authentication". Log in with the agent's CLI first.
 
+## Testing the connection
+
+**Settings → General → Test Connection** works for every CLI provider, not just ACP. It sends the prompt `hello` with the settings currently on screen (unsaved edits included) and passes if a non-empty reply comes back:
+
+- `✓ <first line of the reply> (3.2s)`: the CLI started, authenticated and answered. Hover for the full reply.
+- `✗ <error>`: the CLI failed to start, needs authentication, returned an error, or replied with nothing. Hover for the full message, which includes the agent's stderr when it exited.
+- `no reply after 120s`: the test was cancelled. Agents started through `npx` may still be downloading; try again.
+
+Pre-run and post-run scripts are skipped. ACP agents run read-only, as they do for analysis prompts. The test calls the model, so it costs a few tokens.
+
 ## Smoke-testing an agent
 
 Two ignored tests run a real agent in a temporary directory: one with a read-only prompt, and one that edits a file.
 
 ```sh
 ACP_SMOKE_AGENT="opencode acp" cargo test acp_smoke -- --ignored --nocapture
+ACP_SMOKE_AGENT="npx -y @agentclientprotocol/claude-agent-acp@0.90.0" cargo test acp_smoke -- --ignored --nocapture
 ```
 
 Both call the agent's model, so they cost a few tokens.
+
+The connection test has a matching ignored test. It uses this repository's saved settings, and `ACP_SMOKE_AGENT` when set:
+
+```sh
+CONNECTION_SMOKE_PROVIDER=claude cargo test connection_smoke -- --ignored --nocapture
+```

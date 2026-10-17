@@ -93,6 +93,7 @@ Settings are stored per-project in `.Dirigent/settings.json` and edited via the 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, or `ACP Agent` |
+| Test Connection | button | — | Sends `hello` to the selected provider with the current (unsaved) settings and shows the reply or error; pre/post-run scripts are skipped ([How_to_ACP.md](How_to_ACP.md#testing-the-connection)) |
 | Claude model | string | claude-opus-4-6 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
 | Claude CLI path | string | (auto-detect) | Path to `claude` binary; auto-detected via `which` |

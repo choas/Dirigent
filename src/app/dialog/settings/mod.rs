@@ -1,5 +1,6 @@
 mod agents;
 mod commands;
+mod connection_test;
 mod general;
 mod lsp;
 mod playbook;

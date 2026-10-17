@@ -14,7 +14,8 @@ pub(crate) enum CodexError {
     SpawnFailed(std::io::Error),
     StreamReadError(std::io::Error),
     Cancelled,
-    NonZeroExit(std::process::ExitStatus),
+    /// Exit status plus the last `error`/`turn.failed` message from the stream.
+    NonZeroExit(std::process::ExitStatus, Option<String>),
     InvalidExtraArgs(String),
     HookRejected(String),
 }
@@ -30,7 +31,10 @@ impl std::fmt::Display for CodexError {
                 write!(f, "failed to parse extra_args (unmatched quote?): {args}")
             }
             CodexError::HookRejected(msg) => write!(f, "hook script rejected: {msg}"),
-            CodexError::NonZeroExit(status) => write!(f, "codex exited with {status}"),
+            CodexError::NonZeroExit(status, None) => write!(f, "codex exited with {status}"),
+            CodexError::NonZeroExit(status, Some(msg)) => {
+                write!(f, "codex exited with {status}: {msg}")
+            }
         }
     }
 }
@@ -77,6 +81,8 @@ struct CodexStreamState {
     edited_files: Vec<String>,
     metrics: StreamMetrics,
     logged_tool_item_ids: Vec<String>,
+    /// Last error the CLI reported in the stream (e.g. an unsupported model).
+    last_error: Option<String>,
 }
 
 struct HookCommand {
@@ -432,7 +438,7 @@ fn process_event_stream(
     stdout_handle: impl std::io::Read,
     cancel: &AtomicBool,
     on_log: &mut impl FnMut(&str),
-) -> Result<(String, Vec<String>, StreamMetrics), std::io::Error> {
+) -> Result<CodexStreamState, std::io::Error> {
     use std::io::BufRead;
 
     let reader = std::io::BufReader::new(stdout_handle);
@@ -451,7 +457,7 @@ fn process_event_stream(
         process_codex_stream_line(line, on_log, &mut state);
     }
 
-    Ok((state.final_result, state.edited_files, state.metrics))
+    Ok(state)
 }
 
 fn process_codex_stream_line(
@@ -474,6 +480,24 @@ fn process_codex_json_event(
     append_codex_text_event(event, on_log, &mut state.final_result);
     collect_edited_paths(event, &mut state.edited_files);
     update_codex_metrics(event, &mut state.metrics);
+    if let Some(message) = extract_error_message(event) {
+        state.last_error = Some(message);
+    }
+}
+
+/// Message of an `error` or `turn.failed` event. API errors arrive as a JSON
+/// string; their nested `error.message` is the readable part.
+fn extract_error_message(event: &serde_json::Value) -> Option<String> {
+    let message = match event.get("type").and_then(|t| t.as_str())? {
+        "error" => event.get("message"),
+        "turn.failed" => event.get("error").and_then(|e| e.get("message")),
+        _ => None,
+    }?
+    .as_str()?;
+    let nested = serde_json::from_str::<serde_json::Value>(message)
+        .ok()
+        .and_then(|v| v.pointer("/error/message")?.as_str().map(str::to_string));
+    Some(nested.unwrap_or_else(|| message.to_string()))
 }
 
 fn log_codex_tool_event(
@@ -646,8 +670,7 @@ pub(crate) fn invoke_codex_streaming(
         .join()
         .unwrap_or_else(|_| Err(std::io::Error::other("codex waiter thread panicked")))
         .map_err(CodexError::SpawnFailed)?;
-    let (final_result, edited_files, metrics) =
-        stream_result.map_err(CodexError::StreamReadError)?;
+    let state = stream_result.map_err(CodexError::StreamReadError)?;
 
     if !stderr.is_empty() {
         on_log(&stderr);
@@ -666,15 +689,15 @@ pub(crate) fn invoke_codex_streaming(
         return Err(CodexError::Cancelled);
     }
     if !status.success() {
-        return Err(CodexError::NonZeroExit(status));
+        return Err(CodexError::NonZeroExit(status, state.last_error));
     }
 
     Ok(CodexResponse {
-        stdout: final_result,
-        edited_files,
-        cost_usd: metrics.cost_usd,
-        duration_ms: metrics.duration_ms,
-        num_turns: metrics.num_turns,
+        stdout: state.final_result,
+        edited_files: state.edited_files,
+        cost_usd: state.metrics.cost_usd,
+        duration_ms: state.metrics.duration_ms,
+        num_turns: state.metrics.num_turns,
     })
 }
 
@@ -720,16 +743,15 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (final_result, edited_files, metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(final_result, "first\nsecond\n");
+        assert_eq!(state.final_result, "first\nsecond\n");
         assert_eq!(log, "first\nsecond\n");
-        assert!(edited_files.is_empty());
-        assert_eq!(metrics.cost_usd, None);
-        assert_eq!(metrics.duration_ms, None);
-        assert_eq!(metrics.num_turns, Some(1));
+        assert!(state.edited_files.is_empty());
+        assert_eq!(state.metrics.cost_usd, None);
+        assert_eq!(state.metrics.duration_ms, None);
+        assert_eq!(state.metrics.num_turns, Some(1));
     }
 
     #[test]
@@ -742,13 +764,12 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (final_result, edited_files, _metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(final_result, "done\n");
+        assert_eq!(state.final_result, "done\n");
         assert_eq!(log, "\u{2192} Bash $ /bin/zsh -lc 'printf probe'\ndone\n");
-        assert!(edited_files.is_empty());
+        assert!(state.edited_files.is_empty());
     }
 
     #[test]
@@ -760,12 +781,11 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (_final_result, edited_files, _metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
         assert_eq!(log, "\u{2192} FileChange modify src/codex.rs\n");
-        assert_eq!(edited_files, vec!["src/codex.rs".to_string()]);
+        assert_eq!(state.edited_files, vec!["src/codex.rs".to_string()]);
     }
 
     #[test]
@@ -786,13 +806,32 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut log = String::new();
 
-        let (_final_result, _edited_files, metrics) =
-            process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
-                .expect("stream should parse");
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |text| log.push_str(text))
+            .expect("stream should parse");
 
-        assert_eq!(metrics.cost_usd, Some(0.0));
-        assert_eq!(metrics.duration_ms, Some(0));
-        assert_eq!(metrics.num_turns, Some(1));
+        assert_eq!(state.metrics.cost_usd, Some(0.0));
+        assert_eq!(state.metrics.duration_ms, Some(0));
+        assert_eq!(state.metrics.num_turns, Some(1));
+    }
+
+    #[test]
+    fn process_event_stream_keeps_the_last_api_error() {
+        let input = concat!(
+            "{\"type\":\"error\",\"message\":\"{\\\"type\\\":\\\"error\\\",\\\"status\\\":400,\\\"error\\\":{\\\"message\\\":\\\"model not supported\\\"}}\"}\n",
+            "{\"type\":\"turn.failed\",\"error\":{\"message\":\"plain failure\"}}\n",
+        );
+        let cancel = AtomicBool::new(false);
+
+        let state = process_event_stream(input.as_bytes(), &cancel, &mut |_| {})
+            .expect("stream should parse");
+
+        assert_eq!(state.last_error.as_deref(), Some("plain failure"));
+        let api_error: serde_json::Value =
+            serde_json::from_str(input.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            extract_error_message(&api_error).as_deref(),
+            Some("model not supported")
+        );
     }
 
     #[test]

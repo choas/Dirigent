@@ -33,6 +33,7 @@ impl DirigentApp {
                 self.render_settings_provider_row(ui);
                 self.render_settings_model_row(ui, refresh_models);
                 self.render_settings_cli_paths_row(ui);
+                self.render_connection_test_row(ui);
                 self.render_settings_misc_rows(ui);
             });
     }
@@ -448,7 +449,7 @@ impl DirigentApp {
             ui,
             "Agent Command:",
             &mut self.settings.acp_cli_path,
-            "e.g. claude-code-acp, gemini, goose",
+            "e.g. npx, opencode, gemini, goose",
         );
         cli_field(
             ui,

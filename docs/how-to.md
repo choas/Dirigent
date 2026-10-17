@@ -174,6 +174,7 @@ Dirigent supports OpenCode as an alternative to Claude Code, enabling models fro
 2. Change **CLI Provider** from Claude to OpenCode
 3. Configure the OpenCode model (e.g. `openai/o3`, `google/gemini-2.5-pro`)
 4. Set the CLI path if `opencode` is not on your PATH
+5. Click **Test Connection** to check that OpenCode starts and answers. This works for every provider.
 
 The rest of the workflow (cues, diffs, review) works the same regardless of provider.
 
