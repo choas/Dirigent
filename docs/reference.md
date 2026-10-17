@@ -104,7 +104,7 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, or `ACP Agent` |
+| CLI provider | enum | Claude | `Claude`, `OpenCode`, `Gemini`, `Codex`, `ACP Agent`, or `Herdr` |
 | Test Connection | button | — | Sends `hello` to the selected provider with the current (unsaved) settings and shows the reply or error; pre/post-run scripts are skipped ([How_to_ACP.md](How_to_ACP.md#testing-the-connection)) |
 | Claude model | string | claude-opus-4-8 | Model to use with Claude Code |
 | Claude custom models | list | empty | Additional model names for the dropdown |
@@ -129,6 +129,7 @@ Because `.Dirigent/settings.json` arrives with a checkout, many of its fields ar
 | ACP extra args | string | empty | Arguments that start the agent in ACP mode, e.g. `acp`, `--experimental-acp` |
 | ACP env vars | string | empty | `KEY=VAL` lines set on the agent process |
 | ACP pre-/post-run script | string | empty | Shell scripts executed around each ACP run |
+| Herdr CLI path | string | (auto-detect) | Path to `herdr`; a configured path that does not resolve is an error. The Herdr provider otherwise uses the Claude model, CLI path, extra args, env vars and scripts ([How_to_Herdr.md](How_to_Herdr.md)) |
 | Auto-continue | bool | false | Re-prompt a run that stopped with unfinished work |
 | Auto-continue max | int | 3 | Cap on consecutive auto-continues per cue |
 

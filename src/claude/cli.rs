@@ -129,9 +129,47 @@ pub(super) fn resolve_env_pairs_with(
     pairs
 }
 
+/// The environment a Claude run gets on top of the inherited one, in
+/// precedence order: Settings `env_vars` (resolved from Dirigent's own
+/// environment), then `.Dirigent/.env`. Later entries win on duplicate keys,
+/// matching `Command::env` and `portable_pty::CommandBuilder::env`.
+pub(crate) fn compose_run_envs(
+    env_vars: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+) -> Vec<(String, String)> {
+    compose_run_envs_with(env_vars, project_root, on_log, |name| {
+        std::env::var(name).ok()
+    })
+}
+
+/// [`compose_run_envs`] with an injectable lookup for the Settings `env_vars`
+/// names, so tests don't have to mutate the process environment.
+pub(crate) fn compose_run_envs_with(
+    env_vars: &str,
+    project_root: &Path,
+    on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let mut envs = resolve_env_pairs_with(env_vars, on_log, lookup);
+    envs.extend(load_dirigent_env_pairs(project_root, on_log));
+    envs
+}
+
+/// Split the free-form Settings `extra_args` string like a shell would. An
+/// unmatched quote falls back to plain whitespace splitting rather than
+/// dropping the arguments.
+pub(crate) fn split_extra_args(extra_args: &str) -> Vec<String> {
+    if extra_args.is_empty() {
+        return Vec::new();
+    }
+    shlex::split(extra_args)
+        .unwrap_or_else(|| extra_args.split_whitespace().map(String::from).collect())
+}
+
 /// Test lookup over a fixed set of variables, standing in for the process env.
 #[cfg(test)]
-pub(super) fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+pub(crate) fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
     let vars: std::collections::HashMap<String, String> = vars
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))

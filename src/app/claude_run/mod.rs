@@ -121,6 +121,25 @@ struct RunRequest<'a> {
     jj_cli_path: String,
 }
 
+/// Session continuity for Claude Code runs (direct or in a herdr pane):
+/// `--resume <id>` to continue a conversation, else `--session-id <new id>` so
+/// a later reply can resume it. The id also scopes the Stop hook to this run.
+/// Returns the args and the id to store, or `None` for other providers.
+fn session_continuity_args(
+    provider: &CliProvider,
+    resume_session_id: Option<String>,
+    new_id: impl FnOnce() -> String,
+) -> Option<(Vec<String>, String)> {
+    if !provider.runs_claude_code() {
+        return None;
+    }
+    let (flag, id) = match resume_session_id {
+        Some(id) => ("--resume", id),
+        None => ("--session-id", new_id()),
+    };
+    Some((vec![flag.to_string(), id.clone()], id))
+}
+
 impl DirigentApp {
     /// Build the initial prompt for a cue, gathering auto-context for Claude provider.
     fn build_initial_prompt(&self, effective_text: &str, cue: &Cue) -> String {
@@ -250,18 +269,12 @@ impl DirigentApp {
             &self.project_root,
         );
 
-        // For Claude provider, inject session continuity args.
-        if provider == CliProvider::Claude {
-            let session_id = if let Some(ref id) = resume_session_id {
-                config.extra_args_vec.push("--resume".to_string());
-                config.extra_args_vec.push(id.clone());
-                id.clone()
-            } else {
-                let id = uuid::Uuid::new_v4().to_string();
-                config.extra_args_vec.push("--session-id".to_string());
-                config.extra_args_vec.push(id.clone());
-                id
-            };
+        if let Some((args, session_id)) =
+            session_continuity_args(&provider, resume_session_id, || {
+                uuid::Uuid::new_v4().to_string()
+            })
+        {
+            config.extra_args_vec.extend(args);
             // Losing this breaks --resume for the run, but the run itself is
             // fine, so log rather than interrupt the user with a status message.
             self.db_log(
@@ -283,6 +296,13 @@ impl DirigentApp {
     }
 
     pub(super) fn trigger_claude(&mut self, cue_id: i64) {
+        let provider = self.settings.cli_provider.clone();
+        self.trigger_run_with_provider(cue_id, provider);
+    }
+
+    /// Run a cue with `provider` instead of the configured one (the prompt
+    /// field's experimental herdr button).
+    pub(super) fn trigger_run_with_provider(&mut self, cue_id: i64, provider: CliProvider) {
         if let Err(e) = settings::sync_home_guard_hook(
             &self.project_root,
             self.settings.allow_home_folder_access,
@@ -293,7 +313,6 @@ impl DirigentApp {
 
         // Start tracking immediately so the timer appears in the UI while
         // we build the prompt (which may involve blocking I/O for auto-context).
-        let provider = self.settings.cli_provider.clone();
         self.claude
             .running_logs
             .insert(cue_id, (String::new(), provider.clone()));
@@ -377,13 +396,14 @@ impl DirigentApp {
 
         let resume_session_id = latest_exec.as_ref().and_then(|e| e.session_id.clone());
 
-        // When resuming a Claude session the previous context is already in the
-        // conversation, so we only need to send the user's reply. For a fresh
-        // session (or non-Claude provider) we build the full structured prompt.
+        // When resuming a Claude Code session the previous context is already
+        // in the conversation, so we only need to send the user's reply. For a
+        // fresh session (or another provider) we build the full structured
+        // prompt.
         // We also need the full prompt when there are new images to attach.
         let prompt = if resume_session_id.is_some()
             && all_images.is_empty()
-            && provider == CliProvider::Claude
+            && provider.runs_claude_code()
         {
             reply.to_string()
         } else {
@@ -470,7 +490,7 @@ impl DirigentApp {
         let (raw_text, matched_command) =
             resolve_command_prefix(&cue.text, &self.settings.commands);
 
-        let prompt = if resume_session_id.is_some() && provider == CliProvider::Claude {
+        let prompt = if resume_session_id.is_some() && provider.runs_claude_code() {
             "continue".to_string()
         } else {
             let original_text = build_pr_hint_text(&raw_text, cue.source_ref.as_deref());
@@ -1356,6 +1376,50 @@ impl DirigentApp {
                 project_name
             };
             send_macos_notification("Dirigent", &subtitle, &preview);
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn herdr_gets_the_same_session_args_as_claude() {
+        for provider in [CliProvider::Claude, CliProvider::Herdr] {
+            assert_eq!(
+                session_continuity_args(&provider, None, || "new-id".to_string()),
+                Some((
+                    vec!["--session-id".to_string(), "new-id".to_string()],
+                    "new-id".to_string()
+                )),
+                "{provider:?}"
+            );
+            assert_eq!(
+                session_continuity_args(&provider, Some("old".to_string()), || {
+                    panic!("no new id when resuming")
+                }),
+                Some((
+                    vec!["--resume".to_string(), "old".to_string()],
+                    "old".to_string()
+                )),
+                "{provider:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_providers_get_no_session_args() {
+        for provider in [
+            CliProvider::OpenCode,
+            CliProvider::Gemini,
+            CliProvider::Codex,
+            CliProvider::Acp,
+        ] {
+            assert_eq!(
+                session_continuity_args(&provider, Some("x".to_string()), String::new),
+                None
+            );
         }
     }
 }

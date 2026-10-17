@@ -64,9 +64,9 @@ impl DirigentApp {
         }
 
         ui.horizontal(|ui| {
-            let can_create = !self.git.pr_title.trim().is_empty()
-                && !self.git.pr_create_op.in_flight()
-                && !self.git.pr_prefill_op.in_flight();
+            let can_create = !self.git.pr.title.trim().is_empty()
+                && !self.git.pr.create_op.in_flight()
+                && !self.git.pr.prefill_op.in_flight();
             let create_btn = egui::Button::new(
                 icon("\u{2191} Push & Create PR", fs).color(self.semantic.badge_text),
             )
@@ -80,7 +80,7 @@ impl DirigentApp {
             }
             if ui
                 .add_enabled(
-                    !self.git.pr_create_op.in_flight(),
+                    !self.git.pr.create_op.in_flight(),
                     egui::Button::new("Cancel"),
                 )
                 .clicked()
@@ -102,7 +102,7 @@ impl DirigentApp {
                 .monospace()
                 .color(self.semantic.accent),
         );
-        if self.git.pr_prefill_op.in_flight() {
+        if self.git.pr.prefill_op.in_flight() {
             ui.label(
                 egui::RichText::new("Detecting base branch and commits\u{2026}")
                     .color(self.semantic.secondary_text),
@@ -113,7 +113,7 @@ impl DirigentApp {
         // Title
         ui.label(egui::RichText::new("Title").strong());
         ui.add(
-            egui::TextEdit::singleline(&mut self.git.pr_title)
+            egui::TextEdit::singleline(&mut self.git.pr.title)
                 .desired_width(f32::INFINITY)
                 .hint_text("PR title"),
         );
@@ -123,7 +123,7 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Base branch").strong());
             ui.add(
-                egui::TextEdit::singleline(&mut self.git.pr_base)
+                egui::TextEdit::singleline(&mut self.git.pr.base)
                     .desired_width(120.0)
                     .hint_text("main"),
             );
@@ -133,7 +133,7 @@ impl DirigentApp {
         // Body
         ui.label(egui::RichText::new("Description").strong());
         ui.add(
-            egui::TextEdit::multiline(&mut self.git.pr_body)
+            egui::TextEdit::multiline(&mut self.git.pr.body)
                 .desired_width(f32::INFINITY)
                 .desired_rows(8)
                 .hint_text("PR description (optional)")
@@ -142,6 +142,6 @@ impl DirigentApp {
         ui.add_space(SPACE_XS);
 
         // Draft checkbox
-        ui.checkbox(&mut self.git.pr_draft, "Create as draft");
+        ui.checkbox(&mut self.git.pr.draft, "Create as draft");
     }
 }

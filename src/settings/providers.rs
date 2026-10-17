@@ -58,6 +58,9 @@ pub(crate) enum CliProvider {
     Gemini,
     Codex,
     Acp,
+    /// Native, interactive Claude Code in a herdr pane: Dirigent hands over
+    /// the prompt and collects the diff, transcript and metrics.
+    Herdr,
 }
 
 impl CliProvider {
@@ -68,7 +71,15 @@ impl CliProvider {
             CliProvider::Gemini => "Gemini",
             CliProvider::Codex => "Codex",
             CliProvider::Acp => "ACP Agent",
+            CliProvider::Herdr => "Herdr",
         }
+    }
+
+    /// Whether runs are Claude Code sessions (directly or in a herdr pane), so
+    /// they get Claude's session continuity (`--session-id`/`--resume`), the
+    /// short resume prompts, and Dirigent MCP injection.
+    pub fn runs_claude_code(&self) -> bool {
+        matches!(self, CliProvider::Claude | CliProvider::Herdr)
     }
 
     pub fn all() -> &'static [CliProvider] {
@@ -78,6 +89,7 @@ impl CliProvider {
             CliProvider::Gemini,
             CliProvider::Codex,
             CliProvider::Acp,
+            CliProvider::Herdr,
         ]
     }
 }

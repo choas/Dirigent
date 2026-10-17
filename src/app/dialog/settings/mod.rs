@@ -369,7 +369,10 @@ impl DirigentApp {
                     self.gemini_models.clear();
                     self.spawn_gemini_models_fetch();
                 }
-                CliProvider::Claude | CliProvider::Codex | CliProvider::Acp => {}
+                CliProvider::Claude
+                | CliProvider::Codex
+                | CliProvider::Acp
+                | CliProvider::Herdr => {}
             }
         }
         if let Some(idx) = fetch_idx {

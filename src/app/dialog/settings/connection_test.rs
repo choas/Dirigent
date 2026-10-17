@@ -152,6 +152,11 @@ fn run_connection_test(
     project_root: &Path,
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
+    // The test prompt runs headless Claude (as every analysis prompt does for
+    // Herdr), so check the herdr side separately.
+    if *provider == CliProvider::Herdr {
+        crate::herdr::check_server(&settings.herdr_cli_path)?;
+    }
     let reply = crate::app::split_cue::run_cli_prompt(
         TEST_PROMPT,
         provider,
@@ -174,7 +179,8 @@ fn run_connection_test(
 fn without_run_scripts(settings: &Settings, provider: &CliProvider) -> Settings {
     let mut settings = settings.clone();
     let (pre, post) = match provider {
-        CliProvider::Claude => (
+        // Herdr shares Claude's scripts.
+        CliProvider::Claude | CliProvider::Herdr => (
             &mut settings.claude_pre_run_script,
             &mut settings.claude_post_run_script,
         ),
@@ -278,6 +284,25 @@ echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'
             ..Settings::default()
         };
         assert!(run(&settings, dir.path()).is_err());
+    }
+
+    #[test]
+    fn herdr_test_reports_an_unresolvable_herdr_path_before_running_claude() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            cli_provider: CliProvider::Herdr,
+            herdr_cli_path: "/nonexistent/herdr".into(),
+            claude_cli_path: "/nonexistent/claude".into(),
+            ..Settings::default()
+        };
+        let err = run_connection_test(
+            &settings,
+            &CliProvider::Herdr,
+            dir.path(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap_err();
+        assert!(err.contains("/nonexistent/herdr"), "{err}");
     }
 
     /// Runs the real test against a provider configured in this repo's saved

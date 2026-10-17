@@ -532,6 +532,9 @@ pub(crate) fn run_codex_cli(
         cost_usd: state.metrics.cost_usd,
         duration_ms: state.metrics.duration_ms,
         num_turns: state.metrics.num_turns,
+        // Token usage is not parsed from this CLI's stream yet.
+        input_tokens: None,
+        output_tokens: None,
         metadata: None,
     })
 }

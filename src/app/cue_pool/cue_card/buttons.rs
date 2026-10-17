@@ -404,7 +404,7 @@ impl DirigentApp {
             .ok()
             .flatten()
             .is_some();
-        if !already_notified && !self.git.pr_notify_op.in_flight() {
+        if !already_notified && !self.git.pr.notify_op.in_flight() {
             if ui
                 .small_button(icon("\u{1F514} Notify PR", fs))
                 .on_hover_text("Reply to the PR comment that this finding was fixed")

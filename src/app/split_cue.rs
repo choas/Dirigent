@@ -300,8 +300,10 @@ pub(super) fn run_cli_prompt(
     let req = crate::ai_backend::BackendRequest {
         prompt,
         project_root,
+        cue_id: None,
         model: pf.model,
         cli_path: pf.cli_path,
+        herdr_cli_path: &settings.herdr_cli_path,
         extra_args: pf.extra_args,
         extra_args_vec: &[],
         env_vars: pf.env_vars,

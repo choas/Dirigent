@@ -1,6 +1,6 @@
 //! The seam between the app and the AI CLI backends.
 //!
-//! Every backend (Claude, Gemini, OpenCode, Codex, ACP agents) is invoked through the
+//! Every backend (Claude, Gemini, OpenCode, Codex, ACP agents, Herdr) is invoked through the
 //! [`AiBackend`] trait, whose provided [`AiBackend::invoke`] method runs the
 //! one canonical sequence:
 //!
@@ -39,6 +39,7 @@ use crate::ai_process;
 use crate::claude::{self, ClaudeRunMetadata, RunMetrics};
 use crate::codex;
 use crate::gemini;
+use crate::herdr;
 use crate::opencode;
 use crate::settings::CliProvider;
 
@@ -145,9 +146,15 @@ impl std::fmt::Display for BackendError {
 /// apply to them (`extra_args_vec` and `use_pty` are Claude-only today).
 pub(crate) struct BackendRequest<'a> {
     pub prompt: &'a str,
+    /// The cue this run belongs to; `None` for analysis prompts. The Herdr
+    /// backend names its tab after it.
+    pub cue_id: Option<i64>,
     pub project_root: &'a Path,
     pub model: &'a str,
     pub cli_path: &'a str,
+    /// The `herdr` binary (Herdr backend only); `cli_path` is then the Claude
+    /// Code CLI started inside the herdr pane.
+    pub herdr_cli_path: &'a str,
     pub extra_args: &'a str,
     /// Structured args that must not go through shlex::split (e.g.
     /// --mcp-config paths). Passed directly as individual Command::arg entries.
@@ -176,6 +183,8 @@ pub(crate) struct BackendResponse {
     pub cost_usd: Option<f64>,
     pub duration_ms: Option<u64>,
     pub num_turns: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
     pub metadata: Option<ClaudeRunMetadata>,
 }
 
@@ -297,7 +306,8 @@ pub(crate) trait AiBackend: Sync {
                 cost_usd: response.cost_usd,
                 duration_ms: response.duration_ms.unwrap_or(elapsed_ms),
                 num_turns: response.num_turns,
-                ..RunMetrics::default()
+                input_tokens: response.input_tokens,
+                output_tokens: response.output_tokens,
             },
             metadata: response.metadata,
             parse_diff: self.parse_diff_fn(),
@@ -313,6 +323,7 @@ pub(crate) fn backend_for(provider: &CliProvider) -> &'static dyn AiBackend {
         CliProvider::OpenCode => &OpenCodeBackend,
         CliProvider::Codex => &CodexBackend,
         CliProvider::Acp => &AcpBackend,
+        CliProvider::Herdr => &HerdrBackend,
     }
 }
 
@@ -457,6 +468,37 @@ impl AiBackend for AcpBackend {
     }
 }
 
+pub(crate) struct HerdrBackend;
+
+impl AiBackend for HerdrBackend {
+    fn name(&self) -> &'static str {
+        "Herdr"
+    }
+
+    fn cli_name(&self) -> &'static str {
+        "herdr"
+    }
+
+    /// The response is a transcript that starts with the prompt, and reply
+    /// prompts embed the previous run's diff — parsing it would resurrect
+    /// that old diff. The working tree is the only diff source.
+    fn parse_diff_fn(&self) -> fn(&str) -> Option<String> {
+        no_response_diff
+    }
+
+    fn invoke_cli(
+        &self,
+        req: &BackendRequest<'_>,
+        on_log: &SharedLog,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<BackendResponse, BackendError> {
+        // The herdr run logs only from the invoking thread.
+        ai_process::with_locked_log(on_log, "herdr run", |log| {
+            herdr::run_herdr_cli(req, &mut **log, cancel)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,9 +563,11 @@ mod tests {
     fn request<'a>(root: &'a Path) -> BackendRequest<'a> {
         BackendRequest {
             prompt: "p",
+            cue_id: None,
             project_root: root,
             model: "",
             cli_path: "",
+            herdr_cli_path: "",
             extra_args: "",
             extra_args_vec: &[],
             env_vars: "",
@@ -597,8 +641,30 @@ mod tests {
             "a backend that reports no cost must not record zero"
         );
         assert_eq!(outcome.metrics.num_turns, Some(3));
+        assert_eq!(outcome.metrics.input_tokens, None);
+        assert_eq!(outcome.metrics.output_tokens, None);
         // duration_ms is the measured wall clock — tiny but always stamped.
         assert!(outcome.metrics.duration_ms < 60_000);
+    }
+
+    #[test]
+    fn reported_token_counts_reach_the_metrics() {
+        let backend = StubBackend::new(|| {
+            Ok(BackendResponse {
+                input_tokens: Some(1200),
+                output_tokens: Some(34),
+                ..BackendResponse::default()
+            })
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let outcome = backend
+            .invoke(&request(tmp.path()), Box::new(|_| {}), cancel)
+            .expect("run should succeed");
+
+        assert_eq!(outcome.metrics.input_tokens, Some(1200));
+        assert_eq!(outcome.metrics.output_tokens, Some(34));
     }
 
     #[test]

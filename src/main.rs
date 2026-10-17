@@ -14,6 +14,7 @@ mod fast_llm;
 mod file_tree;
 mod gemini;
 mod git;
+mod herdr;
 mod jj;
 mod log_collector;
 mod lsp;

@@ -615,6 +615,69 @@ pub(super) struct CommitGroup {
     pub(super) hunk_selection: std::collections::HashMap<String, Vec<String>>,
 }
 
+/// State for the pull-request flow: the Create PR dialog, importing review
+/// findings from a PR (with the filter dialog and its ignore patterns), and
+/// notifying the PR once findings are addressed.
+pub(crate) struct PrState {
+    /// Create PR dialog fields.
+    pub(super) title: String,
+    pub(super) body: String,
+    pub(super) base: String,
+    pub(super) draft: bool,
+    /// In-flight PR creation (push + create).
+    pub(super) create_op: AsyncOp<Result<String, String>>,
+    /// In-flight async prefill of the Create PR dialog (default branch + body).
+    pub(super) prefill_op: AsyncOp<(String, String)>,
+    /// The error message from a failed PR creation.
+    pub(super) error_message: String,
+    /// PR number input for importing findings.
+    pub(super) import_number: String,
+    /// In-flight PR findings import.
+    pub(super) import_op: AsyncOp<Result<Vec<crate::sources::PrFinding>, String>>,
+    pub(super) import_start: Option<Instant>,
+    /// Fetched PR findings awaiting user filtering before import.
+    pub(super) findings_pending: Vec<crate::sources::PrFinding>,
+    /// Indices of findings the user has excluded from import.
+    pub(super) findings_excluded: HashSet<usize>,
+    /// In-flight PR notification (reply to PR comments).
+    pub(super) notify_op: AsyncOp<Result<String, String>>,
+    /// Whether the filter dialog is showing the "Patterns" page (true) or "Findings" page (false).
+    pub(super) filter_patterns_page: bool,
+    /// Cached list of PR filter patterns loaded from the DB.
+    pub(super) filter_patterns: Vec<crate::db::PrFilterPattern>,
+    /// Input field for adding a new pattern.
+    pub(super) new_pattern_text: String,
+    /// Match field for new pattern: "text" or "file_path".
+    pub(super) new_pattern_field: String,
+    /// Pattern id currently being edited (None = not editing).
+    pub(super) editing_pattern: Option<(i64, String, String)>,
+}
+
+impl Default for PrState {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            body: String::new(),
+            base: String::new(),
+            draft: false,
+            create_op: AsyncOp::default(),
+            prefill_op: AsyncOp::default(),
+            error_message: String::new(),
+            import_number: String::new(),
+            import_op: AsyncOp::default(),
+            import_start: None,
+            findings_pending: Vec::new(),
+            findings_excluded: HashSet::new(),
+            notify_op: AsyncOp::default(),
+            filter_patterns_page: false,
+            filter_patterns: Vec::new(),
+            new_pattern_text: String::new(),
+            new_pattern_field: "text".to_string(),
+            editing_pattern: None,
+        }
+    }
+}
+
 /// State for git information, dirty files, commit history, and worktrees.
 pub(crate) struct GitState {
     pub(super) info: Option<git::GitInfo>,
@@ -654,34 +717,14 @@ pub(crate) struct GitState {
     pub(super) push_op: AsyncOp<Result<String, String>>,
     /// The error message from a failed push.
     pub(super) push_error_message: String,
-    /// The error message from a failed PR creation.
-    pub(super) pr_error_message: String,
+    /// Pull-request flow: Create PR dialog, findings import/filter, and notify.
+    pub(super) pr: PrState,
     /// In-flight git pull/fetch.
     pub(super) pull_op: AsyncOp<Result<String, String>>,
     /// The type of operation that caused conflicts (merge or rebase).
     pub(super) merge_operation: Option<git::MergeOperation>,
     /// List of files with conflicts (relative paths).
     pub(super) conflict_files: Vec<String>,
-    /// PR dialog fields.
-    pub(super) pr_title: String,
-    pub(super) pr_body: String,
-    pub(super) pr_base: String,
-    pub(super) pr_draft: bool,
-    /// In-flight PR creation (push + create).
-    pub(super) pr_create_op: AsyncOp<Result<String, String>>,
-    /// In-flight async prefill of the Create PR dialog (default branch + body).
-    pub(super) pr_prefill_op: AsyncOp<(String, String)>,
-    /// PR number input for importing findings.
-    pub(super) import_pr_number: String,
-    /// In-flight PR findings import.
-    pub(super) import_pr_op: AsyncOp<Result<Vec<crate::sources::PrFinding>, String>>,
-    pub(super) importing_pr_start: Option<Instant>,
-    /// Fetched PR findings awaiting user filtering before import.
-    pub(super) pr_findings_pending: Vec<crate::sources::PrFinding>,
-    /// Indices of findings the user has excluded from import.
-    pub(super) pr_findings_excluded: std::collections::HashSet<usize>,
-    /// In-flight PR notification (reply to PR comments).
-    pub(super) pr_notify_op: AsyncOp<Result<String, String>>,
     /// Input field for creating a new branch from the Switch Branch dialog.
     pub(super) new_branch_name: String,
     /// Archived worktree DBs (cached list).
@@ -694,16 +737,6 @@ pub(crate) struct GitState {
     pub(super) pending_archive_msg: Option<String>,
     /// Pending archived DB deletion that needs user confirmation.
     pub(super) pending_delete_archive: Option<PathBuf>,
-    /// Whether the filter dialog is showing the "Patterns" page (true) or "Findings" page (false).
-    pub(super) pr_filter_patterns_page: bool,
-    /// Cached list of PR filter patterns loaded from the DB.
-    pub(super) pr_filter_patterns: Vec<crate::db::PrFilterPattern>,
-    /// Input field for adding a new pattern.
-    pub(super) new_pattern_text: String,
-    /// Match field for new pattern: "text" or "file_path".
-    pub(super) new_pattern_field: String,
-    /// Pattern id currently being edited (None = not editing).
-    pub(super) editing_pattern: Option<(i64, String, String)>,
     /// Row index hovered in the git graph (previous frame), for branch lineage highlight.
     pub(super) hovered_graph_row: Option<usize>,
     /// Files selected for the next commit (relative paths).

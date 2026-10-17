@@ -41,7 +41,8 @@ impl DirigentApp {
     /// Checks whether the current PR number already has imported cues (i.e. this is a refresh).
     fn is_pr_refresh(&self) -> bool {
         self.git
-            .import_pr_number
+            .pr
+            .import_number
             .trim()
             .parse::<u32>()
             .ok()
@@ -65,12 +66,12 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("PR #").strong());
             let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.git.import_pr_number)
+                egui::TextEdit::singleline(&mut self.git.pr.import_number)
                     .desired_width(80.0)
                     .hint_text("e.g. 1"),
             );
             // Auto-focus on first render
-            if self.git.import_pr_number.is_empty() {
+            if self.git.pr.import_number.is_empty() {
                 resp.request_focus();
             }
         });
@@ -102,12 +103,13 @@ impl DirigentApp {
         ui.horizontal(|ui| {
             let valid_number = self
                 .git
-                .import_pr_number
+                .pr
+                .import_number
                 .trim()
                 .parse::<u32>()
                 .map(|n| n > 0)
                 .unwrap_or(false);
-            let can_import = valid_number && !self.git.import_pr_op.in_flight();
+            let can_import = valid_number && !self.git.pr.import_op.in_flight();
             let btn_label = if is_refresh {
                 "\u{21BB} Refresh Findings"
             } else {

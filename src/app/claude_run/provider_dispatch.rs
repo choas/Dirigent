@@ -10,6 +10,9 @@ use crate::settings::{self, CliProvider, CueCommand};
 pub(super) struct ProviderConfig {
     pub(super) model: String,
     pub(super) cli_path: String,
+    /// The `herdr` binary; only the Herdr provider uses it (its `cli_path` is
+    /// the Claude CLI launched inside the pane).
+    pub(super) herdr_cli_path: String,
     pub(super) extra_args: String,
     /// Structured args that must not go through shlex::split (e.g. --mcp-config
     /// paths). Passed directly as individual Command::arg entries.
@@ -63,7 +66,7 @@ pub(super) fn build_pr_hint_text(text: &str, source_ref: Option<&str>) -> String
 }
 
 /// Build provider-specific configuration from settings, with optional command overrides.
-/// When the prompt mentions "Dirigent" and the provider is Claude, the Dirigent MCP
+/// When the prompt mentions "Dirigent" and the provider runs Claude Code, the Dirigent MCP
 /// server is conditionally injected via `--mcp-config` so Claude gains cue-management tools.
 pub(super) fn build_provider_config(
     settings: &settings::Settings,
@@ -92,6 +95,7 @@ pub(super) fn build_provider_config(
     ProviderConfig {
         model,
         cli_path,
+        herdr_cli_path: settings.herdr_cli_path.clone(),
         extra_args,
         extra_args_vec,
         env_vars,
@@ -124,7 +128,7 @@ pub(super) fn provider_extra_args_vec(
     prompt: &str,
     project_root: &std::path::Path,
 ) -> Vec<String> {
-    if *provider != CliProvider::Claude || !should_inject_dirigent_mcp(prompt) {
+    if !provider.runs_claude_code() || !should_inject_dirigent_mcp(prompt) {
         return Vec::new();
     }
     let Some(db_path) = resolve_dirigent_db(project_root, settings) else {

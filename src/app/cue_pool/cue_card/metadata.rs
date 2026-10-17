@@ -69,6 +69,23 @@ impl DirigentApp {
         cue: &Cue,
         actions: &mut Vec<(i64, CueAction)>,
     ) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("#{}", cue.id))
+                    .small()
+                    .color(self.semantic.muted_text()),
+            )
+            .on_hover_text("Cue ID");
+            self.render_location_label(ui, cue, actions);
+        });
+    }
+
+    fn render_location_label(
+        &self,
+        ui: &mut egui::Ui,
+        cue: &Cue,
+        actions: &mut Vec<(i64, CueAction)>,
+    ) {
         if cue.file_path.is_empty() {
             ui.label(
                 egui::RichText::new("Global")

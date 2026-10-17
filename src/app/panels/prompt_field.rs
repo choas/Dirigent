@@ -4,6 +4,7 @@ use super::super::{DirigentApp, SPACE_SM, SPACE_XS, icon};
 use crate::db::CueStatus;
 use crate::prompt_hints;
 use crate::prompt_suggestions;
+use crate::settings::CliProvider;
 
 impl DirigentApp {
     // Feature 2: Global prompt input
@@ -76,6 +77,7 @@ impl DirigentApp {
             {
                 self.global_prompt_images.extend(paths);
             }
+            self.render_herdr_button(ui);
             let input_response = ui.add(
                 egui::TextEdit::multiline(&mut self.global_prompt_input)
                     .desired_width(ui.available_width() - 44.0)
@@ -85,6 +87,30 @@ impl DirigentApp {
             );
             self.render_prompt_send_button(ui, &input_response);
         });
+    }
+
+    /// Experimental: run this prompt as native Claude Code in a herdr pane,
+    /// whatever the configured provider. Shown when herdr was found (or its
+    /// path set) and the provider isn't Herdr already.
+    fn render_herdr_button(&mut self, ui: &mut egui::Ui) {
+        if self.settings.herdr_cli_path.is_empty()
+            || self.settings.cli_provider == CliProvider::Herdr
+        {
+            return;
+        }
+        let has_prompt = !self.global_prompt_input.trim().is_empty();
+        if ui
+            .add_enabled(
+                has_prompt,
+                egui::Button::new(icon("H", self.settings.font_size)),
+            )
+            .on_hover_text(
+                "Run this prompt as interactive Claude Code in a herdr pane (experimental)",
+            )
+            .clicked()
+        {
+            self.submit_prompt(Some(CliProvider::Herdr));
+        }
     }
 
     /// Render the send button and handle submit logic.
@@ -108,12 +134,14 @@ impl DirigentApp {
             (false, false)
         };
         if (btn_clicked || enter_submitted || cmd_enter) && !self.global_prompt_input.is_empty() {
-            self.submit_prompt(cmd_enter);
+            let run_with = cmd_enter.then(|| self.settings.cli_provider.clone());
+            self.submit_prompt(run_with);
         }
     }
 
-    /// Submit the current prompt text as a new cue.
-    fn submit_prompt(&mut self, run_immediately: bool) {
+    /// Submit the current prompt text as a new cue, and run it right away with
+    /// `run_with` when given.
+    fn submit_prompt(&mut self, run_with: Option<CliProvider>) {
         let text = self.global_prompt_input.trim().to_string();
         if text.is_empty() {
             return;
@@ -127,12 +155,12 @@ impl DirigentApp {
             Ok(id) => {
                 self.global_prompt_images.clear();
                 self.global_prompt_input.clear();
-                if run_immediately {
+                if let Some(provider) = run_with {
                     match self.db.update_cue_status(id, CueStatus::Ready) {
                         Ok(()) => {
                             self.claude.expand_running = true;
                             self.reload_cues();
-                            self.trigger_claude(id);
+                            self.trigger_run_with_provider(id, provider);
                         }
                         Err(e) => {
                             self.set_status_message(format!("Failed to update cue status: {e}"));

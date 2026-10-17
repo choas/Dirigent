@@ -405,6 +405,9 @@ pub(crate) fn run_opencode_cli(
         cost_usd: (stream_metrics.cost_usd > 0.0).then_some(stream_metrics.cost_usd),
         duration_ms: None,
         num_turns: (stream_metrics.num_turns > 0).then_some(stream_metrics.num_turns),
+        // Token usage is not parsed from this CLI's stream yet.
+        input_tokens: None,
+        output_tokens: None,
         metadata: None,
     })
 }

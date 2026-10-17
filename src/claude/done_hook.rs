@@ -15,7 +15,7 @@ fn settings_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub(super) struct DoneHook {
+pub(crate) struct DoneHook {
     sentinel: PathBuf,
     payload: PathBuf,
     settings_path: PathBuf,
@@ -25,12 +25,17 @@ impl DoneHook {
     /// Install a Claude Code `Stop` hook that writes a sentinel file when
     /// Claude's turn ends. Returns a guard that removes the hook on drop.
     ///
+    /// Fails — with the reason — when `.claude/` cannot be created or
+    /// `settings.local.json` is unwritable or not a JSON object, which is never
+    /// overwritten. The PTY path can live without the hook; the Herdr backend
+    /// cannot see the end of a run otherwise and fails the run instead.
+    ///
     /// `session_id` scopes the hook to a single run: Claude Code fires *all*
     /// matching `Stop` hooks in parallel, so when two runs overlap in the same
     /// project the command must only touch its own sentinel when the triggering
     /// session matches. When the id is unknown (`None`) the hook fires
     /// unconditionally, which is safe for the common single-run case.
-    pub fn install(project_root: &Path, session_id: Option<&str>) -> Option<Self> {
+    pub fn install(project_root: &Path, session_id: Option<&str>) -> anyhow::Result<Self> {
         // The sentinel doubles as this run's identity token in the shared
         // settings file, so it must be unique even when two installs land in the
         // same process during the same instant. pid + timestamp alone can
@@ -54,14 +59,12 @@ impl DoneHook {
         let claude_dir = project_root.join(".claude");
         let settings_path = claude_dir.join("settings.local.json");
 
-        if std::fs::create_dir_all(&claude_dir).is_err() {
-            return None;
-        }
-        if upsert_stop_hook(&settings_path, &sentinel, &payload, session_id).is_err() {
-            return None;
-        }
+        std::fs::create_dir_all(&claude_dir)
+            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", claude_dir.display()))?;
+        upsert_stop_hook(&settings_path, &sentinel, &payload, session_id)
+            .map_err(|e| anyhow::anyhow!("cannot update {}: {e}", settings_path.display()))?;
 
-        Some(Self {
+        Ok(Self {
             sentinel,
             payload,
             settings_path,
@@ -99,10 +102,10 @@ fn upsert_stop_hook(
     // or removal cannot interleave and overwrite our entry with a stale file.
     let _guard = settings_lock().lock().unwrap_or_else(|e| e.into_inner());
 
-    let mut root = read_json_object(settings_path);
-    if !root.is_object() {
-        root = serde_json::json!({});
-    }
+    // A file the user (or Claude Code) wrote that we cannot parse must not be
+    // replaced by `{ "hooks": … }` — that would silently drop every other
+    // setting in it.
+    let mut root = read_settings_for_update(settings_path)?;
 
     let hooks = root
         .as_object_mut()
@@ -334,6 +337,25 @@ fn atomic_write(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read `settings.local.json` for a read/modify/write. A missing or blank
+/// file is an empty object; anything else must parse as a JSON object.
+fn read_settings_for_update(path: &Path) -> anyhow::Result<serde_json::Value> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(serde_json::json!({})),
+        Err(e) => return Err(e.into()),
+    };
+    if content.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("not valid JSON ({e}); fix or remove the file"))?;
+    if !value.is_object() {
+        anyhow::bail!("not a JSON object; fix or remove the file");
+    }
+    Ok(value)
+}
+
 fn read_json_object(path: &Path) -> serde_json::Value {
     if path.exists() {
         std::fs::read_to_string(path)
@@ -381,6 +403,49 @@ mod tests {
         assert!(json.contains("cat >"));
         assert!(json.contains(payload.to_str().unwrap()));
         assert!(json.contains(sentinel.to_str().unwrap()));
+    }
+
+    #[test]
+    fn upsert_stop_hook_refuses_malformed_settings_and_leaves_them_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+        let sentinel = tmp.path().join("sentinel");
+        let payload = tmp.path().join("payload.json");
+        for content in ["{ \"permissions\": ", "[1, 2]"] {
+            std::fs::write(&settings, content).unwrap();
+            assert!(upsert_stop_hook(&settings, &sentinel, &payload, None).is_err());
+            assert_eq!(std::fs::read_to_string(&settings).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn upsert_stop_hook_keeps_existing_settings_and_accepts_blank_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings = tmp.path().join("settings.local.json");
+        let sentinel = tmp.path().join("sentinel");
+        let payload = tmp.path().join("payload.json");
+        std::fs::write(&settings, r#"{"permissions":{"allow":["Bash(ls)"]}}"#).unwrap();
+        upsert_stop_hook(&settings, &sentinel, &payload, None).unwrap();
+        let json = std::fs::read_to_string(&settings).unwrap();
+        assert!(json.contains("Bash(ls)"));
+        assert!(json.contains("Stop"));
+
+        std::fs::write(&settings, "  \n").unwrap();
+        upsert_stop_hook(&settings, &sentinel, &payload, None).unwrap();
+        assert!(std::fs::read_to_string(&settings).unwrap().contains("Stop"));
+    }
+
+    #[test]
+    fn install_reports_why_it_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".claude")).unwrap();
+        std::fs::write(tmp.path().join(".claude/settings.local.json"), "{oops").unwrap();
+        let err = match DoneHook::install(tmp.path(), Some("s")) {
+            Ok(_) => panic!("install must fail on malformed settings"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("settings.local.json"), "{err}");
+        assert!(err.contains("not valid JSON"), "{err}");
     }
 
     #[test]

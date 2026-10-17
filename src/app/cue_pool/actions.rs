@@ -840,7 +840,7 @@ impl DirigentApp {
                 .and_then(|n| n.parse::<u32>().ok())
         });
         if let Some(n) = pr_num {
-            self.git.import_pr_number = n.to_string();
+            self.git.pr.import_number = n.to_string();
             self.start_import_pr_findings();
         } else {
             self.open_import_pr_dialog();

@@ -324,11 +324,11 @@ impl DirigentApp {
 
     /// Render the transient status message with auto-dismiss and fade.
     fn render_status_bar_message(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let busy = self.git.import_pr_op.in_flight()
+        let busy = self.git.pr.import_op.in_flight()
             || self.git.push_op.in_flight()
             || self.git.pull_op.in_flight()
-            || self.git.pr_create_op.in_flight()
-            || self.git.pr_notify_op.in_flight()
+            || self.git.pr.create_op.in_flight()
+            || self.git.pr.notify_op.in_flight()
             || self.git.move_to_branch_op.in_flight();
         let expired = !busy
             && matches!(&self.status_message, Some((_, when)) if when.elapsed().as_secs() >= 6);
