@@ -164,7 +164,7 @@ fn apply_sgr(
             0 => *current = base.clone(),
             1 => { /* bold — egui TextFormat has no bold flag */ }
             3 => current.italics = true,
-            4 => current.underline = egui::Stroke::new(1.0, current.color),
+            4 => current.underline = egui::Stroke::new(1.0_f32, current.color),
             7 => std::mem::swap(&mut current.color, &mut current.background),
             22 => { /* reset bold — no-op */ }
             23 => current.italics = false,

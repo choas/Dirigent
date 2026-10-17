@@ -293,7 +293,7 @@ fn truncate_line(line: &str) -> String {
 fn read_capped(path: &PathBuf) -> Option<(String, bool)> {
     use std::io::Read;
     let len = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
-    if (len as u64) <= MAX_FILE_BYTES as u64 {
+    if len <= MAX_FILE_BYTES as u64 {
         return std::fs::read_to_string(path).ok().map(|c| (c, false));
     }
     let mut buf = Vec::with_capacity(MAX_FILE_BYTES);

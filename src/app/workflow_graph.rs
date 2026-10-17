@@ -249,7 +249,7 @@ impl DirigentApp {
         egui::Frame::NONE
             .inner_margin(8.0)
             .corner_radius(6)
-            .stroke(egui::Stroke::new(1.5, border_color))
+            .stroke(egui::Stroke::new(1.5_f32, border_color))
             .fill(fill)
     }
 

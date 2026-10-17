@@ -193,7 +193,7 @@ impl DirigentApp {
         // Command
         if !run.command.is_empty() {
             ui.label(
-                egui::RichText::new(format!("$ {}", &run.command))
+                egui::RichText::new(format!("$ {}", run.command))
                     .monospace()
                     .small()
                     .color(self.semantic.muted_text()),

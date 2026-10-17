@@ -178,7 +178,7 @@ impl DirigentApp {
         let link = egui::TextFormat {
             font_id: font_id.clone(),
             color: link_color,
-            underline: egui::Stroke::new(1.0, link_color),
+            underline: egui::Stroke::new(1.0_f32, link_color),
             ..Default::default()
         };
 

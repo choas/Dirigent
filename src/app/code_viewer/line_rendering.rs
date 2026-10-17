@@ -289,7 +289,7 @@ fn render_cmd_hover_underline(
         ui.painter().hline(
             code_resp.rect.x_range(),
             code_resp.rect.bottom(),
-            egui::Stroke::new(1.0, accent),
+            egui::Stroke::new(1.0_f32, accent),
         );
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

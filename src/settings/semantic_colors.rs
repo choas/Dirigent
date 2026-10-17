@@ -278,7 +278,7 @@ impl SemanticColors {
             })
             .inner_margin(egui::Margin::same(16))
             .stroke(egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 if self.is_dark {
                     egui::Color32::from_white_alpha(20)
                 } else {
@@ -324,7 +324,7 @@ impl SemanticColors {
                 color: egui::Color32::from_black_alpha(shadow_alpha),
             })
             .stroke(egui::Stroke::new(
-                0.5,
+                0.5_f32,
                 if self.is_dark {
                     egui::Color32::from_white_alpha(15)
                 } else {

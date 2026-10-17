@@ -570,11 +570,11 @@ fn apply_interactive_visuals(v: &mut egui::Visuals, accent: egui::Color32) {
     v.widgets.active.expansion = -0.5;
 
     // Focus ring: accent-colored stroke on active/focused widgets
-    v.selection.stroke = egui::Stroke::new(1.5, accent);
+    v.selection.stroke = egui::Stroke::new(1.5_f32, accent);
     let [r, g, b, _] = accent.to_array();
     v.widgets.hovered.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(r, g, b, 80));
-    v.widgets.active.bg_stroke = egui::Stroke::new(1.5, accent);
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_premultiplied(r, g, b, 80));
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.5_f32, accent);
 }
 
 impl ThemePalette {
