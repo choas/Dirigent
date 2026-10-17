@@ -671,7 +671,7 @@ impl DirigentApp {
         // Once a completed Claude run reports its session id (shown as
         // "— session <id>" at the end of the PTY log), append an external-link
         // icon to that line so the conversation can be resumed in a terminal.
-        let resume_session_id = if !is_current_running && exec.provider == CliProvider::Claude {
+        let resume_session_id = if !is_current_running && exec.provider.runs_claude_code() {
             exec.session_id.as_deref().filter(|s| !s.is_empty())
         } else {
             None

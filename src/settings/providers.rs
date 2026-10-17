@@ -75,6 +75,13 @@ impl CliProvider {
         }
     }
 
+    /// Whether runs are Claude Code sessions (directly or in a herdr pane), so
+    /// they get Claude's session continuity (`--session-id`/`--resume`), the
+    /// short resume prompts, and Dirigent MCP injection.
+    pub fn runs_claude_code(&self) -> bool {
+        matches!(self, CliProvider::Claude | CliProvider::Herdr)
+    }
+
     pub fn all() -> &'static [CliProvider] {
         &[
             CliProvider::Claude,
