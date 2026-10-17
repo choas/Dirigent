@@ -26,7 +26,7 @@ Status: **experimental**. Verified with herdr 0.9.0 and Claude Code 2.1.302. The
 ## What a run does
 
 1. Installs Dirigent's Stop hook in `.claude/settings.local.json`, scoped to this run's session id. If the hook cannot be installed (an unwritable directory, or a file that is not valid JSON, which is never overwritten), the run fails right away.
-2. Opens a new herdr tab in the project root and starts `claude` there with your model, args and a generated `--session-id` (`--resume` for replies).
+2. Opens a tab `Dirigent #<cue id>` in the project's herdr workspace (the workspace labelled like the project folder, e.g. `Dirigent`; created if missing) and starts `claude` there with your model, args and a generated `--session-id` (`--resume` for replies).
 3. Waits until herdr reports Claude as idle, then submits the prompt. If Claude shows a dialog first, such as the folder-trust question in a new directory, the running log says so. Answer the dialog in the herdr tab and the run continues.
 4. Waits for the Stop hook. Meanwhile it watches the pane: if the pane is closed, or Claude exits (`/exit`, a crash, Ctrl-C) before the hook fires, the run fails with that reason.
 5. Reads the result from Claude's session transcript. It looks first at the hook's `transcript_path`, then scans `~/.claude/projects/*/<session-id>.jsonl`, then reads the pane's text, and last uses the hook's `last_assistant_message`. Turns and token counts come from the transcript; cost is unknown. The diff comes from the working tree, as for every provider.

@@ -113,22 +113,50 @@ pub(crate) fn observe(api: &dyn HerdrApi, pane_id: &str) -> Result<PaneObservati
     })
 }
 
-/// Create a tab rooted at `cwd` whose shell gets `env`, returning
-/// `(tab_id, pane_id)`. The environment travels in the socket request only.
-pub(crate) fn create_tab(
+/// Where and how to open the run's tab.
+pub(crate) struct TabSpec<'a> {
+    pub cwd: &'a str,
+    /// The project's herdr workspace label (the project folder's name).
+    pub workspace: &'a str,
+    pub label: &'a str,
+    pub env: &'a [(String, String)],
+}
+
+/// Open the run's tab in the project's herdr workspace — the one labelled
+/// like the project folder — creating that workspace when there is none.
+/// Returns `(tab_id, pane_id)`. The environment travels in the socket
+/// request only.
+pub(crate) fn open_run_tab(
     api: &dyn HerdrApi,
-    cwd: &str,
-    label: &str,
-    env: &[(String, String)],
+    spec: &TabSpec<'_>,
 ) -> Result<(String, String), HerdrError> {
-    let env: serde_json::Map<String, Value> = env
+    let env: serde_json::Map<String, Value> = spec
+        .env
         .iter()
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
-    let created = api.call(
-        "tab.create",
-        json!({ "cwd": cwd, "label": label, "focus": true, "env": env }),
-    )?;
+    let created = match find_workspace(api, spec.workspace)? {
+        Some(workspace_id) => api.call(
+            "tab.create",
+            json!({ "workspace_id": workspace_id, "cwd": spec.cwd, "label": spec.label,
+                    "focus": true, "env": env }),
+        )?,
+        // A new workspace comes with its first tab; name that one for the run.
+        None => {
+            let created = api.call(
+                "workspace.create",
+                json!({ "cwd": spec.cwd, "label": spec.workspace, "focus": true, "env": env }),
+            )?;
+            if let Some(tab_id) = created.pointer("/tab/tab_id").and_then(Value::as_str) {
+                // Cosmetic; the run works under the default tab name too.
+                let _ = api.call(
+                    "tab.rename",
+                    json!({ "tab_id": tab_id, "label": spec.label }),
+                );
+            }
+            created
+        }
+    };
     let id = |ptr: &str| {
         created
             .pointer(ptr)
@@ -138,9 +166,30 @@ pub(crate) fn create_tab(
     match (id("/tab/tab_id"), id("/root_pane/pane_id")) {
         (Some(tab), Some(pane)) => Ok((tab, pane)),
         _ => Err(HerdrError::Transport(format!(
-            "herdr tab.create returned no tab/pane id: {created}"
+            "herdr returned no tab/pane id: {created}"
         ))),
     }
+}
+
+/// The id of the workspace labelled `label`, preferring the focused one when
+/// several share the label.
+fn find_workspace(api: &dyn HerdrApi, label: &str) -> Result<Option<String>, HerdrError> {
+    let listed = api.call("workspace.list", json!({}))?;
+    let matching: Vec<&Value> = listed
+        .get("workspaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|w| w.get("label").and_then(Value::as_str) == Some(label))
+        .collect();
+    let chosen = matching
+        .iter()
+        .find(|w| w.get("focused").and_then(Value::as_bool) == Some(true))
+        .or(matching.first());
+    Ok(chosen
+        .and_then(|w| w.get("workspace_id"))
+        .and_then(Value::as_str)
+        .map(String::from))
 }
 
 /// Type `command` into the pane's shell and press Enter.
@@ -482,19 +531,60 @@ pub(crate) mod tests {
         assert!(observe(&broken, "w1:p1").is_err());
     }
 
+    fn workspaces() -> Value {
+        json!({ "type": "workspace_list", "workspaces": [
+            { "workspace_id": "w1", "label": "Other", "focused": true },
+            { "workspace_id": "w2", "label": "Dirigent", "focused": false },
+            { "workspace_id": "w3", "label": "Dirigent", "focused": true },
+        ]})
+    }
+
+    fn spec<'a>(env: &'a [(String, String)]) -> TabSpec<'a> {
+        TabSpec {
+            cwd: "/repo",
+            workspace: "Dirigent",
+            label: "Dirigent #7",
+            env,
+        }
+    }
+
     #[test]
-    fn create_tab_sends_env_in_the_request_and_returns_ids() {
-        let api = ScriptedHerdr::new(|_, _| {
-            Ok(json!({ "type": "tab_created", "tab": { "tab_id": "w1:t2" },
-                       "root_pane": { "pane_id": "w1:p2" } }))
+    fn run_tab_opens_in_the_project_workspace_with_env() {
+        let api = ScriptedHerdr::new(|method, _| match method {
+            "workspace.list" => Ok(workspaces()),
+            "tab.create" => Ok(json!({ "type": "tab_created", "tab": { "tab_id": "w3:t2" },
+                                      "root_pane": { "pane_id": "w3:p2" } })),
+            other => panic!("unexpected {other}"),
         });
         let env = vec![("API_KEY".to_string(), "s3cret".to_string())];
-        let ids = create_tab(&api, "/repo", "Dirigent: x", &env).unwrap();
-        assert_eq!(ids, ("w1:t2".to_string(), "w1:p2".to_string()));
+        let ids = open_run_tab(&api, &spec(&env)).unwrap();
+        assert_eq!(ids, ("w3:t2".to_string(), "w3:p2".to_string()));
         let params = &api.params_of("tab.create")[0];
+        // Of two "Dirigent" workspaces, the focused one wins.
+        assert_eq!(params["workspace_id"], "w3");
+        assert_eq!(params["label"], "Dirigent #7");
         assert_eq!(params["env"]["API_KEY"], "s3cret");
         assert_eq!(params["cwd"], "/repo");
         assert_eq!(params["focus"], true);
+    }
+
+    #[test]
+    fn run_tab_creates_the_project_workspace_when_missing() {
+        let api = ScriptedHerdr::new(|method, _| match method {
+            "workspace.list" => Ok(json!({ "workspaces": [] })),
+            "workspace.create" => Ok(json!({ "type": "workspace_created",
+                "workspace": { "workspace_id": "w9" }, "tab": { "tab_id": "w9:t1" },
+                "root_pane": { "pane_id": "w9:p1" } })),
+            "tab.rename" => Ok(json!({ "type": "ok" })),
+            other => panic!("unexpected {other}"),
+        });
+        let env = vec![("API_KEY".to_string(), "s3cret".to_string())];
+        let ids = open_run_tab(&api, &spec(&env)).unwrap();
+        assert_eq!(ids, ("w9:t1".to_string(), "w9:p1".to_string()));
+        let created = &api.params_of("workspace.create")[0];
+        assert_eq!(created["label"], "Dirigent");
+        assert_eq!(created["env"]["API_KEY"], "s3cret");
+        assert_eq!(api.params_of("tab.rename")[0]["label"], "Dirigent #7");
     }
 
     #[test]

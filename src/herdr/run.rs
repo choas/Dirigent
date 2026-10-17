@@ -16,8 +16,8 @@ use std::time::Duration;
 use super::client::{HerdrApi, HerdrError, SocketClient, discover_socket, resolve_herdr_binary};
 use super::command::{build_claude_command, tab_label};
 use super::pane::{
-    BootStep, BootWatch, ExitWatch, Timing, create_tab, interrupt, is_pane_gone, launch, observe,
-    read_text, submit_prompt,
+    BootStep, BootWatch, ExitWatch, TabSpec, Timing, interrupt, is_pane_gone, launch, observe,
+    open_run_tab, read_text, submit_prompt,
 };
 use super::transcript;
 use crate::ai_backend::{BackendError, BackendRequest, BackendResponse};
@@ -78,6 +78,7 @@ pub(crate) fn run_herdr_cli(
     }
     let pane_launch = PaneLaunch {
         cwd: req.project_root.to_string_lossy().into_owned(),
+        workspace: project_workspace_label(req.project_root),
         label: tab_label(req.cue_id),
         env,
         command: build_claude_command(&claude_bin, req.model, &args, req.skip_permissions),
@@ -119,6 +120,15 @@ pub(crate) fn run_herdr_cli(
     ))
 }
 
+/// herdr workspaces are typically one per project, labelled with the
+/// project folder's name (`Dirigent`, `ThinIce`, …).
+fn project_workspace_label(project_root: &Path) -> String {
+    project_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Dirigent".to_string())
+}
+
 /// Without the Stop hook nothing tells Dirigent the turn ended, and the cue
 /// would land in Review while Claude is still editing.
 fn install_stop_hook(
@@ -136,6 +146,8 @@ fn install_stop_hook(
 /// What to start in the pane.
 pub(crate) struct PaneLaunch {
     pub cwd: String,
+    /// herdr workspace to open the tab in (created when missing).
+    pub workspace: String,
     pub label: String,
     pub env: Vec<(String, String)>,
     pub command: String,
@@ -163,7 +175,13 @@ pub(crate) fn drive_pane(
     if cancel.load(Ordering::Relaxed) {
         return PaneRun::Cancelled;
     }
-    let pane_id = match create_tab(api, &pane_launch.cwd, &pane_launch.label, &pane_launch.env) {
+    let spec = TabSpec {
+        cwd: &pane_launch.cwd,
+        workspace: &pane_launch.workspace,
+        label: &pane_launch.label,
+        env: &pane_launch.env,
+    };
+    let pane_id = match open_run_tab(api, &spec) {
         Ok((_tab, pane)) => pane,
         Err(e) => return PaneRun::Failed(format!("could not create a herdr tab: {e}")),
     };
@@ -399,6 +417,7 @@ mod tests {
     fn pane_launch() -> PaneLaunch {
         PaneLaunch {
             cwd: "/repo".into(),
+            workspace: "repo".into(),
             label: "Dirigent #7".into(),
             env: vec![("TOKEN".into(), "s3cret".into())],
             command: "'claude' '--session-id' 'abc'".into(),
@@ -427,6 +446,8 @@ mod tests {
             on_call(method, params, &state);
             let ok = || Ok(json!({ "type": "ok" }));
             match (method, state.get()) {
+                ("workspace.list", _) => Ok(json!({ "workspaces": [
+                    { "workspace_id": "w1", "label": "repo", "focused": true } ] })),
                 ("tab.create", _) => Ok(json!({
                     "tab": { "tab_id": "w1:t1" }, "root_pane": { "pane_id": "w1:p1" } })),
                 (_, Claude::PaneClosed) => Err(api_error("pane_not_found")),
@@ -661,6 +682,8 @@ mod tests {
     #[test]
     fn unreachable_server_fails_after_repeated_errors() {
         let api = ScriptedHerdr::new(|method, _| match method {
+            "workspace.list" => Ok(json!({ "workspaces": [
+                { "workspace_id": "w1", "label": "repo", "focused": true } ] })),
             "tab.create" => Ok(json!({
                 "tab": { "tab_id": "w1:t1" }, "root_pane": { "pane_id": "w1:p1" } })),
             "pane.send_input" => Ok(json!({ "type": "ok" })),
@@ -671,6 +694,15 @@ mod tests {
             matches!(&outcome, PaneRun::Failed(m) if m.contains("lost contact")),
             "{outcome:?}"
         );
+    }
+
+    #[test]
+    fn workspace_label_is_the_project_folder_name() {
+        assert_eq!(
+            project_workspace_label(Path::new("/Users/me/prj/Dirigent")),
+            "Dirigent"
+        );
+        assert_eq!(project_workspace_label(Path::new("/")), "Dirigent");
     }
 
     #[test]
