@@ -153,10 +153,18 @@ fn invoke_pty(
     // `std::process::Command`, which also overwrites — see `invoke_headless`.
     builder = builder.envs(compose_pty_envs(req.env_vars, req.project_root, on_log));
 
-    let done_hook = DoneHook::install(req.project_root, session_id.as_deref());
-    if done_hook.is_some() {
-        on_log("⏎ Stop hook installed\n");
-    }
+    // The PTY path still detects the end of a turn without the hook (idle
+    // heuristics), so a failed install is a warning here, not an error.
+    let done_hook = match DoneHook::install(req.project_root, session_id.as_deref()) {
+        Ok(hook) => {
+            on_log("⏎ Stop hook installed\n");
+            Some(hook)
+        }
+        Err(e) => {
+            on_log(&format!("\u{26A0} Stop hook not installed: {e:#}\n"));
+            None
+        }
+    };
 
     let mut session = builder.open().map_err(|e| match e {
         claude_pty::Error::BinaryNotFound => BackendError::NotFound { backend: "claude" },
