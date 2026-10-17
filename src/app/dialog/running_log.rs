@@ -792,7 +792,7 @@ impl DirigentApp {
             } else {
                 self.render_ansi_log(ui, current_running_log);
             }
-        } else if let Some(ref log_text) = log {
+        } else if let Some(log_text) = log {
             if !log_text.is_empty() {
                 match resume_session_id {
                     Some(sid) => self.render_ansi_log_with_resume(ui, log_text, sid),

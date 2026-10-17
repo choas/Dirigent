@@ -36,7 +36,7 @@ fn get_memory_usage_mb() -> Option<u64> {
         suspend_count: i32,
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn mach_task_self() -> mach_port_t;
         fn task_info(
             target_task: mach_port_t,

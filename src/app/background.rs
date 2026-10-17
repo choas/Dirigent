@@ -342,8 +342,8 @@ impl DirigentApp {
             self.search.in_files_results = results;
             self.search.in_files_searching = false;
         }
-        if let Ok((gen, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
-            self.apply_goto_def_result(gen, file_path, target_line, msg);
+        if let Ok((generation, file_path, target_line, msg)) = self.goto_def_rx.try_recv() {
+            self.apply_goto_def_result(generation, file_path, target_line, msg);
         }
     }
 
@@ -405,12 +405,12 @@ impl DirigentApp {
     /// Apply a go-to-definition result if it matches the current generation.
     pub(super) fn apply_goto_def_result(
         &mut self,
-        gen: u64,
+        generation: u64,
         file_path: PathBuf,
         target_line: usize,
         msg: String,
     ) {
-        if gen != self.goto_def_gen {
+        if generation != self.goto_def_gen {
             return;
         }
         if target_line > 0 {

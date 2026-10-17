@@ -1411,7 +1411,7 @@ impl DirigentApp {
         let ready: Vec<i64> = self
             .scheduled_runs
             .iter()
-            .filter(|(_, &when)| now >= when)
+            .filter(|&(_, &when)| now >= when)
             .map(|(&id, _)| id)
             .collect();
         for id in ready {

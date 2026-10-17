@@ -76,7 +76,7 @@ impl DirigentApp {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.goto_def_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.goto_def_gen = self.goto_def_gen.wrapping_add(1);
-        let gen = self.goto_def_gen;
+        let generation = self.goto_def_gen;
 
         let current_file = self.viewer.current_file().cloned();
         let project_root = self.project_root.clone();
@@ -94,11 +94,11 @@ impl DirigentApp {
                 current_file.as_ref(),
                 &project_root,
                 &word_owned,
-                gen,
+                generation,
             );
             let _ = tx.send(result.unwrap_or_else(|| {
                 (
-                    gen,
+                    generation,
                     PathBuf::new(),
                     0,
                     format!("No definition found for `{}`", word_owned),
@@ -116,7 +116,7 @@ pub(crate) fn search_files_for_definition(
     current_file: Option<&PathBuf>,
     project_root: &Path,
     word: &str,
-    gen: u64,
+    generation: u64,
 ) -> Option<(u64, PathBuf, usize, String)> {
     for file_path in all_files {
         if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
@@ -129,7 +129,7 @@ pub(crate) fn search_files_for_definition(
             continue;
         }
         let result =
-            search_single_file_for_definition(file_path, patterns, project_root, word, gen);
+            search_single_file_for_definition(file_path, patterns, project_root, word, generation);
         if result.is_some() {
             return result;
         }
@@ -143,7 +143,7 @@ fn search_single_file_for_definition(
     patterns: &[regex::Regex],
     project_root: &Path,
     word: &str,
-    gen: u64,
+    generation: u64,
 ) -> Option<(u64, PathBuf, usize, String)> {
     let content = std::fs::read_to_string(file_path).ok()?;
     let mut in_block_comment = false;
@@ -164,7 +164,7 @@ fn search_single_file_for_definition(
                     .display(),
                 target_line
             );
-            return Some((gen, file_path.to_path_buf(), target_line, msg));
+            return Some((generation, file_path.to_path_buf(), target_line, msg));
         }
     }
     None

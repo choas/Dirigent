@@ -717,7 +717,7 @@ impl DirigentApp {
         if let Some(ref error) = result.error {
             self.handle_run_error(result, error);
             true
-        } else if let Some(ref limit_line) = usage_limit_msg {
+        } else if let Some(limit_line) = usage_limit_msg {
             self.handle_rate_limit(result, limit_line);
             true
         } else {

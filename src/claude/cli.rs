@@ -280,13 +280,15 @@ mod tests {
         // Use a name that is overwhelmingly likely to be set on dev machines.
         // We assert that the helper round-trips known-present names, drops
         // unknown ones, and forwards a warning about missing names to on_log.
-        std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("DIRIGENT_TEST_ENV_VAR", "test_value_123") };
         let mut log_buf = String::new();
         let pairs = resolve_env_pairs(
             "DIRIGENT_TEST_ENV_VAR\n# comment\nDIRIGENT_MISSING_VAR\n",
             &mut |s| log_buf.push_str(s),
         );
-        std::env::remove_var("DIRIGENT_TEST_ENV_VAR");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("DIRIGENT_TEST_ENV_VAR") };
         assert_eq!(
             pairs,
             vec![(
@@ -306,9 +308,11 @@ mod tests {
 
     #[test]
     fn resolve_env_pairs_strips_legacy_key_equals_value_suffix() {
-        std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("DIRIGENT_LEGACY_VAR", "real_value") };
         let pairs = resolve_env_pairs("DIRIGENT_LEGACY_VAR=stale_inline_value\n", &mut |_| {});
-        std::env::remove_var("DIRIGENT_LEGACY_VAR");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("DIRIGENT_LEGACY_VAR") };
         assert_eq!(
             pairs,
             vec![("DIRIGENT_LEGACY_VAR".to_string(), "real_value".to_string())]

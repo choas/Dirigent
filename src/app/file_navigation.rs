@@ -135,8 +135,8 @@ impl DirigentApp {
         &mut self,
         rel_path: &str,
     ) -> std::sync::Arc<HashMap<usize, bool>> {
-        if let Some((ref cached_path, gen, ref map)) = self.cached_lines_with_cues {
-            if cached_path == rel_path && gen == self.cue_generation {
+        if let Some((ref cached_path, generation, ref map)) = self.cached_lines_with_cues {
+            if cached_path == rel_path && generation == self.cue_generation {
                 return std::sync::Arc::clone(map);
             }
         }
