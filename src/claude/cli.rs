@@ -10,7 +10,17 @@ use std::process::Command;
 /// an expected auth token (e.g. `ANTHROPIC_API_KEY`) was not set, instead of
 /// the run failing opaquely.
 pub(crate) fn apply_env_vars(cmd: &mut Command, env_vars: &str, on_log: &mut dyn FnMut(&str)) {
-    for (name, value) in resolve_env_pairs(env_vars, on_log) {
+    apply_env_vars_with(cmd, env_vars, on_log, |name| std::env::var(name).ok());
+}
+
+/// [`apply_env_vars`] with an injectable lookup (see [`resolve_env_pairs_with`]).
+pub(super) fn apply_env_vars_with(
+    cmd: &mut Command,
+    env_vars: &str,
+    on_log: &mut dyn FnMut(&str),
+    lookup: impl Fn(&str) -> Option<String>,
+) {
+    for (name, value) in resolve_env_pairs_with(env_vars, on_log, lookup) {
         cmd.env(name, value);
     }
 }
@@ -79,22 +89,15 @@ fn load_env_file_var(path: &Path, key: &str) -> Option<String> {
 }
 
 /// Resolve environment variable **names** (one per line, `#` comments allowed)
-/// from the current process environment and return them as `(key, value)` pairs.
+/// via `lookup` and return them as `(key, value)` pairs. Production callers
+/// pass `std::env::var`; tests pass a fixed map instead of mutating the
+/// process environment (`set_var` is unsafe while other test threads may be
+/// reading it).
 ///
 /// Missing names are reported via `on_log` (and `log::warn!`) so the live run
 /// log surfaces an unset auth token instead of the user only seeing an opaque
 /// downstream failure.
-pub(super) fn resolve_env_pairs(
-    env_vars: &str,
-    on_log: &mut dyn FnMut(&str),
-) -> Vec<(String, String)> {
-    resolve_env_pairs_with(env_vars, on_log, |name| std::env::var(name).ok())
-}
-
-/// [`resolve_env_pairs`] with an injectable lookup, so tests can supply
-/// values without mutating the process environment (`set_var` is unsafe
-/// while other test threads may be reading it).
-fn resolve_env_pairs_with(
+pub(super) fn resolve_env_pairs_with(
     env_vars: &str,
     on_log: &mut dyn FnMut(&str),
     lookup: impl Fn(&str) -> Option<String>,
@@ -124,6 +127,16 @@ fn resolve_env_pairs_with(
         }
     }
     pairs
+}
+
+/// Test lookup over a fixed set of variables, standing in for the process env.
+#[cfg(test)]
+pub(super) fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+    let vars: std::collections::HashMap<String, String> = vars
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    move |name| vars.get(name).cloned()
 }
 
 /// Load KEY=VALUE pairs from `.Dirigent/.env` relative to `project_root`.
@@ -284,15 +297,6 @@ mod tests {
                 ("KEY".to_string(), "value with spaces".to_string()),
             ]
         );
-    }
-
-    /// Lookup over a fixed set of variables, standing in for the process env.
-    fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
-        let vars: std::collections::HashMap<String, String> = vars
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        move |name| vars.get(name).cloned()
     }
 
     #[test]
